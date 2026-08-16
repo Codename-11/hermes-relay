@@ -18,13 +18,17 @@ class GatewayEventMapperTest {
 
     private class Recorder {
         val textDeltas = mutableListOf<String>()
+        val interimMessages = mutableListOf<Pair<String, Boolean>>()
+        val reconciledInterims = mutableListOf<String>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
+        val toolStartArgs = mutableListOf<Pair<String, String?>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
         val toolFails = mutableListOf<Pair<String, String?>>()
         val toolOutputRisks = mutableListOf<GatewayToolOutputRisk>()
         val toolGenerating = mutableListOf<String?>()
         val subagentEvents = mutableListOf<GatewaySubagentEvent>()
+        val moaReferences = mutableListOf<GatewayMoaReference>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
@@ -42,8 +46,13 @@ class GatewayEventMapperTest {
             onSessionId = { sessionIds += it },
             onStart = { starts++ },
             onTextDelta = { textDeltas += it },
+            onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
+            onInterimReconciled = { text -> reconciledInterims += text },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallStart = { id, name, args ->
+                toolStarts += id to name
+                toolStartArgs += id to args
+            },
             onToolCallDone = { id, preview -> toolDones += id to preview },
             onToolCallFailed = { id, err -> toolFails += id to err },
             onToolOutputRisk = { toolOutputRisks += it },
@@ -54,6 +63,7 @@ class GatewayEventMapperTest {
             onError = { errors += it },
             onToolGenerating = { toolGenerating += it },
             onSubagentEvent = { subagentEvents += it },
+            onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
@@ -170,6 +180,17 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `message complete backfills text when response was not previewed`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.complete", obj("""{"text":"Final answer","response_previewed":false}"""))
+
+        assertEquals(listOf("Final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
     fun `message complete backfills text and reasoning when nothing streamed`() {
         val r = Recorder()
         val mapper = mapperWith(r)
@@ -179,6 +200,198 @@ class GatewayEventMapperTest {
         )
         assertEquals(listOf("Full answer"), r.textDeltas)
         assertEquals(listOf("the hidden why"), r.thinkingDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message interim seals preview and previewed complete does not duplicate`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate answer" to false), r.interimMessages)
+        assertTrue(r.textDeltas.isEmpty())
+        assertEquals(1, r.starts)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message complete after interim backfills distinct final when not previewed`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent("message.complete", obj("""{"text":"final answer"}"""))
+
+        assertEquals(listOf("candidate answer" to false), r.interimMessages)
+        assertEquals(listOf("final answer"), r.textDeltas)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `non-previewed complete equal to interim reconciles one bubble`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed complete extending interim replaces it with full final`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer"}"""),
+        )
+
+        assertEquals(listOf("candidate answer"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `non-previewed truncated final replaces longer interim`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":false}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate"}"""),
+        )
+
+        assertEquals(listOf("candidate"), r.reconciledInterims)
+        assertTrue(r.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `terminal error complete preserves partial and reports failed status`() {
+        val r = Recorder()
+        val mapper = GatewayEventMapper(r.callbacks)
+
+        mapper.onEvent(
+            "message.complete",
+            obj(
+                """{"text":"partial answer","status":"error","error":"provider failed","partial":true,"recoverable":true}""",
+            ),
+        )
+
+        assertEquals(listOf("partial answer"), r.textDeltas)
+        assertEquals(listOf("error" to "provider failed"), r.statusUpdates)
+        assertEquals(1, r.completes)
+        assertTrue(mapper.turnEnded)
+    }
+
+    @Test
+    fun `terminal error complete without text renders error fallback`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"status":"error","error":"agent build failed","recoverable":true}"""),
+        )
+
+        assertEquals(listOf("Error: agent build failed"), r.textDeltas)
+        assertEquals(listOf("error" to "agent build failed"), r.statusUpdates)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `already streamed interim seals without replaying text`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate answer"}"""))
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":true}"""),
+        )
+
+        assertEquals(listOf("candidate answer" to true), r.interimMessages)
+        assertEquals(listOf("candidate answer"), r.textDeltas)
+    }
+
+    @Test
+    fun `message complete suppresses exact intentional silence marker`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.complete", obj("""{"text":"[SILENT]"}"""))
+
+        assertTrue(r.textDeltas.isEmpty())
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message delta suppresses exact intentional silence marker`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("message.delta", obj("""{"text":"NO_REPLY"}"""))
+        mapper.onEvent("message.delta", obj("""{"text":"The profile said NO_REPLY for context."}"""))
+
+        assertEquals(listOf("The profile said NO_REPLY for context."), r.textDeltas)
+    }
+
+    @Test
+    fun `message interim already streamed seals without replaying text`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate "}"""))
+        mapper.onEvent(
+            "message.interim",
+            obj("""{"text":"candidate answer","already_streamed":true}"""),
+        )
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate answer","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate "), r.textDeltas)
+        assertEquals(listOf("candidate answer" to true), r.interimMessages)
+        assertEquals(1, r.completes)
+    }
+
+    @Test
+    fun `message interim already streamed without text does not backfill previewed complete`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("message.delta", obj("""{"text":"candidate"}"""))
+        mapper.onEvent("message.interim", obj("""{"already_streamed":true}"""))
+        mapper.onEvent(
+            "message.complete",
+            obj("""{"text":"candidate","response_previewed":true}"""),
+        )
+
+        assertEquals(listOf("candidate"), r.textDeltas)
+        assertEquals(listOf("" to true), r.interimMessages)
         assertEquals(1, r.completes)
     }
 
@@ -237,6 +450,54 @@ class GatewayEventMapperTest {
         mapper.onEvent("tool.complete", obj("""{"tool_id":"t1","name":"execute_code","summary":"ran fine"}"""))
         assertEquals(listOf("t1" to "execute_code"), r.toolStarts)
         assertEquals(listOf("t1" to "ran fine"), r.toolDones)
+    }
+
+    @Test
+    fun `tool cards retain live arguments and results for expansion`() {
+        val verbose = Recorder()
+        val verboseMapper = mapperWith(verbose)
+        verboseMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t1","name":"terminal","context":"echo fallback","args_text":"{\"command\":\"echo live\"}"}"""),
+        )
+        verboseMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t1","name":"terminal","summary":"finished","result_text":"live output"}"""),
+        )
+
+        assertEquals(listOf("t1" to "{\"command\":\"echo live\"}"), verbose.toolStartArgs)
+        assertEquals(listOf("t1" to "live output"), verbose.toolDones)
+
+        val standard = Recorder()
+        val standardMapper = mapperWith(standard)
+        standardMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t2","name":"skill","context":"review repository"}"""),
+        )
+        standardMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t2","name":"skill","summary":"completed skill"}"""),
+        )
+
+        assertEquals(listOf("t2" to "review repository"), standard.toolStartArgs)
+        assertEquals(listOf("t2" to "completed skill"), standard.toolDones)
+    }
+
+    @Test
+    fun `structured tool arguments win over legacy previews`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent(
+            "tool.start",
+            obj(
+                """{"tool_id":"t3","name":"terminal","args":{"command":"echo live","timeout":30},"args_text":"stale","context":"older"}""",
+            ),
+        )
+
+        assertEquals(
+            listOf("t3" to "{\"command\":\"echo live\",\"timeout\":30}"),
+            recorder.toolStartArgs,
+        )
     }
 
     @Test
@@ -330,7 +591,7 @@ class GatewayEventMapperTest {
     fun `subagent lifecycle maps phases and fields`() {
         val r = Recorder()
         val mapper = mapperWith(r)
-        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3}"""))
+        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17"}"""))
         mapper.onEvent("subagent.thinking", obj("""{"goal":"research topic","task_index":1,"task_count":3,"text":"hmm"}"""))
         mapper.onEvent(
             "subagent.tool",
@@ -356,6 +617,7 @@ class GatewayEventMapperTest {
         assertEquals(1, start.taskIndex)
         assertEquals(3, start.taskCount)
         assertEquals("research topic", start.goal)
+        assertEquals("child-17", start.subagentId)
         assertEquals("hmm", r.subagentEvents[1].preview)
         val tool = r.subagentEvents[2]
         assertEquals("web_search", tool.toolName)
@@ -453,8 +715,44 @@ class GatewayEventMapperTest {
         assertEquals("r1", ask.requestId)
         assertEquals("Which file?", ask.text)
         assertEquals(listOf("a.txt", "b.txt"), ask.choices)
+        assertFalse(ask.multiSelect)
         assertNull(ask.envVar)
-        assertEquals(300, ask.timeoutSeconds)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify request carries multi select only with bounded usable choices`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "clarify.request",
+            obj(
+                """{"request_id":"r1","question":"Where?","multi_select":true,"choices":""" +
+                    """[" dev ","prod","dev","","stage","canary","extra"]}""",
+            ),
+        )
+
+        val ask = r.interactions.single()
+        assertTrue(ask.multiSelect)
+        assertEquals(listOf("dev", "prod", "stage", "canary"), ask.choices)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify ignores malformed multi select and consumes additive timeout metadata`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r1","multi_select":true,"choices":null,"timeout_seconds":42}"""),
+        )
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r2","multi_select":false,"choices":["a"]}"""),
+        )
+
+        assertFalse(r.interactions[0].multiSelect)
+        assertEquals(42, r.interactions[0].timeoutSeconds)
+        assertFalse(r.interactions[1].multiSelect)
     }
 
     @Test
@@ -494,6 +792,32 @@ class GatewayEventMapperTest {
         val ask = r.interactions.single()
         assertEquals(listOf("once", "session", "always", "deny"), ask.choices)
         assertTrue(ask.smartDenied)
+    }
+
+    @Test
+    fun `approval request removes explicitly forbidden persistent scopes`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"<write to AGENTS.md>","choices":["once","session","always","deny"],"allow_session":false,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "deny"), r.interactions.single().choices)
+    }
+
+    @Test
+    fun `approval request retains session while permanent scope is forbidden`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"guarded command","choices":["once","session","always","deny"],"allow_session":true,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "session", "deny"), r.interactions.single().choices)
     }
 
     @Test
@@ -564,18 +888,142 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `sudo secret and approval expiry events preserve correlation contract`() {
+    fun `interaction expiry events preserve correlation contract`() {
         val r = Recorder()
         val mapper = mapperWith(r)
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r1"}"""))
         mapper.onEvent("sudo.expire", obj("""{"request_id":"r2"}"""))
         mapper.onEvent("secret.expire", obj("""{"request_id":"r3"}"""))
         mapper.onEvent("approval.expire", obj("""{"request_id":"ignored"}"""))
 
         assertEquals(
-            listOf(GatewayAsk.Kind.SUDO, GatewayAsk.Kind.SECRET, GatewayAsk.Kind.APPROVAL),
+            listOf(
+                GatewayAsk.Kind.CLARIFY,
+                GatewayAsk.Kind.SUDO,
+                GatewayAsk.Kind.SECRET,
+                GatewayAsk.Kind.APPROVAL,
+            ),
             r.interactionExpiries.map { it.kind },
         )
-        assertEquals(listOf("r2", "r3", null), r.interactionExpiries.map { it.requestId })
+        assertEquals(listOf("r1", "r2", "r3", null), r.interactionExpiries.map { it.requestId })
+    }
+
+    @Test
+    fun `duplicate request and later turn activity keep decision pending`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        val request = obj("""{"request_id":"r1","question":"Choose","choices":["A","B"]}""")
+
+        mapper.onEvent("clarify.request", request)
+        mapper.onEvent("clarify.request", request)
+        mapper.onEvent("message.delta", obj("""{"text":"Continuing"}"""))
+        mapper.onEvent("tool.complete", obj("""{"tool_id":"other","name":"read_file"}"""))
+        mapper.onEvent("message.complete", obj("""{"text":"Continuing"}"""))
+
+        assertEquals(1, r.interactions.size)
+        assertEquals(r.interactions.single(), mapper.currentInteraction)
+        assertFalse(mapper.turnEnded)
+
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r1"}"""))
+        assertNull(mapper.currentInteraction)
+        assertEquals(GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"), r.interactionExpiries.single())
+        assertTrue(mapper.turnEnded)
+    }
+
+    @Test
+    fun `terminal read request is renderer plumbing not an actionable interaction`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "terminal.read.request",
+            obj("""{"request_id":"terminal-1","start":0,"count":20}"""),
+        )
+
+        assertTrue(r.interactions.isEmpty())
+    }
+
+    @Test
+    fun `moa progress uses one transient slot and transitions to aggregating`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("moa.progress", obj("""{"refs_done":2,"refs_total":3,"label":"advisor-b"}"""))
+        mapper.onEvent("moa.phase", obj("""{"phase":"aggregator","refs_done":3,"refs_total":3}"""))
+
+        assertEquals(
+            listOf(
+                GatewayEventMapper.MOA_STATUS_KIND to "MoA: 2/3 advisors complete",
+                GatewayEventMapper.MOA_STATUS_KIND to "MoA: aggregating…",
+            ),
+            r.statusUpdates,
+        )
+    }
+
+    @Test
+    fun `legacy moa aggregating maps to the same transient phase`() {
+        val r = Recorder()
+        mapperWith(r).onEvent("moa.aggregating", obj("""{"aggregator":"local:aggregate"}"""))
+
+        assertEquals(
+            GatewayEventMapper.MOA_STATUS_KIND to "MoA: aggregating…",
+            r.statusUpdates.single(),
+        )
+    }
+
+    @Test
+    fun `moa references retain safe blocks and neutralize failure sentinels`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":2,"count":3,"label":"advisor-b","text":"Useful second opinion"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":1,"count":3,"label":"advisor-a","text":" [failed: private provider detail]"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":3,"count":3,"label":"advisor-c","text":"[skipped: interrupted by user]"}"""),
+        )
+
+        assertEquals(
+            listOf(
+                GatewayMoaReference(2, 3, "advisor-b", "Useful second opinion"),
+                GatewayMoaReference(1, 3, "advisor-a", "", available = false),
+                GatewayMoaReference(3, 3, "advisor-c", "", available = false),
+            ),
+            r.moaReferences,
+        )
+        assertTrue(r.moaReferences.filterNot { it.available }.all { it.text.isEmpty() })
+    }
+
+    @Test
+    fun `all failed moa references surface only neutral unavailable state`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":1,"count":2,"label":"advisor-a","text":"[failed: secret detail]"}"""),
+        )
+        mapper.onEvent(
+            "moa.reference",
+            obj("""{"index":2,"count":2,"label":"advisor-b","text":"[skipped: recursive preset]"}"""),
+        )
+
+        assertEquals(listOf(1, 2), r.moaReferences.mapNotNull { it.index })
+        assertTrue(r.moaReferences.all { !it.available && it.text.isEmpty() })
+    }
+
+    @Test
+    fun `message output clears active moa status`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent("moa.progress", obj("""{"refs_done":1,"refs_total":2}"""))
+        mapper.onEvent("message.delta", obj("""{"text":"Final answer"}"""))
+
+        assertEquals(listOf(GatewayEventMapper.MOA_STATUS_KIND), r.statusClears)
     }
 
     // --- Forward compat ---
@@ -601,13 +1049,13 @@ class GatewayEventMapperTest {
         val r = Recorder()
         val mapper = mapperWith(r)
         listOf(
-            "reasoning.delta", "thinking.delta", "message.delta", "message.start",
+            "reasoning.delta", "thinking.delta", "message.delta", "message.interim", "message.start",
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
-            "sudo.expire", "secret.expire", "approval.expire",
+            "clarify.expire", "sudo.expire", "secret.expire", "approval.expire",
             "tool.generating", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
-            "tool.output_risk", "moa.reference", "moa.aggregating",
+            "tool.output_risk", "moa.reference", "moa.progress", "moa.phase", "moa.aggregating",
         ).forEach { type ->
             // message.complete/error end the turn; use a fresh mapper for each
             mapperWith(Recorder()).onEvent(type, null)

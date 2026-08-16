@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components.avatar
 
+import com.hermesandroid.relay.ui.components.SphereState
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -218,8 +219,358 @@ class PetLoaderTest {
 
         val avatar = PetLoader.loadPets(dir).single()
 
+        fun PetClip.fileName(): String = (this as FrameSequenceClip).files.single().name
         assertEquals("static", avatar.id)
         assertEquals("Voice · Tools · Activity", avatar.reactivity.summary())
+        assertEquals("thinking.png", avatar.activityClips.getValue(SphereState.Thinking).fileName())
+        assertEquals("writing.png", avatar.activityClips.getValue(SphereState.Streaming).fileName())
+        assertEquals("listening.png", avatar.activityClips.getValue(SphereState.Listening).fileName())
+        assertEquals("speaking.png", avatar.activityClips.getValue(SphereState.Speaking).fileName())
+        assertEquals("error.png", avatar.activityClips.getValue(SphereState.Error).fileName())
+        assertEquals("working.png", avatar.workingClip!!.fileName())
+        assertEquals("greet.png", avatar.oneShots.getValue(PetOneShot.Greet).fileName())
+        assertEquals("done.png", avatar.oneShots.getValue(PetOneShot.Done).fileName())
+    }
+
+    @Test
+    fun `current Petdex taxonomy resolves activity reactions and directional locomotion`() {
+        val dir = tempDir()
+        val files = listOf(
+            "idle.png",
+            "right.png",
+            "left.png",
+            "wave.png",
+            "jump.png",
+            "failed.png",
+            "waiting.png",
+            "running.png",
+            "review.png",
+        )
+        writePack(
+            dir,
+            "petdex",
+            """{ "id": "petdex", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "running-right": { "frames": ["right.png"] },
+                 "running-left": { "frames": ["left.png"] },
+                 "waving": { "frames": ["wave.png"] },
+                 "jumping": { "frames": ["jump.png"] },
+                 "failed": { "frames": ["failed.png"] },
+                 "waiting": { "frames": ["waiting.png"] },
+                 "running": { "frames": ["running.png"] },
+                 "review": { "frames": ["review.png"] }
+            } }""",
+            imageFiles = files,
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip.fileName(): String = (this as FrameSequenceClip).files.single().name
+        assertEquals("idle.png", avatar.activityClips.getValue(SphereState.Idle).fileName())
+        assertEquals("review.png", avatar.activityClips.getValue(SphereState.Thinking).fileName())
+        assertEquals("running.png", avatar.activityClips.getValue(SphereState.Streaming).fileName())
+        assertEquals("waiting.png", avatar.activityClips.getValue(SphereState.Listening).fileName())
+        assertEquals("wave.png", avatar.activityClips.getValue(SphereState.Speaking).fileName())
+        assertEquals("failed.png", avatar.activityClips.getValue(SphereState.Error).fileName())
+        assertEquals("running.png", avatar.workingClip!!.fileName())
+        assertEquals("wave.png", avatar.oneShots.getValue(PetOneShot.Greet).fileName())
+        assertEquals("wave.png", avatar.oneShots.getValue(PetOneShot.Done).fileName())
+        assertEquals("left.png", avatar.locomotionClips.getValue(PetLocomotion.WalkLeft).fileName())
+        assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.WalkRight).fileName())
+        assertEquals("left.png", avatar.locomotionClips.getValue(PetLocomotion.RunLeft).fileName())
+        assertEquals("right.png", avatar.locomotionClips.getValue(PetLocomotion.RunRight).fileName())
+        assertEquals("jump.png", avatar.locomotionClips.getValue(PetLocomotion.Jump).fileName())
+        assertEquals("jump.png", avatar.locomotionClips.getValue(PetLocomotion.Fall).fileName())
+        assertEquals("wave.png", avatar.locomotionClips.getValue(PetLocomotion.Wave).fileName())
+        val travelLeft = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+        )
+        val travelRight = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkRight),
+        )
+        assertEquals("left.png", travelLeft.clip!!.fileName())
+        assertFalse(travelLeft.mirrorHorizontally)
+        assertEquals("right.png", travelRight.clip!!.fileName())
+        assertFalse(travelRight.mirrorHorizontally)
+        assertEquals(
+            "jump.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip!!.fileName(),
+        )
+        assertEquals(
+            "jump.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Fall),
+            ).clip!!.fileName(),
+        )
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Held),
+            ).clip!!.fileName(),
+        )
+        assertEquals(
+            "wave.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Wave),
+            ).clip!!.fileName(),
+        )
+    }
+
+    @Test
+    fun `animation priority keeps manipulation and travel ahead of agent activity`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "priority",
+            """{ "id": "priority", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "walking-left": { "frames": ["walk-left.png"] },
+                 "running-right": { "frames": ["run-right.png"] },
+                 "jumping": { "frames": ["jump.png"] },
+                 "falling": { "frames": ["fall.png"] },
+                 "held": { "frames": ["held.png"] },
+                 "writing": { "frames": ["writing.png"] },
+                 "error": { "frames": ["error.png"] }
+            } }""",
+            imageFiles = listOf(
+                "idle.png",
+                "walk-left.png",
+                "run-right.png",
+                "jump.png",
+                "fall.png",
+                "held.png",
+                "writing.png",
+                "error.png",
+            ),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        data class PriorityCase(
+            val activity: SphereState,
+            val locomotion: PetLocomotion,
+            val expectedFile: String,
+        )
+
+        val cases = listOf(
+            PriorityCase(SphereState.Streaming, PetLocomotion.Held, "held.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.Jump, "jump.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.Fall, "fall.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.WalkLeft, "walk-left.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.RunRight, "run-right.png"),
+            PriorityCase(SphereState.Streaming, PetLocomotion.None, "writing.png"),
+            PriorityCase(SphereState.Error, PetLocomotion.None, "error.png"),
+            PriorityCase(SphereState.Listening, PetLocomotion.None, "idle.png"),
+        )
+
+        cases.forEach { case ->
+            val selection = avatar.resolveBaseSelection(
+                AvatarRenderState(case.activity, petLocomotion = case.locomotion),
+            )
+            assertEquals(
+                "${case.locomotion} over ${case.activity}",
+                case.expectedFile,
+                selection.clip.fileName(),
+            )
+            assertFalse(selection.mirrorHorizontally)
+        }
+    }
+
+    @Test
+    fun `legacy run row supplies directional travel with desktop mirror convention`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "legacy",
+            """{ "id": "legacy", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "run": { "frames": ["run.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "run.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        val left = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunLeft),
+        )
+        val right = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunRight),
+        )
+
+        assertEquals("run.png", left.clip.fileName())
+        assertFalse(left.mirrorHorizontally)
+        assertEquals("run.png", right.clip.fileName())
+        assertTrue(right.mirrorHorizontally)
+    }
+
+    @Test
+    fun `requested run locomotion prefers run clip over distinct walking clip`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "paces",
+            """{ "id": "paces", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "walking-left": { "frames": ["walk-left.png"] },
+                 "running-left": { "frames": ["run-left.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "walk-left.png", "run-left.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        assertEquals(
+            "walk-left.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.WalkLeft),
+            ).clip.fileName(),
+        )
+        assertEquals(
+            "run-left.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunLeft),
+            ).clip.fileName(),
+        )
+    }
+
+    @Test
+    fun `tool-only working pose never becomes roaming locomotion`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "tool-only",
+            """{ "id": "tool-only", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "working": { "frames": ["tool.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "tool.png"),
+        )
+        val avatar = PetLoader.loadPets(dir).single()
+
+        fun PetClip?.fileName(): String = ((this as FrameSequenceClip).files.single().name)
+        val roaming = avatar.resolveBaseSelection(
+            AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.RunRight),
+        )
+        assertEquals("idle.png", roaming.clip.fileName())
+        assertFalse(roaming.mirrorHorizontally)
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Idle, petLocomotion = PetLocomotion.Jump),
+            ).clip.fileName(),
+        )
+        assertEquals(
+            "idle.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Error, petLocomotion = PetLocomotion.RunRight),
+            ).clip.fileName(),
+        )
+        assertEquals(
+            "tool.png",
+            avatar.resolveBaseSelection(
+                AvatarRenderState(SphereState.Streaming, toolCallBurst = 1f),
+            ).clip.fileName(),
+        )
+    }
+
+    @Test
+    fun `dedicated falling clip is preferred over jump fallback`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "falling",
+            """{ "id": "falling", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "jumping": { "frames": ["jump.png"] },
+                 "falling": { "frames": ["fall.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "jump.png", "fall.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(
+            "fall.png",
+            (avatar.locomotionClips.getValue(PetLocomotion.Fall) as FrameSequenceClip).files.single().name,
+        )
+    }
+
+    @Test
+    fun `jump success alias remains available when a pack has no wave`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "jump-only",
+            """{ "id": "jump-only", "states": {
+                 "idle": { "frames": ["idle.png"] },
+                 "jumping": { "frames": ["jump.png"] }
+            } }""",
+            imageFiles = listOf("idle.png", "jump.png"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(
+            "jump.png",
+            (avatar.oneShots.getValue(PetOneShot.Done) as FrameSequenceClip).files.single().name,
+        )
+    }
+
+    @Test
+    fun `stale current Petdex manifests use canonical nonblank row counts`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "petdex-stale",
+            """{ "id": "petdex-stale", "source": "petdex", "states": {
+                 "idle": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 0, "fps": 5.4545455 },
+                 "running-right": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 8, "fps": 5.4545455 },
+                 "running-left": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 16, "fps": 5.4545455 },
+                 "waving": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 24, "fps": 5.4545455 },
+                 "jumping": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 32, "fps": 5.4545455 },
+                 "failed": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 40, "fps": 5.4545455 },
+                 "waiting": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 48, "fps": 5.4545455 },
+                 "running": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 56, "fps": 5.4545455 },
+                 "review": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 64, "fps": 5.4545455 }
+            } }""",
+            imageFiles = listOf("spritesheet.webp"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(4, avatar.oneShots.getValue(PetOneShot.Greet).frameCount)
+        assertEquals(4, avatar.oneShots.getValue(PetOneShot.Done).frameCount)
+        assertEquals(5, avatar.locomotionClips.getValue(PetLocomotion.Jump).frameCount)
+        assertEquals(8, avatar.locomotionClips.getValue(PetLocomotion.WalkLeft).frameCount)
+        assertEquals(8, avatar.locomotionClips.getValue(PetLocomotion.WalkRight).frameCount)
+        assertEquals(8, avatar.activityClips.getValue(SphereState.Error).frameCount)
+        assertEquals(4f * 1000f / 700f, avatar.oneShots.getValue(PetOneShot.Greet).fps, 0.001f)
+        assertEquals(
+            8f * 1000f / 1060f,
+            avatar.locomotionClips.getValue(PetLocomotion.WalkRight).fps,
+            0.001f,
+        )
+    }
+
+    @Test
+    fun `custom packs retain their authored frame counts`() {
+        val dir = tempDir()
+        writePack(
+            dir,
+            "custom-six-frame-wave",
+            """{ "id": "custom-six-frame-wave", "source": "petdex", "states": {
+                 "idle": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 0 },
+                 "waving": { "sheet": "spritesheet.webp", "frameWidth": 192, "frameHeight": 208, "frameCount": 6, "startFrame": 24 }
+            } }""",
+            imageFiles = listOf("spritesheet.webp"),
+        )
+
+        val avatar = PetLoader.loadPets(dir).single()
+
+        assertEquals(6, avatar.oneShots.getValue(PetOneShot.Greet).frameCount)
     }
 
     @Test

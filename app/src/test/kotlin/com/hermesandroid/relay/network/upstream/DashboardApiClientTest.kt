@@ -14,10 +14,45 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
+import okio.Buffer
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 class DashboardApiClientTest {
+
+    @Test
+    fun `multiplex API routing uses served profiles instead of installed inventory`() {
+        val status = DashboardStatus(
+            authRequired = true,
+            profiles = listOf("default", "research", "excluded"),
+            gatewayMode = "multiplex",
+            gateways = listOf(
+                DashboardGatewayTopology(
+                    profile = "default",
+                    servedProfiles = listOf("default", "research", "research", " "),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("default", "research"), status.multiplexServedProfiles())
+        assertFalse("excluded" in status.multiplexServedProfiles())
+    }
+
+    @Test
+    fun `multiplex API routing fails closed without launch gateway served profiles`() {
+        val status = DashboardStatus(
+            authRequired = true,
+            profiles = listOf("default", "research"),
+            gatewayMode = "multiplex",
+            gateways = emptyList(),
+        )
+
+        assertTrue(status.multiplexServedProfiles().isEmpty())
+    }
 
     private lateinit var server: MockWebServer
 
@@ -57,6 +92,36 @@ class DashboardApiClientTest {
         assertEquals(listOf("basic", "nous"), status.authProviders)
         assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
+    }
+
+    @Test
+    fun getStatus_parsesNousAndOptionalGatewayTopology() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """
+                {
+                  "auth_required": false,
+                  "nous_session_valid": "terminal",
+                  "profiles": ["default", "worker"],
+                  "gateway_mode": "multiplex",
+                  "gateways": [{
+                    "profile": "default",
+                    "ports": {"api_server": 8642, "webhook": 8080},
+                    "served_profiles": ["default", "worker"]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val status = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getStatus().getOrThrow()
+
+        assertEquals("terminal", status.nousSessionValid)
+        assertEquals(listOf("default", "worker"), status.profiles)
+        assertEquals("multiplex", status.gatewayMode)
+        assertEquals(8642, status.gateways.single().ports["api_server"])
+        assertEquals(listOf("default", "worker"), status.gateways.single().servedProfiles)
     }
 
     @Test
@@ -274,6 +339,81 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mirrorDashboardSessionCookies_reusesEncryptedSessionOnTrustedRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_rt", "refresh", "192.168.1.20"),
+                storedCookie("hermes_session_provider", "basic", "192.168.1.20"),
+            ),
+        )
+
+        val mirrored = mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+        val cookies = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(3, mirrored)
+        assertEquals(
+            listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
+            cookies.map { it.name },
+        )
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_doesNotCopyPkceOrToUnknownHost() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("hermes_session_at", "access", "192.168.1.20"),
+                storedCookie("hermes_session_pkce", "verifier", "192.168.1.20"),
+            ),
+        )
+
+        assertEquals(
+            0,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://attacker.example:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        assertEquals(
+            1,
+            mirrorDashboardSessionCookies(
+                store = store,
+                targetUrl = "http://100.64.0.20:9119",
+                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+            ),
+        )
+        val mirroredNames = DashboardCookieJar(store).loadForRequest(
+            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
+        ).map { it.name }
+
+        assertEquals(listOf("hermes_session_at"), mirroredNames)
+    }
+
+    @Test
+    fun mirrorDashboardSessionCookies_explicitSignOutClearsEveryRoute() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(listOf(storedCookie("hermes_session", "session", "192.168.1.20")))
+        mirrorDashboardSessionCookies(
+            store = store,
+            targetUrl = "http://100.64.0.20:9119",
+            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        )
+
+        store.clear()
+
+        assertTrue(store.load().isEmpty())
+    }
+
+    @Test
     fun getStatus_defaultsMissingAuthFieldsForOlderDashboard() = runTest {
         server.enqueue(
             MockResponse()
@@ -329,6 +469,22 @@ class DashboardApiClientTest {
         assertEquals("bailey", session.username)
         assertEquals("basic", session.provider)
     }
+
+    private fun storedCookie(
+        name: String,
+        value: String,
+        domain: String,
+    ) = StoredDashboardCookie(
+        name = name,
+        value = value,
+        expiresAt = Long.MAX_VALUE,
+        domain = domain,
+        path = "/",
+        secure = false,
+        httpOnly = true,
+        hostOnly = true,
+        persistent = true,
+    )
 
     @Test
     fun currentSession_mapsUnauthorizedToUnauthenticated() = runTest {
@@ -471,6 +627,131 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun mcpOAuth_preservesProfileAndParsesOpaqueFlow() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"authorization_required","authorization_url":"https://auth.example/authorize?state=secret"}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"flow_id":"opaque-flow","server_name":"hosted","status":"approved","authorization_url":null}""",
+            ),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        val started = client.startMcpOAuth("hosted tools", profile = "work profile").getOrThrow()
+        val approved = client.getMcpOAuthFlow(started.flowId).getOrThrow()
+
+        assertEquals("opaque-flow", started.flowId)
+        assertEquals("approved", approved.status)
+        assertEquals("/api/mcp/servers/hosted%20tools/auth?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/oauth/flows/opaque-flow", server.takeRequest().path)
+    }
+
+    @Test
+    fun mcpOAuthCapability_canonicalMissingFlowUsesReadOnlyGetAndIsSupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"OAuth flow not found or expired"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertTrue(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpOAuthCapability_genericFastApi404UsesReadOnlyGetAndIsUnsupported() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"Not Found"}"""),
+        )
+        val client = DashboardApiClient(server.url("/").toString())
+
+        assertFalse(client.supportsHostedMcpOAuth().getOrThrow())
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/mcp/oauth/flows/__relay_capability_probe_never_a_flow__", request.path)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun mcpMutations_preserveSelectedProfile() = runTest {
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+
+        client.setMcpServerEnabled("hosted", true, "work profile").getOrThrow()
+        client.testMcpServer("hosted", "work profile").getOrThrow()
+        client.removeMcpServer("hosted", "work profile").getOrThrow()
+        client.installMcpCatalogEntry("hosted", profile = "work profile").getOrThrow()
+
+        assertEquals("/api/mcp/servers/hosted/enabled?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted/test?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/servers/hosted?profile=work%20profile", server.takeRequest().path)
+        assertEquals("/api/mcp/catalog/install?profile=work%20profile", server.takeRequest().path)
+    }
+
+    @Test
+    fun customEndpointCrud_usesPublicDashboardRoutesAndRedactedResponse() = runTest {
+        val listBody = """
+            {"endpoints":[{"id":"local","name":"Local","base_url":"https://llm.example/v1","model":"qwen","models":["qwen"],"has_api_key":true,"api_key_preview":"sk-…1234","is_current":true}],"current":{"provider":"local","model":"qwen"}}
+        """.trimIndent()
+        repeat(5) {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+                if (it == 2) """{"ok":true,"reachable":true,"message":"","models":["qwen"]}"""
+                else if (it == 3) """{"ok":true,"provider":"local","model":"qwen"}"""
+                else listBody,
+            ))
+        }
+        val client = DashboardApiClient(server.url("/").toString())
+        val draft = DashboardCustomEndpointDraft(
+            id = "local",
+            name = "Local",
+            baseUrl = "https://llm.example/v1",
+            model = "qwen",
+            models = listOf("qwen", "qwen-vl", " qwen ", ""),
+            apiKey = "never-persist-this",
+        )
+
+        val listed = client.getCustomEndpoints("work profile").getOrThrow()
+        client.saveCustomEndpoint(draft, "work profile").getOrThrow()
+        val validation = client.validateCustomEndpoint(draft).getOrThrow()
+        client.activateCustomEndpoint("local", "work profile").getOrThrow()
+        client.deleteCustomEndpoint("local", "work profile").getOrThrow()
+
+        assertEquals("local", listed.currentProvider)
+        assertTrue(listed.endpoints.single().hasApiKey)
+        assertEquals(listOf("qwen"), validation.models)
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", server.takeRequest().path)
+        val save = server.takeRequest()
+        assertEquals("/api/providers/custom-endpoints?profile=work%20profile", save.path)
+        val saveBody = save.body.readUtf8()
+        assertTrue(saveBody.contains("never-persist-this"))
+        assertTrue(saveBody.contains(""""models":["qwen","qwen-vl"]"""))
+        assertEquals("/api/providers/custom-endpoints/validate", server.takeRequest().path)
+        assertEquals(
+            "/api/providers/custom-endpoints/local/activate?profile=work%20profile",
+            server.takeRequest().path,
+        )
+        assertEquals(
+            "/api/providers/custom-endpoints/local?profile=work%20profile",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
     fun profileActions_useActiveAndDeleteRoutes() = runTest {
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok": true}"""))
         server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"content": "soul", "exists": true}"""))
@@ -491,6 +772,30 @@ class DashboardApiClientTest {
         assertEquals("/api/profiles/research%20profile/soul", soul.path)
         assertEquals("DELETE", delete.method)
         assertEquals("/api/profiles/old%20profile", delete.path)
+    }
+
+    @Test
+    fun profileCreationCarriesMcpServersAndServerBackupIsDistinct() = runTest {
+        repeat(2) {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true}"""),
+            )
+        }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.createProfile(
+            name = "research",
+            description = "Deep work",
+            mcpServers = listOf("github", "memory"),
+        ).getOrThrow()
+        client.createServerBackup().getOrThrow()
+
+        val create = server.takeRequest()
+        assertEquals("/api/profiles", create.path)
+        assertTrue(create.body.readUtf8().contains(""""mcp_servers":["github","memory"]"""))
+        val backup = server.takeRequest()
+        assertEquals("POST", backup.method)
+        assertEquals("/api/ops/backup", backup.path)
     }
 
     @Test
@@ -580,6 +885,8 @@ class DashboardApiClientTest {
         // carry profile=mizu (the desktop's `_open_session_db_for_profile` path).
         val url = request.requestUrl!!
         assertEquals("/api/sessions", url.encodedPath)
+        assertEquals("100", url.queryParameter("limit"))
+        assertEquals("0", url.queryParameter("offset"))
         assertEquals("mizu", url.queryParameter("profile"))
         assertEquals("1", url.queryParameter("min_messages"))
         assertEquals(2, sessions.size)
@@ -590,6 +897,246 @@ class DashboardApiClientTest {
         assertEquals(1250.5, sessions[0].lastActive!!, 0.001)
         assertEquals("Refactor the session API", sessions[0].preview)
         assertEquals("Review title fallbacks", sessions[1].preview)
+    }
+
+    @Test
+    fun listSessions_enrichesWorkspaceRowsWithTranscriptBackedPullRequest() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"coding-1","title":"Ship it","cwd":"/work/hermes-relay","git_branch":"feature/session-context","git_repo_root":"/work/hermes-relay"}]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"coding-1":{"number":134,"url":"https://github.com/example/hermes-relay/pull/134"}},"scanned":["coding-1"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"ghReady":true,"prs":[{"branch":"feature/session-context","draft":false,"number":134,"state":"open","title":"Session context","url":"https://github.com/example/hermes-relay/pull/134"}]}""",
+            ),
+        )
+
+        val session = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions()
+            .getOrThrow()
+            .single()
+
+        assertEquals("/work/hermes-relay", session.cwd)
+        assertEquals("feature/session-context", session.gitBranch)
+        assertEquals("/work/hermes-relay", session.gitRepoRoot)
+        assertEquals(134, session.pullRequest?.number)
+        assertEquals("https://github.com/example/hermes-relay/pull/134", session.pullRequest?.url)
+        assertEquals("open", session.pullRequest?.state)
+        assertEquals(false, session.pullRequest?.draft)
+        server.takeRequest()
+        val scanRequest = server.takeRequest()
+        assertEquals("POST", scanRequest.method)
+        assertEquals("/api/profiles/sessions/pull-requests", scanRequest.requestUrl!!.encodedPath)
+        assertEquals(
+            listOf("coding-1"),
+            Json.parseToJsonElement(scanRequest.body.readUtf8()).jsonObject["ids"]
+                ?.let { it as JsonArray }
+                ?.map { it.toString().trim('"') },
+        )
+        val stateRequest = server.takeRequest()
+        assertEquals("/api/git/review/pr-list", stateRequest.requestUrl!!.encodedPath)
+        val stateBody = Json.parseToJsonElement(stateRequest.body.readUtf8()).jsonObject
+        assertEquals("/work/hermes-relay", stateBody["path"]?.toString()?.trim('"'))
+        assertEquals(listOf("feature/session-context"), (stateBody["branches"] as JsonArray).map { it.toString().trim('"') })
+        assertEquals(listOf("134"), (stateBody["numbers"] as JsonArray).map { it.toString() })
+    }
+
+    @Test
+    fun listSessions_keepsWorkspaceMetadataWhenPullRequestEndpointIsUnavailable() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"legacy-1","git_branch":"dev","git_repo_root":"/work/legacy"}]}""",
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+
+        val session = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions()
+            .getOrThrow()
+            .single()
+
+        assertEquals("dev", session.gitBranch)
+        assertEquals("/work/legacy", session.gitRepoRoot)
+        assertEquals(null, session.pullRequest)
+    }
+
+    @Test
+    fun listSessions_retriesActiveSessionPullRequestMissAfterBoundedTtl() = runTest {
+        var now = 1_000L
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            nowMillis = { now },
+        )
+        val sessionList = """{"sessions":[{"id":"active-1","cwd":"/work/repo"}]}"""
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"pull_requests":{},"scanned":["active-1"]}"""),
+        )
+
+        assertEquals(null, client.listSessions().getOrThrow().single().pullRequest)
+        server.takeRequest()
+        server.takeRequest()
+
+        now += DashboardApiClient.ACTIVE_SESSION_PR_MISS_TTL_MILLIS - 1
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        assertEquals(null, client.listSessions().getOrThrow().single().pullRequest)
+        assertEquals("GET", server.takeRequest().method)
+
+        now += 1
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(sessionList))
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"active-1":{"number":12,"url":"https://github.com/example/repo/pull/12"}},"scanned":["active-1"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"ghReady":false,"prs":[]}"""),
+        )
+
+        assertEquals(12, client.listSessions().getOrThrow().single().pullRequest?.number)
+        assertEquals("GET", server.takeRequest().method)
+        assertEquals("/api/profiles/sessions/pull-requests", server.takeRequest().requestUrl!!.encodedPath)
+        assertEquals("/api/git/review/pr-list", server.takeRequest().requestUrl!!.encodedPath)
+    }
+
+    @Test
+    fun listSessions_performsOneFinalScanWhenAnActiveMissBecomesTerminal() = runTest {
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[{"id":"finishing","cwd":"/work/repo"}]}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"pull_requests":{},"scanned":["finishing"]}"""),
+        )
+        client.listSessions().getOrThrow()
+        repeat(2) { server.takeRequest() }
+
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[{"id":"finishing","cwd":"/work/repo","ended_at":2000.0}]}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"finishing":{"number":13,"url":"https://github.com/example/repo/pull/13"}},"scanned":["finishing"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"ghReady":false,"prs":[]}"""),
+        )
+
+        assertEquals(13, client.listSessions().getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+    }
+
+    @Test
+    fun listSessions_scopesPullRequestCacheByProfileAndSessionId() = runTest {
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        fun enqueueProfileRead(number: Int) {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody("""{"sessions":[{"id":"same","cwd":"/work/repo"}]}"""),
+            )
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody(
+                    """{"pull_requests":{"same":{"number":$number,"url":"https://github.com/example/repo/pull/$number"}},"scanned":["same"]}""",
+                ),
+            )
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody("""{"ghReady":false,"prs":[]}"""),
+            )
+        }
+
+        enqueueProfileRead(11)
+        assertEquals(11, client.listSessions(profile = "alpha").getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+
+        enqueueProfileRead(22)
+        assertEquals(22, client.listSessions(profile = "beta").getOrThrow().single().pullRequest?.number)
+        repeat(3) { server.takeRequest() }
+    }
+
+    @Test
+    fun listAllProfileSessions_doesNotGuessAcrossDuplicateSessionIds() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"same","profile":"alpha","cwd":"/work/a"},{"id":"same","profile":"beta","cwd":"/work/b"}]}""",
+            ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listAllProfileSessions()
+            .getOrThrow()
+
+        assertEquals(2, sessions.size)
+        assertTrue(sessions.all { it.pullRequest == null })
+        assertEquals("GET", server.takeRequest().method)
+    }
+
+    @Test
+    fun listAllProfileSessions_preservesOwnerAndCompositeIdentity() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"same","title":"A","profile":"default"},{"id":"same","title":"B","profile":"work"},{"id":"unsafe"}],"total":3}""",
+                ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listAllProfileSessions()
+            .getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("/api/profiles/sessions", url.encodedPath)
+        assertEquals("all", url.queryParameter("profile"))
+        assertEquals("include", url.queryParameter("archived"))
+        assertEquals(listOf("default", "work"), sessions.map { it.profile })
+        assertEquals(listOf("A", "B"), sessions.map { it.title })
+    }
+
+    @Test
+    fun listSessions_pagesAtUpstreamMaximumWhilePreservingTwoHundredRowWindow() = runTest {
+        val firstPage = (0 until 100).joinToString(",") { "{\"id\":\"sess-$it\"}" }
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"sessions\":[$firstPage],\"total\":102,\"limit\":100,\"offset\":0}"),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"sess-100"},{"id":"sess-101"}],"total":102,"limit":100,"offset":100}""",
+                ),
+        )
+
+        val sessions = DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions(profile = "mizu")
+            .getOrThrow()
+
+        val firstRequest = server.takeRequest().requestUrl!!
+        val secondRequest = server.takeRequest().requestUrl!!
+        assertEquals("100", firstRequest.queryParameter("limit"))
+        assertEquals("0", firstRequest.queryParameter("offset"))
+        assertEquals("mizu", firstRequest.queryParameter("profile"))
+        assertEquals("100", secondRequest.queryParameter("limit"))
+        assertEquals("100", secondRequest.queryParameter("offset"))
+        assertEquals("mizu", secondRequest.queryParameter("profile"))
+        assertEquals(102, sessions.size)
+        assertEquals("sess-0", sessions.first().id)
+        assertEquals("sess-101", sessions.last().id)
     }
 
     @Test
@@ -626,9 +1173,43 @@ class DashboardApiClientTest {
         val url = request.requestUrl!!
         assertEquals("/api/sessions/sess-a/messages", url.encodedPath)
         assertEquals("mizu", url.queryParameter("profile"))
+        assertEquals("500", url.queryParameter("limit"))
+        assertEquals("0", url.queryParameter("offset"))
+        assertEquals("oldest", url.queryParameter("order"))
         assertEquals(2, messages.size)
         assertEquals("user", messages[0].role)
         assertEquals("assistant", messages[1].role)
+    }
+
+    @Test
+    fun getSessionMessages_pagesCompleteHistoryAndPreservesProfileScope() = runTest {
+        server.enqueue(messagePageResponse(key = "messages", start = 0, count = 500, returned = 500))
+        server.enqueue(messagePageResponse(key = "messages", start = 500, count = 1, returned = 1))
+
+        val messages = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getSessionMessages("sess-a", profile = "mizu")
+            .getOrThrow()
+
+        val first = server.takeRequest().requestUrl!!
+        val second = server.takeRequest().requestUrl!!
+        assertEquals(listOf("0", "500"), listOf(first, second).map { it.queryParameter("offset") })
+        assertEquals(listOf("mizu", "mizu"), listOf(first, second).map { it.queryParameter("profile") })
+        assertEquals((0..500).map(Int::toString), messages.map { it.id })
+    }
+
+    @Test
+    fun getSessionMessages_latestUsesOneBoundedPage() = runTest {
+        server.enqueue(messagePageResponse(key = "messages", start = 500, count = 500, returned = 500))
+
+        val messages = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getSessionMessages("sess-a", profile = null, mode = SessionMessageLoadMode.LATEST)
+            .getOrThrow()
+
+        val request = server.takeRequest().requestUrl!!
+        assertEquals("latest", request.queryParameter("order"))
+        assertEquals("0", request.queryParameter("offset"))
+        assertEquals(500, messages.size)
+        assertEquals(1, server.requestCount)
     }
 
     @Test
@@ -671,9 +1252,12 @@ class DashboardApiClientTest {
         )
 
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
-        val result = client.getElevenLabsVoices().getOrThrow()
+        val result = client.getElevenLabsVoices("research profile").getOrThrow()
 
-        assertEquals("/api/audio/elevenlabs/voices", server.takeRequest().path)
+        assertEquals(
+            "/api/audio/elevenlabs/voices?profile=research%20profile",
+            server.takeRequest().path,
+        )
         assertTrue(result.available)
         assertEquals(2, result.voices.size)
         assertEquals("pNInz6obpgDQGcFmaJgB", result.voices[0].voiceId)
@@ -747,6 +1331,20 @@ class DashboardApiClientTest {
 
         assertEquals("/api/config", server.takeRequest().path)
         assertEquals("/api/config/schema", server.takeRequest().path)
+    }
+
+    @Test
+    fun getTtsToolsetConfig_hitsRuntimeProviderRegistry() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"name":"tts","has_category":true,"providers":[]}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.getTtsToolsetConfig().getOrThrow()
+
+        assertEquals("/api/tools/toolsets/tts/config", server.takeRequest().path)
     }
 
     @Test
@@ -905,6 +1503,26 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun setSessionPinned_patchesPinnedScopedToProfile() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ok":true,"pinned":true}"""),
+        )
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.setSessionPinned("sess-keep", pinned = true, profile = "mizu").getOrThrow()
+
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/api/sessions/sess-keep", request.requestUrl!!.encodedPath)
+        assertEquals("mizu", request.requestUrl!!.queryParameter("profile"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""pinned":true"""))
+        assertTrue(body.contains(""""profile":"mizu"""))
+    }
+
+    @Test
     fun renameSession_carriesProfileInBodyAndQuery() = runTest {
         server.enqueue(
             MockResponse()
@@ -974,4 +1592,169 @@ class DashboardApiClientTest {
         assertEquals(true, settings.showReasoning)
         assertEquals("off", settings.toolDisplay)
     }
+
+    @Test
+    fun serverBackup_createDownloadAndImport_useUpstreamContracts() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"archive":"/srv/backups/a.zip"}"""))
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/zip")
+                .setHeader("Content-Disposition", "attachment; filename=\"a.zip\"")
+                .setBody("archive-bytes"),
+        )
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"name":"import"}"""))
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"name":"import"}"""))
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val created = client.createServerBackup().getOrThrow()
+        val downloadSink = ByteArrayOutputStream()
+        val downloadedFilename = client.downloadServerBackup(created["archive"]!!.toString().trim('"')) {
+            downloadSink
+        }.getOrThrow()
+        client.importServerBackup("/srv/backups/a.zip").getOrThrow()
+        val uploadBytes = "zip-data".encodeToByteArray()
+        client.uploadServerBackup(
+            filename = "phone.zip",
+            contentLength = uploadBytes.size.toLong(),
+            openStream = { ByteArrayInputStream(uploadBytes) },
+        ).getOrThrow()
+
+        assertEquals("POST", server.takeRequest().method)
+        val downloadRequest = server.takeRequest()
+        assertEquals("/api/ops/backup/download", downloadRequest.requestUrl!!.encodedPath)
+        assertEquals("/srv/backups/a.zip", downloadRequest.requestUrl!!.queryParameter("archive"))
+        assertEquals("a.zip", downloadedFilename)
+        assertEquals("archive-bytes", downloadSink.toString(Charsets.UTF_8.name()))
+        val importRequest = server.takeRequest()
+        assertEquals("/api/ops/import", importRequest.requestUrl!!.encodedPath)
+        assertTrue(importRequest.body.readUtf8().contains(""""archive":"/srv/backups/a.zip""""))
+        val upload = server.takeRequest()
+        assertEquals("/api/ops/import-upload", upload.requestUrl!!.encodedPath)
+        val uploadBody = upload.body.readUtf8()
+        assertTrue(uploadBody.contains("filename=\"phone.zip\""))
+        assertTrue(uploadBody.contains("zip-data"))
+    }
+
+    @Test
+    fun boundedStreamRequestBody_streamsAndEnforcesDeclaredAndObservedLimits() {
+        val payload = "streamed-archive".encodeToByteArray()
+        val sink = Buffer()
+        BoundedStreamRequestBody(payload.size.toLong(), 32L) {
+            ByteArrayInputStream(payload)
+        }.writeTo(sink)
+        assertEquals("streamed-archive", sink.readUtf8())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            BoundedStreamRequestBody(declaredLength = 33L, limitBytes = 32L) {
+                ByteArrayInputStream(byteArrayOf())
+            }
+        }
+
+        val oversizedUnknownLength = BoundedStreamRequestBody(null, 8L) {
+            ByteArrayInputStream("ninebytes".encodeToByteArray())
+        }
+        assertThrows(IOException::class.java) { oversizedUnknownLength.writeTo(Buffer()) }
+    }
+
+    @Test
+    fun copyBounded_streamsDownloadAndRejectsDeclaredAndObservedOverflow() {
+        val output = ByteArrayOutputStream()
+        val copied = copyBounded(
+            ByteArrayInputStream("download".encodeToByteArray()),
+            output,
+            declaredLength = 8L,
+            limitBytes = 16L,
+        )
+        assertEquals(8L, copied)
+        assertEquals("download", output.toString(Charsets.UTF_8.name()))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            copyBounded(ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), 17L, 16L)
+        }
+        assertThrows(IOException::class.java) {
+            copyBounded(
+                ByteArrayInputStream("seventeen-byte-doc".encodeToByteArray()),
+                ByteArrayOutputStream(),
+                declaredLength = null,
+                limitBytes = 16L,
+            )
+        }
+    }
+
+    @Test
+    fun downloadServerBackup_rejectsDeclaredOversizeBeforeOpeningDestination() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/zip")
+                .setHeader("Content-Length", DashboardApiClient.MAX_BACKUP_TRANSFER_BYTES + 1),
+        )
+        var destinationOpened = false
+        val result = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadServerBackup("/srv/backups/oversize.zip") {
+                destinationOpened = true
+                ByteArrayOutputStream()
+            }
+
+        assertTrue(result.isFailure)
+        assertFalse(destinationOpened)
+    }
+
+    @Test
+    fun learningMutations_preserveNodeIdAndProfile() = runTest {
+        repeat(3) { server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"content":"body"}""")) }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        client.getLearningNode("memory:MEMORY.md:0", "worker").getOrThrow()
+        client.updateLearningNode("memory:MEMORY.md:0", "replacement", "worker").getOrThrow()
+        client.deleteLearningNode("memory:MEMORY.md:0", "worker").getOrThrow()
+
+        val get = server.takeRequest()
+        assertEquals("memory:MEMORY.md:0", get.requestUrl!!.queryParameter("id"))
+        assertEquals("worker", get.requestUrl!!.queryParameter("profile"))
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertTrue(put.body.readUtf8().contains(""""profile":"worker""""))
+        val delete = server.takeRequest()
+        assertEquals("DELETE", delete.method)
+        assertTrue(delete.body.readUtf8().contains(""""id":"memory:MEMORY.md:0""""))
+    }
+
+    @Test
+    fun memoryProviderAndWhatsApp_calls_areProfileScoped() = runTest {
+        repeat(5) { server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ok":true,"pairing_id":"pair-1","status":"waiting"}""")) }
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val values = Json.parseToJsonElement("""{"url":"https://memory.example"}""").jsonObject
+
+        client.getMemoryProviderConfig("honcho", "worker").getOrThrow()
+        client.updateMemoryProviderConfig("honcho", values, "worker").getOrThrow()
+        client.selectMemoryProvider("honcho").getOrThrow()
+        client.startWhatsAppOnboarding("self-chat", "15551234567", "worker").getOrThrow()
+        client.applyWhatsAppOnboarding("pair-1", "self-chat", "15551234567", "worker").getOrThrow()
+
+        assertEquals("worker", server.takeRequest().requestUrl!!.queryParameter("profile"))
+        assertTrue(server.takeRequest().body.readUtf8().contains(""""values":{"url":"https://memory.example"}"""))
+        assertTrue(server.takeRequest().body.readUtf8().contains(""""provider":"honcho""""))
+        val start = server.takeRequest()
+        assertEquals("/api/messaging/whatsapp/onboarding/start", start.requestUrl!!.encodedPath)
+        assertTrue(start.body.readUtf8().contains(""""profile":"worker""""))
+        val apply = server.takeRequest()
+        assertEquals("/api/messaging/whatsapp/onboarding/pair-1/apply", apply.requestUrl!!.encodedPath)
+        assertTrue(apply.body.readUtf8().contains(""""profile":"worker""""))
+    }
+}
+
+private fun messagePageResponse(
+    key: String,
+    start: Int,
+    count: Int,
+    returned: Int,
+): MockResponse {
+    val messages = (start until start + count).joinToString(",") { index ->
+        """{"id":"$index","role":"user","content":"m$index"}"""
+    }
+    return MockResponse()
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+            """{"session_id":"sess-a","$key":[$messages],"pagination":{"limit":500,"offset":$start,"order":"oldest","returned":$returned}}""",
+        )
 }

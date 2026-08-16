@@ -98,6 +98,7 @@ class RelayVoiceClient(
     private val webSocketFactory: ((Request, WebSocketListener) -> WebSocket)? = null,
     private val realtimeResumeRetryIntervalMs: Long = REALTIME_RESUME_RETRY_INTERVAL_MS,
     private val realtimeResumeRetryWindowMs: Long = REALTIME_RESUME_RETRY_WINDOW_MS,
+    private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
 ) {
 
     companion object {
@@ -108,6 +109,7 @@ class RelayVoiceClient(
         private val WAV_AUDIO = "audio/wav".toMediaType()
         private val OCTET_STREAM = "application/octet-stream".toMediaType()
         private const val REALTIME_TIMEOUT_MS = 90_000L
+        private const val VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS = 15_000L
         private const val REALTIME_AGENT_IDLE_TIMEOUT_MS = 90_000L
         private const val REALTIME_AGENT_MAX_TURN_MS = 5 * 60_000L
         private const val REALTIME_AGENT_WAIT_SLICE_MS = 1_000L
@@ -834,6 +836,11 @@ class RelayVoiceClient(
     suspend fun runVoiceOutput(
         text: String,
         renderMode: String? = "verbatim",
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+        language: String? = null,
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         onEvent: (RealtimeVoiceEvent) -> Unit,
     ): Result<VoiceOutputSummary> = withContext(Dispatchers.IO) {
@@ -844,7 +851,15 @@ class RelayVoiceClient(
             return@withContext Result.failure(missingAuthError())
         }
 
-        val sessionResult = createVoiceOutputSession(httpBase, token)
+        val sessionResult = createVoiceOutputSession(
+            httpBase = httpBase,
+            token = token,
+            provider = provider,
+            model = model,
+            voice = voice,
+            sampleRate = sampleRate,
+            language = language,
+        )
         if (sessionResult.isFailure) {
             return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Voice output session failed"))
         }
@@ -854,6 +869,7 @@ class RelayVoiceClient(
         val resumeAttempted = AtomicBoolean(false)
         val routeProbeRequested = AtomicBoolean(false)
         val currentSocket = AtomicReference<WebSocket?>()
+        val firstAudioSeen = AtomicBoolean(false)
         val socketGeneration = AtomicLong(0L)
         val activeSocketGeneration = AtomicLong(0L)
         val lastEventId = AtomicLong(0L)
@@ -967,6 +983,7 @@ class RelayVoiceClient(
                     }
                     onEvent(event)
                     if (event.isAudioDelta) {
+                        firstAudioSeen.set(true)
                         event.audioEventId?.let {
                             lastPlayedAudioEventId.updateAndGet { current -> maxOf(current, it) }
                         }
@@ -1110,6 +1127,15 @@ class RelayVoiceClient(
             onHandoff = onHandoff,
             completeFailure = ::completeFailure,
         )
+        val firstAudioWatchdog = launch {
+            delay(voiceOutputFirstAudioTimeoutMs)
+            if (!completed.get() && !firstAudioSeen.get()) {
+                completeFailure(
+                    "Voice output produced no audio within ${voiceOutputFirstAudioTimeoutMs}ms",
+                )
+                currentSocket.get()?.cancel()
+            }
+        }
         try {
             withTimeout(REALTIME_TIMEOUT_MS) {
                 finished.await()
@@ -1119,6 +1145,7 @@ class RelayVoiceClient(
             socket.close(1001, "timeout")
             Result.failure(IOException("Voice output timed out", e))
         } finally {
+            firstAudioWatchdog.cancel()
             routeWatcher?.cancel()
         }
     }
@@ -1261,8 +1288,11 @@ class RelayVoiceClient(
         inputSampleRate: Int = 16_000,
         chatSessionId: String? = null,
         conversationContext: List<RealtimeConversationContextMessage> = emptyList(),
+        provider: String? = null,
         model: String? = null,
         voice: String? = null,
+        sampleRate: Int? = null,
+        finalAnswerOnly: Boolean = false,
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         turnInputs: kotlinx.coroutines.channels.ReceiveChannel<RealtimeTurnInput>? = null,
         onTurnComplete: (RealtimeVoiceSummary) -> Unit = {},
@@ -1290,8 +1320,11 @@ class RelayVoiceClient(
             token = token,
             chatSessionId = chatSessionId,
             conversationContext = conversationContext,
+            provider = provider,
             model = model,
             voice = voice,
+            sampleRate = sampleRate,
+            finalAnswerOnly = finalAnswerOnly,
         )
         if (sessionResult.isFailure) {
             return@withContext Result.failure(sessionResult.exceptionOrNull() ?: IOException("Realtime agent session failed"))
@@ -1805,6 +1838,28 @@ class RelayVoiceClient(
                     if (event.type == "hermes.run.promoted") {
                         longRunningTurn.set(true)
                         Log.i(TAG, "Realtime agent turn marked long-running (run promoted); relaxing idle guard")
+                        if (persistent &&
+                            event.spokenHandoff == false &&
+                            activeTurn.compareAndSet(true, false)
+                        ) {
+                            Log.i(
+                                TAG,
+                                "Realtime agent foreground turn ended at silent background promotion",
+                            )
+                            onTurnComplete(
+                                RealtimeVoiceSummary(
+                                    provider = event.provider ?: session.provider,
+                                    model = event.model ?: session.model,
+                                    voice = event.voice ?: session.voice,
+                                    sampleRate = session.sampleRate,
+                                    audioChunks = audioChunks,
+                                    audioBytes = audioBytes,
+                                    firstAudioMs = event.firstAudioMs,
+                                    responseDoneMs = event.responseDoneMs,
+                                    eventLogPath = event.eventLogPath ?: session.eventLogPath,
+                                )
+                            )
+                        }
                     }
                     if (event.isAudioDelta) {
                         audioChunks += 1
@@ -1830,13 +1885,12 @@ class RelayVoiceClient(
                             responseDoneMs = event.responseDoneMs,
                             eventLogPath = event.eventLogPath ?: session.eventLogPath,
                         )
-                        if (persistent) {
+                        if (persistent && activeTurn.compareAndSet(true, false)) {
                             // Turn boundary, not session boundary: keep the socket
                             // open for the next utterance.
-                            activeTurn.set(false)
                             longRunningTurn.set(false)
                             onTurnComplete(summary)
-                        } else {
+                        } else if (!persistent) {
                             if (claimTerminalSocket(
                                     webSocket,
                                     generation,
@@ -2658,16 +2712,28 @@ class RelayVoiceClient(
         token: String,
         chatSessionId: String?,
         conversationContext: List<RealtimeConversationContextMessage> = emptyList(),
+        provider: String? = null,
         model: String? = null,
         voice: String? = null,
+        sampleRate: Int? = null,
+        finalAnswerOnly: Boolean = false,
     ): Result<RealtimeSessionResponse> {
         val body = buildJsonObject {
             putProfile()
+            provider?.trim()?.takeIf { it.isNotBlank() }?.let {
+                put("provider", JsonPrimitive(it))
+            }
             model?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("model", JsonPrimitive(it))
             }
             voice?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("voice", JsonPrimitive(it))
+            }
+            sampleRate?.takeIf { it > 0 }?.let {
+                put("sample_rate", JsonPrimitive(it))
+            }
+            if (finalAnswerOnly) {
+                put("final_answer_only", JsonPrimitive(true))
             }
             chatSessionId?.trim()?.takeIf { it.isNotBlank() }?.let {
                 put("chat_session_id", JsonPrimitive(it))
@@ -2726,8 +2792,23 @@ class RelayVoiceClient(
         }
     }
 
-    private fun createVoiceOutputSession(httpBase: String, token: String): Result<VoiceOutputSessionResponse> {
-        val body = buildJsonObject { putProfile() }.toString()
+    private fun createVoiceOutputSession(
+        httpBase: String,
+        token: String,
+        provider: String? = null,
+        model: String? = null,
+        voice: String? = null,
+        sampleRate: Int? = null,
+        language: String? = null,
+    ): Result<VoiceOutputSessionResponse> {
+        val body = buildVoiceOutputSessionPayload(
+            profile = currentProfileName(),
+            provider = provider,
+            model = model,
+            voice = voice,
+            sampleRate = sampleRate,
+            language = language,
+        )
         val request = Request.Builder()
             .url("$httpBase/voice/output/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
@@ -2940,6 +3021,9 @@ class RelayVoiceClient(
                 responseDoneMs = (metrics?.get("response_done_ms") as? JsonPrimitive)?.doubleOrNull,
                 tier = (obj["tier"] as? JsonPrimitive)?.contentOrNull,
                 floor = (obj["floor"] as? JsonPrimitive)?.contentOrNull,
+                spokenHandoff = (obj["spoken_handoff"] as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.toBooleanStrictOrNull(),
                 activeToolName = (obj["active_tool_name"] as? JsonPrimitive)?.contentOrNull,
                 completedToolCount = (obj["completed_tool_count"] as? JsonPrimitive)?.intOrNull
                     ?: (obj["tool_count"] as? JsonPrimitive)?.intOrNull,
@@ -2969,6 +3053,22 @@ class RelayVoiceClient(
         currentProfileName()?.let { put("profile", JsonPrimitive(it)) }
     }
 }
+
+internal fun buildVoiceOutputSessionPayload(
+    profile: String?,
+    provider: String? = null,
+    model: String? = null,
+    voice: String? = null,
+    sampleRate: Int? = null,
+    language: String? = null,
+): String = buildJsonObject {
+    profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", JsonPrimitive(it)) }
+    provider?.trim()?.takeIf { it.isNotBlank() }?.let { put("provider", JsonPrimitive(it)) }
+    model?.trim()?.takeIf { it.isNotBlank() }?.let { put("model", JsonPrimitive(it)) }
+    voice?.trim()?.takeIf { it.isNotBlank() }?.let { put("voice", JsonPrimitive(it)) }
+    sampleRate?.let { put("sample_rate", JsonPrimitive(it)) }
+    language?.trim()?.takeIf { it.isNotBlank() }?.let { put("language", JsonPrimitive(it)) }
+}.toString()
 
 /**
  * Wire shape of `GET /voice/config`. Providers are returned as nested
@@ -3318,6 +3418,7 @@ data class RealtimeVoiceEvent(
     // ADR 33: background-run promotion fields.
     val tier: String? = null,
     val floor: String? = null,
+    val spokenHandoff: Boolean? = null,
     // hermes.run.progress extras — drive the live background-run chip.
     val activeToolName: String? = null,
     val completedToolCount: Int? = null,

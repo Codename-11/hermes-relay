@@ -10,11 +10,11 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
-import com.hermesandroid.relay.network.upstream.GatewaySubagentEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -43,6 +43,9 @@ class ChatHandler {
 
         /** Maximum number of messages kept in memory per session. Oldest are trimmed. */
         internal const val MAX_MESSAGES = 500
+        private const val MAX_MOA_REFERENCES = 32
+        private const val MAX_MOA_LABEL_CHARS = 120
+        private const val MAX_MOA_REFERENCE_CHARS = 16_000
 
         private fun timestampToMillis(timestamp: Double?): Long {
             val value = timestamp ?: return 0L
@@ -87,12 +90,9 @@ class ChatHandler {
         // Fallback form (no relay): `MEDIA:/absolute/path` — relay wasn't
         //   reachable when the tool fired, so we render an "unavailable"
         //   placeholder instead of attempting a fetch.
-        private val mediaRelayRegex = Regex("""MEDIA:hermes-relay://([A-Za-z0-9_-]+)""")
-        // `/.+?` (not `/\S+`) so absolute paths containing spaces — e.g.
-        // `MEDIA:/mnt/media/Coralee Adshade/undressher.jpg` — still match. The
-        // trailing `\s*$` trims any trailing whitespace; non-greedy keeps the
-        // capture to the path. OkHttp re-encodes the space for /media/by-path.
-        private val mediaBarePathRegex = Regex("""^\s*MEDIA:(/.+?)\s*$""")
+        private val mediaRelayPayloadRegex = Regex("""^hermes-relay://([A-Za-z0-9_-]+)$""")
+        private val mediaMarkerPrefixRegex = Regex("MEDIA:")
+        private val windowsAbsoluteMediaPathRegex = Regex("""^[A-Za-z]:[\\/].+""")
         // Rich card marker — single line, full JSON object payload.
         //
         // Agents emit:
@@ -156,6 +156,15 @@ class ChatHandler {
     var onMediaBarePathRequested: (messageId: String, originalPath: String) -> Unit = { _, _ -> }
 
     /**
+     * Fired for a canonical `@image:<path>` directive found on a persisted
+     * USER history row. This is intentionally separate from free-form
+     * assistant `MEDIA:` parsing: only the bounded upstream directive parser
+     * can reach this callback.
+     */
+    var onPersistedUserImageRequested: (messageId: String, originalPath: String) -> Unit =
+        { _, _ -> }
+
+    /**
      * Buffer for incomplete lines during streaming. Tool annotations are line-oriented
      * (backtick + emoji + tool_name + backtick), so we accumulate text until we see a
      * newline and then scan completed lines. This handles the case where a single
@@ -176,6 +185,7 @@ class ChatHandler {
      * post-stream finalize reconciliation pass.
      */
     private var mediaLineBuffer = StringBuilder()
+    private var mediaFenceDelimiter: String? = null
     private val dispatchedMediaMarkers = mutableSetOf<String>()
 
     /**
@@ -206,8 +216,14 @@ class ChatHandler {
      */
     private val activeAnnotationTools = mutableMapOf<String, String>()
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+    // All Chat and Voice transcript publications pass through this invariant
+    // boundary. A caller may address a row by its mutable server/domain id or
+    // its retained client uiKey, but Compose must never observe both aliases.
+    private val _messages = RenderedMessageState(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.flow
+
+    private fun ChatMessage.matchesIdentity(reference: String): Boolean =
+        id == reference || uiKey == reference
 
     /**
      * Latest gateway `status.update` lifecycle line for the in-flight turn
@@ -308,47 +324,54 @@ class ChatHandler {
         fun boolField(name: String): Boolean? = (payload[name] as? JsonPrimitive)?.booleanOrNull
         val toolName = textField("tool_name", "tool", "name") ?: "unknown"
         val callId = textField("call_id", "tool_call_id") ?: toolName
+        // The caller owns one client placeholder id for the whole Relay stream.
+        // message.started can replace that domain id with the server id while
+        // uiKey deliberately retains the client id. Resolve the current domain
+        // id before every event so the tail keeps mutating the same visible row.
+        val currentMessageId = _messages.value.findLast {
+            it.matchesIdentity(messageId)
+        }?.id ?: messageId
 
         when (envelope.event) {
             "message.started" -> {
                 val msgObj = payload["message"] as? JsonObject
                 val serverMsgId = (msgObj?.get("id") as? JsonPrimitive)?.contentOrNull
-                if (!serverMsgId.isNullOrBlank()) replaceMessageId(messageId, serverMsgId)
+                if (!serverMsgId.isNullOrBlank()) replaceMessageId(currentMessageId, serverMsgId)
             }
             "assistant.delta" -> {
-                textField("delta", "content", "text")?.let { onTextDelta(messageId, it) }
+                textField("delta", "content", "text")?.let { onTextDelta(currentMessageId, it) }
             }
             "tool.progress" -> {
                 textField("delta", "thinking_delta", "thinking", "text", "message")?.let {
-                    onThinkingDelta(messageId, it)
+                    onThinkingDelta(currentMessageId, it)
                 }
             }
-            "tool.pending", "tool.started" -> onToolCallStart(messageId, callId, toolName)
-            "tool.completed" -> onToolCallComplete(messageId, callId, textField("result_preview", "summary", "message"))
-            "tool.failed" -> onToolCallFailed(messageId, callId, textField("error", "message") ?: "Tool failed")
+            "tool.pending", "tool.started" -> onToolCallStart(currentMessageId, callId, toolName)
+            "tool.completed" -> onToolCallComplete(currentMessageId, callId, textField("result_preview", "summary", "message"))
+            "tool.failed" -> onToolCallFailed(currentMessageId, callId, textField("error", "message") ?: "Tool failed")
             "memory.updated", "skill.loaded" -> {
                 val label = when (envelope.event) {
                     "memory.updated" -> "Memory"
                     else -> "Skill"
                 }
-                addMessageBadges(messageId, listOf(label))
+                addMessageBadges(currentMessageId, listOf(label))
             }
             "artifact.created" -> {
-                addMessageBadges(messageId, listOf("Artifact"))
+                addMessageBadges(currentMessageId, listOf("Artifact"))
                 textField("url", "path", "preview", "title")?.takeIf { it.isNotBlank() }?.let {
-                    onThinkingDelta(messageId, "Artifact: $it")
+                    onThinkingDelta(currentMessageId, "Artifact: $it")
                 }
             }
             "assistant.completed" -> {
                 if (boolField("interrupted") == true) {
                     onStreamError("Response interrupted")
                 } else {
-                    onTurnComplete(messageId)
+                    onTurnComplete(currentMessageId)
                 }
             }
-            "run.completed", "done" -> onStreamComplete(messageId)
+            "run.completed", "done" -> onStreamComplete(currentMessageId)
             "error" -> {
-                addMessageBadges(messageId, listOf("Error"))
+                addMessageBadges(currentMessageId, listOf("Error"))
                 onStreamError(textField("message", "error") ?: "Unknown error")
             }
             "session.created", "run.started" -> Unit
@@ -360,6 +383,7 @@ class ChatHandler {
 
     fun addUserMessage(message: ChatMessage) {
         _messages.update { list ->
+            if (list.any { it.uiKey == message.uiKey }) return@update list
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
     }
@@ -372,7 +396,7 @@ class ChatHandler {
      */
     fun updateDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
         _messages.update { list ->
-            list.map { if (it.id == messageId) it.copy(deliveryStatus = status) else it }
+            list.map { if (it.matchesIdentity(messageId)) it.copy(deliveryStatus = status) else it }
         }
     }
 
@@ -380,7 +404,7 @@ class ChatHandler {
     fun setBackgroundTask(messageId: String, task: BackgroundTaskState) {
         _messages.update { list ->
             list.map { message ->
-                if (message.id == messageId) message.copy(backgroundTask = task) else message
+                if (message.matchesIdentity(messageId)) message.copy(backgroundTask = task) else message
             }
         }
     }
@@ -392,7 +416,7 @@ class ChatHandler {
     ) {
         _messages.update { list ->
             list.map { message ->
-                if (message.id == messageId && message.backgroundTask != null) {
+                if (message.matchesIdentity(messageId) && message.backgroundTask != null) {
                     message.copy(backgroundTask = transform(message.backgroundTask))
                 } else {
                     message
@@ -473,7 +497,7 @@ class ChatHandler {
      */
     fun appendAskCardMessage(messageId: String, card: HermesCard) {
         _messages.update { list ->
-            if (list.any { it.id == messageId }) return@update list
+            if (list.any { it.matchesIdentity(messageId) }) return@update list
             val msg = ChatMessage(
                 id = messageId,
                 role = MessageRole.ASSISTANT,
@@ -495,15 +519,38 @@ class ChatHandler {
      */
     fun truncateMessagesFrom(messageId: String) {
         _messages.update { list ->
-            val idx = list.indexOfFirst { it.id == messageId }
+            val idx = list.indexOfFirst { it.matchesIdentity(messageId) }
             if (idx < 0) list else list.take(idx)
         }
     }
 
+    /**
+     * Rebind visible user turns after Gateway rewrites a truncated durable
+     * prefix. The response is positional in the same user-ordinal space used
+     * for edit/regenerate. Missing entries clear cached ids so a later rewind
+     * cannot accidentally send an archived pre-rewrite row id.
+     */
+    fun rebindSurvivorUserRowIds(rowIds: List<Long?>) {
+        var ordinal = 0
+        _messages.update { messages ->
+            messages.map { message ->
+                if (!message.isGatewayRewindUser()) return@map message
+                val rebound = rowIds.getOrNull(ordinal)
+                ordinal += 1
+                if (message.rowId == rebound) message else message.copy(rowId = rebound)
+            }
+        }
+    }
+
+    private fun ChatMessage.isGatewayRewindUser(): Boolean =
+        role == MessageRole.USER &&
+            !id.startsWith("voice-intent-") &&
+            !id.startsWith("steer-")
+
     fun replaceMessageContent(messageId: String, content: String) {
         _messages.update { messages ->
             messages.map { message ->
-                if (message.id == messageId) {
+                if (message.matchesIdentity(messageId)) {
                     message.copy(content = content)
                 } else {
                     message
@@ -512,9 +559,50 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Collapse a provisional post-interim segment back into its sealed
+     * assistant bubble when the terminal text proves they are one response.
+     * Tool/card state accumulated after the interim remains attached.
+     */
+    fun reconcileInterimMessage(
+        interimMessageId: String,
+        currentMessageId: String,
+        content: String,
+    ) {
+        _messages.update { messages ->
+            val interim = messages.firstOrNull { it.matchesIdentity(interimMessageId) }
+                ?: return@update messages
+            val current = messages.firstOrNull { it.matchesIdentity(currentMessageId) }
+            val mergedTools = (interim.toolCalls + current?.toolCalls.orEmpty())
+                .distinctBy { it.id ?: "${it.name}:${it.startedAt}" }
+            val merged = interim.copy(
+                content = content,
+                isStreaming = true,
+                toolCalls = mergedTools,
+                thinkingContent = current?.thinkingContent
+                    ?.takeIf { it.isNotBlank() }
+                    ?: interim.thinkingContent,
+                isThinkingStreaming = current?.isThinkingStreaming
+                    ?: interim.isThinkingStreaming,
+                badges = (interim.badges + current?.badges.orEmpty()).distinct(),
+                cards = (interim.cards + current?.cards.orEmpty()).distinct(),
+                cardDispatches = (interim.cardDispatches + current?.cardDispatches.orEmpty())
+                    .distinctBy { "${it.cardKey}:${it.actionValue}:${it.timestamp}" },
+                backgroundTask = current?.backgroundTask ?: interim.backgroundTask,
+            )
+            messages
+                .filterNot {
+                    current != null &&
+                        current.uiKey != interim.uiKey &&
+                        it.matchesIdentity(currentMessageId)
+                }
+                .map { if (it.matchesIdentity(interimMessageId)) merged else it }
+        }
+    }
+
     /** Remove a provisional client-side message that never became a real turn. */
     fun removeMessage(messageId: String) {
-        _messages.update { messages -> messages.filterNot { it.id == messageId } }
+        _messages.update { messages -> messages.filterNot { it.matchesIdentity(messageId) } }
     }
 
     /**
@@ -696,7 +784,7 @@ class ChatHandler {
         _messages.update { messages ->
             var changed = false
             val mapped = messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     changed = true
                     // A realtimeTurn trace is attached ONLY for provider-only
                     // (non-Hermes-backed) turns — Hermes-backed ones leave it
@@ -894,6 +982,7 @@ class ChatHandler {
     fun addPlaceholderMessage(message: ChatMessage) {
         _isStreaming.value = true
         _messages.update { list ->
+            if (list.any { it.uiKey == message.uiKey }) return@update list
             (list + message).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
     }
@@ -909,11 +998,17 @@ class ChatHandler {
     fun restoreInFlightTurn(
         checkpoint: ChatTurnCheckpoint,
         upstreamAssistantText: String? = null,
+        corrections: List<String> = emptyList(),
     ) {
         val user = checkpoint.user
         val assistant = checkpoint.assistant
         val upstreamText = upstreamAssistantText.orEmpty()
-        val currentAssistant = _messages.value.lastOrNull { it.id == assistant.id }
+        // A history poll may already have adopted the server id while the
+        // checkpoint still names the original client identity. They are one
+        // logical row, resolved through either side of that alias.
+        val currentAssistant = _messages.value.lastOrNull {
+            it.matchesIdentity(assistant.id) && it.role == MessageRole.ASSISTANT
+        }
         val restoredContent = listOf(
             assistant.content,
             upstreamText,
@@ -973,8 +1068,30 @@ class ChatHandler {
                 startedAt = task.startedAt,
             )
         }
+        val checkpointMoaReferences = assistant.moaReferences
+            .filter { it.index in 1..MAX_MOA_REFERENCES }
+            .distinctBy { it.index }
+            .sortedBy { it.index }
+            .take(MAX_MOA_REFERENCES)
+            .map { reference ->
+                MoaReference(
+                    index = reference.index,
+                    count = reference.count,
+                    label = reference.label.take(MAX_MOA_LABEL_CHARS),
+                    text = if (reference.available) {
+                        reference.text.take(MAX_MOA_REFERENCE_CHARS)
+                    } else {
+                        ""
+                    },
+                    available = reference.available,
+                )
+            }
+        val restoredMoaReferences = currentAssistant?.moaReferences
+            ?.takeIf { it.isNotEmpty() }
+            ?: checkpointMoaReferences
         val restoredAssistant = ChatMessage(
-            id = assistant.id,
+            id = currentAssistant?.id ?: assistant.id,
+            uiKey = currentAssistant?.uiKey ?: assistant.id,
             role = MessageRole.ASSISTANT,
             content = restoredContent,
             timestamp = assistant.timestamp,
@@ -996,14 +1113,17 @@ class ChatHandler {
             cardDispatches = currentAssistant?.cardDispatches?.takeIf { it.isNotEmpty() }
                 ?: assistant.cardDispatches,
             backgroundTask = currentAssistant?.backgroundTask ?: restoredBackgroundTask,
+            moaReferences = restoredMoaReferences,
         )
 
         activeAgentName = restoredAssistant.agentName ?: activeAgentName
         _messages.update { current ->
-            val withoutOldAssistant = current.filterNot { it.id == assistant.id }
+            val withoutOldAssistant = current.filterNot {
+                it.matchesIdentity(assistant.id) && it.role == MessageRole.ASSISTANT
+            }
             val users = withoutOldAssistant.filter { it.role == MessageRole.USER }
             val positionalUser = users.getOrNull(checkpoint.priorUserMessageCount)
-            val hasUser = withoutOldAssistant.any { it.id == user.id } ||
+            val hasUser = withoutOldAssistant.any { it.matchesIdentity(user.id) } ||
                 positionalUser?.content?.trim() == user.content.trim()
             val withUser = if (hasUser) {
                 withoutOldAssistant
@@ -1015,13 +1135,53 @@ class ChatHandler {
                     timestamp = user.timestamp,
                 )
             }
-            val insertBeforeAsk = withUser.indexOfFirst {
+            // Newer gateways retain the original prompt in inflight.user and
+            // expose every accepted active-turn redirect separately. Restore
+            // those corrections as ordinary user bubbles before the assistant
+            // row. Consume matching already-present rows first so repeated
+            // resume/checkpoint passes cannot duplicate them.
+            val originalUserIndex = withUser.indexOfFirst { it.matchesIdentity(user.id) }
+                .takeIf { it >= 0 }
+                ?: withUser.indexOfFirst {
+                    it.role == MessageRole.USER && it.content.trim() == user.content.trim()
+                }
+            val existingAfterOriginal = withUser
+                .drop((originalUserIndex + 1).coerceAtLeast(0))
+                .filter { it.role == MessageRole.USER }
+                .map { it.content.trim() }
+                .toMutableList()
+            val restoredCorrections = corrections
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .mapIndexedNotNull { index, correction ->
+                    val existingIndex = existingAfterOriginal.indexOf(correction)
+                    if (existingIndex >= 0) {
+                        existingAfterOriginal.removeAt(existingIndex)
+                        null
+                    } else {
+                        ChatMessage(
+                            id = "${user.id}-correction-${index + 1}",
+                            role = MessageRole.USER,
+                            content = correction,
+                            timestamp = user.timestamp + index + 1L,
+                        )
+                    }
+                }
+            val firstAskIndex = withUser.indexOfFirst {
+                it.clientOnly && it.id.startsWith("ask-")
+            }
+            val withCorrections = if (firstAskIndex >= 0) {
+                withUser.toMutableList().apply { addAll(firstAskIndex, restoredCorrections) }
+            } else {
+                withUser + restoredCorrections
+            }
+            val insertBeforeAsk = withCorrections.indexOfFirst {
                 it.clientOnly && it.id.startsWith("ask-")
             }
             val restored = if (insertBeforeAsk >= 0) {
-                withUser.toMutableList().apply { add(insertBeforeAsk, restoredAssistant) }
+                withCorrections.toMutableList().apply { add(insertBeforeAsk, restoredAssistant) }
             } else {
-                withUser + restoredAssistant
+                withCorrections + restoredAssistant
             }
             restored.let { list ->
                 if (list.size > MAX_MESSAGES) list.drop(list.size - MAX_MESSAGES) else list
@@ -1037,12 +1197,14 @@ class ChatHandler {
         // Drop any pending line buffers / dedupe state so a fresh session
         // doesn't inherit leftovers from the previous one.
         mediaLineBuffer.clear()
+        mediaFenceDelimiter = null
         dispatchedMediaMarkers.clear()
         annotationLineBuffer.clear()
         activeAnnotationTools.clear()
         cardLineBuffer.clear()
         dispatchedCardMarkers.clear()
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     /**
@@ -1093,7 +1255,7 @@ class ChatHandler {
     fun replaceMessageId(oldId: String, newId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == oldId && msg.content.isBlank() && msg.isStreaming) {
+                if (msg.matchesIdentity(oldId) && msg.content.isBlank() && msg.isStreaming) {
                     msg.copy(id = newId)
                 } else msg
             }
@@ -1116,7 +1278,7 @@ class ChatHandler {
     fun mutateMessage(messageId: String, transform: (ChatMessage) -> ChatMessage) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) transform(msg) else msg
+                if (msg.matchesIdentity(messageId)) transform(msg) else msg
             }
         }
     }
@@ -1153,11 +1315,20 @@ class ChatHandler {
         // so we can attach results back to the originating assistant message's ToolCall
         val toolResults = items.filter { it.role == "tool" }
             .associateBy { it.toolCallId }
+        // A reconnect/rejoin history response can repeat a persisted message row.
+        // Chat's LazyColumn renders domain ids as stable keys (via ChatMessage.uiKey),
+        // so allowing both copies through would crash Compose before either copy
+        // could be reconciled. A domain id identifies one persisted message: retain
+        // its first transcript position while adopting the latest repeated snapshot.
+        // Rows without ids remain independent, and tool/hidden rows keep their
+        // separate handling above/below.
+        val renderedItems = coalesceRenderedHistoryItems(items)
 
         // Accumulator for media markers we find in loaded content — fired AFTER
         // the wholesale `_messages.value = ...` assignment so the ViewModel's
         // mutateMessage lookups find the newly-loaded messages.
         val pendingMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
+        val pendingPersistedUserImages = mutableListOf<Pair<String, String>>()
 
         // Reconcile optimistic (client-UUID) live ids to their server ids BEFORE
         // building the carry map, so the id-keyed delta-merge updates rows in
@@ -1169,8 +1340,8 @@ class ChatHandler {
         // silently misses those rows, so a gateway turn's tokens/badges survived
         // only if a content match happened to cover them. See
         // [reconcileLiveIdsToServer].
-        val serverItemIds = items.mapNotNullTo(HashSet()) { it.id }
-        val idRemap = reconcileLiveIdsToServer(items, serverItemIds)
+        val serverItemIds = renderedItems.mapNotNullTo(HashSet()) { it.id }
+        val idRemap = reconcileLiveIdsToServer(renderedItems, serverItemIds)
 
         // Carry CLIENT-ONLY enrichment forward across the reload, keyed by the
         // RECONCILED message id. The server transcript (MessageItem) rebuilds
@@ -1207,11 +1378,16 @@ class ChatHandler {
         // clientOnly bubbles (same exchange, pre-sync copy).
         val syncedRealtimeTurnContents = mutableSetOf<String>()
 
-        val loaded = items.mapNotNull { item ->
-            val role = when (item.role) {
-                "user" -> MessageRole.USER
-                "assistant" -> MessageRole.ASSISTANT
-                "system" ->
+        val loaded = renderedItems.mapNotNull { item ->
+            val displayKind = item.displayKind?.trim()?.lowercase()
+            if (displayKind == "hidden") return@mapNotNull null
+            val role = when {
+                displayKind == "model_switch" ||
+                    displayKind == "async_delegation_complete" ||
+                    displayKind == "auto_continue" -> MessageRole.SYSTEM
+                item.role == "user" -> MessageRole.USER
+                item.role == "assistant" -> MessageRole.ASSISTANT
+                item.role == "system" ->
                     // Upstream injects role:system STEERING markers into the
                     // session history on model/personality change — e.g.
                     // "[System: The active model for this chat has changed to …]"
@@ -1227,9 +1403,11 @@ class ChatHandler {
                     } else {
                         MessageRole.SYSTEM
                     }
-                "tool" -> return@mapNotNull null // Merged into assistant tool calls above
+                item.role == "tool" -> return@mapNotNull null // Merged into assistant tool calls above
                 else -> return@mapNotNull null
             }
+            val displayContent = displayEventContent(displayKind, item.displayMetadata)
+            val rawServerContent = displayContent ?: item.contentText ?: ""
             // If > 1e12, already in milliseconds; otherwise convert from seconds
             val ts = item.timestamp ?: 0.0
             val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
@@ -1241,15 +1419,21 @@ class ChatHandler {
                 emptyList()
             }
 
-            val messageId = item.id?.toString() ?: java.util.UUID.randomUUID().toString()
-            val rawContent = item.contentText ?: ""
+            val messageId = item.id ?: java.util.UUID.randomUUID().toString()
+            val rawContent = rawServerContent
+
+            val persistedImages = if (role == MessageRole.USER && rawContent.isNotEmpty()) {
+                PersistedImageReferenceParser.parse(rawContent)
+            } else {
+                PersistedImageReferences(rawContent, emptyList())
+            }
 
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
-            val afterMedia = if (role == MessageRole.ASSISTANT && rawContent.isNotEmpty()) {
-                extractMediaMarkersFromContent(messageId, rawContent, pendingMediaHits)
+            val afterMedia = if (role == MessageRole.ASSISTANT && persistedImages.cleanedText.isNotEmpty()) {
+                extractMediaMarkersFromContent(messageId, persistedImages.cleanedText, pendingMediaHits)
             } else {
-                rawContent
+                persistedImages.cleanedText
             }
 
             // Cards are synchronous (no async fetch) so we attach them
@@ -1287,12 +1471,28 @@ class ChatHandler {
             // content-keyed queue. Inbound attachments are intentionally
             // excluded — they come back via the marker re-dispatch.
             val carriedAttachments = run {
-                val byId = prior?.attachments.orEmpty().filter { it.relayToken == null }
+                val persistedImagePaths = persistedImages.paths.toHashSet()
+                val byId = prior?.attachments.orEmpty().filter { attachment ->
+                    attachment.relayToken == null ||
+                        (
+                            role == MessageRole.USER &&
+                                attachment.relayToken in persistedImagePaths
+                            )
+                }
                 when {
                     byId.isNotEmpty() -> byId
                     role == MessageRole.USER ->
                         priorOutboundByContent[cleanedContent]?.removeFirstOrNull().orEmpty()
                     else -> emptyList()
+                }
+            }
+            if (
+                role == MessageRole.USER &&
+                carriedAttachments.isEmpty() &&
+                persistedImages.paths.isNotEmpty()
+            ) {
+                persistedImages.paths.forEach { path ->
+                    pendingPersistedUserImages += messageId to path
                 }
             }
             // Server reasoning is authoritative when present; absent, keep the
@@ -1320,6 +1520,8 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
+                    rowId = item.resolvedRowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1339,6 +1541,10 @@ class ChatHandler {
                     } else {
                         prior.badges
                     },
+                    // Keep sanitized advisor state while reconciling a still-live
+                    // row, but clear it once completion made history authoritative.
+                    // The server transcript never becomes the source of these blocks.
+                    moaReferences = if (prior.isStreaming) prior.moaReferences else emptyList(),
                 )
             } else {
                 // INSERT — a server message with no local row yet. Built from
@@ -1346,6 +1552,8 @@ class ChatHandler {
                 // nothing local to carry).
                 ChatMessage(
                     id = messageId,
+                    rowId = item.resolvedRowId,
+                    reactions = item.reactions,
                     role = role,
                     content = cleanedContent,
                     attachments = carriedAttachments,
@@ -1431,6 +1639,37 @@ class ChatHandler {
                 }
             }
         }
+        for ((messageId, path) in pendingPersistedUserImages) {
+            onPersistedUserImageRequested(messageId, path)
+        }
+    }
+
+    /**
+     * Collapse replayed visible history rows by their authoritative message id.
+     *
+     * Replacing the value at its first-seen slot preserves transcript ordering;
+     * the last repeated value wins so a later, more complete snapshot is not lost.
+     * Null ids cannot be proven identical and therefore remain separate rows.
+     */
+    private fun coalesceRenderedHistoryItems(items: List<MessageItem>): List<MessageItem> {
+        val firstSlotById = HashMap<String, Int>()
+        val coalesced = ArrayList<MessageItem>(items.size)
+        for (item in items) {
+            if (renderedRoleOf(item) == null) continue
+            val id = item.id
+            if (id == null) {
+                coalesced += item
+                continue
+            }
+            val existingSlot = firstSlotById[id]
+            if (existingSlot == null) {
+                firstSlotById[id] = coalesced.size
+                coalesced += item
+            } else {
+                coalesced[existingSlot] = item
+            }
+        }
+        return coalesced
     }
 
     /** One adoptable server row during id reconciliation. `taken` enforces consume-once. */
@@ -1496,19 +1735,54 @@ class ChatHandler {
      * [loadMessageHistory] so reconciliation only adopts ids onto rows that
      * actually render.
      */
-    private fun renderedRoleOf(item: MessageItem): MessageRole? = when (item.role) {
-        "user" -> MessageRole.USER
-        "assistant" -> MessageRole.ASSISTANT
-        "system" ->
-            if (!showSystemMarkers &&
-                item.contentText?.trimStart()?.startsWith("[System:") == true
-            ) {
-                null
-            } else {
-                MessageRole.SYSTEM
+    private fun renderedRoleOf(item: MessageItem): MessageRole? =
+        when (item.displayKind?.trim()?.lowercase()) {
+            "hidden" -> null
+            "model_switch", "async_delegation_complete", "auto_continue" -> MessageRole.SYSTEM
+            else -> when (item.role) {
+                "user" -> MessageRole.USER
+                "assistant" -> MessageRole.ASSISTANT
+                "system" ->
+                    if (!showSystemMarkers &&
+                        item.contentText?.trimStart()?.startsWith("[System:") == true
+                    ) {
+                        null
+                    } else {
+                        MessageRole.SYSTEM
+                    }
+                else -> null
             }
-        else -> null
-    }
+        }
+
+    private fun displayEventContent(displayKind: String?, metadata: JsonObject?): String? =
+        when (displayKind) {
+            "model_switch" -> {
+                val model = metadata.stringField("model")
+                    ?: metadata.stringField("to_model")
+                    ?: metadata.stringField("target_model")
+                if (model.isNullOrBlank()) "Model changed" else "Model changed to $model"
+            }
+            "async_delegation_complete" -> {
+                val count = metadata.intField("task_count")
+                    ?: metadata.intField("tasks")
+                    ?: metadata.intField("count")
+                when (count) {
+                    null -> "Background work completed"
+                    1 -> "1 background task completed"
+                    else -> "$count background tasks completed"
+                }
+            }
+            "auto_continue" -> "Continued after an interrupted turn"
+            else -> null
+        }
+
+    private fun JsonObject?.stringField(key: String): String? =
+        (this?.get(key) as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun JsonObject?.intField(key: String): Int? =
+        (this?.get(key) as? JsonPrimitive)?.let { primitive ->
+            primitive.contentOrNull?.toIntOrNull()
+        }
 
     /**
      * Normalize content for reconciliation matching: strip `MEDIA:`/`CARD:` marker
@@ -1524,7 +1798,8 @@ class ChatHandler {
         for (line in text.lines()) {
             val t = line.trim()
             if (t.isEmpty()) continue
-            if (mediaRelayRegex.containsMatchIn(t) || mediaBarePathRegex.containsMatchIn(t)) continue
+            if (parseMediaMarkerLine(t).isNotEmpty()) continue
+            if (PersistedImageReferenceParser.parse(t).paths.isNotEmpty()) continue
             if (cardMarkerRegex.containsMatchIn(t)) continue
             if (sb.isNotEmpty()) sb.append('\n')
             sb.append(t)
@@ -1541,6 +1816,51 @@ class ChatHandler {
     }
 
     /**
+     * Parse one marker-only line using upstream-compatible wrappers and
+     * boundaries. Prose and malformed examples remain ordinary text; a whole
+     * inline-code or emphasis wrapper is accepted, as are adjacent markers,
+     * sentence-final punctuation, POSIX paths, and Windows absolute paths.
+     */
+    private fun parseMediaMarkerLine(line: String): List<MediaMarkerHit> {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+            return emptyList()
+        }
+        val starts = mediaMarkerPrefixRegex.findAll(trimmed).map { it.range.first }.toList()
+        if (starts.isEmpty()) return emptyList()
+        val prefix = trimmed.substring(0, starts.first())
+        if (prefix.any { !it.isWhitespace() && it !in "`*_~" }) return emptyList()
+
+        val hits = ArrayList<MediaMarkerHit>(starts.size)
+        for ((index, start) in starts.withIndex()) {
+            val payloadStart = start + "MEDIA:".length
+            val payloadEnd = starts.getOrNull(index + 1) ?: trimmed.length
+            val payload = trimmed.substring(payloadStart, payloadEnd)
+                .trim()
+                .trimEnd { it in "`*_~.,;:)}]" }
+                .trim()
+            if (payload.isEmpty()) return emptyList()
+            val relay = mediaRelayPayloadRegex.matchEntire(payload)
+            when {
+                relay != null -> hits += MediaMarkerHit.RelayToken(relay.groupValues[1])
+                payload.startsWith("/") || windowsAbsoluteMediaPathRegex.matches(payload) ->
+                    hits += MediaMarkerHit.BarePath(payload)
+                else -> return emptyList()
+            }
+        }
+        return hits
+    }
+
+    private fun fenceDelimiter(line: String): String? {
+        val trimmed = line.trimStart()
+        return when {
+            trimmed.startsWith("```") -> "```"
+            trimmed.startsWith("~~~") -> "~~~"
+            else -> null
+        }
+    }
+
+    /**
      * Scan loaded (non-streaming) message content line-by-line for media
      * markers, append hits to [out], and return the content with matched
      * lines removed. Pure function — does NOT mutate [_messages] or fire
@@ -1552,24 +1872,20 @@ class ChatHandler {
         out: MutableList<Pair<String, MediaMarkerHit>>,
     ): String {
         var cleaned = content
+        var openFence: String? = null
         for (rawLine in content.lines()) {
             val trimmed = rawLine.trim()
             if (trimmed.isEmpty()) continue
-
-            val relayMatch = mediaRelayRegex.find(trimmed)
-            if (relayMatch != null) {
-                out.add(messageId to MediaMarkerHit.RelayToken(relayMatch.groupValues[1]))
-                cleaned = cleaned
-                    .replace("\n$rawLine\n", "\n")
-                    .replace("\n$rawLine", "")
-                    .replace("$rawLine\n", "")
-                    .replace(rawLine, "")
+            val delimiter = fenceDelimiter(rawLine)
+            if (delimiter != null) {
+                openFence = if (openFence == delimiter) null else if (openFence == null) delimiter else openFence
                 continue
             }
+            if (openFence != null) continue
 
-            val bareMatch = mediaBarePathRegex.find(trimmed)
-            if (bareMatch != null) {
-                out.add(messageId to MediaMarkerHit.BarePath(bareMatch.groupValues[1]))
+            val hits = parseMediaMarkerLine(trimmed)
+            if (hits.isNotEmpty()) {
+                hits.forEach { out.add(messageId to it) }
                 cleaned = cleaned
                     .replace("\n$rawLine\n", "\n")
                     .replace("\n$rawLine", "")
@@ -1661,6 +1977,37 @@ class ChatHandler {
         }
     }
 
+    /**
+     * Returns true when structured session history contains tool lifecycle
+     * state that the live transcript did not receive. This is a read-only
+     * preflight for Gateway completion reconciliation: healthy live turns keep
+     * their current StateFlow list and UI identity, while omitted upstream
+     * tool events opt into [loadMessageHistory]. Assistant prose is never
+     * inspected or interpreted here.
+     */
+    fun hasMissingPersistedToolActivity(items: List<MessageItem>): Boolean {
+        val toolResults = items.filter { it.role == "tool" }
+            .associateBy { it.toolCallId }
+        val persistedCalls = coalesceRenderedHistoryItems(items)
+            .asSequence()
+            .filter { it.role == "assistant" }
+            .flatMap { parseToolCallsFromHistory(it.toolCalls, toolResults).asSequence() }
+            .toList()
+        if (persistedCalls.isEmpty()) return false
+
+        val localCalls = _messages.value.flatMap { it.toolCalls }
+        return persistedCalls.any { persisted ->
+            val local = persisted.id?.let { id -> localCalls.firstOrNull { it.id == id } }
+                ?: localCalls.firstOrNull {
+                    it.id == null && it.name == persisted.name && it.args == persisted.args
+                }
+            local == null ||
+                (persisted.isComplete && !local.isComplete) ||
+                (persisted.result != null && persisted.result != local.result) ||
+                (persisted.success != null && persisted.success != local.success)
+        }
+    }
+
     // --- Session management ---
 
     fun setSessionId(sessionId: String?) {
@@ -1682,7 +2029,10 @@ class ChatHandler {
         // sessions as "Untitled" in the drawer (issue #133). Preserve the known
         // local title whenever the server hasn't supplied a non-blank one.
         val existingById = _sessions.value.associateBy { it.sessionId }
-        val mapped = items.map { item ->
+        // The drawer is always composed, even while closed, and keys rows by
+        // session id. A refresh race or duplicated upstream row must not put
+        // the same key into Compose's LazyColumn.
+        val mapped = items.distinctBy { it.id }.map { item ->
             val startedAtMs = timestampToMillis(item.startedAt)
             val lastActivityAtMs = timestampToMillis(item.resolvedLastActivity)
             val activityAtMs = firstPositive(lastActivityAtMs, startedAtMs)
@@ -1702,6 +2052,11 @@ class ChatHandler {
                 title = resolvedTitle,
                 model = item.model,
                 messageCount = item.messageCount ?: 0,
+                inputTokens = item.inputTokens ?: 0,
+                outputTokens = item.outputTokens ?: 0,
+                actualCostUsd = item.actualCostUsd,
+                estimatedCostUsd = item.estimatedCostUsd,
+                isActive = item.isActive,
                 updatedAt = activityAtMs,
                 startedAt = startedAtMs,
                 lastActivityAt = lastActivityAtMs,
@@ -1710,6 +2065,16 @@ class ChatHandler {
                 // SessionItem; the other ChatSession() call sites are local optimistic
                 // rows (default source). (ADR 12 — Threads surface, slice 1.)
                 source = item.source,
+                hasModelConfig = item.hasModelConfig,
+                pinned = item.pinned,
+                archived = item.archived,
+                workingDirectory = item.cwd,
+                gitBranch = item.gitBranch,
+                gitRepoRoot = item.gitRepoRoot,
+                pullRequestNumber = item.pullRequest?.number,
+                pullRequestUrl = item.pullRequest?.url,
+                pullRequestState = item.pullRequest?.state,
+                pullRequestDraft = item.pullRequest?.draft == true,
             )
         }.sortedByDescending { it.activityTimestamp }
         // Preserve the active session's optimistic row when the server list
@@ -1756,11 +2121,39 @@ class ChatHandler {
         }
     }
 
+    /** Apply an optimistic pin/archive mutation; a failed server write restores the copy. */
+    fun setSessionFlagsLocal(
+        sessionId: String,
+        pinned: Boolean? = null,
+        archived: Boolean? = null,
+    ) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.sessionId == sessionId) {
+                    session.copy(
+                        pinned = pinned ?: session.pinned,
+                        archived = archived ?: session.archived,
+                    )
+                } else {
+                    session
+                }
+            }
+        }
+    }
+
     /**
      * Add a newly created session to the list.
      */
     fun addSession(session: ChatSession) {
-        _sessions.update { listOf(session) + it }
+        // Gateway onSessionId and an overlapping REST refresh can both publish
+        // the same freshly-created session. Treat this as an idempotent upsert,
+        // preferring an existing server-enriched row while collapsing any
+        // duplicates that were already present.
+        _sessions.update { current ->
+            val existing = current.firstOrNull { it.sessionId == session.sessionId }
+            listOf(existing ?: session) +
+                current.filterNot { it.sessionId == session.sessionId }
+        }
     }
 
     // --- SSE streaming event entry points ---
@@ -1783,12 +2176,12 @@ class ChatHandler {
 
         _messages.update { messages ->
             val existing = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
 
             if (existing != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(content = msg.content + processedDelta)
                     } else {
                         msg
@@ -1952,6 +2345,18 @@ class ChatHandler {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
 
+            fenceDelimiter(line)?.let { delimiter ->
+                mediaFenceDelimiter = if (mediaFenceDelimiter == delimiter) {
+                    null
+                } else if (mediaFenceDelimiter == null) {
+                    delimiter
+                } else {
+                    mediaFenceDelimiter
+                }
+                continue
+            }
+            if (mediaFenceDelimiter != null) continue
+
             if (tryDispatchMediaMarker(messageId, trimmed)) {
                 stripLineFromContent(messageId, trimmed)
             }
@@ -2021,7 +2426,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(cards = msg.cards + card)
                 } else msg
             }
@@ -2047,7 +2452,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 var cleaned = msg.content
                 var changed = false
                 for (rawLine in msg.content.lines()) {
@@ -2081,29 +2486,26 @@ class ChatHandler {
      * Returns true when a marker was matched so the caller can strip the line.
      */
     private fun tryDispatchMediaMarker(messageId: String, line: String): Boolean {
-        val relayMatch = mediaRelayRegex.find(line)
-        if (relayMatch != null) {
-            val token = relayMatch.groupValues[1]
-            val dedupeKey = "$messageId:relay:$token"
-            if (dispatchedMediaMarkers.add(dedupeKey)) {
-                Log.d(TAG, "Media marker (relay): token=$token")
-                onMediaAttachmentRequested(messageId, token)
+        val hits = parseMediaMarkerLine(line)
+        for (hit in hits) {
+            when (hit) {
+                is MediaMarkerHit.RelayToken -> {
+                    val dedupeKey = "$messageId:relay:${hit.token}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (relay): token=${hit.token}")
+                        onMediaAttachmentRequested(messageId, hit.token)
+                    }
+                }
+                is MediaMarkerHit.BarePath -> {
+                    val dedupeKey = "$messageId:bare:${hit.path}"
+                    if (dispatchedMediaMarkers.add(dedupeKey)) {
+                        Log.d(TAG, "Media marker (bare-path): ${hit.path}")
+                        onMediaBarePathRequested(messageId, hit.path)
+                    }
+                }
             }
-            return true
         }
-
-        val bareMatch = mediaBarePathRegex.find(line)
-        if (bareMatch != null) {
-            val path = bareMatch.groupValues[1]
-            val dedupeKey = "$messageId:bare:$path"
-            if (dispatchedMediaMarkers.add(dedupeKey)) {
-                Log.d(TAG, "Media marker (bare-path, unavailable): $path")
-                onMediaBarePathRequested(messageId, path)
-            }
-            return true
-        }
-
-        return false
+        return hits.isNotEmpty()
     }
 
     /**
@@ -2114,7 +2516,7 @@ class ChatHandler {
     private fun stripLineFromContent(messageId: String, line: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     // Remove the line (with surrounding newlines) from content
                     val cleaned = msg.content
                         .replace("\n$line\n", "\n")
@@ -2242,24 +2644,29 @@ class ChatHandler {
         if (mediaLineBuffer.isNotEmpty()) {
             val remaining = mediaLineBuffer.toString().trim()
             mediaLineBuffer.clear()
-            if (remaining.isNotEmpty() && tryDispatchMediaMarker(messageId, remaining)) {
+            if (mediaFenceDelimiter == null && remaining.isNotEmpty() && tryDispatchMediaMarker(messageId, remaining)) {
                 stripLineFromContent(messageId, remaining)
             }
         }
+        mediaFenceDelimiter = null
 
         // Post-stream reconciliation: re-scan the final content for markers
         // that raced with stripLineFromContent during streaming.
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 var cleaned = msg.content
                 var changed = false
+                var openFence: String? = null
                 for (rawLine in msg.content.lines()) {
                     val trimmed = rawLine.trim()
                     if (trimmed.isEmpty()) continue
-                    if (mediaRelayRegex.containsMatchIn(trimmed) ||
-                        mediaBarePathRegex.containsMatchIn(trimmed)
-                    ) {
+                    val delimiter = fenceDelimiter(rawLine)
+                    if (delimiter != null) {
+                        openFence = if (openFence == delimiter) null else if (openFence == null) delimiter else openFence
+                        continue
+                    }
+                    if (openFence == null && parseMediaMarkerLine(trimmed).isNotEmpty()) {
                         tryDispatchMediaMarker(messageId, trimmed)
                         cleaned = cleaned
                             .replace("\n$rawLine\n", "\n")
@@ -2305,7 +2712,7 @@ class ChatHandler {
     private fun finalizeAnnotations(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
 
                 val existingToolNames = msg.toolCalls.map { it.name }.toSet()
                 val newToolCalls = mutableListOf<ToolCall>()
@@ -2388,7 +2795,7 @@ class ChatHandler {
             .take(4)
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = cleaned)
                 } else {
                     msg
@@ -2404,7 +2811,7 @@ class ChatHandler {
         if (cleaned.isEmpty()) return
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     msg.copy(badges = (msg.badges + cleaned).distinct().take(4))
                 } else {
                     msg
@@ -2438,11 +2845,11 @@ class ChatHandler {
         )
         _messages.update { messages ->
             val target = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
             if (target != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(toolCalls = msg.toolCalls + placeholder)
                     } else {
                         msg
@@ -2466,6 +2873,7 @@ class ChatHandler {
         messageId: String,
         toolCallId: String,
         toolName: String,
+        argsPreview: String? = null,
         runId: String? = null,
         provenance: String? = null,
     ) {
@@ -2473,7 +2881,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             val target = messages.findLast {
-                it.id == messageId && it.role == MessageRole.ASSISTANT
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
             }
             if (target != null) {
                 // Adopt a pending "preparing" placeholder for this name
@@ -2487,12 +2895,13 @@ class ChatHandler {
                         .indexOfFirst { it.isGenerating && !it.isComplete && it.name.isEmpty() }
                         .takeIf { it >= 0 }
                 messages.map { msg ->
-                    if (msg.id != messageId) return@map msg
+                    if (!msg.matchesIdentity(messageId)) return@map msg
                     if (genIdx != null) {
                         val calls = msg.toolCalls.toMutableList()
                         calls[genIdx] = calls[genIdx].copy(
                             id = toolCallId,
                             name = toolName,
+                            args = argsPreview ?: calls[genIdx].args,
                             isGenerating = false,
                             // Execution starts now — preparing time isn't runtime.
                             startedAt = System.currentTimeMillis(),
@@ -2505,7 +2914,7 @@ class ChatHandler {
                             toolCalls = msg.toolCalls + ToolCall(
                                 id = toolCallId,
                                 name = toolName,
-                                args = null,
+                                args = argsPreview,
                                 result = null,
                                 success = null,
                                 isComplete = false,
@@ -2526,7 +2935,7 @@ class ChatHandler {
                         ToolCall(
                             id = toolCallId,
                             name = toolName,
-                            args = null,
+                            args = argsPreview,
                             result = null,
                             success = null,
                             isComplete = false,
@@ -2542,6 +2951,44 @@ class ChatHandler {
 
     // --- Gateway subagent lanes ---
 
+    fun onMoaReference(messageId: String, event: GatewayMoaReference) {
+        _messages.update { messages ->
+            val targetIndex = messages.indexOfLast {
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
+            }
+            if (targetIndex < 0) return@update messages
+            _isStreaming.value = true
+
+            val message = messages[targetIndex]
+            val nextIndex = event.index ?: ((message.moaReferences.maxOfOrNull { it.index } ?: 0) + 1)
+            if (nextIndex !in 1..MAX_MOA_REFERENCES) return@update messages
+            val reference = MoaReference(
+                index = nextIndex,
+                count = event.count,
+                label = event.label.take(MAX_MOA_LABEL_CHARS),
+                text = if (event.available) event.text.take(MAX_MOA_REFERENCE_CHARS) else "",
+                available = event.available,
+            )
+            val existingAtIndex = message.moaReferences.firstOrNull { it.index == nextIndex }
+            val exactReplay = existingAtIndex == reference
+            val base = if (nextIndex == 1 && !exactReplay) {
+                emptyList()
+            } else {
+                message.moaReferences
+            }
+            if (exactReplay) {
+                messages
+            } else {
+                val upserted = (base.filterNot { it.index == nextIndex } + reference)
+                    .sortedBy(MoaReference::index)
+                    .take(MAX_MOA_REFERENCES)
+                messages.toMutableList().also {
+                    it[targetIndex] = message.copy(moaReferences = upserted)
+                }
+            }
+        }
+    }
+
     /**
      * Lane labels by task index, captured from `subagent.start` (goal
      * truncated to 60 chars) and stamped onto every child ToolCall so
@@ -2550,6 +2997,7 @@ class ChatHandler {
      * [onStreamComplete] / [clearMessages].
      */
     private val subagentLabels = mutableMapOf<Int, String>()
+    private val subagentIds = mutableMapOf<Int, String>()
 
     /**
      * Apply one gateway `subagent.*` lifecycle event to the streaming
@@ -2565,6 +3013,9 @@ class ChatHandler {
         when (event.phase) {
             GatewaySubagentEvent.Phase.START -> {
                 if (label != null) subagentLabels[event.taskIndex] = label
+                event.subagentId?.takeIf(String::isNotBlank)?.let {
+                    subagentIds[event.taskIndex] = it
+                }
             }
 
             GatewaySubagentEvent.Phase.TOOL -> {
@@ -2579,14 +3030,16 @@ class ChatHandler {
                     isComplete = false,
                     taskIndex = event.taskIndex,
                     taskLabel = laneLabel,
+                    subagentId = event.subagentId?.takeIf(String::isNotBlank)
+                        ?: subagentIds[event.taskIndex],
                 )
                 _messages.update { messages ->
                     val target = messages.findLast {
-                        it.id == messageId && it.role == MessageRole.ASSISTANT
+                        it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
                     }
                     if (target != null) {
                         messages.map { msg ->
-                            if (msg.id != messageId) return@map msg
+                            if (!msg.matchesIdentity(messageId)) return@map msg
                             val closed = msg.toolCalls.map { call ->
                                 if (call.taskIndex == event.taskIndex && !call.isComplete) {
                                     call.copy(
@@ -2618,10 +3071,11 @@ class ChatHandler {
                 // "interrupted" lanes never finished — not a success either.
                 val failed = event.status == "failed" || event.status == "interrupted"
                 val laneLabel = subagentLabels.remove(event.taskIndex) ?: label
+                val subagentId = subagentIds.remove(event.taskIndex) ?: event.subagentId
                 val summaryId = "subagent-${event.taskIndex}-${syntheticToolSeq++}"
                 _messages.update { messages ->
                     messages.map { msg ->
-                        if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                        if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                         val hasLaneCalls = msg.toolCalls.any { it.taskIndex == event.taskIndex }
                         val closed = msg.toolCalls.map { call ->
                             if (call.taskIndex == event.taskIndex && !call.isComplete) {
@@ -2650,6 +3104,7 @@ class ChatHandler {
                                 completedAt = System.currentTimeMillis(),
                                 taskIndex = event.taskIndex,
                                 taskLabel = laneLabel,
+                                subagentId = subagentId,
                             )
                         }
                         msg.copy(toolCalls = withSummary)
@@ -2672,14 +3127,14 @@ class ChatHandler {
         // Snapshot the matching tool call's name BEFORE mutating — we need it
         // to decide whether to emit a phone-action result bubble below.
         val toolName = _messages.value
-            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
@@ -2716,14 +3171,14 @@ class ChatHandler {
         // Snapshot tool name before the update so the phone-action bubble
         // can label the failure correctly.
         val toolName = _messages.value
-            .firstOrNull { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
@@ -2756,7 +3211,7 @@ class ChatHandler {
     fun onToolOutputRisk(messageId: String, outputRisk: GatewayToolOutputRisk) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId || msg.role != MessageRole.ASSISTANT) return@map msg
+                if (!msg.matchesIdentity(messageId) || msg.role != MessageRole.ASSISTANT) return@map msg
                 val updatedCalls = msg.toolCalls.map { call ->
                     if (call.id == outputRisk.toolCallId) {
                         call.copy(
@@ -2787,7 +3242,7 @@ class ChatHandler {
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) {
+                if (msg.matchesIdentity(messageId)) {
                     msg.copy(isStreaming = false, isThinkingStreaming = false)
                 } else {
                     msg
@@ -2816,7 +3271,7 @@ class ChatHandler {
     fun markStopped(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && "Stopped" !in msg.badges) {
+                if (msg.matchesIdentity(messageId) && "Stopped" !in msg.badges) {
                     msg.copy(badges = msg.badges + "Stopped")
                 } else {
                     msg
@@ -2843,7 +3298,7 @@ class ChatHandler {
     fun markError(messageId: String) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId && "Error" !in msg.badges) {
+                if (msg.matchesIdentity(messageId) && "Error" !in msg.badges) {
                     msg.copy(badges = msg.badges + "Error", clientOnly = true)
                 } else {
                     msg
@@ -2867,13 +3322,22 @@ class ChatHandler {
         }
 
         _messages.update { messages ->
-            messages.map { msg ->
-                if (msg.id == messageId || msg.isStreaming) {
-                    msg.copy(isStreaming = false, isThinkingStreaming = false)
-                } else {
-                    msg
+            messages
+                .filterNot { msg ->
+                        msg.matchesIdentity(messageId) &&
+                        msg.role == MessageRole.ASSISTANT &&
+                        msg.toolCalls.isEmpty() &&
+                        msg.backgroundTask == null &&
+                        msg.thinkingContent.isBlank() &&
+                        (msg.content.isBlank() || isIntentionalSilenceMarker(msg.content))
                 }
-            }
+                .map { msg ->
+                    if (msg.matchesIdentity(messageId) || msg.isStreaming) {
+                        msg.copy(isStreaming = false, isThinkingStreaming = false)
+                    } else {
+                        msg
+                    }
+                }
         }
 
         // Post-stream reconciliation: re-scan final content for any annotation
@@ -2898,6 +3362,7 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onStreamError(message: String) {
@@ -2927,15 +3392,18 @@ class ChatHandler {
             }
         }
         subagentLabels.clear()
+        subagentIds.clear()
     }
 
     fun onThinkingDelta(messageId: String, delta: String) {
         _isStreaming.value = true
         _messages.update { messages ->
-            val existing = messages.findLast { it.id == messageId && it.role == MessageRole.ASSISTANT }
+            val existing = messages.findLast {
+                it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
+            }
             if (existing != null) {
                 messages.map { msg ->
-                    if (msg.id == messageId) {
+                    if (msg.matchesIdentity(messageId)) {
                         msg.copy(
                             thinkingContent = msg.thinkingContent + delta,
                             isThinkingStreaming = true
@@ -2960,7 +3428,7 @@ class ChatHandler {
     fun onUsageReceived(messageId: String, inputTokens: Int?, outputTokens: Int?, totalTokens: Int?, cost: Double?) {
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id == messageId) {
+                if (msg.matchesIdentity(messageId)) {
                     msg.copy(
                         inputTokens = inputTokens,
                         outputTokens = outputTokens,
@@ -2993,7 +3461,7 @@ class ChatHandler {
         )
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.id != messageId) return@map msg
+                if (!msg.matchesIdentity(messageId)) return@map msg
                 val alreadyDispatched = msg.cardDispatches.any {
                     it.cardKey == cardKey && it.actionValue == actionValue
                 }
@@ -3073,3 +3541,15 @@ internal fun formatPhoneActionResult(
         append("Status ${result.status}.")
     }
 }
+
+internal fun isIntentionalSilenceMarker(content: String): Boolean =
+    when (content.trim().trim('"', '\'', '`').uppercase()) {
+        "NO_REPLY",
+        "[NO_REPLY]",
+        "SILENT",
+        "[SILENT]",
+        "<SILENT>",
+        "(SILENT)",
+        -> true
+        else -> false
+    }

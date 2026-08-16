@@ -7,10 +7,12 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -59,6 +61,10 @@ class RelayHttpClient(
 
     companion object {
         private const val TAG = "RelayHttpClient"
+        const val MAX_MODEL_CAPABILITY_ROWS = 64
+        private const val MAX_MODEL_CAPABILITY_PROVIDER_CHARS = 128
+        private const val MAX_MODEL_CAPABILITY_MODEL_CHARS = 512
+        private const val MAX_MODEL_CAPABILITY_PROFILE_CHARS = 128
         private val sessionsJson = Json {
             ignoreUnknownKeys = true
             isLenient = true
@@ -134,6 +140,91 @@ class RelayHttpClient(
         val name: String,
         val text: String,
     )
+
+    @Serializable
+    data class ImageActivitySnapshot(
+        @SerialName("session_id") val sessionId: String,
+        val profile: String,
+        val activities: List<ImageActivity> = emptyList(),
+    )
+
+    @Serializable
+    data class ImageActivity(
+        @SerialName("call_id") val callId: String,
+        @SerialName("tool_name") val toolName: String,
+        val state: String,
+        @SerialName("started_at") val startedAt: Double,
+        @SerialName("completed_at") val completedAt: Double? = null,
+    )
+
+    /**
+     * Poll the optional Relay image lifecycle bridge. A null success means the
+     * connected Relay predates the endpoint; callers should stop polling and
+     * continue using native Gateway events without surfacing an error.
+     */
+    suspend fun fetchImageActivity(
+        profile: String,
+        sessionId: String,
+        sinceEpochSeconds: Double,
+    ): Result<ImageActivitySnapshot?> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay URL not configured")
+            )
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing")
+            )
+        }
+
+        val httpBase = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = try {
+            "$httpBase/chat/image-activity".toHttpUrl().newBuilder()
+                .addQueryParameter("profile", profile)
+                .addQueryParameter("session_id", sessionId)
+                .addQueryParameter("since", sinceEpochSeconds.toString())
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Authorization", "Bearer $sessionToken")
+            .header("Accept", "application/json")
+            .build()
+        val activityClient = okHttpClient.newBuilder()
+            .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        try {
+            activityClient.newCall(request).execute().use { response ->
+                if (response.code == 404) {
+                    return@withContext Result.success(null)
+                }
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IOException("Image activity request failed (HTTP ${response.code})")
+                    )
+                }
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) {
+                    return@withContext Result.failure(IOException("Empty response body"))
+                }
+                Result.success(
+                    sessionsJson.decodeFromString(ImageActivitySnapshot.serializer(), body)
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     /**
      * Fetch `GET /media/<token>` from the relay over HTTP(S). Returns a
@@ -615,6 +706,45 @@ class RelayHttpClient(
         val capabilities: List<String> = emptyList(),
         val profiles: List<RelayProfileInfo> = emptyList(),
         val health: String = "unknown",
+        @SerialName("gateway_heartbeat") val gatewayHeartbeat: GatewayHeartbeat? = null,
+    )
+
+    @Serializable
+    data class GatewayHeartbeat(
+        val status: String = "missing",
+        val supported: Boolean = false,
+        @SerialName("age_seconds") val ageSeconds: Int? = null,
+    )
+
+    @Serializable
+    data class ModelCapabilityRequestRow(
+        val provider: String,
+        val model: String,
+    )
+
+    @Serializable
+    data class ModelCapabilitiesRequest(
+        @SerialName("schema_version") val schemaVersion: Int = 1,
+        val profile: String? = null,
+        val refresh: Boolean = false,
+        val models: List<ModelCapabilityRequestRow>,
+    )
+
+    @Serializable
+    data class ModelCapabilityRow(
+        val provider: String,
+        val model: String,
+        val reasoning: Boolean? = null,
+        @SerialName("reasoning_efforts") val reasoningEfforts: List<String> = emptyList(),
+        @SerialName("reasoning_efforts_exact") val reasoningEffortsExact: Boolean = false,
+        val source: String = "",
+    )
+
+    @Serializable
+    data class ModelCapabilitiesResponse(
+        @SerialName("schema_version") val schemaVersion: Int = 1,
+        @SerialName("contract_version") val contractVersion: String = "",
+        val capabilities: List<ModelCapabilityRow> = emptyList(),
     )
 
     /** Fetch the installed plugin/protocol/profile capability contract. */
@@ -646,6 +776,64 @@ class RelayHttpClient(
                 }
         } catch (e: Exception) {
             Log.w(TAG, "fetchRelayInfo failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** Optional provider/model reasoning overlay; 404 and no pairing are fail-soft. */
+    suspend fun fetchModelCapabilities(
+        models: List<ModelCapabilityRequestRow>,
+        profile: String? = null,
+        refresh: Boolean = false,
+    ): Result<ModelCapabilitiesResponse?> = withContext(Dispatchers.IO) {
+        val boundedModels = models
+            .asSequence()
+            .map {
+                ModelCapabilityRequestRow(
+                    it.provider.trim().take(MAX_MODEL_CAPABILITY_PROVIDER_CHARS),
+                    it.model.trim().take(MAX_MODEL_CAPABILITY_MODEL_CHARS),
+                )
+            }
+            .filter { it.provider.isNotEmpty() && it.model.isNotEmpty() }
+            .distinct()
+            .take(MAX_MODEL_CAPABILITY_ROWS)
+            .toList()
+        if (boundedModels.isEmpty()) return@withContext Result.success(null)
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        val token = sessionTokenProvider()
+        if (relayUrl.isEmpty() || token.isNullOrBlank()) return@withContext Result.success(null)
+        val base = relayUrl
+            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+            .trimEnd('/')
+        val url = runCatching { "$base/relay/model-capabilities".toHttpUrl() }.getOrElse {
+            return@withContext Result.success(null)
+        }
+        val payload = ModelCapabilitiesRequest(
+            profile = profile?.trim()?.take(MAX_MODEL_CAPABILITY_PROFILE_CHARS)
+                ?.takeIf { it.isNotEmpty() },
+            refresh = refresh,
+            models = boundedModels,
+        )
+        val request = Request.Builder()
+            .url(url)
+            .post(sessionsJson.encodeToString(payload).toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .build()
+        try {
+            okHttpClient.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(request).execute().use { response ->
+                    if (response.code == 404) return@withContext Result.success(null)
+                    if (!response.isSuccessful) return@withContext Result.failure(IOException("HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    val parsed = body.takeIf { it.isNotBlank() }?.let {
+                        sessionsJson.decodeFromString(ModelCapabilitiesResponse.serializer(), it)
+                    }
+                    if (parsed?.schemaVersion != 1) Result.success(null) else Result.success(parsed)
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchModelCapabilities failed: ${e.message}")
             Result.failure(e)
         }
     }
@@ -1046,6 +1234,7 @@ class RelayHttpClient(
         logSuccess: Boolean = true,
     ): Result<RelayHealth> = withContext(Dispatchers.IO) {
         val trimmed = relayUrl.trim()
+        val operation = "Relay health probe before WebSocket connection"
         if (trimmed.isEmpty()) {
             return@withContext Result.failure(
                 IllegalArgumentException("Relay URL is empty")
@@ -1066,7 +1255,9 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_url_invalid) ?: "Relay URL invalid",
                 detail = e.message,
-                url = relayUrl,
+                operation = operation,
+                configuredUrl = relayUrl,
+                suggestion = "Enter a Relay URL beginning with ws:// or wss://.",
             )
             return@withContext Result.failure(
                 IOException("Invalid relay URL: ${e.message}")
@@ -1087,6 +1278,7 @@ class RelayHttpClient(
             .get()
             .header("Accept", "application/json")
             .build()
+        val requestUrl = request.url.toString()
 
         try {
             fastClient.newCall(request).execute().use { response ->
@@ -1096,8 +1288,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "HTTP ${response.code}",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = NetworkDiagnosticGuidance.forHttpStatus(response.code, "Relay"),
                     )
                     return@withContext Result.failure(
                         IOException("Relay responded HTTP ${response.code}")
@@ -1110,8 +1305,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Empty response",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a Hermes-Relay server and inspect its logs.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay returned an empty response")
@@ -1127,8 +1325,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Non-JSON response",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a Hermes-Relay server rather than another HTTP service.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay returned non-JSON: ${e.message ?: "parse error"}")
@@ -1141,8 +1342,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "status=${status ?: "missing"}",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Check the Relay service health and server logs.",
                     )
                     return@withContext Result.failure(
                         IOException("Relay reports status=${status ?: "missing"} (expected 'ok')")
@@ -1155,8 +1359,11 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Warning,
                         title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                         detail = "Missing version field",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
+                        suggestion = "Verify this route points to a current Hermes-Relay server.",
                     )
                     return@withContext Result.failure(
                         IOException("Response doesn't look like a hermes-relay — missing 'version' field")
@@ -1172,7 +1379,9 @@ class RelayHttpClient(
                         severity = DiagnosticSeverity.Info,
                         title = context?.getString(R.string.http_diag_health_ok) ?: "Relay health ok",
                         detail = "version=$version clients=$clients sessions=$sessions",
-                        url = httpBase,
+                        operation = operation,
+                        configuredUrl = trimmed,
+                        requestUrl = requestUrl,
                         elapsedMs = System.currentTimeMillis() - startedAtMs,
                     )
                 }
@@ -1185,8 +1394,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Warning,
                 title = context?.getString(R.string.http_diag_health_timeout) ?: "Relay health timeout",
                 detail = "No HTTP response in 3s",
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Relay is not responding (3s timeout)"))
         } catch (e: java.net.ConnectException) {
@@ -1196,8 +1408,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_conn_refused) ?: "Relay connection refused",
                 detail = e.message,
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Connection refused — is the relay running on this URL?"))
         } catch (e: IOException) {
@@ -1207,8 +1422,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Warning,
                 title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: "Network error",
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(IOException("Network error: ${e.message ?: "unreachable"}"))
         } catch (e: Exception) {
@@ -1218,8 +1436,11 @@ class RelayHttpClient(
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_health_failed) ?: "Relay health failed",
                 detail = e.message ?: e.javaClass.simpleName,
-                url = httpBase,
+                operation = operation,
+                configuredUrl = trimmed,
+                requestUrl = requestUrl,
                 elapsedMs = System.currentTimeMillis() - startedAtMs,
+                suggestion = NetworkDiagnosticGuidance.forThrowable(e, "Relay"),
             )
             Result.failure(e)
         }

@@ -61,6 +61,7 @@ class ChatViewModelStreamRecoveryTest {
     private lateinit var handler: ChatHandler
 
     private val messagesRequests = AtomicInteger(0)
+    private val latestMessagesRequests = AtomicInteger(0)
     private val streamRequests = AtomicInteger(0)
 
     /** GET /messages body for the [n]-th poll (1-based). */
@@ -99,7 +100,10 @@ class ChatViewModelStreamRecoveryTest {
                         }
                     }
                     request.method == "GET" &&
-                        path == "/api/sessions/$SESSION_ID/messages" -> {
+                        request.requestUrl?.encodedPath == "/api/sessions/$SESSION_ID/messages" -> {
+                        if (request.requestUrl?.queryParameter("order") == "latest") {
+                            latestMessagesRequests.incrementAndGet()
+                        }
                         MockResponse()
                             .setResponseCode(200)
                             .setHeader("Content-Type", "application/json")
@@ -184,6 +188,7 @@ class ChatViewModelStreamRecoveryTest {
                     it.role == MessageRole.ASSISTANT && it.content == RECOVERED && !it.isStreaming
                 }
         }
+        assertTrue("short recovery must poll one bounded latest page", latestMessagesRequests.get() > 0)
 
         // Stability requires the answer on two consecutive polls, and the
         // first poll had none — at least 3 polls total.

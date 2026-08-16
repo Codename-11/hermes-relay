@@ -4,6 +4,9 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.ProxyEndpoint
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -25,7 +28,7 @@ import java.util.concurrent.atomic.AtomicLong
  * network-aware switching" (2026-04-19).
  *
  * Uses [MockWebServer] to stand up real loopback sockets so the
- * OkHttp → HEAD /health path exercises the production code unchanged.
+ * OkHttp → GET /health path exercises the production code unchanged.
  * A test-local mutable clock drives cache-TTL assertions deterministically
  * without `Thread.sleep`.
  */
@@ -40,6 +43,7 @@ class EndpointResolverTest {
 
     @Before
     fun setUp() {
+        DiagnosticsLog.clear()
         clockMillis.set(0L)
         reachableServer = MockWebServer().apply {
             dispatcher = healthDispatcher(statusCode = 200)
@@ -61,6 +65,7 @@ class EndpointResolverTest {
 
     @After
     fun tearDown() {
+        DiagnosticsLog.clear()
         runCatching { reachableServer.shutdown() }
         runCatching { secondReachableServer.shutdown() }
     }
@@ -77,6 +82,18 @@ class EndpointResolverTest {
         val winner = resolver.resolve(listOf(lan, tail))
         assertNotNull("expected priority-0 winner", winner)
         assertEquals("lan", winner!!.role)
+    }
+
+    @Test
+    fun supportedRouteWins_overHigherPriorityExperimentalReach() = runTest {
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val reach = candidate("outbound_broker", priority = 0, server = reachableServer)
+            .copy(experimental = true)
+        val tailscale = candidate("tailscale", priority = 1, server = secondReachableServer)
+
+        val winner = resolver.resolve(listOf(reach, tailscale))
+
+        assertEquals("tailscale", winner?.role)
     }
 
     // ---------------------------------------------------------------
@@ -370,6 +387,11 @@ class EndpointResolverTest {
         assertNotNull(request)
         assertEquals("GET", request!!.method)
         assertEquals("/api/status", request.path)
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Endpoint))
+            .first { it.operation != null }
+        assertEquals("Dashboard or API route health probe", diagnostic.operation)
+        assertEquals("http://[host]", diagnostic.configuredUrl)
+        assertEquals("http://[host]/api/status", diagnostic.requestUrl)
     }
 
     @Test
@@ -393,6 +415,101 @@ class EndpointResolverTest {
 
         assertEquals(candidate, winner)
         assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun dashboardHealthDoesNotVouchForRelayHealthOnTheSameRoute() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        secondReachableServer.dispatcher = healthDispatcher(statusCode = 503)
+        val candidate = EndpointCandidate(
+            role = "lan",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+            relay = RelayEndpoint(
+                "ws://${secondReachableServer.hostName}:${secondReachableServer.port}",
+            ),
+        )
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+
+        val standardWinner = resolver.resolve(listOf(candidate), EndpointSurface.Standard)
+        val relayWinner = resolver.resolve(listOf(candidate), EndpointSurface.Relay)
+
+        assertEquals("the healthy Dashboard keeps the standard route usable", candidate, standardWinner)
+        assertNull("a failed Relay /health must not be masked by Dashboard health", relayWinner)
+        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun secureLinkStandardSurfacesProbeIndependently() {
+        val pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val candidate = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = pin,
+                surfaces = listOf("relay", "api", "dashboard"),
+            ),
+        )
+        val resolver = EndpointResolver(fastClient)
+
+        assertEquals(
+            "https://relay.example:9443/dashboard/api/status",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Dashboard),
+        )
+        assertEquals(
+            "https://relay.example:9443/api/health",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Api),
+        )
+        assertEquals(
+            "https://relay.example:9443/relay/health",
+            resolver.probeRequestUrlForTest(candidate, EndpointSurface.Relay),
+        )
+    }
+
+    @Test
+    fun secureLinkDoesNotProbeUnadvertisedStandardService() {
+        val candidate = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay"),
+            ),
+        )
+        val resolver = EndpointResolver(fastClient)
+
+        assertNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Dashboard))
+        assertNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Api))
+        assertNotNull(resolver.probeRequestUrlForTest(candidate, EndpointSurface.Relay))
+    }
+
+    @Test
+    fun apiHealthProbe_usesGetWhenServerRejectsHead() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path != "/health" -> MockResponse().setResponseCode(404)
+                request.method == "HEAD" -> MockResponse().setResponseCode(405)
+                request.method == "GET" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(405)
+            }
+        }
+        val apiOnly = EndpointCandidate(
+            role = "tailscale",
+            api = ApiEndpoint(reachableServer.hostName, reachableServer.port),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(apiOnly))
+
+        assertEquals(apiOnly, winner)
+        val request = reachableServer.takeRequest(1, TimeUnit.SECONDS)
+        assertEquals("GET", request?.method)
+        assertEquals("/health", request?.path)
     }
 
     // ---------------------------------------------------------------

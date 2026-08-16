@@ -23,6 +23,7 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -33,6 +34,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -160,6 +162,57 @@ class VoiceViewModelBargeInTest {
     }
 
     // -------------------------------------------------------------------
+    // Full-turn ownership — Thinking -> Speaking uses one listener
+    // -------------------------------------------------------------------
+
+    @Test
+    fun `one listener spans Thinking into Speaking without rearm`() = runTest {
+        val vm = buildViewModel()
+
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+        assertEquals(VoiceState.Thinking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+
+        vm.markBargeInPlaybackStartedForTest()
+        runCurrent()
+        assertEquals(VoiceState.Speaking, vm.uiState.value.state)
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        verify(exactly = 1) { bargeInListener.markPlaybackStarted(any(), any()) }
+    }
+
+    @Test
+    fun `bargeInDetected during Thinking interrupts generation and captures replacement`() = runTest {
+        val vm = buildViewModel()
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+
+        bargeInFlow.emit(Unit)
+        runCurrent()
+
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
+        verify(atLeast = 1) { chatViewModel.cancelStream() }
+        verify(atLeast = 1) { recorder.startRecording() }
+        assertNull(vm.takeSpokenInterruptionNoteForTest())
+    }
+
+    @Test
+    fun `bargeInDetected after audible playback arms the next-turn note`() = runTest {
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(
+            chunks = listOf("Hello."),
+            currentIdx = 0,
+            outputAudioActive = true,
+        )
+
+        vm.onBargeInDetected()
+        runCurrent()
+
+        assertEquals(SPEECH_INTERRUPTED_NOTE, vm.takeSpokenInterruptionNoteForTest())
+    }
+
+    // -------------------------------------------------------------------
     // Test 1 — bargeInDetected while Speaking → interrupt + Listening
     // -------------------------------------------------------------------
 
@@ -179,6 +232,45 @@ class VoiceViewModelBargeInTest {
             vm.uiState.value.state,
         )
         verify(atLeast = 1) { recorder.startRecording() }
+    }
+
+    @Test
+    fun `manual mic waits for barge-in reader release before starting capture`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returns readerRelease
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Hello."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.startListening()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 1) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `manual mic release cancels capture waiting on barge-in shutdown`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returns readerRelease
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Hello."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.startListening()
+        runCurrent()
+        vm.stopListening()
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        assertEquals(VoiceState.Idle, vm.uiState.value.state)
     }
 
     // -------------------------------------------------------------------

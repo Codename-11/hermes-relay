@@ -1,10 +1,10 @@
 # Local tool routing <ExperimentalBadge />
 
-The big feature. The remote Hermes agent can read, write, search, execute, capture, paste, and edit on **your machine** — not the server — through the same WSS relay it uses for chat. The agent's brain and conversation state stay on the host; your laptop is the hands.
+The big feature. The remote Hermes agent can read, write, search, execute, capture, paste, edit, and use explicitly brokered connected devices on **your machine** — not the server — through the same WSS relay it uses for chat. The agent's brain and conversation state stay on the host; your laptop is the hands.
 
 ## What the agent can do
 
-Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`". The shipped toolset is grouped into six families:
+Tools are registered in the `desktop` toolset. The agent sees them as normal tools alongside its usual ones — no special syntax needed, just "read my notes" or "run `tsc --noEmit`". The shipped toolset is grouped into seven families:
 
 **Filesystem**
 
@@ -20,7 +20,7 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | Tool | Signature | Example use |
 |------|-----------|-------------|
 | `desktop_terminal` | `(command: string, cwd?: string, timeout?: number)` | "Run `tsc --noEmit` and tell me what's broken." `bash -lc` on POSIX, `cmd /c` on Windows. |
-| `desktop_powershell` | `(script: string, cwd?: string, timeout?: number)` | Runs a PowerShell script piped over stdin (`pwsh` preferred, falls back to `powershell`) — no `cmd.exe` quote-mangling. |
+| `desktop_powershell` | `(script: string, cwd?: string, timeout?: number, device?: string)` | Runs a private temporary PowerShell script (`pwsh` preferred, falls back to `powershell`) with complete UTF-8 stdout/stderr, native exit status, and explicit truncation metadata. |
 
 **Process management**
 
@@ -59,9 +59,56 @@ Tools are registered in the `desktop` toolset. The agent sees them as normal too
 | `desktop_screenshot` | `(display?: number \| string, save_to?: string)` | Capture all monitors (default), primary (`'primary'`), or a specific display (`1` / `2` / ...). Returns base64 + dimensions, or saves to `save_to` and returns the path. |
 | `desktop_open_in_editor` | `(path: string, line?: number, col?: number, wait?: boolean)` | Open a file in the user's editor. Detects `$VISUAL` → `$EDITOR` → `code` / `cursor` / `subl` / `nvim` / `vim` on PATH → platform fallback. Injects `-g path:line:col` for GUI editors. |
 
-That's the 23 tools the client advertises by default. A further **computer-use** family (`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` / `_cancel`) is registered for full local UI control but ships **experimental and off by default**. Enable it persistently with `hermes-relay computer-use enable` or from the Windows tray; one-process flag/env overrides remain available. Host input still fails closed without a task-scoped grant approved locally.
+**USB devices**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_usb_devices` | `(reason?: string)` | List USB devices visible to the selected desktop host. |
+| `desktop_usb_run` | `(executable: string, arguments?: string[], cwd?: string, timeout?: number, reason?: string)` | Direct-spawn a native or vendor USB utility without shell parsing. |
+
+**Android Debug Bridge service**
+
+| Tool | Signature | Example use |
+|------|-----------|-------------|
+| `desktop_adb_devices` | `(reason?: string)` | List devices visible to the local ADB backend. |
+| `desktop_adb_shell` | `(serial: string, command: string, timeout?: number, reason?: string)` | Run one bounded Android shell operation on an explicit serial. |
+| `desktop_adb_push` | `(serial: string, source: string, destination: string, timeout?: number, reason?: string)` | Push one local file to an explicit serial. |
+| `desktop_adb_pull` | `(serial: string, source: string, destination: string, timeout?: number, reason?: string)` | Pull one device file to the local PC. |
+| `desktop_adb_install` | `(serial: string, apk: string, replace?: boolean, timeout?: number, reason?: string)` | Install one local APK on an explicit serial. |
+| `desktop_adb_logcat` | `(serial: string, lines?: number, timeout?: number, reason?: string)` | Return a bounded recent logcat snapshot. |
+
+The two raw USB tools appear when the selected host's USB policy is Ask or
+Allow. The six ADB tools additionally require a working ADB backend. Structured
+mode omits the four general shell/process escape hatches but retains these
+separately gated USB paths. A further **computer-use** family
+(`desktop_computer_status` / `_screenshot` / `_action` / `_grant_request` /
+`_cancel`) is registered for full local UI control but ships **experimental and
+off by default**. Enable it persistently with `hermes-relay computer-use enable`
+or from the Windows tray; one-process flag/env overrides remain available. Host
+input still fails closed without a task-scoped grant approved locally.
 
 All tools run under a **30-second AbortController** ceiling enforced by the router. `desktop_terminal` / `desktop_powershell` accept a per-call `timeout` (seconds, per the wire spec — converted to ms internally) that's clamped to a 10-minute maximum. `desktop_screenshot` has its own 10 s timeout and 50 MB cap. `desktop_clipboard_*` 5 s timeout and 10 MB cap.
+
+Every client-routed tool also accepts `device`, using the stable device ID or an
+unambiguous computer name shown by `desktop_health`. It is optional with one
+connected PC and required when several desktop daemons are online. An
+untargeted call fails closed rather than choosing the latest heartbeat.
+
+Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
+device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
+detached commands, and command jobs are intentionally labeled `system.execute`:
+because they run as your Windows user, they can indirectly access files and
+attached hardware. **Standard** mode withholds those four escape hatches.
+Newly paired hosts default to **Ask Every Time**, which routes every available
+command, file, screen/input, and USB operation through the local approval card.
+Raw USB can independently be Off, Ask through the local
+approval card for every operation, or can Allow after explicit confirmation.
+It governs host-wide direct execution of native/vendor USB utilities and all
+enabled USB services; it is not scoped to one physical device. ADB remains a
+secondary service and its device operations require an exact serial. Full
+Access overrides every available capability; changing one gate selects a matching
+preset automatically and otherwise creates a Custom policy. Camera and microphone remain unavailable and unadvertised until
+controlled paths exist.
 
 The router heartbeats `desktop.status` every 30 s, advertising the full handler-name list, so the server's `desktop` channel knows which tools your client can service. Servers ping `/desktop/_ping?tool=<name>` to fail fast when a tool isn't advertised.
 
@@ -135,7 +182,7 @@ Consent is stored per-URL in `~/.hermes/remote-sessions.json` as `toolsConsented
 The desktop tools run **in-process on your machine** with your full user privileges. That's a real risk — a compromised relay or a misaligned agent could ask to `rm -rf /`, exfiltrate tokens, or rewrite your `.ssh/config`. The walls:
 
 1. **Consent per-URL, not per-run.** Once you say yes to `ws://hermes.example.com`, the agent on THAT server has persistent tool access. A different URL re-prompts.
-2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Start/Restart daemon as Administrator…**. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
+2. **User privilege by default; explicit elevation only.** All tools inherit the daemon's privilege. The Windows tray remains unprivileged and requests UAC only when you explicitly choose **Restart as Administrator...**. **Return to user mode** stops the elevated daemon once and starts it normally. While an Administrator daemon is active, approved shell and input actions run elevated; the tray labels that state and displays a stronger warning for an active control grant.
 3. **Per-call AbortController ceiling.** 30 seconds per tool call hard stop. A long-running compromise would trip this.
 4. **Handler implementations are defensive:**
    - `desktop_read_file` caps at `max_bytes` (default 1 MB) and truncates with a marker.
@@ -168,11 +215,93 @@ How you approve depends on how the client is running:
 
 - **Interactive (`shell` / `chat` on a TTY):** a visible prompt appears in your terminal — type `yes` to approve.
 - **Headless (`daemon`, no TTY):** approvals route through the local file bridge at `~/.hermes/grant-bridge` (override with `HERMES_RELAY_GRANT_BRIDGE_DIR`). The daemon writes `request-<id>.json`; `hermes-relay grants` reviews it and writes the matching response. Without a local approver, the request times out and input stays failed-closed.
-- **Windows tray:** a new pending request raises a native security alert. Choose **Review pending grants…** to open the same `hermes-relay grants` review in a terminal. The tray never auto-approves a request and has no hidden approval window.
+- **Windows tray:** a pending request raises a dedicated borderless approval card without opening the main management UI. The card identifies the host, operation scope, and reason; it never auto-approves.
 
 Use `hermes-relay computer-use status` to see the persisted preference, daemon privilege, active grant/expiry, pending count, and whether a restart is required. Disabling desktop use requests exact-once cancellation from the running daemon. The Windows tray displays the same state and warns explicitly when an Administrator control grant is active.
 
 Input injection is currently **Windows-only**; `status` / `screenshot` work cross-platform.
+
+### Computer-use engines
+
+The `desktop_computer_*` contract stays the same regardless of the local engine.
+On Windows you can choose:
+
+| Engine | Behavior |
+|--------|----------|
+| **CUA Driver** | Preferred/default structured engine. Targets a named PID and window through UI Automation and background dispatch, and can show an animated virtual cursor without moving the physical pointer. |
+| **Windows input** | Explicit compatibility backend. Uses the original Windows input path and can depend on foreground focus or move the physical pointer for some actions. |
+
+Check the detected runtime and current selection from the CLI:
+
+```powershell
+hermes-relay computer-use status --json
+hermes-relay computer-use engine cua
+hermes-relay computer-use cursor on
+hermes-relay computer-use cua status
+hermes-relay computer-use cua health
+hermes-relay computer-use cua check-update
+hermes-relay computer-use cua install --yes
+hermes-relay computer-use cua update --yes
+```
+
+The management UI exposes the same choices under **Settings → Computer
+control**. Selecting `cua` succeeds only when Hermes finds the canonical runtime
+at `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe` and verifies its
+supported version, manifest identity, allowlisted tools, and non-unrestricted
+permission mode. Accessibility health is an explicit diagnostic while the
+temporary Windows workaround for trycua/cua#3103 is active. Hermes does not trust whichever `cua-driver.exe`
+happens to appear first on `PATH`. If the runtime is missing, incompatible, or
+degraded, the UI explains why and a new control session can use Windows input
+compatibility. Backend selection is made once per authenticated control session;
+changing the preference never switches an active session underneath an action.
+
+CUA sessions follow Hermes control sessions. Hermes derives the driver session
+identity locally; an agent cannot choose or share a cursor ID. Each action uses
+a fresh target-window snapshot, and element handles are wrapped in a short-lived,
+single-use Hermes token bound to the control authority, grant, PID, window, and
+snapshot generation. The handler returns a post-action snapshot so the caller
+can verify whether the expected state actually changed. Grant expiry, cancellation, disconnect, policy change,
+emergency stop, or daemon shutdown revokes the associated local state.
+
+**Background is mandatory for CUA.** A target that cannot accept background input
+returns a failure instead of silently bringing itself forward. The foreground
+escalation control is reserved for a later explicit-authority path; this release
+always reports it off, even if an older preview saved the preference, and Full
+Access cannot enable it. The animated agent cursor is optional. It is a visual overlay
+with a distinct session identity—not another Windows hardware pointer—and the
+operator's physical cursor remains untouched by CUA actions.
+
+CUA Driver is a separate optional dependency. Hermes-Relay does not bundle or
+silently install/update it. `computer-use cua status|check-update` are
+read-only; `install|update` require explicit `--yes` confirmation. Hermes uses
+the canonical upstream package, validates versioned GitHub release metadata and
+installer SHA-256, and refuses updates outside `>=0.19.3,<0.20.0`. These checks
+do not claim a Windows publisher signature. Hermes executes the verified
+temporary installer under a sanitized environment, then validates the canonical
+`packages/current` binary, driver manifest, and permission mode. The UI and
+`computer-use cua health` can recheck accessibility health without changing
+the selected backend. Hermes forces CUA telemetry off for
+its child invocations; any future telemetry opt-in belongs to the local
+operator. `hermes-relay update` continues to manage only the Hermes-Relay CLI
+and Windows UI.
+
+Window-scoped snapshots and element actions use the selected backend. A normal
+full-display screenshot remains on the separate read-only `system_capture` path;
+using it does not switch the input backend. The local audit and UI Activity
+timeline show bounded high-level evidence—backend, background dispatch, control
+session, target app/window identifiers, action, phase, and verification state.
+Accessibility text, screenshot bytes, entered values, and raw driver responses
+are redacted from the activity drilldown.
+
+::: warning CUA does not sandbox raw commands
+CUA's PID/window and snapshot boundaries apply to structured computer-control
+actions. If Commands, PowerShell, or terminal execution is allowed, the agent
+can still invoke ordinary OS automation through that broader trusted path.
+Disable raw command access when scoped computer control is part of your threat
+model. Full Access never bypasses authenticated targeting, sensitive-surface
+checks, UAC or Windows-session boundaries, audit, health checks, or emergency
+stop.
+:::
 
 ## Diagnosing routing
 
@@ -231,9 +360,16 @@ If `connected: true` but the agent still says the tool is missing:
 
 `hermes-relay daemon` runs the WSS connection + tool router headless, so the agent can reach your machine while you're in another window or VS Code or off making coffee. Use `hermes-relay daemon start` to run it in the **background** (no console window, survives closing the terminal), `daemon status` to check it, and `daemon stop` to stop it. See [Subcommands → daemon](./subcommands.md#hermes-relay-daemon) for full lifecycle/log details.
 
-Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log.
+Want to see what the agent actually ran on your machine? `hermes-relay audit` lists recent `desktop_*` activity from a local log. The management UI previews the latest three events and opens each event into a lifecycle stepper plus bounded request, stdout, stderr, result, exit, timing, and truncation details. Errors have a dedicated failure panel. Screenshot events may retain bounded local evidence for a larger viewer; Settings controls Off/1-day/7-day/30-day retention and clearing Activity removes it. Sensitive request inputs remain excluded from the JSON audit log.
 
-`daemon start` covers "background, this session." On Windows, the optional tray can start at sign-in and starts the daemon when it launches; this is a per-user login entry, not a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
+The daemon records one interruption event when automatic reconnect begins and a
+recovery event when it succeeds rather than adding one row per backoff attempt.
+The Overview shows retry attempt/timing and supports **Retry now** or an explicit
+disconnect. When the management UI is hidden, connection loss and restoration
+use the same compact local-card language as permission requests; no duplicate
+card appears while the UI is already open.
+
+`daemon start` covers "background, this session." On Windows, **Start UI at sign-in** registers the optional tray as a per-user login entry. **Start daemon with UI** separately opts into connecting remote access when the tray launches and defaults off for existing installs. Neither is a Windows service. For Linux/macOS or a machine-level lifetime, wrap foreground `hermes-relay daemon` with your service manager of choice.
 
 ## Related
 

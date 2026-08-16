@@ -32,6 +32,7 @@ data class ChatTurnCheckpoint(
     val priorUserMessageCount: Int,
     val baselineAssistantCount: Int,
     val pendingAsk: ChatTurnAskCheckpoint? = null,
+    val queuedMessages: List<ChatQueuedMessageCheckpoint> = emptyList(),
     val startedAt: Long,
     val updatedAt: Long,
 ) {
@@ -40,6 +41,17 @@ data class ChatTurnCheckpoint(
         const val MAX_AGE_MS = 24L * 60L * 60L * 1_000L
     }
 }
+
+@Serializable
+data class ChatQueuedMessageCheckpoint(
+    val id: String,
+    val text: String,
+    val transport: String,
+    val ownerRunId: String,
+    val interfaceContextPrompt: String? = null,
+    /** Attachment bytes are intentionally not copied into Preferences DataStore. */
+    val hadAttachments: Boolean = false,
+)
 
 @Serializable
 data class ChatTurnUserCheckpoint(
@@ -66,6 +78,17 @@ data class ChatTurnAssistantCheckpoint(
     val cardDispatches: List<HermesCardDispatch> = emptyList(),
     val toolCalls: List<ChatTurnToolCheckpoint> = emptyList(),
     val backgroundTask: ChatTurnBackgroundTaskCheckpoint? = null,
+    /** Sanitized, bounded live-only MoA presentation state; never server transcript data. */
+    val moaReferences: List<ChatTurnMoaReferenceCheckpoint> = emptyList(),
+)
+
+@Serializable
+data class ChatTurnMoaReferenceCheckpoint(
+    val index: Int,
+    val count: Int? = null,
+    val label: String,
+    val text: String = "",
+    val available: Boolean = true,
 )
 
 @Serializable
@@ -106,6 +129,7 @@ data class ChatTurnAskCheckpoint(
     val requestId: String? = null,
     val text: String,
     val choices: List<String>? = null,
+    val multiSelect: Boolean = false,
     val smartDenied: Boolean = false,
     val envVar: String? = null,
     val timeoutSeconds: Int,

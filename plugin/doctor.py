@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .compat import collect_compat_status
+from .gateway_diagnostics import assess_gateway_heartbeat, assess_gateway_prior_exit
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_NAME = "hermes-relay"
@@ -313,6 +314,100 @@ def _check(checks: list[dict[str, str]], check_id: str, status: str, summary: st
     checks.append({"id": check_id, "status": status, "summary": summary})
 
 
+def _component_status(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        for key in ("status", "state", "overall", "health"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+        if raw.get("ok") is True or raw.get("healthy") is True:
+            return "ok"
+        if raw.get("ok") is False or raw.get("healthy") is False:
+            return "degraded"
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return None
+
+
+def _component_message(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    for key in ("message", "summary", "error", "reason"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _sanitize_dashboard_components(status_body: Any) -> dict[str, Any]:
+    """Extract optional upstream /api/status component rollup for diagnostics.
+
+    Older Hermes builds omit the object entirely. The doctor treats absence as
+    unsupported, not healthy or unhealthy, and only reports bounded text that is
+    already sanitized by upstream.
+    """
+    if not isinstance(status_body, dict):
+        return {"supported": False, "overall": None, "components": {}}
+    raw_components = status_body.get("components")
+    if not isinstance(raw_components, dict):
+        return {"supported": False, "overall": None, "components": {}}
+
+    components: dict[str, dict[str, Any]] = {}
+    for name, raw in sorted(raw_components.items(), key=lambda item: str(item[0])):
+        safe_name = str(name).strip()
+        if not safe_name:
+            continue
+        component_status = _component_status(raw) or "unknown"
+        item: dict[str, Any] = {"status": component_status}
+        message = _component_message(raw)
+        if message:
+            item["message"] = message
+        if isinstance(raw, dict):
+            for key in (
+                "configured",
+                "connected",
+                "healthy",
+                "ok",
+                "unhandled_5xx_count_5m",
+                "self_test",
+            ):
+                value = raw.get(key)
+                if isinstance(value, (bool, int, float, str)) or value is None:
+                    item[key] = value
+        components[safe_name] = item
+
+    overall = _component_status(status_body.get("overall"))
+    if overall is None:
+        statuses = {str(item["status"]).lower() for item in components.values()}
+        overall = "ok" if statuses and statuses <= {"ok", "healthy", "ready"} else "degraded"
+    return {"supported": True, "overall": overall, "components": components}
+
+
+def _component_check_status(component_health: dict[str, Any]) -> str:
+    if not component_health.get("supported"):
+        return "ok"
+    overall = str(component_health.get("overall") or "").lower()
+    if overall in {"ok", "healthy", "ready"}:
+        return "ok"
+    return "warn"
+
+
+def _component_check_summary(component_health: dict[str, Any]) -> str:
+    if not component_health.get("supported"):
+        return "dashboard component health rollup is not exposed by this Hermes build"
+    components = component_health.get("components")
+    if not isinstance(components, dict) or not components:
+        return "dashboard component health rollup is present but empty"
+    degraded = [
+        f"{name}={data.get('status', 'unknown')}"
+        for name, data in components.items()
+        if str(data.get("status", "")).lower() not in {"ok", "healthy", "ready"}
+    ]
+    if degraded:
+        return "dashboard component health reports " + ", ".join(degraded)
+    return "dashboard component health reports all components ready"
+
+
 def collect_doctor_report(
     *,
     api_url: str | None = None,
@@ -330,6 +425,7 @@ def collect_doctor_report(
     port = relay_port if relay_port is not None else _default_relay_port()
 
     api_capabilities = probe(_url(api_base, "/v1/capabilities"), method="GET", timeout=timeout)
+    api_toolsets = probe(_url(api_base, "/v1/toolsets"), method="GET", timeout=timeout)
     dashboard_status = probe(_url(dashboard_base, "/api/status"), method="GET", timeout=timeout)
     dashboard_audio = probe(
         _url(dashboard_base, "/api/audio/transcribe"),
@@ -369,6 +465,8 @@ def collect_doctor_report(
     duplicate_dirs = _duplicate_plugin_dirs(plugins_root, plugin_name)
     bootstrap = _bootstrap_status(site_dirs)
     relay_import = _relay_import_chain()
+    gateway_heartbeat = assess_gateway_heartbeat()
+    gateway_prior_exit = assess_gateway_prior_exit()
     checks: list[dict[str, str]] = []
 
     _check(
@@ -406,11 +504,78 @@ def collect_doctor_report(
     )
     _check(
         checks,
+        "api-toolsets",
+        "ok" if api_toolsets.get("ok") else ("ok" if api_toolsets.get("exists") else "warn"),
+        "standard API /v1/toolsets reachable"
+        if api_toolsets.get("ok")
+        else (
+            "standard API /v1/toolsets exists (authentication required for inventory)"
+            if api_toolsets.get("exists")
+            else "standard API /v1/toolsets was not detected"
+        ),
+    )
+    _check(
+        checks,
         "dashboard-status",
         "ok" if dashboard_status.get("ok") else "warn",
         "dashboard /api/status reachable"
         if dashboard_status.get("ok")
         else "dashboard not reachable from this host",
+    )
+    dashboard_json = dashboard_status.get("json")
+    topology = dashboard_json if isinstance(dashboard_json, dict) else {}
+    component_health = _sanitize_dashboard_components(topology)
+    _check(
+        checks,
+        "dashboard-component-health",
+        _component_check_status(component_health),
+        _component_check_summary(component_health),
+    )
+    nous_state = topology.get("nous_session_valid")
+    if nous_state == "terminal":
+        _check(
+            checks,
+            "dashboard-nous-session",
+            "warn",
+            "Nous bootstrap session is terminal; sign in again before inference",
+        )
+
+    mode = topology.get("gateway_mode")
+    profiles = topology.get("profiles")
+    if isinstance(mode, str) or isinstance(profiles, list):
+        safe_profiles = [str(item) for item in (profiles or []) if isinstance(item, str)]
+        summary = f"gateway mode {mode or 'unknown'}"
+        if safe_profiles:
+            summary += f"; profiles: {', '.join(safe_profiles)}"
+        _check(checks, "dashboard-topology", "ok", summary)
+
+    heartbeat_status = gateway_heartbeat["status"]
+    heartbeat_check_status = (
+        "warn" if heartbeat_status in {"stale", "malformed", "pid_mismatch", "start_mismatch"} else "ok"
+    )
+    heartbeat_summary = {
+        "fresh": "upstream gateway event loop heartbeat is fresh",
+        "stale": "upstream gateway event loop heartbeat is stale",
+        "malformed": "upstream gateway heartbeat is malformed",
+        "pid_mismatch": "upstream gateway heartbeat PID does not match gateway ownership",
+        "start_mismatch": "upstream gateway heartbeat belongs to an earlier process start",
+        "legacy": "running gateway does not expose the event-loop heartbeat (older Hermes)",
+        "missing": "gateway event-loop heartbeat is not present",
+    }[heartbeat_status]
+    _check(checks, "gateway-heartbeat", heartbeat_check_status, heartbeat_summary)
+    prior_exit = gateway_prior_exit["prior_exit"]
+    prior_exit_summary = {
+        "clean": "previous gateway life reached a recorded exit path",
+        "unclean": "previous gateway life ended without reaching an exit path",
+        "unknown": "previous gateway exit could not be classified from bounded evidence",
+    }[prior_exit]
+    if gateway_prior_exit.get("suspected_oom") is True:
+        prior_exit_summary += "; low-memory evidence suggests a possible OOM kill"
+    _check(
+        checks,
+        "gateway-prior-exit",
+        "warn" if prior_exit == "unclean" else "ok",
+        prior_exit_summary,
     )
     _check(
         checks,
@@ -490,9 +655,10 @@ def collect_doctor_report(
         "standard": {
             "api_url": api_base,
             "dashboard_url": dashboard_base,
-            "api": {"capabilities": api_capabilities},
+            "api": {"capabilities": api_capabilities, "toolsets": api_toolsets},
             "dashboard": {
                 "status": dashboard_status,
+                "component_health": component_health,
                 "audio_transcribe": dashboard_audio,
                 "ws_ticket": dashboard_ws_ticket,
                 "capabilities": dashboard_capabilities,
@@ -505,6 +671,8 @@ def collect_doctor_report(
             "info": relay_info,
             "import_chain": relay_import,
         },
+        "gateway_heartbeat": gateway_heartbeat,
+        "gateway_prior_exit": gateway_prior_exit,
         "bootstrap": bootstrap,
         "lifecycle": {
             "upstream_plugin_remove_cleans_external_artifacts": False,

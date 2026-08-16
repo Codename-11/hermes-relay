@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -42,6 +45,13 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.DiagnosticDetailDialog
 import com.hermesandroid.relay.ui.components.DiagnosticsLogPanel
 import com.hermesandroid.relay.ui.components.StatusCheckTimeline
+import com.hermesandroid.relay.ui.components.SupportBundleDialog
+import com.hermesandroid.relay.ui.components.SupportReviewState
+import com.hermesandroid.relay.ui.components.buildSupportReviewState
+import com.hermesandroid.relay.reliability.ReliabilityCenter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
@@ -81,6 +91,7 @@ fun DiagnosticsScreen(
     val relayInfo by connectionViewModel.relayInfo.collectAsState()
     val effectiveSessionProfileName by
         connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val toolsets by connectionViewModel.toolsetInventory.collectAsState()
     val checkedAt by connectionViewModel.diagnosticsCheckedAt.collectAsState()
     val refreshing by connectionViewModel.diagnosticsRefreshing.collectAsState()
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
@@ -117,6 +128,8 @@ fun DiagnosticsScreen(
 
     // Tapping a check backed by a concrete log entry opens its full detail.
     var selectedEntry by remember { mutableStateOf<DiagnosticLogEntry?>(null) }
+    var supportReview by remember { mutableStateOf<SupportReviewState?>(null) }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -182,11 +195,39 @@ fun DiagnosticsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                info.gatewayHeartbeat?.let { heartbeat ->
+                    val detail = heartbeat.ageSeconds?.let { " · ${it}s" }.orEmpty()
+                    Text(
+                        text = stringResource(R.string.diag_gateway_heartbeat, heartbeat.status, detail),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (heartbeat.status in setOf("stale", "malformed", "pid_mismatch", "start_mismatch")) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 val profileKey = effectiveSessionProfileName ?: "(default)"
                 val profileState = info.profiles.firstOrNull { it.name == profileKey }?.relayState
                     ?: stringResource(R.string.diag_check_not_checked)
                 Text(
                     text = stringResource(R.string.diag_plugin_profile, profileKey, profileState),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            toolsets?.let { inventory ->
+                val enabled = inventory.count { it.enabled }
+                val relayVisible = inventory.any { item ->
+                    item.tools.any { it.startsWith("relay_") || it.startsWith("android_") }
+                }
+                Text(
+                    text = stringResource(
+                        R.string.diag_toolsets_inventory,
+                        enabled,
+                        inventory.size,
+                        if (relayVisible) stringResource(R.string.diag_yes) else stringResource(R.string.diag_no),
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -202,6 +243,19 @@ fun DiagnosticsScreen(
                     }
                 },
             )
+
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        supportReview = withContext(Dispatchers.IO) {
+                            buildSupportReviewState(ReliabilityCenter.reports(context))
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.support_bundle_review))
+            }
 
             Text(
                 text = stringResource(R.string.diag_recent_diagnostics),
@@ -226,6 +280,9 @@ fun DiagnosticsScreen(
 
     selectedEntry?.let { entry ->
         DiagnosticDetailDialog(entry = entry, onDismiss = { selectedEntry = null })
+    }
+    supportReview?.let { state ->
+        SupportBundleDialog(state = state, onDismiss = { supportReview = null })
     }
 }
 
@@ -266,7 +323,7 @@ internal fun buildStatusChecks(
             it.category == category && it.severity == DiagnosticSeverity.Error
         }
 
-    fun DiagnosticLogEntry.message(): String = detail ?: title
+    fun DiagnosticLogEntry.message(): String = suggestion ?: detail ?: title
 
     val checks = mutableListOf<StatusCheck>()
 

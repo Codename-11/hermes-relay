@@ -12,6 +12,7 @@ import {
   revokeSession,
 } from "../lib/api.js";
 import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatters.js";
+import { formatSessionExpiry } from "../lib/session-expiry.mjs";
 import PairDialog from "../components/PairDialog.jsx";
 import {
   Alert,
@@ -163,6 +164,10 @@ function classifySession(session, grants) {
     session.device_type,
     session.client_type,
     session.platform,
+    session.device_platform,
+    session.device_model,
+    session.client_surface,
+    session.device_form_factor,
     session.device_name,
     session.device_label,
     session.client_name,
@@ -654,7 +659,7 @@ export default function RelayManagement({ autoRefresh }) {
                   <TableHead>Device</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Last seen</TableHead>
-                  <TableHead>TTL</TableHead>
+                  <TableHead>Expires</TableHead>
                   <TableHead>Grants</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -675,11 +680,14 @@ export default function RelayManagement({ autoRefresh }) {
                     s.last_activity_at ||
                     s.updated_at ||
                     s.paired_at;
-                  const expiresAt = s.expires_at || s.expiresAt || s.expires;
-                  const ttl = expiresAt ? ttlCountdown(expiresAt) : "never";
+                  const expiresAt = s.expires_at ?? s.expiresAt ?? s.expires;
+                  const expiry = formatSessionExpiry(expiresAt);
                   const grants = extractGrants(s);
                   const type = classifySession(s, grants);
                   const transport = sessionTransport(s);
+                  const deviceDetail = [s.device_model, s.device_platform]
+                    .filter((value) => value && value !== "unknown")
+                    .join(" · ");
                   return (
                     <TableRow key={tokenPrefix || idx}>
                       <TableCell className="font-medium">
@@ -687,6 +695,11 @@ export default function RelayManagement({ autoRefresh }) {
                         <div className="font-mono text-xs font-normal text-muted-foreground">
                           {tokenPrefix ? shortToken(tokenPrefix, 12) : "no token prefix"}
                         </div>
+                        {deviceDetail ? (
+                          <div className="text-xs font-normal text-muted-foreground">
+                            {deviceDetail}
+                          </div>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
@@ -700,12 +713,20 @@ export default function RelayManagement({ autoRefresh }) {
                       </TableCell>
                       <TableCell>{relativeTime(lastSeen)}</TableCell>
                       <TableCell>
-                        <Badge
-                          variant={ttl === "expired" ? "destructive" : "secondary"}
-                          className="text-xs"
-                        >
-                          {ttl}
-                        </Badge>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge
+                            variant={expiry.expired ? "destructive" : "secondary"}
+                            className="whitespace-nowrap text-xs"
+                            title={expiry.exact ? `Expires ${expiry.exact}` : undefined}
+                          >
+                            {expiry.label}
+                          </Badge>
+                          {expiry.exact ? (
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">
+                              {expiry.exact}
+                            </span>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">

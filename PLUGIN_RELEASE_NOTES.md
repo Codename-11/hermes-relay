@@ -1,20 +1,22 @@
-# Hermes-Relay-Plugin v__VERSION__
+# Hermes-Relay-Server v__VERSION__
 
-**Release Date:** July 15, 2026
+**Release Date:** August 14, 2026
 
-This patch aligns Server default with Hermes' sticky active profile and lets paired clients import conventional profile avatar files without exposing host paths.
+This release adds an official, opt-in Relay pane for Hermes Desktop through the supported runtime Plugin SDK. It keeps Relay management profile-scoped and user-invoked without opening a pane during startup, reconnects, profile changes, or plugin updates.
 
-Pairs with Hermes-Relay-Android v1.4.6 for profile image import. Standard chat and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
+Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## What's changed
 
 ### Added
 
-- **Paired clients can import profile avatars.** Relay discovers conventional direct-child images such as `avatar.png` and `profile.jpg`, validates their media type, size, and profile boundary, and serves the bytes through an authenticated route.
+- **Official Hermes Desktop pane.** The unified plugin package registers a movable native pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management.
+- **Explicit entry points.** Labeled sidebar, status-bar, and command-palette actions register and reveal the pane lazily; repeated opens reuse the same surface.
+- **Profile-scoped state.** Cached Relay state follows the active Hermes profile and is disposed cleanly when the plugin unloads.
 
-### Fixed
+### Changed
 
-- **Server default follows Hermes' active profile.** Advertised identity, model, SOUL, profile metadata, and avatar resolve through the sticky `active_profile` marker instead of always using the root profile.
+- **Plugin loading stays passive.** Loading, startup, reconnects, profile changes, and updates never reveal the pane or perform pane-owned network work.
 
 ## Install / update
 
@@ -22,13 +24,14 @@ Pairs with Hermes-Relay-Android v1.4.6 for profile image import. Standard chat a
     hermes plugins install Codename-11/hermes-relay/plugin --enable
 
     # Classic install / update on a systemd host:
-    curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/server-v__VERSION__/install.sh | bash
     # or, if already installed:
     hermes-relay-update
 
 ## Verify
 
     hermes relay doctor
+    # Agent/tool callers can use desktop_health to list desktop targets.
     python scripts/check-plugin-version-sync.py --expect __VERSION__
 
 ---

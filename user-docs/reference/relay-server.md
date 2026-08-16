@@ -165,12 +165,46 @@ All settings via environment variables:
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path |
 | `RELAY_LOG_LEVEL` | `INFO` | Logging level |
+| `RELAY_SECURE_LINK_ENABLED` | `0` | Enable optional Hermes Secure Link. Restart and re-pair so the QR carries its exact origin and SPKI pin. |
+| `RELAY_SECURE_LINK_HOST` | `0.0.0.0` | Secure Link bind and advertised host. Reachability must come from LAN, VPN/Tailscale, or operator-managed public routing. |
+| `RELAY_SECURE_LINK_PORT` | `9443` | Secure Link HTTPS port. |
+| `RELAY_SECURE_LINK_CERT` | generated | Optional TLS certificate path; identity changes require re-pairing. |
+| `RELAY_SECURE_LINK_KEY` | generated | Optional TLS private-key path. |
+| `RELAY_SECURE_LINK_DASHBOARD_URL` | `http://127.0.0.1:9119` | Loopback Dashboard upstream for the fixed `/dashboard` namespace. |
+| `RELAY_EXPERIMENTAL_REACH_ENABLED` | `0` | Explicitly enable the experimental Hermes Reach connector. Not recommended for normal remote access. |
+| `RELAY_SECURE_LINK_BROKER_URL` | — | Experimental Reach broker `wss://` base URL. Requires Secure Link and the explicit Reach flag. |
+| `RELAY_SECURE_LINK_BROKER_HOST_TOKEN` | — | Raw host-registration token for the outbound Reach connector. Configure with the broker URL; never put it in a QR or broker credential file. |
+| `RELAY_SECURE_LINK_BROKER_HOST_ID_FILE` | `~/.hermes/relay-secure-link/host-id` | Persistent opaque Reach host-ID file. |
 | `RELAY_TRUST_PROXY_HEADERS` | `0` | Trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. |
 | `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch for non-loopback plaintext Hermes API bearer auth on `/voice/*`. Leave off for production. For a running relay, use `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim instead of restarting with env. |
 | `RELAY_MEDIA_MAX_SIZE_MB` | `100` | Per-file size cap for `POST /media/register` (inbound media pipeline — see ADR 14) |
 | `RELAY_MEDIA_TTL_SECONDS` | `86400` | How long a registered media entry stays fetchable |
 | `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the in-memory media registry before LRU eviction |
 | `RELAY_MEDIA_ALLOWED_ROOTS` | — | Extra absolute-path roots allowed on register (`os.pathsep`-separated). Extends defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE`). |
+
+Hermes Secure Link uses one pinned HTTPS origin with fixed `/relay`, `/api`, and
+`/dashboard` namespaces. Those routes share transport trust, not credentials:
+Relay sessions, API bearers, and Dashboard cookies/native bearers remain
+separate. The pairing QR establishes the endpoint authority and pin before the
+first request; it verifies continuity with that paired endpoint, not the
+physical host's identity. Secure Link is opt-in and does not create network
+reachability. After enabling it, check `secure_link.status` in the ordinary
+Relay `/health` response and re-pair. See [Remote access](/guide/remote-access).
+
+Hermes Reach is a separate, experimental outbound rendezvous service, run as
+`python -m plugin.rendezvous --credentials <private-json> --listen 0.0.0.0
+--port 9444 --tls-cert <cert> --tls-key <key>`. Its public surface is
+`GET /health` and WSS `/v1/connect`. It forwards opaque records while QR-pinned Secure Link TLS
+protects the inner session end-to-end. It is not required for direct,
+Tailscale, or Secure Link routes. Configure the connector through
+`RELAY_EXPERIMENTAL_REACH_ENABLED=1`, `RELAY_SECURE_LINK_BROKER_URL`, and
+`RELAY_SECURE_LINK_BROKER_HOST_TOKEN`; both are required, and Secure Link must
+already be enabled. Relay `/health` reports `secure_link.reach` as `disabled`,
+`unavailable`, `stopped`, `connecting`, `connected`, or `backoff` with bounded
+stream, attempt, connection-time, and error diagnostics. Reach is attempted
+only after supported routes are unavailable. The broker credential file stores
+only base64url SHA-256 host-token digests under opaque host IDs; public
+listeners require TLS, while plaintext development mode is loopback-only.
 
 Voice endpoints accept either a Relay session token or the existing Hermes API bearer token. The Hermes API bearer path is limited to `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*`; pairing is still required for terminal, bridge, TUI, sessions, media, clipboard, profile writes, and Android control routes. Android derives a default Relay URL from the API URL by swapping `http(s)` to `ws(s)` and using port `8767`, then probes `/voice/config`; custom Relay URLs are still supported as an override. Non-loopback API-bearer voice calls require HTTPS by default. For temporary plain-LAN phone testing, run `hermes relay insecure-api-key on` or `hermes-relay insecure-api-key on` on the relay host; disable it with the matching `off` command.
 

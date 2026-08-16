@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import com.hermesandroid.relay.wake.MicrophoneOwner
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -40,24 +42,37 @@ class RealtimePcmRecorder(
         maxDurationMs: Long = 15_000,
         onLevel: ((Float) -> Unit)? = null,
     ): ByteArray = withContext(Dispatchers.IO) {
-        val minBuffer = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        ).coerceAtLeast(sampleRate / 10 * 2)
+        val microphoneLease =
+            MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.RealtimeDiagnostics)
+                ?: error("Microphone is in use by another voice feature")
+        val minBuffer = try {
+            AudioRecord.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            ).coerceAtLeast(sampleRate / 10 * 2)
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
+            throw t
+        }
         val maxBytes = ((sampleRate * maxDurationMs) / 1000L * 2L).toInt()
 
-        val recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(minBuffer)
-            .build()
+        val recorder = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuffer)
+                .build()
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
+            throw t
+        }
 
         val out = ByteArrayOutputStream(minBuffer * 4)
         val buffer = ByteArray(minBuffer)
@@ -77,32 +92,46 @@ class RealtimePcmRecorder(
             capturing = false
             try { recorder.stop() } catch (_: Exception) { }
             recorder.release()
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
         }
         out.toByteArray()
     }
 
     @SuppressLint("MissingPermission")
     suspend fun capture(durationMs: Long = 800): ByteArray = withContext(Dispatchers.IO) {
-        val minBuffer = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        ).coerceAtLeast(sampleRate / 10 * 2)
+        val microphoneLease =
+            MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.RealtimeDiagnostics)
+                ?: error("Microphone is in use by another voice feature")
+        val minBuffer = try {
+            AudioRecord.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            ).coerceAtLeast(sampleRate / 10 * 2)
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
+            throw t
+        }
         val targetBytes = ((sampleRate * durationMs) / 1000L * 2L)
             .toInt()
             .coerceAtLeast(minBuffer)
 
-        val recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(minBuffer)
-            .build()
+        val recorder = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuffer)
+                .build()
+        } catch (t: Throwable) {
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
+            throw t
+        }
 
         val out = ByteArrayOutputStream(targetBytes)
         val buffer = ByteArray(minBuffer)
@@ -123,6 +152,7 @@ class RealtimePcmRecorder(
         } finally {
             try { recorder.stop() } catch (_: Exception) { }
             recorder.release()
+            MicrophoneOwnershipCoordinator.release(microphoneLease)
         }
         out.toByteArray()
     }

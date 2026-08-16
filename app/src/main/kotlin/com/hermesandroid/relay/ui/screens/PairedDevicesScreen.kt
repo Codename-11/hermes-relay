@@ -64,6 +64,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
@@ -91,6 +93,7 @@ import java.util.Date
 fun PairedDevicesScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onManageSessions: () -> Unit,
     onRequestRepair: () -> Unit,
 ) {
     val devices by connectionViewModel.pairedDevices.collectAsState()
@@ -157,7 +160,9 @@ fun PairedDevicesScreen(
                 loading && devices.isEmpty() -> LoadingState()
                 loadError != null && devices.isEmpty() -> ErrorState(
                     message = loadError!!,
-                    onRetry = { connectionViewModel.loadPairedDevices() }
+                    onRetry = { connectionViewModel.loadPairedDevices() },
+                    onManageSessions = onManageSessions,
+                    onRequestRepair = onRequestRepair,
                 )
                 devices.isEmpty() -> EmptyState(onRequestRepair = onRequestRepair)
                 else -> DeviceList(
@@ -376,7 +381,12 @@ private fun LoadingState() {
 }
 
 @Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
+private fun ErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    onManageSessions: () -> Unit,
+    onRequestRepair: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -402,8 +412,22 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.paired_devices_invalid_session_help),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = onRetry) {
+        Button(onClick = onManageSessions) {
+            Text(stringResource(R.string.paired_devices_manage_sessions))
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onRequestRepair) {
+            Text(stringResource(R.string.paired_devices_repair_this_phone))
+        }
+        Spacer(Modifier.height(4.dp))
+        TextButton(onClick = onRetry) {
             Text(stringResource(R.string.paired_devices_try_again))
         }
     }
@@ -550,6 +574,18 @@ private fun DeviceCard(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
+                    val deviceDetail = listOf(device.deviceModel, device.devicePlatform)
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString(" · ")
+                    if (deviceDetail.isNotBlank()) {
+                        Text(
+                            text = deviceDetail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (device.deviceId.isNotBlank()) {
                         Text(
                             text = device.deviceId,
@@ -905,6 +941,17 @@ private fun EndpointsSubList(
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.weight(1f),
                 )
+                if (candidate.hasSecureProxy()) {
+                    Text(
+                        text = if (candidate.secureLinkCoversAllServices()) {
+                            stringResource(R.string.secure_link_pinned_tls_short)
+                        } else {
+                            stringResource(R.string.secure_link_partial_short)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 if (isActive) {
                     Text(
                         text = stringResource(R.string.paired_devices_active),

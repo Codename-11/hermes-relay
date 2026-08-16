@@ -63,6 +63,8 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val plainText = remember(entry) { entry.toPlainText() }
     val severityName = entry.severity.name
+    val copiedToast = stringResource(R.string.diag_copied)
+    val exportChooserTitle = stringResource(R.string.diag_export)
 
     // Info-severity pre-flight: routine log lines only become GitHub issues once
     // the reporter says what they expected instead (that answer replaces the
@@ -104,9 +106,27 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                 MetaRow("When", DateFormat.format("yyyy-MM-dd HH:mm:ss", entry.timestampMs).toString())
                 MetaRow("Severity", severityName)
                 MetaRow("Category", entry.category.label)
+                entry.operation?.let { MetaRow("Operation", it) }
                 entry.endpointRole?.let { MetaRow("Route", it) }
-                entry.url?.let { MetaRow("URL", it) }
+                entry.configuredUrl?.let { MetaRow("Configured URL", it) }
+                entry.requestUrl?.let { MetaRow("Request", it) }
+                if (entry.configuredUrl == null && entry.requestUrl == null) {
+                    entry.url?.let { MetaRow("URL", it) }
+                }
                 entry.elapsedMs?.let { MetaRow("Elapsed", "${it}ms") }
+                entry.suggestion?.let { suggestion ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Suggested next step",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = suggestion,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
 
                 Spacer(Modifier.height(14.dp))
                 val body = entry.stacktrace ?: entry.detail
@@ -165,7 +185,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                     OutlinedButton(
                         onClick = {
                             IssueReport.copyToClipboard(context, plainText)
-                            toast(context, "Diagnostic copied")
+                            toast(context, copiedToast)
                         },
                     ) { Text(stringResource(R.string.common_copy)) }
                     OutlinedButton(
@@ -174,7 +194,7 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
                                 context,
                                 subject = "Hermes-Relay diagnostic — ${entry.title}",
                                 text = plainText,
-                                chooserTitle = "Export diagnostic",
+                                chooserTitle = exportChooserTitle,
                             )
                             if (!shared) {
                                 IssueReport.copyToClipboard(context, plainText)
@@ -246,7 +266,7 @@ internal fun DiagnosticSeverityChip(severity: DiagnosticSeverity) {
     }
     Surface(shape = RoundedCornerShape(50), color = bg) {
         Text(
-            text = severity.name.uppercase(),
+            text = stringResource(severityLabelRes(severity)).uppercase(),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             color = fg,
@@ -267,9 +287,15 @@ private fun DiagnosticLogEntry.toPlainText(): String = buildString {
     appendLine("Severity: ${severity.name}")
     appendLine("Time:     ${DateFormat.format("yyyy-MM-dd HH:mm:ss", timestampMs)}")
     appendLine("App:      ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) ${BuildConfig.FLAVOR}")
+    operation?.let { appendLine("Operation: $it") }
     endpointRole?.let { appendLine("Route:    $it") }
-    url?.let { appendLine("URL:      $it") }
+    configuredUrl?.let { appendLine("Configured URL: $it") }
+    requestUrl?.let { appendLine("Request:  $it") }
+    if (configuredUrl == null && requestUrl == null) {
+        url?.let { appendLine("URL:      $it") }
+    }
     elapsedMs?.let { appendLine("Elapsed:  ${it}ms") }
+    suggestion?.let { appendLine("Suggested next step: $it") }
     detail?.let {
         appendLine()
         appendLine("Detail:")

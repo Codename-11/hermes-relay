@@ -20,6 +20,31 @@ import org.junit.Test
 class GatewayProcessControllerTest {
 
     @Test
+    fun duplicateProcessSnapshotsPublishOneComposeIdentityWithLatestState() = runTest {
+        val source = FakeProcessSource().apply {
+            snapshot = listOf(
+                process(id = "95f99e98-cd62-4a60-8001-c66f6de9eecc", status = "running"),
+                process(
+                    id = "95f99e98-cd62-4a60-8001-c66f6de9eecc",
+                    status = "exited",
+                    exitCode = 0,
+                ),
+            )
+        }
+        val controller = GatewayProcessController(this)
+
+        controller.bind(source, "chat-a")
+        controller.sessionReady("chat-a")
+        runCurrent()
+
+        val published = controller.processes.value.single()
+        assertEquals("95f99e98-cd62-4a60-8001-c66f6de9eecc", published.id)
+        assertFalse(published.isRunning)
+        assertEquals(0, published.exitCode)
+        controller.close()
+    }
+
+    @Test
     fun pollsEveryFiveSecondsOnlyWhileAProcessIsRunning() = runTest {
         val source = FakeProcessSource()
         source.snapshot = listOf(process(id = "p1", status = "running"))

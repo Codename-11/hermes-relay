@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
@@ -15,6 +16,77 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayAppStatusTest {
+
+    @Test
+    fun `pet roaming supports chat terminal and curated status chrome routes`() {
+        assertEquals("chat", petSurfaceOwnerForRoute(Screen.Chat.route))
+        assertEquals("terminal", petSurfaceOwnerForRoute(Screen.Terminal.route))
+        assertEquals(Screen.Settings.route, petSurfaceOwnerForRoute(Screen.Settings.route))
+        assertEquals(
+            Screen.AppearanceSettings.route,
+            petSurfaceOwnerForRoute(Screen.AppearanceSettings.route),
+        )
+        assertEquals(Screen.About.route, petSurfaceOwnerForRoute(Screen.About.route))
+        assertNull(petSurfaceOwnerForRoute(Screen.Manage.route))
+    }
+
+    @Test
+    fun `status chrome route allowlist stays intentionally small`() {
+        assertEquals(
+            setOf(
+                Screen.Settings.route,
+                Screen.AppearanceSettings.route,
+                Screen.About.route,
+            ),
+            APP_STATUS_PET_ROUTES,
+        )
+    }
+
+    @Test
+    fun `Petdex gallery uses its own previews without the global companion overlay`() {
+        assertFalse(floatingPetAllowedOnRoute(Screen.PetdexBrowse.route))
+        assertTrue(floatingPetAllowedOnRoute(Screen.Chat.route))
+        assertTrue(floatingPetAllowedOnRoute(Screen.AppearanceSettings.route))
+    }
+
+    @Test
+    fun `connection footer remains visible in conversation voice only`() {
+        assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
+        assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))
+        assertFalse(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Focus))
+    }
+
+    @Test
+    fun `full-screen connect routes suppress connection-dependent app chrome`() {
+        assertTrue(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.Pair.route,
+            ),
+        )
+        assertTrue(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.Onboarding.route,
+            ),
+        )
+        assertFalse(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = true,
+                isDemoMode = false,
+                currentRoute = Screen.ConnectionsSettings.route,
+            ),
+        )
+        assertFalse(
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = false,
+                isDemoMode = true,
+                currentRoute = Screen.Chat.route,
+            ),
+        )
+    }
 
     @Test
     fun `dashboard-only connection counts as configured startup chat`() {

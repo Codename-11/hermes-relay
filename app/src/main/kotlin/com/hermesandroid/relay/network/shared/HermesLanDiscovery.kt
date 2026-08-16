@@ -61,7 +61,7 @@ object HermesLanDiscovery {
             .callTimeout(PROBE_TIMEOUT_MS * 2, TimeUnit.MILLISECONDS)
             .build()
 
-        coroutineScope {
+        val results = coroutineScope {
             val semaphore = Semaphore(MAX_CONCURRENT_PROBES)
             hosts.map { host ->
                 async {
@@ -79,6 +79,8 @@ object HermesLanDiscovery {
                         .thenBy { it.host },
                 )
         }
+        Log.d(TAG, "scan complete hosts=${hosts.size} matches=${results.size}")
+        results
     }
 
     private fun probeHost(
@@ -133,8 +135,7 @@ object HermesLanDiscovery {
                 val body = response.body.string().take(2_048)
                 expectedBody(body, contentType)
             }
-        } catch (e: Exception) {
-            Log.d(TAG, "probe failed url=$url type=${e.javaClass.simpleName}")
+        } catch (_: Exception) {
             false
         }
     }

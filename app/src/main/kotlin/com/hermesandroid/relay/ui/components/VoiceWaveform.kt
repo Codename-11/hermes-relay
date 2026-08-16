@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.hermesandroid.relay.viewmodel.VoiceState
 import kotlin.math.PI
 import kotlin.math.max
@@ -140,6 +141,8 @@ fun VoiceWaveform(
     amplitude: Float,
     state: VoiceState,
     outputAudioActive: Boolean = false,
+    height: Dp = 56.dp,
+    compactBars: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // No downstream smoothing. The VoiceViewModel already runs an
@@ -154,6 +157,7 @@ fun VoiceWaveform(
     // doesn't look abrupt.
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val errorColor = MaterialTheme.colorScheme.error
+    val compactColor = MaterialTheme.colorScheme.primary
 
     val targetPrimary = when (state) {
         VoiceState.Idle -> dim.copy(alpha = 0.3f)
@@ -198,16 +202,41 @@ fun VoiceWaveform(
     )
     val spinnerPhase = rememberProcessingSpinnerPhase(processing)
 
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp),
-    ) {
+    val canvasModifier = if (compactBars) {
+        modifier.height(height)
+    } else {
+        modifier.fillMaxWidth().height(height)
+    }
+    Canvas(modifier = canvasModifier) {
         val width = size.width
         val height = size.height
         if (width <= 0f || height <= 0f) return@Canvas
 
         val centerY = height / 2f
+
+        if (compactBars) {
+            val barCount = 10
+            // Keep the compact waveform inside its assigned composer lane.
+            // The previous 52 dp drawing width overflowed the 32 dp canvas and
+            // visually collided with the adjacent state label.
+            val gap = 2.dp.toPx()
+            val barWidth = 2.dp.toPx()
+            val totalWidth = barWidth * barCount + gap * (barCount - 1)
+            val startX = ((width - totalWidth) / 2f).coerceAtLeast(0f)
+            repeat(barCount) { index ->
+                val wave = ((sin(phases[0] + index * 0.82f) + 1f) * 0.5f)
+                val activeHeight = height * (0.22f + wave * (0.28f + displayAmplitude * 0.5f))
+                val x = startX + index * (barWidth + gap)
+                drawRoundRect(
+                    color = compactColor.copy(alpha = if (index < 5) 0.96f else 0.22f),
+                    topLeft = Offset(x, centerY - activeHeight / 2f),
+                    size = Size(barWidth, activeHeight),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f),
+                )
+            }
+            return@Canvas
+        }
+
         val peakPixels = height * PEAK_FRACTION
         val strokePx = STROKE_WIDTH_DP.dp.toPx()
         val centerX = width / 2f

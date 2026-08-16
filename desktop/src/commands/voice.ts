@@ -24,12 +24,19 @@
 // here without restructuring — the resolver and HTTP helper are reusable.
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type {
   GatewayEvent,
   SessionCreateResponse,
   SessionResumeResponse
+} from '../gatewayTypes.js'
+import {
+  sessionProjectName,
+  sessionQueuedPromptPreview,
+  sessionResumeActivity,
+  type SessionResumeActivity
 } from '../gatewayTypes.js'
 import { getActiveDesktopRelayUrl } from '../desktopConfig.js'
 import { formatError } from '../lib/hints.js'
@@ -38,6 +45,7 @@ import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { theme as makeTheme, type Theme } from '../lib/theme.js'
 import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
+import { SessionResumeDrain } from '../resumeDrain.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { openInBrowser, startVoiceServer } from '../voiceServer.js'
@@ -381,7 +389,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     const cfg: ConstructorParameters<typeof RelayTransport>[0] = {
       url,
-      deviceName: `hermes-relay-cli voice (${process.platform})`
+      ...desktopRelayIdentity()
     }
     if (creds.pairingCode) cfg.pairingCode = creds.pairingCode
     if (creds.sessionToken) cfg.sessionToken = creds.sessionToken
@@ -392,6 +400,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
     relay.onAuthSuccess((token, ver, meta) => {
       mintedToken = token
       void saveSession(url, token, ver, {
+        initializeAccessPolicy: true,
         grants: meta.grants,
         ttlExpiresAt: meta.ttlExpiresAt,
         endpointRole
@@ -437,18 +446,47 @@ function waitForReady(gw: GatewayClient, timeoutMs = READY_TIMEOUT_MS): Promise<
 async function createOrResumeSession(
   gw: GatewayClient,
   resumeId: string | null
-): Promise<{ sessionId: string; model: string | null }> {
+): Promise<{
+  sessionId: string
+  model: string | null
+  projectName: string | null
+  queuedPrompt: string | null
+  resumeActivity: SessionResumeActivity
+  resumeDrain: Promise<void> | null
+}> {
   const cols = process.stdout.columns ?? 80
   if (resumeId) {
-    const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
-    const r = asRpcResult<SessionResumeResponse>(raw)
-    if (!r?.session_id) throw new Error(`failed to resume session ${resumeId}`)
-    return { sessionId: r.session_id, model: r.info?.model ?? null }
+    const drain = new SessionResumeDrain(gw)
+    try {
+      const raw = await gw.request<SessionResumeResponse>('session.resume', { session_id: resumeId, cols })
+      const r = asRpcResult<SessionResumeResponse>(raw)
+      if (!r?.session_id) throw new Error(`failed to resume session ${resumeId}`)
+      const resumeActivity = sessionResumeActivity(r)
+      const drained = drain.activate(r.session_id, resumeActivity)
+      return {
+        sessionId: r.session_id,
+        model: r.info?.model ?? null,
+        projectName: sessionProjectName(r.info),
+        queuedPrompt: sessionQueuedPromptPreview(r),
+        resumeActivity,
+        resumeDrain: resumeActivity === 'idle' ? null : drained
+      }
+    } catch (error) {
+      drain.cancel()
+      throw error
+    }
   }
   const raw = await gw.request<SessionCreateResponse>('session.create', { cols })
   const r = asRpcResult<SessionCreateResponse>(raw)
   if (!r?.session_id) throw new Error('failed to create session')
-  return { sessionId: r.session_id, model: r.info?.model ?? null }
+  return {
+    sessionId: r.session_id,
+    model: r.info?.model ?? null,
+    projectName: sessionProjectName(r.info),
+    queuedPrompt: null,
+    resumeActivity: 'idle',
+    resumeDrain: null
+  }
 }
 
 async function voiceMode(args: ParsedArgs): Promise<number> {
@@ -493,7 +531,14 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
     return 1
   }
 
-  let session: { sessionId: string; model: string | null }
+  let session: {
+    sessionId: string
+    model: string | null
+    projectName: string | null
+    queuedPrompt: string | null
+    resumeActivity: SessionResumeActivity
+    resumeDrain: Promise<void> | null
+  }
   try {
     session = await createOrResumeSession(gw, conversation)
   } catch (e) {
@@ -501,8 +546,30 @@ async function voiceMode(args: ParsedArgs): Promise<number> {
     await tearDown()
     return 1
   }
-  if (session.model) {
-    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}… on ${session.model}\n`)
+  if (session.model || session.projectName) {
+    const modelDetail = session.model ? ` on ${session.model}` : ''
+    const projectDetail = session.projectName ? ` · ${session.projectName}` : ''
+    process.stderr.write(`Session ${session.sessionId.slice(0, 8)}…${modelDetail}${projectDetail}\n`)
+  }
+  if (session.resumeActivity === 'running-and-queued') {
+    process.stderr.write('Resumed live turn; the next accepted prompt is queued.\n')
+  } else if (session.resumeActivity === 'running') {
+    process.stderr.write('Resumed live turn still in progress.\n')
+  } else if (session.resumeActivity === 'queued') {
+    process.stderr.write('Resumed session with an accepted prompt waiting to run.\n')
+  }
+  if (session.queuedPrompt) {
+    process.stderr.write(`Queued prompt: ${session.queuedPrompt}\n`)
+  }
+  if (session.resumeDrain) {
+    try {
+      await session.resumeDrain
+      process.stderr.write('Resumed activity completed.\n')
+    } catch (e) {
+      process.stderr.write(`error: ${rpcErrorMessage(e)}\n`)
+      await tearDown()
+      return 1
+    }
   }
 
   try {

@@ -83,8 +83,14 @@ fun ModelPickerSheet(
     }
     // groupBy preserves key insertion order, so providers stay current-first
     // (the caller sorts is_current to the front).
-    val grouped = remember(filtered) {
-        filtered.groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: "Other" }
+    val otherGroupLabel = stringResource(R.string.model_picker_other)
+    val grouped = remember(filtered, otherGroupLabel) {
+        filtered.groupBy { option ->
+            ModelPickerGroupIdentity(
+                provider = option.provider?.trim()?.lowercase().orEmpty(),
+                label = option.group?.takeIf { it.isNotBlank() } ?: otherGroupLabel,
+            )
+        }
     }
 
     ModalBottomSheet(
@@ -106,7 +112,7 @@ fun ModelPickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "Model", style = MaterialTheme.typography.titleMedium)
+                    Text(text = stringResource(R.string.model_picker_model), style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = "${modelOptions.size} models",
                         style = MaterialTheme.typography.labelMedium,
@@ -131,7 +137,7 @@ fun ModelPickerSheet(
                             )
                         }
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text(if (refreshing) "Refreshing" else "Refresh")
+                        Text(if (refreshing) stringResource(R.string.model_picker_refreshing) else stringResource(R.string.model_picker_refresh))
                     }
                 }
             }
@@ -179,10 +185,10 @@ fun ModelPickerSheet(
                     }
                 }
 
-                grouped.forEach { (provider, opts) ->
-                    item(key = "header_$provider") {
+                grouped.forEach { (group, opts) ->
+                    item(key = modelPickerHeaderKey(group)) {
                         Text(
-                            text = provider,
+                            text = group.label,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(
@@ -190,7 +196,7 @@ fun ModelPickerSheet(
                             ),
                         )
                     }
-                    items(items = opts, key = { "$provider:${it.value}" }) { opt ->
+                    items(items = opts, key = ::modelPickerOptionKey) { opt ->
                         ModelPickerRow(option = opt, onClick = { onSelect(opt) })
                     }
                 }
@@ -210,6 +216,75 @@ fun ModelPickerSheet(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+internal data class ModelPickerGroupIdentity(
+    val provider: String,
+    val label: String,
+)
+
+internal fun modelPickerHeaderKey(group: ModelPickerGroupIdentity): String =
+    "provider:${group.provider}:${group.label}"
+
+/** Exact domain identity; duplicate provider/model rows must be repaired upstream. */
+internal fun modelPickerOptionKey(option: ChatInputPickerOption): String =
+    "model:${option.provider?.trim()?.lowercase().orEmpty()}:${option.value}"
+
+/**
+ * Compact sibling of [ModelPickerSheet] for short, ungrouped control lists.
+ * Passport selectors use this so profile, personality, and reasoning choices
+ * share the model picker's modal hierarchy, row rhythm, and selected-state
+ * treatment instead of expanding dense radio lists inside the detail card.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun OptionPickerSheet(
+    title: String,
+    subtitle: String? = null,
+    options: List<ChatInputPickerOption>,
+    onSelect: (ChatInputPickerOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Text(text = title, style = MaterialTheme.typography.titleMedium)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider()
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+            ) {
+                items(
+                    items = options,
+                    key = { option -> "${option.group}:${option.value}:${option.label}" },
+                ) { option ->
+                    ModelPickerRow(option = option, onClick = { onSelect(option) })
                 }
             }
         }

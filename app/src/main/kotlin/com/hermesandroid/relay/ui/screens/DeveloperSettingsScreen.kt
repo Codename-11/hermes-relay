@@ -64,8 +64,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Dedicated Developer Options screen. Gated behind the tap-version-7x
- * unlock. Hosts feature flags (voice/terminal/bridge/etc.), data management
- * (clear session / wipe caches), and any experimental toggles.
+ * unlock. Hosts experimental labs, test tools, and data-management utilities.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,12 +72,12 @@ fun DeveloperSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
     onNavigateToRealtimeVoice: () -> Unit = {},
+    onNavigateToImageGenerationLab: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalBrand.current.isDark
-
-    val relayEnabled by FeatureFlags.relayEnabled(context).collectAsState(initial = FeatureFlags.isDevBuild)
+    val petTerrainOverlayEnabled by FeatureFlags.petTerrainOverlayEnabled(context).collectAsState(false)
 
     // Data management local state — unfolded from the private
     // DataManagementSection helper in the old SettingsScreen.
@@ -184,8 +183,17 @@ fun DeveloperSettingsScreen(
                             )
                         }
                         IconButton(onClick = {
-                            connectionViewModel.resetOnboarding()
-                            Toast.makeText(context, context.getString(R.string.dev_settings_onboarding_reset_toast), Toast.LENGTH_SHORT).show()
+                            connectionViewModel.resetOnboarding { success ->
+                                Toast.makeText(
+                                    context,
+                                    if (success) {
+                                        context.getString(R.string.dev_settings_onboarding_reset_toast)
+                                    } else {
+                                        context.getString(R.string.dev_settings_reset_failed)
+                                    },
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.RestartAlt,
@@ -299,42 +307,6 @@ fun DeveloperSettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Relay features toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Science,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.tertiary
-                                )
-                                Text(
-                                    text = stringResource(R.string.dev_settings_relay_features),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            Text(
-                                text = stringResource(R.string.dev_settings_relay_features_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = relayEnabled,
-                            onCheckedChange = { scope.launch { FeatureFlags.setRelayEnabled(context, it) } }
-                        )
-                    }
-
-                    HorizontalDivider()
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -372,6 +344,75 @@ fun DeveloperSettingsScreen(
 
                     HorizontalDivider()
 
+                    if (FeatureFlags.isDevBuild) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Science,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.dev_settings_image_generation_lab),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                                Text(
+                                    text = stringResource(R.string.dev_settings_image_generation_lab_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = onNavigateToImageGenerationLab) {
+                                Icon(
+                                    imageVector = Icons.Filled.Science,
+                                    contentDescription = stringResource(
+                                        R.string.dev_settings_open_image_generation_lab_cd
+                                    ),
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.dev_settings_pet_terrain_overlay),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.dev_settings_pet_terrain_overlay_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = petTerrainOverlayEnabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        FeatureFlags.setPetTerrainOverlayEnabled(context, enabled)
+                                    }
+                                },
+                            )
+                        }
+
+                        HorizontalDivider()
+                    }
+
                     // Lock developer options
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -390,9 +431,15 @@ fun DeveloperSettingsScreen(
                             )
                         }
                         IconButton(onClick = {
-                            scope.launch { FeatureFlags.lockDevOptions(context) }
-                            Toast.makeText(context, context.getString(R.string.dev_settings_locked_toast), Toast.LENGTH_SHORT).show()
-                            onBack()
+                            scope.launch {
+                                FeatureFlags.lockDevOptions(context)
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.dev_settings_locked_toast),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                onBack()
+                            }
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.Lock,
@@ -520,8 +567,16 @@ fun DeveloperSettingsScreen(
                     onClick = {
                         showExportDialog = false
                         connectionViewModel.exportSettings { json ->
-                            backupJson = json
-                            exportLauncher.launch("hermes-relay-sensitive-backup.json")
+                            if (json == null) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.dev_settings_export_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                backupJson = json
+                                exportLauncher.launch("hermes-relay-sensitive-backup.json")
+                            }
                         }
                     }
                 ) {
@@ -577,8 +632,17 @@ fun DeveloperSettingsScreen(
                 TextButton(
                     onClick = {
                         showResetDialog = false
-                        connectionViewModel.resetAppData()
-                        Toast.makeText(context, context.getString(R.string.dev_settings_app_data_reset_toast), Toast.LENGTH_SHORT).show()
+                        connectionViewModel.resetAppData { success ->
+                            Toast.makeText(
+                                context,
+                                if (success) {
+                                    context.getString(R.string.dev_settings_app_data_reset_toast)
+                                } else {
+                                    context.getString(R.string.dev_settings_reset_failed)
+                                },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                 ) {
                     Text(stringResource(R.string.dev_settings_reset_action), color = MaterialTheme.colorScheme.error)

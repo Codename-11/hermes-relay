@@ -134,6 +134,7 @@ Phone (WSS)      → Relay Server (:8767)          [bridge, terminal]
 - Pairing codes are user-friendly and don't require pre-shared secrets.
 - Session tokens avoid re-pairing on every app restart.
 - Tokens stored in EncryptedSharedPreferences (Android Keystore-backed AES-256-GCM).
+- An explicit re-pair replaces older sessions and trusted credentials for the same non-empty device ID; it does not accumulate duplicate entries for one app installation. Other devices and legacy entries without an identity remain independent.
 
 #### 6a. QR Carries Both API and Relay Credentials (updated 2026-05-03)
 
@@ -265,9 +266,11 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 
 ### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
 
-> **Status (2026-06-29):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); cron `deliver=phone` is the one remaining broken path. See TODO.md "Phone platform — usability roadmap".
+> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in TODO.md.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
+>
+> **Outbound-first refinement (2026-08-14):** an outbound platform send does not itself create a gateway session; the `source=phone` session is created only when the phone first replies. Android groups the bounded proactive cache by connection + `chat_id` and renders a provisional Thread during that gap. A notification tap opens that exact provisional Thread, and the first reply uses the existing phone-platform path before promoting the view to the real gateway session. Once `/phone/threads` reports the mapping, the provisional row disappears. This cache is a bootstrap transcript, not a second long-term history store.
 >
 > **Why unified, not separate:** a separate "agent chat" tab is redundant — a Thread is just a chat session the agent can also start. One Chat surface (sessions tagged by source) matches the Discord/messaging-app model the product targets. **Two distinct senses of "gateway" to keep straight:** the *messaging gateway / platform layer* (`gateway/platforms/*` — phone/Discord/Slack as platforms; this is the Thread's `source`) vs. the *dashboard gateway transport* (`/api/ws` tui_gateway — how live chat bytes flow). A Thread is defined by its **platform/source**, not its transport; the two are orthogonal.
 
@@ -589,7 +592,10 @@ We considered four options:
    501 toggle stub remain — no native equivalent exists.
 3. Config/memory/available-models/session search: remove those compatibility
    handlers only after stable core APIs exist or the dependent Android surfaces
-   are redesigned.
+   are redesigned. While they remain, session search is offloaded through
+   upstream `AsyncSessionDB` (or `asyncio.to_thread` on older Hermes), and each
+   memory mutation request resets the optional upstream per-turn consolidation
+   failure budget so independent REST calls cannot consume one shared budget.
 4. Slash middleware: remove after native API-server slash preprocessing exists.
 5. Full cleanup: delete `hermes_relay_bootstrap/`, delete
    `hermes_relay_bootstrap.pth`, remove the `.pth` install block, and update
@@ -825,14 +831,15 @@ Server side (`plugin/relay/config.py`, `plugin/relay/server.py`):
 Client side (`app/src/main/kotlin/.../data/ProfileData.kt`, `auth/AuthManager.kt`, `viewmodel/ChatViewModel.kt`):
 - `Profile` includes the `apiServer*` metadata and exposes `hasIsolatedApi`.
 - `AuthManager.parseAgentProfiles` reads the new `api_server_*` fields with safe defaults so older relays remain compatible.
-- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL while reusing the Connection's stored API bearer token.
+- `ConnectionViewModel` keeps a base API client for server health/settings and a chat-routed API client for actual chat. Selecting a profile with `apiServerUrl` swaps chat/session calls to that profile API URL using the Connection's stored API bearer token.
+- **Multiplex routing (2026-07-19, amended 2026-07-28).** When dashboard `/api/status` positively reports `gateway_mode=multiplex` and the selected non-default profile appears in its `profiles` list, the chat-routed API client uses the shared listener at `/p/<encoded-profile>`. Dedicated `api_server_url` metadata still wins. Missing/older topology and the server-default selection stay on the root API URL, so no prefix is guessed. A known multiplex profile route uses a separately encrypted per-Connection/per-profile API key configured in the profile sheet; if none exists, Android sends no bearer rather than reusing the root Connection key. The optional compatibility bootstrap recognizes the prefix for slash-command route matching only; upstream middleware remains responsible for authorization and profile runtime scope.
 - `ChatViewModel` send path omits `profile`, `model`, and profile `SOUL.md` overrides when the selected profile has an isolated API route. The profile API server owns its own default model, SOUL, sessions, memory, tools, and `.env`; Android still appends phone context when enabled. If no isolated API route exists, it keeps the compatibility overlay behavior.
 - Chat session browsing is scoped to the selected profile route. On profile switch Android clears the old session list, refetches through the routed API client, and labels the drawer with the active profile/API fallback.
-- Voice requests carry the selected profile to relay-owned `/voice/*` routes. `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
+- Voice requests carry the selected profile to both upstream dashboard audio routes and relay-owned `/voice/*` routes. Standard `/api/audio/transcribe`, `/api/audio/speak`, `/api/audio/speak-stream`, and provider-catalog requests use the selected profile query; Relay `/voice/config` resolves profile-local `tts`/`stt` where present, while `/voice/output/*` and `/voice/realtime/*` resolve experimental `voice_output` / `realtime_voice` sections from the selected profile config and fall back to relay defaults with explicit `config_scope` metadata.
 
 **Trade-offs / v1 scope:**
 - **Isolation when the profile API is running; overlay only as fallback.** Proper Hermes profile switching requires each profile's API server/gateway to be running and discoverable. If a profile has no API route, the app can still provide the older model/SOUL overlay, but that does not isolate memory, sessions, tools, provider auth, or cron jobs.
-- **Shared-key assumption.** The relay exposes only `api_server_key_present`, never the key. Android reuses the active Connection's stored API bearer for profile API requests. Operators who intentionally use different API keys per profile should pair those profile API servers as separate Connections or keep a shared API key across profile API servers.
+- **Credential isolation.** The relay exposes only `api_server_key_present`, never the key. Dedicated profile API origins retain the Connection credential contract. Shared `/p/<profile>` routes use encrypted profile credentials and never inherit the root key.
 - **SOUL.md size.** Some SOUL files are multi-KB (Mizu's is 8 KB). The full content ships as `system_message` only in overlay fallback mode; isolated profile APIs should rely on their own configured SOUL/default prompt.
 - **Persisted per Connection.** The selected profile name and last session id are persisted per Connection/profile context. Switching Connections clears the in-memory object, then rehydrates the destination Connection's persisted profile once its advertised profile list arrives.
 - **Voice is profile-aware but still relay-mediated.** Voice output/realtime settings can follow the selected profile, but provider secrets stay server-side and the Hermes chat/tool loop still owns the final assistant text. Bridge commands remain unrelated to model choice.
@@ -973,7 +980,16 @@ The plan called for adding a `// VOICE HOOK` callback to `ChatViewModel` so `Voi
 - Observes the same state the chat UI observes — no divergence risk.
 - Transcribed user text routes through the existing `chatVm.sendMessage(text)` path, so voice utterances appear as normal user messages in chat history. Load the session on another device and you see the transcript.
 
-**Trade-off documented in a KDoc comment:** relies on the "last `isStreaming=true` message is the current turn" invariant. If `ChatViewModel` ever streams multiple assistant messages concurrently (multi-agent hand-off, for example) this needs a dedicated per-turn flow. Flagged for Phase 3+ review.
+**Follow-up (2026-07-25):** the observer no longer relies on a single
+`isStreaming=true` assistant message. A per-turn cursor follows every new
+assistant bubble until the run-level `ChatViewModel.isStreaming` state ends,
+so tool handoffs and the final answer are narrated in order. The cursor fences
+the pre-turn stable UI identities and submitted user-turn/session identity,
+and only speaks strict content suffix growth, preventing StateFlow/history
+reconciliation or a pending-new-chat session switch from replaying old or
+rewritten text. Each newly observed assistant bubble also inserts a speech
+boundary, so an interim fragment without punctuation cannot run into the final
+answer.
 
 ### Alternatives explicitly rejected
 
@@ -1070,32 +1086,36 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
 ```json
 {
   "hermes": 3,
-  "host": "192.168.1.100",
+  "host": "hermes.tail-scale.ts.net",
   "port": 8642,
   "key": "optional-api-key",
-  "tls": false,
-  "relay": { "url": "ws://192.168.1.100:8767", "code": "ABC123",
+  "tls": true,
+  "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "code": "ABC123",
              "ttl_seconds": 2592000, "grants": {...},
-             "transport_hint": "ws" },
+             "transport_hint": "wss" },
   "endpoints": [
-    { "role": "lan",       "priority": 0,
-      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767",
-                 "transport_hint": "ws" } },
-    { "role": "tailscale", "priority": 1,
+    { "role": "tailscale", "priority": 0,
       "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
       "relay": { "url": "wss://hermes.tail-scale.ts.net:8767",
                  "transport_hint": "wss" } },
-    { "role": "public",    "priority": 2,
+    { "role": "public",    "priority": 1,
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
       "relay": { "url": "wss://hermes.example.com/relay",
-                 "transport_hint": "wss" } }
+                 "transport_hint": "wss" } },
+    { "role": "lan",       "priority": 2,
+      "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
+      "relay": { "url": "ws://192.168.1.100:8767",
+                 "transport_hint": "ws" } }
   ],
   "sig": "base64-hmac-sha256"
 }
 ```
 
 **Semantics (locked):**
+- **Generated defaults are secure-first (amended 2026-08-12).** An available
+  pinned Hermes Secure Link, Tailscale Serve, and configured public TLS candidates
+  precede plain LAN. LAN remains a signed, independently acknowledged fallback.
+  An explicit operator preference can still change the strict order.
 - **`role` is an open string.** Known values `lan` / `tailscale` / `public`
   get styled chips + icons on the phone. Anything else (`wireguard`,
   `zerotier`, `netbird-eu`, whatever the operator wants) renders with a
@@ -1107,17 +1127,25 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   over a higher one. Reachability is only the tiebreaker for candidates
   that share the same priority. This is the DNS SRV priority/weight
   contract — known-good semantics, nothing new to debate.
-- **Reachability probe**: `HEAD` against `${api.tls?https:http}://
-  ${api.host}:${api.port}/health` with a 2-second timeout. The result is
-  cached for 30 seconds per-endpoint so repeated `connect()` calls don't
-  hammer the network. Relay-side reachability is implied — if the API
-  server is reachable the relay usually is too, and the first WSS connect
-  will loudly fail otherwise.
+- **Reachability probes are per surface.** Standard routing probes Dashboard
+  `/api/status` when present, otherwise an explicitly configured API `/health`,
+  with Relay `/health` used only for Relay-only records. Relay socket selection probes the
+  candidate's own Relay `/health`; a healthy Dashboard or API listener never
+  vouches for Relay on another port. Results are cached independently by
+  candidate and surface, so a Relay outage cannot poison healthy standard chat,
+  Manage, sessions, or Vanilla Hermes voice.
 - **Network-change re-probe**: Android's `ConnectivityManager
   .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
   higher-priority candidate became reachable after a network transition,
   the phone reconnects to it; if the current one became unreachable, the
   phone falls through to the next candidate in priority order.
+- **Relay retry state is route-aware.** Transport-failure streaks are scoped to
+  the Relay socket URL, so one LAN failure plus one Tailscale failure cannot
+  evict Tailscale as though it had failed twice. Automatic route replacement
+  preserves the accumulated exponential-backoff attempt; explicit user/network
+  handoff and a successful socket open reset it. If every Relay surface is
+  unavailable, the standard route remains stable while Relay retries the last
+  configured socket with bounded backoff.
 - **TTL defaults by role** (informational — operator can override at
   pair time): `lan` → 7 days, `tailscale` → 30 days, `public` → 30 days,
   unknown role → 7 days (conservative). The longer `tailscale` default
@@ -1703,7 +1731,10 @@ override:
 **Protocol additions (relay <-> Android, additive).**
 
 - `hermes.run.promoted` - run moved to background; carries `run_id`,
-  `promote_after_ms`, `spoken_handoff`.
+  `promote_after_ms`, `spoken_handoff`. A false `spoken_handoff` is also the
+  foreground turn boundary; when true, the following `voice.response.done` is
+  the boundary. In both cases the background socket, task card, cancellation,
+  progress, and result delivery remain active.
 - `hermes.run.background_completed` - background run finished; precedes the
   provider/relay summary.
 - Extend `hermes.run.progress` with `tier` and `floor` so the client can render
@@ -1940,7 +1971,8 @@ after the turn settles and therefore cannot restore the in-between UI.
 
 1. Persist active session-backed turns as a bounded set in the shared Android
    DataStore, keyed by connection/profile context plus durable session id, with a
-   24-hour expiry. Store each visible assistant state and server-issued ask, but
+   24-hour expiry. Store each visible assistant state and server-issued ask,
+   including clarify multi-select semantics, but
    never an entered password/secret or approval response.
 2. On reopen, restore that UI immediately, then recover in this order: exact
    `session.activate` using the saved live id; `session.resume` using the durable
@@ -1952,6 +1984,9 @@ after the turn settles and therefore cannot restore the in-between UI.
    remains exclusive because that transport cannot multiplex live sessions.
 4. Apply the same history fallback to sessions-SSE transport drops and route
    handoffs. A final persisted transcript replaces the checkpoint and clears it.
+5. When `session.resume.inflight` includes user corrections, restore the bounded
+   corrections in server order exactly once between the original user turn and
+   the partial assistant response.
 
 **Consequences.** Reopening Chat or moving between running Gateway chats can
 continue each assistant bubble with its last-known reasoning and tool state
@@ -2017,9 +2052,9 @@ private preflight.
 
 ---
 
-## ADR 37 — Desktop is CLI/TUI plus an optional menu-only Windows systray
+## ADR 37 — Desktop is CLI/TUI plus an optional Windows management tray
 
-**Status:** Accepted (2026-07-13).
+**Status:** Amended (2026-08-11; originally accepted 2026-07-13).
 
 **Context.** The Windows Tauri shell grew from a tray convenience into a second
 desktop client with Chat, embedded PTYs, sessions, plugins, voice, diagnostics,
@@ -2029,41 +2064,87 @@ helper carry a full WebView application architecture.
 
 **Decision.** Hermes-Relay desktop has exactly two deliverables on the
 `desktop-v*` production track (historical `cli-v*` tags remain immutable):
-track:
 
 1. `hermes-relay`, the primary cross-platform CLI and terminal TUI. Interactive
    behavior, pairing, sessions, daemon management, grants, audit, diagnostics,
    plugins, chat, and voice remain CLI-owned.
-2. `hermes-relay-tray`, an optional Windows-only native tray process. Its only
-   interface is the right-click context menu. It may display daemon state and
-   invoke the installed CLI for TUI, start/stop/restart, pairing, pending grant
-   review, audit, diagnostics, logs, sign-in startup, emergency stop, and exit.
-   Left-click does nothing. Daemon state includes PID liveness and the current
+2. `hermes-relay-tray`, an optional Windows-only management tray. It may display
+   a single compact popup for connection state, paired Hermes hosts, the selected
+   host's access policy, pending grants, daemon controls, authorized clients,
+   activity, and settings. It invokes the installed CLI rather than duplicating
+   its state or protocol logic. Daemon state includes PID liveness and the current
    User/Administrator privilege level; elevation is an explicit UAC-confirmed
    daemon action, never a permanently elevated tray. Desktop computer use is a
-   persistent CLI-owned machine preference, while the tray displays and invokes
-   that contract rather than maintaining private settings.
+   per-host CLI-owned policy, while the tray displays and invokes that contract
+   rather than maintaining private settings.
 
-The tray must not create an application window, WebView, overlay, embedded
-terminal, chat view, session manager, plugin view, voice view, diagnostics
-dashboard, or settings panel. Actions requiring interaction open the real CLI
-in a terminal. The Windows installer places one CLI binary and the tray binary
-beside each other under `~/.hermes/bin`; there is no private bundled sidecar.
+The management popup is deliberately not a second Hermes desktop client. It must
+not contain chat, an embedded terminal or PTY, agent sessions, plugins, voice, an
+always-on overlay, or a general diagnostics dashboard. Pairing may open the real
+CLI until an equally narrow native pairing dialog exists. The Windows installer
+places one CLI binary and the tray binary beside each other under
+`~/.hermes/bin`; there is no private bundled sidecar.
+
+**2026-08-11 access and host amendment.** Stored relay URLs represent distinct
+Hermes hosts, not peer devices on one relay. The compact host selector lists
+those local pairings and places **Pair another host...** inside the selector;
+when none exist, the selector becomes the single Pair action. Peer sessions for
+the selected relay appear only under Settings as authorized clients and may be
+revoked there.
+
+Host access is persisted locally, keyed by canonical relay URL, and defaults to
+`ask`. `trusted` permits the regular command and file tool surface while keeping
+task-scoped screen/input approval. `full_access` also permits screen, keyboard,
+and mouse use without expiring task grants for that host. Full Access never
+bypasses relay authentication, local audit, revocation, emergency stop, or UAC
+boundaries. The daemon may connect in a locked zero-tool state under `ask`, so
+starting connectivity does not itself require or imply a tool grant.
 
 **Consequences.**
 
-- Tauri, xterm, dashboard assets, tray IPC, and tray-owned PTY/process state are
-  removed.
-- Pending computer-use requests gain a CLI command so approval is available
-  without a GUI window and stays scriptable.
+- A narrowly scoped Tauri WebView is allowed for the popup; xterm, tray-owned
+  PTY/process state, and full desktop-client assets remain excluded.
+- Pending computer-use requests retain a CLI command and are also resolved in a
+  focused in-window dialog, so normal tray operation never requires opening a
+  terminal merely to approve or reject a request.
 - Normal-user operation remains the default. Administrator desktop-tool access
   is available through an explicit UAC prompt, and elevated daemon lifecycle
   actions retain that privilege boundary.
-- Experimental desktop use remains separately opt-in. The tray shows its state,
-  active grant and expiry, alerts on pending local approval, supports immediate
-  cancellation, and warns when an Administrator input grant is active.
-- The tray is a small native Rust process built on `tray-icon`; NSIS packages it
-  with the same compiled CLI released separately.
+- The tray shows host access, active grant and expiry, alerts on pending local
+  approval, supports immediate cancellation, and warns when an Administrator
+  input grant is active.
+- Local desktop-tool audit entries use a backward-compatible structured event
+  envelope (`tool.completed`, category, duration, request ID, and optional
+  process exit code). The tray derives its live, filterable Activity view from
+  that local log and treats non-zero exits as attention-worthy even when the
+  tool handler itself returned normally. Successful tray management actions
+  append compatible `management.completed` events, keeping daemon, host-access,
+  grant, client-revocation, startup, pairing, and update changes in the same
+  local timeline without creating a second state store.
+- Settings shows only a short Activity preview. A dedicated detail view owns
+  filters, event expansion, and confirmed local-history clearing. Non-zero
+  subprocess exits are warnings rather than user-actionable Issues; only handler
+  failures and aborts contribute to the Issues count.
+- Host cards navigate to local detail rather than implicitly switching the
+  daemon. Host selection is an explicit detail action, and an optional local
+  alias is stored beside the selected relay URL without mutating the paired
+  session or remote server identity.
+- The tray is a small Rust/Tauri process; NSIS packages it with the same compiled
+  CLI released separately.
+- **2026-08-14 process-containment amendment.** Treat every external executable
+  launch as a bounded resource. Periodic UI refreshes must be single-flight and
+  coalesced across windows, must not start another refresh while one is pending,
+  and must apply a timeout, termination, and retry backoff to every child.
+  Grant-card discovery reads the local bridge directly rather than polling the
+  complete management snapshot. Static probes such as the CLI version, registry
+  settings, and optional ADB availability are cached or refreshed only when the
+  owning setting changes. The tray must remain useful when a probe fails and
+  must never amplify that failure into an unbounded subprocess queue.
+- Tray lifecycle, refresh, and child-process diagnostics are recorded in the
+  bounded local `~/.hermes/tray.log`; daemon authentication, transport, and tool-
+  router lifecycle remain in `~/.hermes/daemon.log`. Operational logs exclude
+  credentials and sensitive command arguments. Management failures are reported
+  as failures rather than silently dropped or appended as successful activity.
 - Rich full-window desktop chat and management remain upstream desktop-product
   concerns, not a Hermes-Relay surface.
 - The CLI package version remains canonical for both binaries and the installer.
@@ -2103,12 +2184,22 @@ stable identity independent of endpoint URLs.
 - **Relay is optional.** It adds pairing, terminal, bridge/device control,
   media, notification companion, enhanced voice, and desktop tooling. It never
   becomes a prerequisite for standard chat or management.
+- **Relay compatibility shims are narrow and read-only.** When upstream Gateway
+  suppresses `image_generate` lifecycle frames with tool progress disabled, a
+  paired Android client may poll Relay's `/chat/image-activity` route during
+  that active turn. Relay derives start/completion state from the selected
+  profile's authoritative Hermes session database without proxying chat.
+  Native Gateway lifecycle events take precedence, and absence of the optional
+  route silently restores the vanilla behavior.
 - **Readiness is capability-based.** Chat, Manage, Voice, API fallback, and
   Relay extensions report their own state. A missing optional endpoint does not
   mark the whole connection unhealthy.
 - **Routing is automatic.** Chat prefers Dashboard/Gateway and falls back to the
   API server only when configured and usable. Users choose a transport only in
   advanced diagnostics or compatibility settings, not during normal setup.
+  Endpoint discovery may advertise a conventional API route, but does not enable
+  that optional fallback unless the connection has persisted API configuration;
+  cold-start state remains unconfigured until that persisted value is hydrated.
 
 **Product flow.** Normal onboarding asks for one Hermes address, discovers the
 Dashboard/Gateway, authenticates through its supported provider, and finishes
@@ -2138,3 +2229,989 @@ An API endpoint or Relay can be added later without recreating the connection.
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/GatewayChatClient.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/network/upstream/HermesApiClient.kt`
 - `docs/upstream-surface-matrix.md`
+
+---
+
+## ADR 39 — Android dashboard redirect auth uses native PKCE
+
+**Status:** Superseded by ADR 40 (2026-07-27).
+
+**Context.** Android originally completed redirect-provider dashboard sign-in
+inside a WebView and imported cookies. Current upstream Gateway can advertise a
+native authorization-code flow with PKCE, bearer refresh, and WebSocket ticket
+support. That contract allows the provider to use the user's browser session
+without exposing browser cookies to the app.
+
+**Decision.** When `/api/status.auth_flows` contains `native_pkce`, Android uses
+an AndroidX Custom Tab and a lifecycle-owned callback bound to literal
+`127.0.0.1` on an OS-assigned port. The selected provider, S256 challenge,
+redirect URI, and CSRF state are sent to upstream. Verifier/state remain only
+in the sign-in coroutine; callback input is bounded and state-validated before
+errors or codes are accepted. Tokens are encrypted per connection and attached
+only to the exact trusted dashboard base. Native bearer exchange requires
+HTTPS, except literal loopback development. Missing capability selects the
+legacy cookie/WebView flow; native failures do not silently downgrade.
+
+All dashboard consumers share the same authenticated client policy: Gateway
+chat and tickets, Manage and cold prewarm, standard voice, and voice config.
+Local sign-out clears cookies and native tokens and closes the cached Gateway
+socket.
+
+**Consequences.**
+
+- Redirect-provider sign-in remains in the app task while using the system
+  browser's provider session and security posture.
+- Process death or cancellation discards the ephemeral authorization and simply
+  requires a new attempt.
+- Plain-LAN HTTP dashboards must be upgraded to HTTPS before native bearer auth
+  is offered.
+- Older upstream versions remain usable through the explicitly identified
+  WebView compatibility path.
+
+---
+
+## ADR 40 — Android dashboard redirect auth is provider-compatible
+
+**Status:** Amended (2026-07-28).
+
+**Context.** Upstream advertises `native_pkce` in `/api/status.auth_flows` for
+its desktop client. The corresponding `/auth/native/*` broker is explicitly a
+desktop system-browser flow: it redirects to a loopback listener owned by the
+desktop process and returns bearer tokens rather than dashboard cookies.
+Android incorrectly treated that server-wide capability as a platform-neutral
+mode selector, so redirect providers such as self-hosted OIDC were sent through
+the desktop loopback contract.
+
+**Decision.** Android redirect-provider sign-in uses the upstream dashboard
+cookie flow by default:
+
+- open `/auth/login?provider=...&next=...` in a full-screen embedded sign-in
+  destination with a normal app bar rather than a modal WebView;
+- allow the provider to return through the dashboard's public
+  `/auth/callback`;
+- import only cookies observed on the configured dashboard origin;
+- verify the imported session through `/api/auth/me`;
+- reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
+  navigation instead of following or importing it.
+
+Android does not select `/auth/native/authorize` merely because it appears in
+`auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
+is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
+Android WebViews, so Android uses the gateway-brokered native PKCE route for
+that provider when advertised and opens it in a system Custom Tab. The
+ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
+store, and exact-origin attachment remain app-owned. Public cleartext
+dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
+dashboard routes retain the same HTTP allowance as their existing cookie
+sessions. If the provider redirect from a private route declares a canonical
+HTTPS dashboard callback, Android begins browser authorization on that
+canonical origin so the temporary PKCE cookie and callback remain same-origin;
+the one-time code exchange and resulting exact-origin bearer stay bound to the
+active private route.
+
+**Consequences.**
+
+- Self-hosted OIDC uses the same public callback registered for the dashboard.
+- Android Manage, Chat, Voice, and onboarding continue to share one verified
+  dashboard cookie session.
+- A server-wide desktop capability can no longer switch Android into a
+  loopback callback flow.
+- Android retains a full-screen embedded WebView for compatible dashboard
+  cookie providers, while providers that prohibit embedding use the explicit
+  brokered native route.
+
+---
+
+## ADR 41 — Android owns full-turn interruption and experimental wake detection
+
+**Status:** Accepted (2026-07-29).
+
+**Context.** Android barge-in previously armed only when speech playback began.
+That left agent generation non-interruptible and recreated the microphone/VAD
+pipeline at the Thinking-to-Speaking boundary. Upstream voice work established
+a safer full-turn lifecycle, quiet calibration before playback, and phase-aware
+bare stop behavior. Upstream wake listening is host-local, but enabling that
+server listener from Android would capture audio on the wrong machine and
+couple Standard voice to non-standard server behavior.
+
+**Decision.**
+
+- Android owns one barge-in listener per active voice response, spanning
+  `Thinking`, `Speaking`, and final audio drain on Standard and Realtime paths.
+  A turn epoch fences callbacks, and teardown completes before replacement
+  capture or another listener can acquire the microphone.
+- Quiet-room RMS calibration occurs before output and freezes at playback
+  start. The gate follows upstream's 90th-percentile ambient floor, 3× default
+  multiplier, generation/playback minimums, 4,000 RMS ceiling, 500 ms grace,
+  and 80%-majority decision window. Calibration frames cannot trigger. The
+  renderer drives playback phase, ambient drift resumes only in quiet gaps,
+  and grace rearms after gaps of at least one second. Android exposes the
+  multiplier and grace for device tuning while preserving upstream defaults.
+- Interruption uses the existing active-turn cancellation seam. Late Standard
+  stream content and Realtime audio are suppressed. Silencing does not cancel
+  a promoted Hermes task; explicit background-task cancellation remains the
+  separate destructive intent.
+- Configurable stop phrases default to exact bare `stop` and end the active
+  voice chat during generation or playback; an empty list disables the feature.
+  The phrase remains ordinary agent input outside voice chat, and longer
+  requests remain agent input. Existing exact pause/resume controls remain
+  phase-gated to Continuous mode.
+- A playback interruption arms the upstream-compatible one-shot note for the
+  next model-bound Standard turn, expires after 120 seconds, and is carried in
+  API-local interface context rather than visible or persisted user text.
+  Generation or pre-audio synthesis interruption does not claim that spoken
+  output was cut off, and Realtime relies on its persistent provider session
+  context.
+- Wake-word detection is Android-local, experimental, and off by default. A
+  user-started microphone foreground service runs sherpa-onnx for the single
+  validated “Hey Hermes” phrase, with an ongoing notification and Stop action.
+  No pre-activation PCM leaves the phone.
+- Wake and voice share a process-wide microphone lease. Detection releases its
+  recorder before entering the existing voice flow and resumes only after voice
+  exits. There is no boot receiver or server wake-listener control.
+- The KWS model is downloaded and SHA-256 verified on first enable. Preferences
+  store enabled state, fixed phrase, strictness, decoder confirmation,
+  start-new-session behavior, and a future-safe profile-routing shape. Only
+  active-profile preservation is implemented; profile-specific phrases are
+  intentionally not claimed.
+- sherpa owns temporal confirmation through `numTrailingBlanks`. Android treats
+  each non-empty keyword result as a completed event, resets the native stream
+  immediately, and does not require the same completed result to recur. Voice
+  settings can arm a bounded real-microphone test; test detections report
+  success without entering voice or acquiring a second microphone owner.
+
+**Consequences.**
+
+- Standard voice remains Dashboard/Gateway-backed and works against unmodified
+  upstream Hermes. Local detection is an Android input affordance, not a Relay
+  server dependency.
+- The sherpa runtime increases Android artifacts for each packaged ABI, while
+  the approximately 6 MB model is device storage rather than APK payload.
+- Continuous wake listening has visible microphone and battery cost and
+  requires explicit device/acoustic validation before the experimental label
+  can be reconsidered.
+- The ordinary foreground-service mode may continue listening in the
+  background, but it does not launch an activity from the background. It holds
+  a detection behind an actionable notification until Hermes is visible.
+  Default-assistant integration is a separate Android system role and lifecycle.
+
+---
+
+## ADR 42 — Full assistant wake uses Android's selected VoiceInteractionService
+
+**Status:** Accepted (2026-07-30).
+
+**Context.** The microphone foreground-service preview can detect in the
+background, but Android correctly prevents an ordinary background app from
+presenting its Activity immediately. Queuing the activation behind a
+notification is therefore not equivalent to a default digital assistant.
+Accessibility, overlays, full-screen intents, or server-side microphones would
+either bypass platform policy, weaken privacy, or break the vanilla-Hermes
+boundary.
+
+**Decision.**
+
+- Hermes declares a `VoiceInteractionService` and associated
+  `VoiceInteractionSessionService`. Android activates it only after the user
+  confirms Hermes as the Assistant role; the app never silently takes the role.
+- The always-running interaction service remains lightweight and owns only
+  opt-in Android-local sherpa-onnx KWS. Session UI and lifecycle work run in a
+  separate process. The system session opens the existing app voice flow with
+  `startVoiceActivity`, including the keyguard-supported platform path.
+- Assistant KWS and the experimental microphone foreground service are separate,
+  mutually exclusive modes. Both use the same model, tuning, privacy boundary,
+  and one-microphone handoff. Voice capture, barge-in, and diagnostics retain
+  their existing process-wide lease.
+- Session state crosses the process boundary through explicit, package-scoped
+  broadcasts. Exit/cancel tears down the existing voice flow, finishes the
+  system session, and retries local wake ownership only after the microphone is
+  free. Process recreation creates a fresh activation rather than relying on an
+  in-memory Activity reference.
+- The system session defaults to a compact bottom bar and can expand without
+  changing turn lifecycle. **Open full voice** disables only the system-owned
+  session UI and foregrounds the app-owned Voice surface. It does not create
+  another voice session or reacquire the microphone. Back collapses an expanded
+  surface first; Back from compact, hide, Stop, or cancel remains terminal,
+  while the hidden session still observes the final `Closed` state and finishes
+  without cancelling the completed turn.
+- Connection, chat, and voice runtime ownership is application-lifetime in the
+  main process rather than Activity-owned. The assistant service may initialize
+  that graph and start a turn while no Activity exists; the app UI later binds
+  the same ViewModels, recorder, players, clients, and turn state. The isolated
+  session process never creates voice collaborators.
+- Standard voice remains dashboard-backed and upstream-only. Assistant mode adds
+  an Android invocation surface; it does not add or require a Relay/server wake
+  endpoint.
+
+**Consequences.**
+
+- Background and locked-screen invocation is mediated by Android's selected
+  assistant UI/session rather than an ordinary background Activity launch.
+- Users can leave Hermes selected for gesture/power-button invocation while
+  turning continuous KWS off, or remove Hermes through Android's Assistant
+  settings.
+- Android does not grant third-party assistants Google's dedicated low-power
+  hotword DSP integration. Local sherpa inference keeps pre-activation audio
+  private but can consume materially more battery than the built-in assistant.
+
+---
+
+## ADR 43 — App-owned voice overlay uses a microphone foreground service
+
+**Status:** Accepted (2026-07-31).
+
+**Context.** A `TYPE_APPLICATION_OVERLAY` remains visible over another app, but
+it does not make its owning process foreground for Android's while-in-use
+microphone app-op. The first capture could begin during the foreground grace
+window, while later captures opened successfully but received silenced PCM.
+Keeping `AudioRecord` in the existing voice runtime was still desirable: wake,
+voice capture, barge-in, and diagnostics already share one process-wide owner.
+
+**Decision.**
+
+- Opening the system voice overlay while Hermes is visible starts a dedicated
+  service with `foregroundServiceType="microphone"` before the app backgrounds.
+  The required ongoing notification explains the microphone access and offers
+  a terminal **Stop voice** action.
+- The service never creates an `AudioRecord` and never acquires a microphone
+  lease. It supplies only the foreground execution capability; the existing
+  `VoiceViewModel` and `VoiceRecorder` remain the sole capture owner.
+- Overlay Hide, Exit, Open Hermes, voice-mode shutdown, add-view failure, and
+  app-task removal stop the service. Notification Stop closes the overlay and
+  exits voice mode rather than leaving an unprotected capture surface visible.
+- The service is distinct from experimental wake-word listening. Wake remains
+  paused during voice and cannot become a second microphone owner.
+
+**Consequences.**
+
+- Repeated overlay turns can receive real microphone PCM after Hermes moves to
+  the background instead of Android substituting silence.
+- Background overlay use has an explicit persistent privacy affordance and
+  cannot silently retain microphone eligibility after the overlay session.
+- Android 14+ while-in-use rules require starting this service from the visible,
+  user-initiated overlay action; an arbitrary background caller cannot create
+  equivalent microphone privilege.
+
+---
+
+## ADR 44 — Floating pets use one measured-rail behavior director
+
+**Status:** Accepted (2026-08-01).
+
+**Context.** An app-level pet is visually pleasant only when its movement reads
+as intentional and never competes with the interface. Treating the entire
+Compose or accessibility tree as walkable geometry would make text and controls
+accidental terrain, while independently launched animation effects can interrupt
+dragging, misrepresent active agent work, or snap to stale coordinates when a
+scroll changes measured bounds. Chat adds a special case: the pet should walk on
+top of a response bubble without ever covering its text or jumping through it.
+
+**Decision.**
+
+- One root overlay owns position and arbitration. It consumes no transcript or
+  control-bar layout space; only the pet-sized target handles pointer input.
+- Appearance persists one 60–120% scale, default 100%, that changes art, touch
+  target, collision footprint, perch eligibility, and route clearance together.
+  The 100% base equals the previous 125% physical size, and legacy stored values
+  are rebased to preserve their rendered size; visual and planner geometry may
+  never scale independently.
+- Screen owners opt in by publishing live-measured perches, obstacles, scrolling,
+  and modal visibility. The supported terrain is Chat's composer and eligible
+  visible settled message bubbles, Terminal's extra-keys toolbar, root Settings
+  summary/category cards, Appearance section cards, and the persistent status
+  strip on Settings/Appearance/About. No accessibility-tree scan or
+  arbitrary-Composable discovery is permitted.
+- Registration does not make a surface rectangle walkable. Bubble interiors
+  remain protected obstacles; only an explicitly derived edge rail or touchdown
+  with exact collision-validated endpoints is autonomous terrain. A validation
+  failure waits locally instead of projecting or snapping to invented geometry.
+- Direct interaction has priority over agent activity, followed by a pending
+  response visit, autonomous roaming, and idle reactions. Activity clips remain
+  truthful because locomotion is eligible only while Hermes is idle.
+- Drag/drop changes placement without changing the roaming preference. The held
+  and falling states suspend autonomous movement until the placement and landing
+  animation settle, then an enabled pet resumes from the valid landing surface.
+- Autonomous, recovery, and direct drag/drop routes are distinct motion/debug
+  kinds. Recovery and direct manipulation cannot be reused as autonomous route
+  eligibility. When a layout update has already placed the pet inside a measured
+  obstacle, recovery is limited to the shortest bounded straight egress to a
+  clear edge and stops there.
+- A response visit is a deterministic bounded terrain journey. Nearby responses
+  use the direct composer/gutter/bubble excursion. Farther visible responses
+  require a complete chain of settled message-top rails with no hop over 210 dp;
+  sparse chats without that chain defer the visit. The newest response gets the
+  full cross and greeting, then the pet may inspect one to three successively
+  older visible rails according to temperament before retracing the same bounded
+  journey. A measured bubble too narrow for walking may contribute a centered,
+  zero-width touchdown when at least 35% of the pet width is supported; it is a
+  transient route step, never an idle or patrol surface. Unsafe geometry and interactive response rows are skipped rather than
+  crossed, and a sparse gap ends exploration instead of inventing a ledge. The
+  active planner uses the same rail-overlap launch point as the debug graph,
+  walking there before takeoff and backtracking past dead-end candidate edges.
+- Settled Chat uses one text-safe habitat order: the measured side pocket beside
+  the newest settled bubble, then its raised top edge, then the outer composer
+  corner. A changed habitat is reached from the live coordinate, never snapped.
+- Settings terrain may be published dynamically by reusable components, but it
+  remains explicit opt-in measured geometry with owner scroll/modal state. The
+  app never turns every card, heading, control, or semantics node into terrain.
+  Root Settings and Appearance explicitly publish selected card tops. Their
+  bounded planner may tour several connected levels in either direction and
+  must retrace the exact selected legs; the same maximum transfer length still
+  rejects any card without a pet-sized clear approach.
+- Temporary suspension preserves screen coordinates. Scrolling stops movement
+  but does not reclassify the route, re-dock, teleport, or dim the pet. Settings,
+  Appearance, and About hide it while a dialog owns the surface. Routes without
+  an approved rail use the persisted logical-edge home.
+- Motion states correspond to physical movement: directional walking for
+  horizontal travel, jump to the apex, fall through descent and manual-drop
+  settling, and held during drag. Airborne duration grows with route length;
+  anticipation, turn pauses, cycle-quantized walking, shadow height, and landing
+  squash are presentation polish around those honest states.
+- Calm, Balanced, and Playful alter cadence and cap older-bubble exploration at
+  one, two, or three stops. App animation settings, foreground/activity state,
+  scrolling, dialogs, Android animator scale, and TalkBack touch exploration
+  always take precedence.
+- Debug builds may expose a default-off Pet path inspector anchored below the
+  app header and Android status-bar inset, leaving header navigation and actions
+  accessible. It starts as a narrow collapsed bar, moves only from an explicit
+  grip, snaps horizontally, persists normalized viewport placement, re-clamps
+  after viewport or size changes, and exposes a reset action. A recoverable PASS
+  mode collapses it and leaves only the unlock control interactive; non-control
+  regions and the diagnostic Canvas remain click-through. It expands on demand.
+  **Terrain** is the default balanced view; **Plan** isolates selected and active travel, and
+  **Full** adds protected bounds, footprint, raw labels, gate, and locomotion
+  state. The views distinguish measured terrain, narrow-bubble touchdown points,
+  collision-checked candidate routes, the selected out-and-back route with
+  directional arrows and numbered stops, and the solid currently active route.
+  The planner keeps an event-driven lookahead ready while behavior pacing is
+  idle, refreshes it on terrain or supported-waypoint changes, and treats an
+  in-flight transfer as atomic. Freeze snapshots only the visualization while planning continues. The
+  expanded actions can disable the persisted overlay request entirely, and
+  diagnostics are cleared when Developer Options are locked.
+- Installed Petdex pets use the same renderer and planner without manifest edits
+  or asset conversion by the user. The catalog preview resolves through the live
+  renderer and names the exact direct, mirrored, fallback, or mirrored-fallback
+  row for each supported action.
+
+**Consequences.**
+
+- Adding another roam surface requires an explicit measured-rail registration
+  and ownership of its scroll/modal state; it is not automatically inferred.
+- Bubble visits remain fun but deterministic and text-safe. When geometry is not
+  provably safe, no visit is preferable to a partially obscured message.
+- Position, activity truth, accessibility behavior, and Petdex fallback semantics
+  share one source of runtime truth instead of drifting across route-local effects.
+
+## ADR 45 — Provider/model reasoning levels use an optional capability overlay
+
+**Context.** Upstream Hermes owns model discovery and selection. Its
+`model.options` contract supplies provider/model identities and may report a
+reasoning boolean, but not every provider exposes an authoritative list of
+selectable effort values. A client-side provider table would drift, while making
+Relay mandatory would break the Vanilla Hermes path.
+
+**Decision.**
+
+- Upstream `model.options` remains the source of provider/model identity. Relay
+  never invents models or gates model selection or chat.
+- Android normalizes that inventory before publication: repeated rows with the
+  same case-insensitive provider slug are merged, repeated exact model IDs
+  within that provider are collapsed, and different provider slugs remain
+  separate choices even when their labels and model IDs match. Compose keys use
+  the provider slug plus exact model ID, never a display label or list position.
+- When available, the optional Relay `POST /relay/model-capabilities` overlay
+  resolves capability metadata for the exact, profile-scoped `{provider, model}`
+  pairs supplied by the client. A remote caller needs a paired session with an
+  active `chat` grant; loopback operator calls may omit it.
+- Resolution uses this precedence: an exact upstream effort list, then an exact
+  Relay effort list, then an explicit upstream `reasoning: false`, then the
+  canonical advisory set `none`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+  `max`, `ultra`.
+- Only a coherent provider/model identity may produce an exact result. API model
+  aliases may contribute only when their provider resolves uniquely. Missing,
+  malformed, unsupported, unauthenticated, or failed overlay calls keep the
+  advisory set instead of disabling the control.
+- Exact lists are selectable truth for the next request. Advisory lists are
+  compatibility choices, not a claim that every value is provider-supported.
+  An effort confirmed by the active session may remain visible as current state
+  even when it is no longer selectable for a new request.
+- Requests are schema-versioned and bounded to 64 exact pairs. Relay may perform
+  bounded provider discovery using host-owned credentials, but returns only
+  capability metadata. Credentials, credential fingerprints, probe details, and
+  internal cache keys never cross the route.
+- Primary UI copy describes **available levels** for exact results and
+  **standard levels** for advisory results. Provider source and overlay details
+  belong in diagnostics, not in the normal composer.
+
+**Consequences.** Vanilla Hermes remains complete without Relay. A connected
+Relay can narrow choices after capability discovery without changing the model
+inventory. Old Relay versions, a missing `chat` grant, network failures, and
+unsupported providers fail soft to the same stable advisory behavior. Cached,
+dynamic, and refreshed catalogs are idempotent at the Android publication
+boundary, while provider-specific aliases and reasoning capabilities retain
+their exact route identity.
+
+---
+
+## ADR 46 — Session pin and archive state follows upstream profile storage
+
+**Status:** Accepted (2026-08-07).
+
+**Context.** Android's session drawer originally kept pin and archive sets in
+Compose `remember` state. The controls appeared to work until the drawer or app
+was recreated, at which point neither set had a durable owner. Current upstream
+Hermes exposes both fields on stored session rows, returns them from the
+Dashboard session list, and accepts `pinned` or `archived` through the existing
+profile-aware session PATCH route. The official client treats the server row as
+durable truth. A separate Android registry would drift across clients and could
+collide when two connections or profiles contain the same session id.
+
+**Decision.**
+
+- Android maps upstream `pinned` and `archived` fields into `ChatSession`; the
+  drawer is a stateless renderer of those fields.
+- Gateway-mode lists request `archived=include` through the active connection
+  and effective profile's Dashboard route so archived rows survive recreation
+  and remain available for restore.
+- Pin/unpin and archive/restore use the same profile-scoped Dashboard PATCH
+  contract as rename. API-server mode uses its official session PATCH for pins.
+  Its current list cannot include archived rows, so Android does not offer an
+  archive action there that would become unrestorable after restart. Relay
+  endpoints are never required.
+- Mutations update the visible row optimistically, roll back on a failed write,
+  and refresh from server truth after success. Revision and scope-generation
+  fences prevent older completions or a profile/connection transition from
+  changing the newly selected namespace.
+- Deleting a session needs no metadata cleanup on Android because there is no
+  local flag index; the next server list simply omits the deleted row.
+
+**Consequences.** Pin state, and archive state on the standard Dashboard path,
+now survive Android process and drawer recreation and agree with other official
+clients. Identical session ids in different profiles or installations remain
+isolated by their server database. Hosts predating the upstream fields fail the
+mutation visibly and retain their previous row rather than reporting local-only
+success.
+
+---
+
+## ADR 47 — Android follow-up queues are destination- and run-owned
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Android previously represented queued composer submissions as one
+ViewModel-wide list of strings. Queue presentation and completion dispatch both
+consulted the mutable visible session, so switching between two running Gateway
+sessions could display and submit a follow-up in the wrong server conversation.
+Composer attachments and voice context were also read at dispatch time rather
+than captured with the queued text.
+
+**Decision.**
+
+- Each queued item snapshots its connection/profile context key, stored session,
+  configured transport, originating local run id, attachments, voice context,
+  and stable queue id at submission.
+- The queue tray projects only items owned by the visible context and session.
+  Session/profile switching does not rebind or globally expose queued items.
+- A run must complete before its own items become eligible. Detached Gateway
+  completion carries the exact live session generation and reconciles only the
+  checkpoint with that same durable and live identity, preventing a late older
+  completion from releasing a newer same-session queue.
+- Dispatch occurs only while the exact destination is visible and idle. A route
+  change, deleted session, connection replacement, cancellation, or unavailable
+  destination removes only the affected queue and reports the loss where user
+  action is required.
+- In-flight checkpoints persist bounded queued text and voice context. Attachment
+  bytes are deliberately excluded from Preferences DataStore; restoration drops
+  such an item with a visible review-and-resend notice rather than sending an
+  incomplete prompt.
+- Durable session metadata and live tool-card identity remain independent. Queue
+  ownership consumes their existing connection/profile and checkpoint seams but
+  does not move metadata or Compose expansion state into the queue.
+
+**Consequences.** Concurrent Gateway sessions retain independent queues and no
+completion can redirect a follow-up through the currently visible chat. Queue
+editing restores only the selected item's composer payload. Process restoration
+is deterministic for bounded text queues, while attachment restoration fails
+closed instead of silently changing the submitted turn.
+
+---
+
+## ADR 48 — Android profile switching lives in a context shelf
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Agent Passport had become both an inspection/configuration surface
+and the primary profile switcher, while the Session Drawer already had the
+separate responsibility of listing the active profile's conversations. Profile
+switching was therefore buried, duplicated across picker implementations, and
+the old `default` alias collapsed two different identities: following the
+server's sticky default and explicitly selecting the root profile named
+`default`.
+
+**Decision.** Chat owns a compact collapsible Profile Shelf directly below its
+top app bar. The header toggles it; the active capsule opens Agent Passport;
+inactive avatars switch context; and the fixed overflow plus Passport's Switch
+agent control open one canonical full switcher. Presentation order and hiding
+remain `ProfilePresentationStore` state owned by `ProfileController`, including
+the selected-hidden exception. Local icons remain connection/profile scoped.
+Compose renders state and invokes ViewModel actions; it never writes a store.
+
+Server default is represented only by `SERVER_DEFAULT_PROFILE_KEY`/a null
+selection and uses a home glyph. A profile literally named `default` retains its
+own request, lock, icon, presentation, and session keys. Selecting either does
+not call the upstream sticky-default mutation.
+
+Profile changes preserve the existing `activateGatewayProfile` and
+`switchProfileContext` lifecycle. A live Gateway turn detaches and reconciles to
+its original session; SSE switching remains disabled while streaming. The
+destination restores only its connection/profile/transport-compatible last
+session or starts a draft, never hot-swaps a live session. Model/provider,
+personality, reasoning, approval, Fast, and YOLO state reset at the ViewModel
+context boundary before destination session truth can repopulate them.
+
+**Consequences.** The hamburger remains exclusively the Session Drawer. Agent
+Passport stays focused on inspection and configuration. The drawer may widen
+its read-only browse scope to all profiles and organize that combined set by
+recency, project, status, or profile; opening a cross-profile row performs the
+same explicit profile-context switch as the shelf. Named-profile ownership uses
+a deterministic identity accent with an optional per-connection local override,
+while Server default remains a neutral home identity; color never communicates
+activity or health. The shelf adds no fake
+activity indicator, hides for one visible identity, retains 48 dp touch targets,
+and exposes meaningful TalkBack actions in compact, large-font, light, and dark
+layouts.
+
+---
+
+## ADR 49 — Android text shares become reviewed chat drafts
+
+**Status:** Accepted (2026-08-08).
+
+**Context.** Android users can share selected text between apps, but Hermes
+Relay did not advertise a sharesheet target. Treating an external intent as a
+message send would bypass composer review, and handling draft/session state in
+`MainActivity` or Compose would split ownership from `ChatViewModel` and risk
+writing into whichever session happened to be visible during startup.
+
+**Decision.**
+
+- The shared manifest advertises `ACTION_SEND` with `text/*`, so Google Play and
+  sideload builds expose the same user-mediated entry point.
+- `MainActivity` accepts only non-blank `EXTRA_TEXT` from that contract. A
+  process-local identity-fenced handoff retains one pending share across cold
+  Compose initialization and prevents an older completion from clearing a
+  newer intent.
+- RelayApp waits for onboarding and initial chat-context settlement, then asks
+  `ChatViewModel` to create a new chat under the already active connection,
+  effective profile, and configured transport before navigating to Chat.
+- `ChatViewModel` reuses the existing new-chat lifecycle. Gateway turns retain
+  their detached background reconciliation; SSE keeps its existing exclusive
+  cancellation behavior. No profile, sticky default, or presentation store is
+  changed.
+- Composer prefill is a buffered one-consumer event. It may wait for Chat to
+  compose, is delivered once, and never calls `sendMessage`; submission always
+  requires an explicit user action.
+
+**Consequences.** Shared text lands in a fresh, reviewable draft without
+crossing profile/session namespaces or creating a new server-side integration.
+Non-text attachments and multi-item shares remain outside this contract.
+
+---
+
+## ADR 50 — Android transcript reads are explicitly bounded and intent-specific
+
+**Status:** Accepted (2026-08-09).
+
+**Context.** Hermes now defaults omitted message limits to the latest 500 rows.
+Android previously omitted pagination on both the API-server and profile-scoped
+Dashboard routes, which silently dropped older history and shifted transcript-
+derived edit ordinals in long sessions.
+
+**Decision.** Both transports share one 500-row pagination contract. Complete
+user-visible reads page oldest-first and accept legacy envelopes with no
+pagination metadata. Reads stop at 50,000 messages or 32 MB of decoded response
+payload. Recovery explicitly requests one latest page only while the already
+known transcript fits that window; otherwise it uses complete paging to retain
+the positional user anchor. Cancellation propagates rather than becoming an
+empty transcript.
+
+**Consequences.** Long session history, sharing, retry, and edit/regenerate no
+longer operate on a silent latest-500 subset. Recovery stays cheap for ordinary
+sessions without allowing a bounded window to replace the complete visible
+history. Older Hermes releases remain compatible.
+
+---
+
+## ADR 51 — Android coding-session context is optional upstream metadata
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Current upstream Hermes records a session's working directory, Git
+branch, and repository root in its session database and returns those fields on
+Dashboard session-list routes. It also exposes a read-only profile-wide endpoint
+that recovers the pull request a session created from a narrowly validated tool
+result. Android previously discarded all of that context, making coding chats
+indistinguishable in the session drawer.
+
+**Decision.** Android maps optional `cwd`, `git_branch`, and `git_repo_root`
+fields from existing Dashboard list responses. For rows with workspace context,
+it asks `POST /api/profiles/sessions/pull-requests` and accepts only a positive
+PR number with a non-blank URL. Unresolved active sessions retry on a bounded
+cadence and receive one final scan after ending; resolved associations and
+terminal misses remain cached. Cache ownership is profile plus session id, and
+ambiguous duplicate ids in an all-profile response are never assigned a
+transcript result. Android then uses the repository-
+scoped `POST /api/git/review/pr-list` view to refresh the matching branch or
+known PR number's lifecycle state. The drawer displays only the repository
+basename, exact branch, PR number, and lifecycle state; it does not expose host
+paths. Both reads are best-effort. A missing route, unavailable GitHub CLI,
+malformed response, or API-server-only connection leaves ordinary session
+behavior intact and is not promoted to a session-list failure.
+
+**Consequences.** Coding sessions become recognizable without introducing a
+Relay dependency or a GitHub credential path. Repository and branch state can
+still appear when PR recovery is unsupported, while legacy hosts show no new
+badges and active sessions can surface a PR created after their first drawer
+refresh without allowing cross-profile cache collisions.
+
+---
+
+## ADR 52 — Desktop RPC is explicitly device-targeted and capability-honest
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** A Relay can retain several authorized desktop sessions, but the
+desktop channel historically latched one latest WebSocket. Pairing two PCs could
+therefore make an agent command change targets implicitly. The desktop surface
+also mixes typed file/process/screen operations with unrestricted terminal and
+PowerShell execution. Camera, microphone, and attached-device toggles cannot be
+claimed as security boundaries while unrestricted code still runs as the same
+Windows user.
+
+**Decision.** Every desktop advertises a stable installation `device_id` and
+display name. The Relay keeps all connected desktop WebSockets, accepts a
+`device` selector on every client-routed tool, binds pending responses to that
+WebSocket, and fails closed when more than one desktop is connected without an
+explicit target. Health reports enumerate valid targets, and successful RPCs
+identify the resolved target.
+
+Typed tools are the preferred automation surface and declare a capability such
+as `files.read`, `files.write`, `process.manage`, `screen.observe`, or
+`input.control`. `desktop_terminal`, `desktop_powershell`, detached processes,
+and background command jobs declare `system.execute`. This capability is an
+escape hatch: at user privilege it can transitively reach files, processes,
+USB devices, camera, or microphone through operating-system APIs. The UI must
+not present independent hardware-deny toggles as enforceable while
+`system.execute` remains enabled.
+
+Existing local policy remains authoritative on each target PC: Ask does not
+start the headless tool router without consent; Structured withholds
+`desktop_terminal`, `desktop_powershell`, detached process launch, and command
+job start; Trusted permits typed and execution tools but retains task grants for
+screen/input; Full Access bypasses those task grants for that Relay host.
+
+Hardware policy is separate and per host. USB defaults Disabled and exposes
+only typed, serial-bound ADB list, shell, push, pull, install, and bounded
+logcat operations. Ask raises the dedicated local approval card for every
+operation; Allow requires explicit confirmation. Full Access does not override
+the USB policy. Disabled or unavailable backends are omitted from advertised
+tools. Microphone and camera remain visibly unavailable until bounded
+brokers, active-use indication, and cancellation exist.
+
+The management UI names the legacy no-tools Ask state **Restricted**. A separate
+**Ask Every Time** preset advertises each available command, file, screen/input,
+and USB operation behind a per-operation local approval; unavailable brokers
+remain disabled. New pairings receive Ask Every Time explicitly, while missing
+or existing legacy policy records retain their previous fail-closed meaning.
+
+**Consequences.** Agents cannot accidentally execute against whichever PC most
+recently sent a heartbeat, and a response from another PC cannot satisfy a
+targeted request. Common operations remain typed and auditable while raw shell
+power is labeled honestly. Structured mode makes the USB policy enforceable,
+and device operations appear as their own local Activity category. Microphone
+and camera controls are not shipped as cosmetic switches.
+
+---
+
+## ADR 53 — Desktop management separates host scope from local-PC scope
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** The compact Windows tray had accumulated per-host connection and
+authorization information alongside local daemon, update, and application
+controls. That made Settings difficult to scan and left common operator tasks—
+opening the CLI, viewing the daemon log, running diagnostics, or returning an
+elevated daemon to normal user privileges—dependent on external instructions.
+The tray must remain a small management utility rather than regrow into an
+embedded terminal or general desktop client.
+
+**Decision.** The three top-level destinations remain Overview, Hosts, and
+Settings, with scope determining ownership:
+
+- A Host detail page is the hub for one paired Relay instance. It owns the local
+  display name, connection state, Relay address/version, pairing and session
+  details, access preset, capabilities, authorized clients, explicit connect,
+  re-pair, client deauthorization, and guarded Forget host actions. Opening the
+  page never silently selects or connects the host.
+- Settings owns this Windows PC and the installed application. It contains
+  daemon lifecycle and sign-in behavior, CLI launchers, logs and diagnostics,
+  bundle updates, and Help & About. **Start UI at sign-in** controls only the
+  per-user tray startup entry. **Start daemon with UI** is a separate opt-in,
+  defaults off for existing installs, and never implies elevation. Per-host
+  access and client lists do not appear there.
+- **Open terminal** starts a normal terminal with `hermes-relay` available.
+  **Open Hermes CLI** starts the paired remote Hermes TUI in a real terminal;
+  neither action embeds a terminal emulator in the tray.
+- **View daemon log** opens the daemon connection/tool-router log. Tray startup,
+  refresh, and child-process failures use the separate local tray log so a UI
+  failure remains observable even when no daemon is running. **Run diagnostics**
+  delegates to the CLI diagnostic contract rather than creating a second health
+  model and reports both log locations when relevant.
+- Help & About reports UI, CLI, and connected Relay versions and links to the
+  documentation, troubleshooting guide, and release notes through the default
+  browser. Log and diagnostic shortcuts remain available there as well.
+
+The tray always remains unelevated. **Restart as Administrator...** is an
+explicit UAC-mediated action that elevates only the daemon. **Return to user
+mode** performs one elevated-daemon stop followed by a normal daemon start.
+Elevation is not stored as a toggle or sign-in preference because every approved
+command and input action inherits the daemon's privilege.
+
+**Consequences.** Relay-specific actions are discoverable from the corresponding
+host without making global Settings wider. Routine CLI and support workflows no
+longer require users to find paths or commands manually. Administrator state is
+visible and reversible, while the management UI and automatic startup retain
+normal user privilege. The product stays a thin CLI/TUI plus compact Windows
+management surface; chat, plugins, voice, and terminal rendering remain outside
+the tray.
+
+---
+
+## ADR 54 — Hermes Secure Link is pinned and service-isolated
+
+**Status:** Accepted (2026-08-12).
+
+**Context.** Tailscale Serve is the primary supported secure remote path today,
+but some operators need encrypted Relay access without adding an external
+reverse proxy or tailnet. Expanding a plugin-owned listener across API,
+Dashboard, and Relay would collapse independent trust domains and expose
+loopback-authorized management routes.
+
+**Decision.** Keep Tailscale Serve WSS/HTTPS as the primary documented path.
+Add an opt-in Relay plugin ingress, named **Hermes Secure Link**, on port `9443`
+with fixed `/relay`, `/api`, and `/dashboard` namespaces. Pairing carries its exact HTTPS authority and SPKI
+SHA-256 pin in the signed, operator-reviewed QR. Relay sessions, API bearer
+authentication, and Dashboard cookie/native bearer authentication remain
+independent. Dashboard forwarding fails closed unless its upstream
+OAuth/password gate is active, so loopback-token HTML is never re-exported.
+
+Clients require the QR-provided authority and pin before the first proxy
+request, retain hostname verification, and fail closed on malformed, missing,
+or changed trust. A rotation requires explicit re-pairing. Secure candidates
+are ordered before LAN by default, while LAN remains an independently configured
+fallback with its existing plaintext acknowledgement.
+
+The three namespaces share one pinned TLS authority but not credentials: Relay
+keeps pairing/session authentication, API keeps its bearer, and Dashboard keeps
+its cookie/native bearer. Direct and Tailscale HTTPS routes remain independent
+fallback candidates. Secure Link verifies continuity with the paired endpoint
+and protects transport, but it does not establish the physical host's identity
+or make the listener reachable across NAT or a firewall. Full invariants and acceptance checks live in
+[`security-native-proxy.md`](security-native-proxy.md).
+
+**Consequences.** Hermes Secure Link adds a narrow pinned-TLS option without
+becoming a general host proxy or a second authentication system. Failure to
+initialize it does not make the ordinary Relay unavailable or advertise a
+candidate. Certificate rotation is explicit, and the vanilla upstream path
+remains independent of the optional Relay plugin.
+
+---
+
+## ADR 55 — Outbound broker transport carries opaque Secure Link streams
+
+**Status:** Experimental (2026-08-13).
+
+**Context.** Hermes Secure Link encrypts an already reachable connection but
+does not traverse NAT or firewalls. A native zero-configuration remote route
+needs both host and client to connect outbound without giving a rendezvous
+service access to Hermes credentials or payloads. It must also preserve
+multi-device targeting and the direct, Tailscale, and LAN routes.
+
+**Decision.** Add an optional outbound rendezvous candidate named **Hermes
+Reach**. The client and host
+connector use system-trusted WSS to reach the broker, which authenticates their
+route credentials and matches an explicit opaque host identifier. The resulting
+stream carries a second, inner TLS 1.3 connection to the host's existing Hermes
+Secure Link listener. The client validates the exact authority and SPKI pin from
+the operator-reviewed pairing QR. The broker and connector route bytes but do
+not terminate inner TLS, parse Hermes protocols, or receive Relay/API/Dashboard
+credentials.
+
+Host and client broker credentials are separate. Initial client bootstrap is
+short-lived and one-time; durable route access is scoped and independently
+revocable. A host connection supports isolated simultaneous streams with
+explicit framing, quotas, replay handling, and device targeting. Broker or pin
+failure never downgrades to plaintext. Secure Link certificate rotation remains
+an explicit re-pair. The detailed wire, threat, rotation, and acceptance
+contract is [`security-broker-transport.md`](security-broker-transport.md).
+
+**Consequences.** Hermes Reach remains an explicitly enabled experimental
+fallback and must be ordered after Tailscale, public TLS, Direct Secure Link,
+and other supported routes. It is not promoted in normal setup or marketing.
+Hermes Reach can provide reachability while its broker can
+observe connection
+metadata, but a malicious or compromised broker can only deny, delay, replay,
+or misroute ciphertext; inner TLS detects modification and wrong-host routing.
+Hermes authorization remains local and the vanilla upstream path remains
+independent. Implementing the client requires a TLS-over-broker byte-stream
+adapter; advertising the candidate is forbidden until that adapter and the
+cross-platform acceptance gates are complete.
+
+---
+
+## ADR 56 — Structured desktop control may use CUA Driver behind Hermes policy
+
+**Status:** Accepted for phased implementation (2026-08-13).
+
+**Implementation note (2026-08-13).** The first Windows integration keeps the
+public `desktop_computer_*` contract and adds canonical runtime discovery,
+manifest/version/tool/permission/health checks, an allowlisted CUA adapter,
+server-owned control-session envelopes, per-session grants, sensitive-target
+preflight, single-use snapshot tokens, pre/action/post snapshot flow, and local
+CLI/UI engine status. CUA actions are background-only in this phase; foreground
+escalation remains reserved and reports disabled. The optional driver is not
+bundled or updated by Hermes-Relay, and Hermes forces driver telemetry off for
+every child process it starts. The legacy engine remains the default and the
+fail-closed fallback while the live Windows acceptance and remaining scope,
+redaction, and grant-bridge hardening gates tracked in `TODO.md` stay open.
+
+**Second-phase refinement (2026-08-13).** CUA is the preferred/default setting
+for new structured-control sessions; the original Windows input path is named
+`legacy_compat` and remains available only as an explicit compatibility choice
+or a fail-closed pre-session fallback when CUA is unavailable. The backend is
+selected once per authenticated control session and cannot change mid-session.
+Window-scoped snapshots/actions use CUA, while the existing read-only full-
+display screenshot remains a separate `system_capture` path. Local audit and
+the UI activity timeline expose bounded high-level fields—backend, dispatch,
+control session, target app/window identifiers, action, phase, and verification
+state—while omitting accessibility text, screenshots, entered values, and raw
+driver responses.
+
+Hermes now owns an explicit Windows lifecycle surface without bundling the
+driver: `computer-use cua status|health|install|check-update|update`, with `--yes`
+required for install/update. Mutations accept only supported upstream releases
+(`>=0.19.3 <0.20.0`), verify the `trycua/cua` product/version manifest and
+installer SHA-256 before running a temporary installer under a sanitized
+environment, then verify the canonical `packages/current` binary, manifest,
+version, path, and permission mode. Accessibility health is an explicit
+diagnostic. There is no automatic install or
+update.
+
+**Context.** The first Windows input backend uses PowerShell, `SetCursorPos`,
+`mouse_event`, and `SendKeys`. It can move the operator's physical pointer and
+depends on foreground focus. CUA Driver provides target-process/window UI
+Automation, accessibility snapshots, background input, and session-scoped
+animated agent cursors without moving the physical pointer. Its full local tool
+surface also includes foreground activation, arbitrary application control,
+recording, configuration, and update operations that exceed Hermes-Relay's
+screen/input capability.
+
+**Decision.** Adopt CUA Driver only as an optional, version-pinned structured
+computer-control backend behind the existing `desktop_computer_*` contract.
+Hermes remains the outer authority for Relay authentication, target-device
+routing, per-host capability policy, local grants, emergency stop, and audit.
+The daemon translates an allowlisted Hermes schema to CUA operations; it never
+forwards arbitrary CUA tool names or JSON.
+
+Background dispatch is the default. A `background_unavailable` result returns
+to the caller instead of silently foregrounding another application. Foreground
+dispatch, application launch/termination, JavaScript execution, recording,
+replay, configuration, and driver updates require separate, explicit local
+authority. Full Access may bypass ordinary task prompts, but never authenticated
+targeting, sensitive-surface blocks, UAC/session boundaries, audit, emergency
+stop, runtime validation, or per-action failures.
+
+Every semantic element action requires a fresh pre-action window snapshot, an
+opaque element token bound to its snapshot generation, authenticated principal,
+grant, PID, and window, followed by a post-action snapshot that records whether
+the expected state changed. Grant scope and sensitive-surface policy apply to
+both accessibility text and pixels.
+
+Multiple animated pointers are virtual agent overlays, not additional Windows
+hardware cursors. Relay must first attach a server-owned authenticated control
+session identity—at minimum the Relay session, requester device, chat/run,
+target device, and request—to each command. The desktop derives cursor identity
+locally and owns one bounded CUA session per active control session. Model
+arguments cannot choose or share cursor IDs. Grant expiry, cancellation,
+disconnect, re-pair, policy downgrade, emergency stop, desktop lock/session
+change, or daemon shutdown ends the corresponding driver session immediately.
+
+CUA runs in the interactive user's logon session, never Windows Session 0.
+Initial packaging remains optional and resolves the canonical installed package
+rather than an untrusted PATH entry. Readiness uses the driver's live manifest,
+schema, tool surface, daemon status, and permission mode and fails closed on an
+absent or incompatible backend. Telemetry and driver updates remain explicit
+operator choices.
+
+**Temporary Windows implementation note (2026-08-14).** Until
+`trycua/cua#3103` is fixed in the supported driver range, the whole-desktop
+`health_report` is not a session-start gate: its fixed UIA timeout can report a
+false degradation and leave the driver temporarily busy. Operators can re-run
+that diagnostic from the CLI or UI. Structured actions retain their existing
+target, grant, snapshot, timeout, and fail-closed checks. Remove this exception
+when the upstream probe is bounded and cannot poison later actions.
+
+**Consequences.** Hermes can gain background, element-aware control and clean
+per-agent animated cursors without replacing its Relay protocol or permission
+model. The existing PowerShell/User32 backend remains a compatibility fallback
+until authenticated control-session identity, scoped grants, sensitive-surface
+enforcement, and lifecycle tests ship. Raw command execution remains an honest
+escape hatch: strong computer-control isolation is meaningful only when command
+execution is disabled or the host is already fully trusted.
+
+---
+
+## ADR 57 — Official Desktop Relay UI is a lazy, unified-package runtime plugin
+
+**Status:** Accepted (2026-08-14).
+
+**Context.** Official Hermes Desktop now discovers a regular agent plugin's
+`desktop/plugin.js` and loads it through `@hermes/plugin-sdk`. The SDK provides
+profile-aware `ctx.rest()` access to the same `plugin_api.py` namespace used by
+the web Dashboard, plus native pane, sidebar, status-bar, palette, close,
+reveal, drag, dock, i18n, query, and unload lifecycles. Registering a pane also
+adopts it into the live layout, which would violate Hermes-Relay's requirement
+that plugin load and application lifecycle events never open or focus Relay.
+
+**Decision.** Ship `plugin/desktop/plugin.js` beside `plugin.yaml` and the
+existing Dashboard half. Keep the Desktop half opt-in and use only public SDK
+imports. At registration time contribute three labeled open actions, but no
+pane and no network work. The first explicit action registers one dismissible
+management pane and calls the plugin-scoped `ctx.panes.reveal()` method.
+Subsequent actions reveal the same pane. The host owns close, focus, drag,
+docking, enable state, hot reload, and disposer execution.
+
+The pane reads and mutates the existing Relay Dashboard backend through
+`ctx.rest()` only. It maintains no server cache, starts no timer/socket/polling
+loop, sends no notification, and makes no request until the user opens a view.
+Every query key contains the active Desktop profile, while the SDK binds the
+request to that profile's authenticated backend namespace. Pairing, revocation,
+and remote-access actions stay user initiated; destructive or host-changing
+actions require an additional in-pane confirmation.
+
+**Security boundary.** Runtime Desktop plugins are trusted local ESM with full
+renderer authority; upstream provides error isolation, not a sandbox. Relay
+therefore ships fixed reviewed UI code only. It does not load generated ESM,
+Kotlin, Python, remote modules, or arbitrary action schemas, and it never stores
+tokens, keys, QR secrets, media paths, or duplicated Relay state. The existing
+Relay-gated declarative Android Plugin Studio remains a separate host-rendered,
+digest-approved capability model.
+
+**Consequences.** One plugin install now exposes the Relay-specific management
+role in both the web Dashboard and official Desktop without patching Hermes or
+replacing the standalone Relay CLI/tray. The SDK has no public programmatic
+pane-coordinate API and its agent `focus_pane` surface excludes contributed
+IDs, so movement remains native drag/dock and agent-driven reveal remains
+unsupported. Physical Desktop certification remains required for multi-window,
+named-profile, remote/SSH-mapped profile, close/reopen, drag/dock, hot-reload,
+and renderer-log behavior.

@@ -26,12 +26,12 @@
   },
   "scenes": [
     {
-      "id": "01_startup",
-      "title": "Cold start",
-      "source": "assets/screenshots/01_startup.png",
-      "readme": "assets/screenshots/01_startup.png",
+      "id": "01_voice_conversation",
+      "title": "Voice in conversation",
+      "source": "assets/screenshots/01_voice_conversation.png",
+      "readme": "assets/screenshots/01_voice_conversation.png",
       "play": "1.png",
-      "captureNote": "Fresh launch or first-viewport app state."
+      "captureNote": "Real ConversationVoiceDock inside the production chat composer, complementing the full Voice focus frame."
     },
     {
       "id": "02_chat",
@@ -39,7 +39,7 @@
       "source": "assets/screenshots/02_chat.png",
       "readme": "assets/screenshots/02_chat.png",
       "play": "2.png",
-      "captureNote": "Clean session with live assistant output and no private host data."
+      "captureNote": "Galaxy Ultra-like chat viewport with Hermes Relay identity, grouped code conversation, model and effort controls, plus Petdex Teknium perched through the production floating-pet host."
     },
     {
       "id": "03_voice",
@@ -47,7 +47,7 @@
       "source": "assets/screenshots/03_voice.png",
       "readme": "assets/screenshots/03_voice.png",
       "play": "3.png",
-      "captureNote": "Voice mode overlay with neutral transcript text."
+      "captureNote": "Real full-screen VoiceModeOverlay with the session pill, fixed sphere frame, waveform, visible transcript, and public-safe provider metadata."
     },
     {
       "id": "04_sessions",
@@ -55,15 +55,15 @@
       "source": "assets/screenshots/04_sessions.png",
       "readme": "assets/screenshots/04_sessions.png",
       "play": "4.png",
-      "captureNote": "Session drawer or session management surface."
+      "captureNote": "Real SessionDrawerContent with deterministic pinned, Thread, and standard session fixtures."
     },
     {
       "id": "05_themes",
-      "title": "App themes",
+      "title": "Themes and customization",
       "source": "assets/screenshots/05_themes.png",
       "readme": "assets/screenshots/05_themes.png",
       "play": "5.png",
-      "captureNote": "Theme picker (Settings → Appearance) showing the eight looks plus light/dark and font controls."
+      "captureNote": "Real Appearance screen showing the live preview, preset gallery, light/dark mode, and expanded Relay customizer."
     },
     {
       "id": "06_manage",
@@ -79,15 +79,35 @@
       "source": "assets/screenshots/07_connections.png",
       "readme": "assets/screenshots/07_connections.png",
       "play": "7.png",
-      "captureNote": "Connection/routes view using generic LAN/Tailscale/public labels."
+      "captureNote": "Real ConnectionsSettingsScreen with deterministic public-safe server and dashboard status fixtures."
     },
     {
       "id": "08_appearance",
-      "title": "Agent avatar & skins",
+      "title": "Floating pets and appearance",
       "source": "assets/screenshots/08_appearance.png",
       "readme": "assets/screenshots/08_appearance.png",
       "play": "8.png",
-      "captureNote": "Appearance: agent-avatar picker (Add a pet) + sphere-skin grid with honest capability badges."
+      "captureNote": "Real Appearance screen showing the background/pet separation, pinned Petdex Teknium artwork rendered through PetAvatar, and Petdex/import actions."
+    }
+  ],
+  "supplementalScenes": [
+    {
+      "id": "12_theme_customizer",
+      "title": "Relay theme customizer",
+      "source": "assets/screenshots/supplemental/12_theme_customizer.png",
+      "captureNote": "Real Appearance customizer with accent, shape, surface, and density controls."
+    },
+    {
+      "id": "13_font_picker",
+      "title": "Language, density, and fonts",
+      "source": "assets/screenshots/supplemental/13_font_picker.png",
+      "captureNote": "Real Appearance language, font-size, Inter, and Nunito controls."
+    },
+    {
+      "id": "14_startup",
+      "title": "Start a conversation",
+      "source": "assets/screenshots/supplemental/14_startup.png",
+      "captureNote": "Current empty-chat chrome, idle visualization, model and effort controls, and public-safe suggestions."
     }
   ]
 }

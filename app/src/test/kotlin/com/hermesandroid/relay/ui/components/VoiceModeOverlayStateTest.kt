@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.BackgroundRunState
@@ -12,13 +13,71 @@ import com.hermesandroid.relay.viewmodel.VoiceUiState
 import com.hermesandroid.relay.viewmodel.backgroundRunAfterCancelRequest
 import com.hermesandroid.relay.viewmodel.preserveRealtimeTurnOnStop
 import com.hermesandroid.relay.viewmodel.realtimeTranscriptState
-import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterResponseDone
+import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterPromotion
 import com.hermesandroid.relay.viewmodel.voiceSessionExitState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VoiceModeOverlayStateTest {
+
+    @Test
+    fun voiceRouteParts_deduplicatePunctuationAliases() {
+        assertEquals(
+            listOf("xai_tts", "leo"),
+            distinctVoiceRouteParts(listOf("xai_tts", "xai-tts", "leo")),
+        )
+        assertEquals("xAI TTS", voiceRouteDisplayLabel("xai_tts"))
+        assertEquals("Leo", voiceRouteDisplayLabel("leo"))
+    }
+
+    @Test
+    fun richResultLabel_identifiesOnlyActualImagesAsImages() {
+        val image = ChatMessage(
+            id = "image",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("image/png", "")),
+        )
+        val pdf = ChatMessage(
+            id = "pdf",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("application/pdf", "")),
+        )
+        val unknown = ChatMessage(
+            id = "unknown",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            attachments = listOf(Attachment("application/octet-stream", "")),
+        )
+
+        assertEquals(true, voiceRichResultUsesImageLabel(image, inlineImageCount = 0))
+        assertEquals(true, voiceRichResultUsesImageLabel(image.copy(attachments = emptyList()), inlineImageCount = 1))
+        assertEquals(false, voiceRichResultUsesImageLabel(pdf, inlineImageCount = 0))
+        assertEquals(false, voiceRichResultUsesImageLabel(unknown, inlineImageCount = 0))
+        assertEquals(false, voiceRichResultUsesImageLabel(image, inlineImageCount = 1))
+    }
+
+    @Test
+    fun transcriptKey_staysStableAcrossServerIdAdoption() {
+        val serverId = "7c4af8b7-1bb2-4830-a4e5-0332d5ddcd1f"
+        val live = ChatMessage(
+            id = "client-assistant-id",
+            role = MessageRole.ASSISTANT,
+            content = "Earlier snapshot",
+            timestamp = 1L,
+        )
+        val reconciled = live.copy(id = serverId, content = "Reconciled snapshot")
+
+        assertEquals(voiceTranscriptItemKey(live), voiceTranscriptItemKey(reconciled))
+        assertEquals("message:client-assistant-id", voiceTranscriptItemKey(reconciled))
+        assertNotEquals("aux:pending-voice-transcript", voiceTranscriptItemKey(reconciled))
+    }
 
     @Test
     fun providerTranscript_isTranscribingAfterMicrophoneCaptureStops() {
@@ -27,12 +86,10 @@ class VoiceModeOverlayStateTest {
     }
 
     @Test
-    fun responseDone_keepsLogicalTurnActiveOnlyWhileBackgroundRunIsLive() {
-        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RUNNING))
-        assertEquals(true, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.RECONNECTING))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DELIVERING))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(BackgroundRunPhase.DONE))
-        assertEquals(false, realtimeTurnActiveAfterResponseDone(null))
+    fun promotion_keepsForegroundBusyOnlyForSpokenHandoff() {
+        assertEquals(false, realtimeTurnActiveAfterPromotion(spokenHandoff = false))
+        assertEquals(true, realtimeTurnActiveAfterPromotion(spokenHandoff = true))
+        assertEquals(true, realtimeTurnActiveAfterPromotion(spokenHandoff = null))
     }
 
     @Test

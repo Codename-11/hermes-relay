@@ -26,10 +26,12 @@ import kotlinx.serialization.json.putJsonObject
  *
  *  - `POST /api/sessions/{id}/chat/stream` (`_handle_session_chat_stream`)
  *    consumes `message` (or `input`) and `system_message` (or
- *    `instructions`, string only). `message` accepts either a plain string
- *    or OpenAI-style content parts (text + `image_url`) via
- *    `_normalize_multimodal_content`. Top-level `messages`, `attachments`,
- *    `model`, and `profile` are NOT parsed.
+ *    `instructions`, string only). Newer servers also parse per-request model
+ *    fields and reuse a backend-acknowledged session model lock when those
+ *    fields are omitted. Android therefore acknowledges a lock first and
+ *    omits `model` on that turn; the builder's model field remains only for
+ *    older-server compatibility. Top-level `messages`, `attachments`, and
+ *    `profile` are not parsed.
  *
  *  - `POST /v1/runs` (`_handle_runs`) consumes `input` (string or message
  *    array), `instructions`, `conversation_history` (array of
@@ -45,9 +47,8 @@ import kotlinx.serialization.json.putJsonObject
  *    entries are silently skipped and `tool_calls` fields are stripped.
  *    Top-level `attachments` and `profile` are NOT parsed.
  *
- * Legacy hint fields we deliberately keep sending although current native
- * upstream ignores them: `model` + `profile` on the sessions path,
- * `profile` on runs/completions, and `stream` on runs. They are
+ * Legacy hint fields we deliberately keep sending: `model` + `profile` on the
+ * sessions path, `profile` on runs/completions, and `stream` on runs. They are
  * configuration hints (never user content, so they cannot mask data
  * loss) honored by legacy fork builds — the runs path in particular only
  * activates against servers that explicitly advertise SSE-on-POST, which

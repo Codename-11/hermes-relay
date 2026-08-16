@@ -10,7 +10,9 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -23,8 +25,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
@@ -74,18 +78,23 @@ class ChatViewModelGatewayInboundTurnTest {
     private var persistedHistory: List<MessageItem> = emptyList()
     @Volatile
     private var holdCompletionsStream = false
+    private val apiCompletionsRequestCount = AtomicInteger(0)
 
     @Before
     fun setUp() {
         gatewayHarness = GatewayClientHarness()
         apiServer = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse =
-                    if (holdCompletionsStream && request.path == "/v1/chat/completions") {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.path == "/v1/chat/completions") {
+                        apiCompletionsRequestCount.incrementAndGet()
+                    }
+                    return if (holdCompletionsStream && request.path == "/v1/chat/completions") {
                         MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
                     } else {
                         MockResponse().setResponseCode(404)
                     }
+                }
             }
             start()
         }
@@ -106,6 +115,7 @@ class ChatViewModelGatewayInboundTurnTest {
         handler = ChatHandler().also { it.setSessionId(STORED_SESSION_ID) }
         persistedHistory = emptyList()
         holdCompletionsStream = false
+        apiCompletionsRequestCount.set(0)
         viewModel = ChatViewModel().also {
             it.initialize(
                 HermesApiClient(apiServer.url("/").toString(), "test-key"),
@@ -140,6 +150,94 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun allProfilesOpenKeepsGlobalSelectionButScopesHistoryResumeAndSendToOwner() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var loadedProfile: String? = null
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+        viewModel.setProfileMessageLoaderWithMode { profileName, _, _ ->
+            loadedProfile = profileName
+            Result.success(emptyList())
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+
+        awaitCondition { loadedProfile == owner.name }
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+        assertEquals("X-bot", handler.activeAgentName)
+        assertEquals("unchanged", persistedSession)
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = null,
+        )
+        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+
+        viewModel.createNewChat()
+        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+    }
+
+    @Test
+    fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
+        val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
+        val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+
+        viewModel.createProfileChat(
+            profileName = "default",
+            profile = rootDefault,
+            contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
+        )
+
+        assertEquals("default", viewModel.openedSessionProfileName.value)
+        assertEquals("default", gatewayClient.sessionProfileProvider())
+        assertEquals(null, handler.currentSessionId.value)
+        assertEquals("Hermes", handler.activeAgentName)
+        assertEquals("unchanged", persistedSession)
+    }
+
+    @Test
+    fun gatewaySessionCreateProviderPreservesExplicitFastFalse() {
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "session.info",
+                buildJsonObject { put("fast", false) },
+                "live-resumed",
+            ),
+        )
+        val deadline = System.currentTimeMillis() + 5_000
+        while (viewModel.fastEnabled.value != false) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (System.currentTimeMillis() >= deadline) error("fast=false did not reconcile")
+            Thread.sleep(20)
+        }
+
+        assertEquals(false, gatewayClient.sessionModelProvider()?.fast)
+    }
+
+    @Test
     fun dashboardOnlyConnectionCanSendWithoutApiClient() {
         viewModel.updateGatewayClient(null)
         gatewayClient.clearSession()
@@ -156,6 +254,40 @@ class ChatViewModelGatewayInboundTurnTest {
         gatewayHarness.awaitRpc("prompt.submit")
         assertTrue(handler.messages.value.any { it.content == "Dashboard-only gateway turn" })
         assertTrue(gatewayClient.hasActiveTurn())
+    }
+
+    @Test
+    fun gatewayRichCardActionStaysOnGatewayInsteadOfDrainingThroughSessionsApi() {
+        viewModel.sseFallbackEndpoint = "sessions"
+        val cardMessageId = "card-message"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = cardMessageId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+            ),
+        )
+        handler.onTextDelta(
+            cardMessageId,
+            """
+            CARD:{"type":"approval_request","id":"test-card","actions":[{"label":"Approve","value":"approve","mode":"send_text"}]}
+            """.trimIndent(),
+        )
+        handler.onTurnComplete(cardMessageId)
+        val card = handler.messages.value.single { it.id == cardMessageId }.cards.single()
+        val apiRequestsBeforeAction = apiCompletionsRequestCount.get()
+
+        viewModel.dispatchCardAction(
+            messageId = cardMessageId,
+            cardKey = card.id!!,
+            action = card.actions.single(),
+        )
+
+        val submit = gatewayHarness.awaitRpc("prompt.submit")
+        assertEquals("approve", (submit["text"] as JsonPrimitive).content)
+        assertEquals(apiRequestsBeforeAction, apiCompletionsRequestCount.get())
     }
 
     @Test
@@ -198,6 +330,24 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.switchProfileContext("connection-dashboard/profile-default", STORED_SESSION_ID)
 
         awaitCondition { handler.messages.value.any { it.content == "Dashboard history" } }
+    }
+
+    @Test
+    fun profileContextSwitchClearsSessionScopedModelAndPersonality() {
+        viewModel.selectModel("provider/old-model", "provider")
+        viewModel.selectPersonality("coach")
+        assertEquals("provider/old-model", viewModel.selectedModelOverride.value)
+        assertEquals("coach", viewModel.selectedPersonality.value)
+
+        viewModel.switchProfileContext("connection-dashboard/profile-new", null)
+
+        assertEquals(null, viewModel.selectedModelOverride.value)
+        assertEquals(null, viewModel.selectedProviderOverride.value)
+        assertEquals("default", viewModel.selectedPersonality.value)
+        assertEquals(null, viewModel.selectedReasoningEffort.value)
+        assertEquals(null, viewModel.yoloEnabled.value)
+        assertEquals(null, viewModel.fastEnabled.value)
+        assertEquals(null, viewModel.approvalMode.value)
     }
 
     @Test
@@ -463,7 +613,9 @@ class ChatViewModelGatewayInboundTurnTest {
 
         gatewayHarness.awaitRpc("session.activate")
         awaitCondition {
-            handler.messages.value.any { it.id == "pending-assistant" } &&
+            handler.messages.value.any {
+                it.id == "pending-assistant" && it.content == "Partial answer from upstream"
+            } &&
                 handler.isStreaming.value
         }
         val restored = handler.messages.value.single { it.id == "pending-assistant" }
@@ -473,6 +625,8 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(restored.toolCalls.single().isComplete)
         assertEquals("Running terminal", handler.turnStatus.value)
         assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
+        assertEquals(PROFILE_CONTEXT, viewModel.pendingAsk.value?.contextKey)
+        assertEquals(STORED_SESSION_ID, viewModel.pendingAsk.value?.sessionId)
         val restoredApproval = handler.messages.value
             .single { it.id == "ask-approval-1" }
             .cards
@@ -511,6 +665,10 @@ class ChatViewModelGatewayInboundTurnTest {
                 content = JsonPrimitive("Partial answer from upstream and finished"),
             ),
         )
+
+        assertTrue(handler.isStreaming.value)
+        assertEquals("approval-1", checkpointStore.checkpoint?.pendingAsk?.cardKey)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "approval.respond" })
         serverWs.send(
             gatewayHarness.eventFrame(
                 "message.complete",
@@ -519,13 +677,401 @@ class ChatViewModelGatewayInboundTurnTest {
             ),
         )
 
-        awaitCondition { !handler.isStreaming.value }
         shadowOf(Looper.getMainLooper()).idle()
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.ASSISTANT &&
+                    it.content == "Partial answer from upstream and finished"
+            }
+        }
+        awaitCondition { !handler.isStreaming.value }
+        // Neither replayed activity nor generic completion proves consent.
+        // The client-only card remains actionable until an explicit response
+        // or authoritative expiry event owns the transition.
+        assertEquals("approval-1", viewModel.pendingAsk.value?.cardKey)
+        assertTrue(
+            handler.messages.value
+                .single { it.id == "ask-approval-1" }
+                .cardDispatches
+                .isEmpty(),
+        )
+
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "once")
+        gatewayHarness.awaitRpc("approval.respond")
+        awaitCondition { !handler.isStreaming.value }
         awaitCondition { checkpointStore.checkpoint == null }
-        assertTrue(handler.messages.value.any {
+        assertEquals(
+            "once",
+            handler.messages.value.single { it.id == "ask-approval-1" }
+                .cardDispatches.single().actionValue,
+        )
+    }
+
+    @Test
+    fun explicitApprovalActionAloneEmitsResponseAndCollapsesCard() {
+        viewModel.sendMessage("Run the guarded command")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject { put("command", "guarded command") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "once")
+
+        val response = gatewayHarness.awaitRpc("approval.respond")
+        assertEquals(JsonPrimitive("live-resumed"), response["session_id"])
+        assertEquals(JsonPrimitive("once"), response["choice"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals("once", cardMessage.cardDispatches.single().actionValue)
+    }
+
+    @Test
+    fun protectedInstructionApprovalCardOffersOneOperationScopeOnly() {
+        viewModel.sendMessage("Edit the disposable instruction fixture")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject {
+                    put("command", "<write to AGENTS.md>")
+                    put("allow_session", false)
+                    put("allow_permanent", false)
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("once"))
+                        add(JsonPrimitive("session"))
+                        add(JsonPrimitive("always"))
+                        add(JsonPrimitive("deny"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        val card = handler.messages.value.single { it.id == pending.messageId }.cards.single()
+        assertEquals(listOf("once", "deny"), card.actions.map { it.value })
+    }
+
+    @Test
+    fun multiSelectClarifyPreservesCardSemanticsAndExactWireAnswer() {
+        viewModel.sendMessage("Ask which environments")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-1")
+                    put("question", "Which environments?")
+                    put("multi_select", true)
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("dev"))
+                        add(JsonPrimitive("stage"))
+                        add(JsonPrimitive("prod"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        val card = handler.messages.value.single { it.id == pending.messageId }.cards.single()
+        assertTrue(card.input?.multiSelect == true)
+        assertEquals(listOf("dev", "stage", "prod"), card.input?.choices)
+        assertEquals(null, card.input?.expiresAtMillis)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "[\"prod\",\"dev\"]")
+
+        val response = gatewayHarness.awaitRpc("clarify.respond")
+        assertEquals(JsonPrimitive("clarify-1"), response["request_id"])
+        assertEquals(JsonPrimitive("[\"prod\",\"dev\"]"), response["answer"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+    }
+
+    @Test
+    fun authoritativeClarifyExpiryCollapsesCardAndRejectsLateAction() {
+        viewModel.sendMessage("Ask a question")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-expired")
+                    put("question", "Still there?")
+                    put("choices", buildJsonArray { add(JsonPrimitive("yes")) })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.expire",
+                buildJsonObject { put("request_id", "clarify-expired") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals(
+            HermesCardDispatch.EXPIRED_STAMP,
+            cardMessage.cardDispatches.single().actionValue,
+        )
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "yes")
+        Thread.sleep(100)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "clarify.respond" })
+    }
+
+    @Test
+    fun explicitDenialActionEmitsResponseAndCollapsesCard() {
+        viewModel.sendMessage("Run the guarded command")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "approval.request",
+                buildJsonObject { put("command", "guarded command") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+
+        viewModel.answerAsk(pending.messageId, pending.cardKey, "deny")
+
+        val response = gatewayHarness.awaitRpc("approval.respond")
+        assertEquals(JsonPrimitive("live-resumed"), response["session_id"])
+        assertEquals(JsonPrimitive("deny"), response["choice"])
+        awaitCondition { viewModel.pendingAsk.value == null }
+        val cardMessage = handler.messages.value.single { it.id == pending.messageId }
+        assertEquals("deny", cardMessage.cardDispatches.single().actionValue)
+    }
+
+    @Test
+    fun queuedOnlyRecoverySettlesPriorCheckpointBeforeStreamingQueuedTurn() {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("prior-user", "First prompt", now - 3_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "prior-assistant",
+                    content = "Old partial",
+                    timestamp = now - 2_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 2_900L,
+                updatedAt = now,
+            ),
+        )
+        persistedHistory = listOf(
+            MessageItem(
+                id = "server-prior-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("First prompt"),
+            ),
+            MessageItem(
+                id = "server-prior-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Completed first answer"),
+            ),
+        )
+        gatewayHarness.recoveryRunning = false
+        gatewayHarness.recoveryQueuedUser = "Second queued prompt"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            } && handler.messages.value.any {
+                it.id.startsWith("gateway-inbound-") && it.isStreaming
+            }
+        }
+        val beforeEvents = handler.messages.value
+        assertTrue(beforeEvents.any {
             it.role == MessageRole.ASSISTANT &&
-                it.content == "Partial answer from upstream and finished"
+                it.content == "Completed first answer" &&
+                !it.isStreaming
         })
+        assertFalse(beforeEvents.any { it.id == "prior-assistant" && it.isStreaming })
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+        persistedHistory = persistedHistory + listOf(
+            MessageItem(
+                id = "server-queued-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("Second queued prompt"),
+            ),
+            MessageItem(
+                id = "server-queued-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Second answer"),
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition {
+            handler.messages.value.count {
+                it.role == MessageRole.ASSISTANT && it.content == "Second answer"
+            } == 1
+        }
+        assertTrue(handler.messages.value.any { it.content == "Completed first answer" })
+        assertFalse(handler.messages.value.any {
+            it.id == "prior-assistant" && it.content.contains("Second answer")
+        })
+    }
+
+    @Test
+    fun runningAndQueuedRecoveryCreatesANewPromptAndCheckpointAfterCurrentCompletion() {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("prior-user", "First prompt", now - 3_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "prior-assistant",
+                    content = "Current partial",
+                    timestamp = now - 2_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 2_900L,
+                updatedAt = now,
+            ),
+        )
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Current partial"
+        gatewayHarness.recoveryQueuedUser = "Second queued prompt"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any { it.id == "prior-assistant" && it.isStreaming }
+        }
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Current partial completed") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            handler.messages.value.any {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            } && handler.messages.value.any {
+                it.id.startsWith("gateway-inbound-") && it.isStreaming
+            }
+        }
+        awaitCondition { checkpointStore.checkpoint?.user?.content == "Second queued prompt" }
+        assertTrue(
+            "prior turn was not settled before queued handoff: ${handler.messages.value}",
+            handler.messages.value.any {
+                it.id == "prior-assistant" &&
+                    it.content.endsWith("Current partial completed") &&
+                    !it.isStreaming
+            },
+        )
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+        persistedHistory = listOf(
+            MessageItem(
+                id = "server-prior-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("First prompt"),
+            ),
+            MessageItem(
+                id = "server-prior-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Current partial completed"),
+            ),
+            MessageItem(
+                id = "server-queued-user",
+                sessionId = STORED_SESSION_ID,
+                role = "user",
+                content = JsonPrimitive("Second queued prompt"),
+            ),
+            MessageItem(
+                id = "server-queued-assistant",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Second answer"),
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Second answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition { checkpointStore.checkpoint == null }
+        assertEquals(
+            1,
+            handler.messages.value.count {
+                it.role == MessageRole.USER && it.content == "Second queued prompt"
+            },
+        )
+        assertEquals(
+            1,
+            handler.messages.value.count {
+                it.role == MessageRole.ASSISTANT && it.content == "Second answer"
+            },
+        )
     }
 
     @Test
@@ -585,7 +1131,8 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun queuedMessageDrainsAfterUnsolicitedTurnCompletes() {
-        gatewayHarness.steerStatus = "rejected"
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        gatewayHarness.redirectStatus = "rejected"
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -597,7 +1144,7 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { handler.isStreaming.value }
 
         viewModel.sendMessage("Run this next")
-        gatewayHarness.awaitRpc("session.steer")
+        gatewayHarness.awaitRpc("session.redirect")
         awaitCondition { viewModel.queuedMessages.value == listOf("Run this next") }
 
         persistedHistory = persistedAnswerHistory()
@@ -611,10 +1158,282 @@ class ChatViewModelGatewayInboundTurnTest {
 
         awaitCondition {
             gatewayHarness.rpcLog.any { (method, params) ->
-                method == "prompt.submit" && params["text"] == JsonPrimitive("Run this next")
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Run this next") &&
+                    params["queued"] == JsonPrimitive(true)
             }
         }
         assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun multipleQueuedMessagesDrainAsAnOwnedRunChain() {
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        gatewayHarness.redirectStatus = "rejected"
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Queued first")
+        gatewayHarness.awaitRpc("session.redirect")
+        viewModel.sendMessage("Queued second")
+        gatewayHarness.awaitRpcCount("session.redirect", 2)
+        awaitCondition {
+            viewModel.queuedMessages.value == listOf("Queued first", "Queued second")
+        }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Original complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "prompt.submit" } == 1
+        }
+        assertEquals(listOf("Queued second"), viewModel.queuedMessages.value)
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "First queued complete") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            gatewayHarness.rpcLog.filter { it.first == "prompt.submit" }
+                .map { it.second["text"] } ==
+                listOf(JsonPrimitive("Queued first"), JsonPrimitive("Queued second"))
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun queuedMessageStaysWithOriginWhileAnotherRunningSessionCompletes() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run task A")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial A") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Follow up A")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Follow up A") }
+
+        viewModel.switchSession(secondSession)
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertTrue("session B must not show A's queue", viewModel.queuedMessages.value.isEmpty())
+
+        viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task B complete") },
+                "live-b",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+        assertEquals(
+            0,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Follow up A")
+            },
+        )
+
+        // A finishes late while B remains visible. Its queue becomes eligible,
+        // but must not be dispatched through B's mutable visible route.
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Task A complete") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertEquals(
+            0,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Follow up A")
+            },
+        )
+
+        viewModel.switchSession(STORED_SESSION_ID)
+        awaitCondition {
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Follow up A") &&
+                    params["queued"] == JsonPrimitive(true)
+            }
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+    }
+
+    @Test
+    fun queuedMessageVisibilityFollowsItsOriginProfile() {
+        val defaultContext = AgentDisplay.profileContextKey("connection-a", null)
+        val otherContext = AgentDisplay.profileContextKey("connection-a", "profile-b")
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(defaultContext, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Run in default profile")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Default profile partial") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+        viewModel.sendMessage("Default profile follow-up")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        viewModel.switchProfileContext(otherContext, STORED_SESSION_ID)
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Default profile partial"
+        viewModel.switchProfileContext(defaultContext, STORED_SESSION_ID)
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.isStreaming.value &&
+                viewModel.queuedMessages.value == listOf("Default profile follow-up")
+        }
+    }
+
+    @Test
+    fun connectionChangeCancelsOwnedQueueAndLateCompletionCannotResendIt() {
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        viewModel.observeConnectionSwitches(switches)
+
+        viewModel.sendMessage("Run before connection change")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Must stay on the old connection")
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        switches.tryEmit("connection-b")
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late old-connection completion") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertFalse(
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Must stay on the old connection")
+            },
+        )
+    }
+
+    @Test
+    fun deletingDestinationCancelsItsQueueAndEditRestoresOnlyThatItem() {
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = STORED_SESSION_ID,
+                title = "Owned session",
+                model = null,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+        viewModel.profileSessionDeleter = { true }
+
+        viewModel.sendMessage("Run before delete")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Edit this queued message")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Edit this queued message") }
+        assertEquals("Edit this queued message", viewModel.takeQueuedForEdit(0))
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        viewModel.sendMessage("Cancel when destination is deleted")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Cancel when destination is deleted") }
+        viewModel.deleteSession(STORED_SESSION_ID)
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late deleted-session completion") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertFalse(
+            gatewayHarness.rpcLog.any { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Cancel when destination is deleted")
+            },
+        )
+    }
+
+    @Test
+    fun retryQueuedForActiveRunIsCancelledWithThatRun() {
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            STORED_SESSION_ID,
+        )
+
+        viewModel.sendMessage("Retry this turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.retryLastMessage()
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Retry this turn") }
+
+        viewModel.cancelStream()
+        gatewayHarness.awaitRpc("session.interrupt")
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Late completion after cancel") },
+                "live-resumed",
+            ),
+        )
+        Thread.sleep(100)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertEquals(
+            1,
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" && params["text"] == JsonPrimitive("Retry this turn")
+            },
+        )
     }
 
     @Test
@@ -634,38 +1453,12 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun unsolicitedTurnDoesNotReplaceAnActiveForcedSseTurn() {
-        holdCompletionsStream = true
+    fun gatewayVoiceTurnDoesNotRequireApiFallback() {
         viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
-        awaitCondition { handler.isStreaming.value }
-        val localPlaceholderId = handler.messages.value.last().id
+        val params = gatewayHarness.awaitRpc("prompt.submit")
 
-        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
-        persistedHistory = persistedAnswerHistory()
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.complete",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
-        Thread.sleep(150)
-        shadowOf(Looper.getMainLooper()).idle()
-
-        assertTrue("the forced SSE turn must still own streaming", handler.isStreaming.value)
-        assertTrue(handler.messages.value.any { it.id == localPlaceholderId && it.isStreaming })
-        assertFalse(handler.messages.value.any { it.content == BACKGROUND_ANSWER })
-
-        viewModel.cancelStream()
-        awaitCondition { !handler.isStreaming.value }
-        awaitCondition { handler.messages.value.any { it.content == BACKGROUND_ANSWER } }
+        assertEquals(JsonPrimitive("local voice turn"), params["text"])
+        assertEquals(0, apiCompletionsRequestCount.get())
     }
 
     @Test

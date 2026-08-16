@@ -13,6 +13,12 @@ export interface SessionInfo {
   cwd?: string
   mcp_servers?: McpServerStatus[]
   model: string
+  project?: {
+    id?: string
+    name?: string
+    primary_path?: string
+    slug?: string
+  } | null
   release_date?: string
   skills: Record<string, string[]>
   tools: Record<string, string[]>

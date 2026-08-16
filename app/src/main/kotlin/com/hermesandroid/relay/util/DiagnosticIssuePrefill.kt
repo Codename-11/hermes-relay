@@ -28,6 +28,9 @@ object DiagnosticIssuePrefill {
     private const val MAX_TRACE_FOR_URL = 3000
 
     private const val DEFAULT_WHAT_HAPPENED = "Captured diagnostic from the in-app activity log."
+    private const val CONFIGURED_URL_MARKER = "[diagnostic-configured-url]"
+    private const val REQUEST_URL_MARKER = "[diagnostic-request-url]"
+    private const val LEGACY_URL_MARKER = "[diagnostic-url]"
 
     /** `[Bug]:` for Error entries, `[Diagnostic]:` for Info/Warning. */
     fun issueTitle(entry: DiagnosticLogEntry): String = when (entry.severity) {
@@ -36,12 +39,13 @@ object DiagnosticIssuePrefill {
     }
 
     /**
-     * `bug` for Error entries; `question` (an existing repo label) for
-     * Info/Warning so routine diagnostics don't pollute the bug queue.
+     * `bug,area:android` for Error entries; `question,area:android` for
+     * Info/Warning so routine diagnostics don't pollute the bug queue and all
+     * in-app reports reach the owning Android surface.
      */
     fun issueLabels(entry: DiagnosticLogEntry): String = when (entry.severity) {
-        DiagnosticSeverity.Error -> "bug"
-        else -> "question"
+        DiagnosticSeverity.Error -> "bug,area:android"
+        else -> "question,area:android"
     }
 
     /**
@@ -52,7 +56,7 @@ object DiagnosticIssuePrefill {
      */
     fun connectionMode(entry: DiagnosticLogEntry): String =
         entry.endpointRole
-            ?: entry.url?.let { Connection.inferRouteRole(it) }
+            ?: entry.primaryUrl?.let { Connection.inferRouteRole(it) }
             ?: "unknown"
 
     /**
@@ -76,7 +80,10 @@ object DiagnosticIssuePrefill {
         val whatHappened = DiagnosticsLog.redactReportText(expectation)
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_WHAT_HAPPENED
-        return buildString {
+        val configuredUrl = reportSafeUrl(entry.configuredUrl)
+        val requestUrl = reportSafeUrl(entry.requestUrl)
+        val legacyUrl = reportSafeUrl(entry.url)
+        val body = buildString {
             appendLine(
                 "> ⚠️ Before submitting: remove any secrets, tokens, real hostnames/IPs, " +
                     "or personal data from the detail below.",
@@ -99,9 +106,15 @@ object DiagnosticIssuePrefill {
             appendLine("- Title: ${entry.title}")
             appendLine("- Category: ${entry.category.label}")
             appendLine("- Severity: ${entry.severity.name}")
+            entry.operation?.let { appendLine("- Operation: $it") }
             entry.endpointRole?.let { appendLine("- Route: $it") }
-            entry.url?.let { appendLine("- URL: $it") }
+            configuredUrl?.let { appendLine("- Configured URL: $CONFIGURED_URL_MARKER") }
+            requestUrl?.let { appendLine("- Request: $REQUEST_URL_MARKER") }
+            if (configuredUrl == null && requestUrl == null) {
+                legacyUrl?.let { appendLine("- URL: $LEGACY_URL_MARKER") }
+            }
             entry.elapsedMs?.let { appendLine("- Elapsed: ${it}ms") }
+            entry.suggestion?.let { appendLine("- Suggested next step: $it") }
             if (trace.isNotBlank()) {
                 appendLine()
                 appendLine("```")
@@ -110,6 +123,19 @@ object DiagnosticIssuePrefill {
             }
             appendLine()
             append("<sub>Captured by the Hermes-Relay in-app diagnostics log</sub>")
+        }
+        return DiagnosticsLog.redactReportText(body).orEmpty()
+            .replace(CONFIGURED_URL_MARKER, configuredUrl.orEmpty())
+            .replace(REQUEST_URL_MARKER, requestUrl.orEmpty())
+            .replace(LEGACY_URL_MARKER, legacyUrl.orEmpty())
+    }
+
+    private fun reportSafeUrl(value: String?): String? {
+        val sanitized = DiagnosticsLog.sanitizeUrl(value) ?: return null
+        return if (sanitized.contains("://")) {
+            sanitized
+        } else {
+            DiagnosticsLog.redactReportText(sanitized)
         }
     }
 }

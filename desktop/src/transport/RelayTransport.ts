@@ -10,14 +10,16 @@
 
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { connect as tlsConnect } from 'node:tls'
+import * as tls from 'node:tls'
 
-import { comparePins, extractSpkiSha256, isSecureUrl, pinKey } from '../certPin.js'
+import { certificateDerToPem, comparePins, extractSpkiSha256, isSecureUrl, peerCertificateDer, pinKey } from '../certPin.js'
 import type { GatewayEvent } from '../gatewayTypes.js'
 import { CircularBuffer } from '../lib/circularBuffer.js'
 import { getSession, saveSession } from '../remoteSessions.js'
+import { installWindowsSystemCaTrust } from '../windowsSystemCa.js'
 
 import type { Transport } from './Transport.js'
+import { openBrokerRelaySocket, type BrokerRouteConfig } from './BrokerRelaySocket.js'
 
 const MAX_LOG_LINES = 200
 const MAX_LOG_LINE_BYTES = 4096
@@ -43,6 +45,11 @@ const RECONNECT_MAX_MS = 30_000
 const RECONNECT_BACKOFF_CEIL = 4 // cap the exponent so 2^n doesn't overflow past MAX
 const RECONNECT_RATE_LIMITED_MS = 5 * 60 * 1000
 const TLS_PROBE_TIMEOUT_MS = 10_000
+
+// Install Windows roots before either TLS client creates a secure context.
+// This changes only Node on Windows; Bun and other platforms retain their
+// runtime-owned trust behavior.
+installWindowsSystemCaTrust(tls)
 
 const truncateLine = (line: string) =>
   line.length > MAX_LOG_LINE_BYTES ? `${line.slice(0, MAX_LOG_LINE_BYTES)}… [truncated ${line.length} bytes]` : line
@@ -74,7 +81,7 @@ interface WSLike {
   addEventListener(type: 'error', listener: (ev: WSErrorEvent) => void): void
 }
 
-type WSFactory = (url: string) => WSLike
+type WSFactory = (url: string, headers?: Record<string, string>, pinnedCertificatePem?: string) => WSLike
 
 export interface AuthMeta {
   /** Per-channel grant expiry (epoch seconds; `null` = never). Shape matches
@@ -85,6 +92,7 @@ export interface AuthMeta {
   /** Server's hint about the transport it's running on — `"wss"` / `"ws"` / `"unknown"`.
    * Used by the contextual connect banner so we can tell the user what they're on. */
   transportHint: string | null
+  routeCredential: { kind: 'broker_route'; brokerUrl: string; hostId: string; credentialId: string; token: string; expiresAt: number | null } | null
 }
 
 export type AuthOutcome =
@@ -96,7 +104,7 @@ export type AuthOutcome =
  * auth.ok seen; `reconnecting` = socket dropped, backoff timer armed. */
 type ReconnectState = 'idle' | 'connecting' | 'connected' | 'reconnecting'
 
-const defaultWSFactory: WSFactory = url => {
+const defaultWSFactory: WSFactory = (url, headers, pinnedCertificatePem) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Ctor = (globalThis as any).WebSocket
 
@@ -104,6 +112,19 @@ const defaultWSFactory: WSFactory = url => {
     throw new Error('RelayTransport: global WebSocket not available. Need Node >=21.')
   }
 
+  if ((headers && Object.keys(headers).length) || pinnedCertificatePem) {
+    // Bun's compiled runtime supports upgrade headers and scoped TLS options.
+    // Trusting the exact certificate observed during pin verification binds
+    // the live handshake to that check and preserves hostname validation.
+    const options = {
+      ...(headers ? { headers } : {}),
+      ...(pinnedCertificatePem ? { tls: { rejectUnauthorized: true, ca: pinnedCertificatePem } } : {})
+    }
+    // Bun accepts options as the second argument. Passing an empty protocols
+    // array plus a third options argument silently drops TLS settings and
+    // fails private-certificate handshakes.
+    return new Ctor(url, options) as WSLike
+  }
   return new Ctor(url) as WSLike
 }
 
@@ -113,8 +134,22 @@ export interface RelayTransportConfig {
   pairingCode?: string
   /** Previously-minted session token for reconnection. */
   sessionToken?: string
+  /** Pin supplied by the operator-reviewed pairing invite before a session
+   * record exists. It is compared before the first WebSocket is opened. */
+  expectedCertPin?: string
+  /** Authenticate a native Relay-only secure proxy WebSocket upgrade. */
+  sessionHeader?: boolean
   /** Human-readable label for the "Paired Devices" list. */
   deviceName?: string
+  /** Machine hostname used as a fallback identity by newer relays. */
+  deviceHostname?: string
+  /** Hardware/model descriptor retained as secondary metadata. */
+  deviceModel?: string
+  /** OS/platform descriptor retained as secondary metadata. */
+  devicePlatform?: string
+  /** Client family and physical form-factor metadata. */
+  clientSurface?: string
+  deviceFormFactor?: string
   /** Stable per-install identifier. */
   deviceId?: string
   /** Requested session lifetime in seconds (0 = never expire). */
@@ -135,6 +170,7 @@ export interface RelayTransportConfig {
    * Returning false aborts reconnect — used for credential-purge races
    * (e.g. user ran `hermes-relay pair --reset` mid-session). */
   reconnectGate?: () => boolean
+  broker?: BrokerRouteConfig
   /** When set false, suppress the `desktop.workspace` advertisement
    * fired on first auth.ok. Default: true — every connection sends a
    * one-shot workspace envelope (cwd / git state / hostname). One-shot
@@ -168,6 +204,7 @@ export interface RelayTransportConfig {
 export class RelayTransport extends EventEmitter implements Transport {
   private ws: WSLike | null = null
   private wsFactory: WSFactory
+  private pinnedCertificatePem: string | undefined
   private cfg: RelayTransportConfig
   private reqId = 0
   private logs = new CircularBuffer<string>(MAX_LOG_LINES)
@@ -182,7 +219,7 @@ export class RelayTransport extends EventEmitter implements Transport {
   /** Auth.ok metadata captured on handshake — surfaces grants / ttl / transport
    * hint to the CLI so `hermes-relay status`, the connect banner, and future
    * TTL-aware flows don't have to re-RPC for data the handshake already carried. */
-  authMeta: AuthMeta = { grants: null, ttlExpiresAt: null, transportHint: null }
+  authMeta: AuthMeta = { grants: null, ttlExpiresAt: null, transportHint: null, routeCredential: null }
   private authSuccessObservers: Array<(token: string, serverVersion: string | null, meta: AuthMeta) => void> = []
   private authSettlers: Array<(r: AuthOutcome) => void> = []
   private authFailReason: null | string = null
@@ -309,9 +346,24 @@ export class RelayTransport extends EventEmitter implements Transport {
       this.teardownSocket(-1, msg)
     }, AUTH_TIMEOUT_MS)
 
+    // Hermes Reach carries the inner Secure Link TLS/WS connection through an
+    // opaque byte rendezvous. Its factory validates the inner QR SPKI and
+    // hostname before exposing the WebSocket.
+    if (this.cfg.broker) {
+      try {
+        const ws = await openBrokerRelaySocket(this.cfg.broker)
+        this.bindSocket(ws)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        this.authFailReason = msg; this.teardownSocket(-1, msg)
+      }
+      return
+    }
+
     // TOFU: probe the TLS peer cert BEFORE the WebSocket handshake so we can
     // refuse to open the WS on a pin mismatch. No-op for ws://.
     if (isSecureUrl(this.cfg.url)) {
+      this.pinnedCertificatePem = undefined
       try {
         await this.verifyOrCapturePin()
       } catch (e) {
@@ -328,7 +380,12 @@ export class RelayTransport extends EventEmitter implements Transport {
     let ws: WSLike
 
     try {
-      ws = this.wsFactory(this.cfg.url)
+      const token = this.sessionToken ?? this.cfg.sessionToken
+      ws = this.wsFactory(
+        this.cfg.url,
+        this.cfg.sessionHeader && token ? { 'X-Hermes-Relay-Session': token } : undefined,
+        this.pinnedCertificatePem
+      )
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       this.pushLog(`[ws] factory failed: ${msg}`)
@@ -338,8 +395,11 @@ export class RelayTransport extends EventEmitter implements Transport {
       return
     }
 
-    this.ws = ws
+    this.bindSocket(ws)
+  }
 
+  private bindSocket(ws: WSLike): void {
+    this.ws = ws
     ws.addEventListener('open', () => {
       this.pushLog(`[ws] open → ${this.cfg.url}`)
       this.sendAuth()
@@ -377,18 +437,18 @@ export class RelayTransport extends EventEmitter implements Transport {
     const port = parseInt(u.port || '443', 10)
     const key = pinKey(this.cfg.url)
     const stored = await getSession(this.cfg.url)
-    const expectedPin = stored?.certPinSha256 ?? null
+    const expectedPin = stored?.certPinSha256 ?? this.cfg.expectedCertPin ?? null
 
-    const actualPin = await new Promise<string>((resolve, reject) => {
-      const socket = tlsConnect({
+    const verified = await new Promise<{ pin: string; der: Buffer }>((resolve, reject) => {
+      const socket = tls.connect({
         host,
         port,
         servername: host,
-        // Let Node's default CA store run. Self-signed servers still TOFU-
-        // pin on subsequent connects, but the first probe requires a valid
-        // chain. If users need a self-signed flow, they can pre-seed a pin
-        // via the Android app or a future `--trust-self-signed` flag.
-        rejectUnauthorized: true
+        // A server-advertised pin is authoritative trust material. Permit the
+        // handshake to reach pin comparison even when the private proxy uses
+        // a locally issued certificate; without a pin, normal CA validation
+        // remains mandatory before TOFU capture.
+        rejectUnauthorized: !expectedPin
       })
 
       const timer = setTimeout(() => {
@@ -402,8 +462,7 @@ export class RelayTransport extends EventEmitter implements Transport {
           // `detailed=false` here; we only need `raw` (DER). We always pin
           // the leaf — intermediates rotate on CA renewal and would cause
           // spurious mismatches.
-          const peer = socket.getPeerCertificate(false)
-          const raw = (peer as unknown as { raw?: Buffer })?.raw
+          const raw = peerCertificateDer(socket)
 
           if (!raw || !Buffer.isBuffer(raw) || raw.length === 0) {
             socket.destroy()
@@ -413,7 +472,7 @@ export class RelayTransport extends EventEmitter implements Transport {
           }
           const pin = extractSpkiSha256(raw)
           socket.end()
-          resolve(pin)
+          resolve({ pin, der: raw })
         } catch (e) {
           socket.destroy()
           reject(e instanceof Error ? e : new Error(String(e)))
@@ -426,6 +485,7 @@ export class RelayTransport extends EventEmitter implements Transport {
       })
     })
 
+    const actualPin = verified.pin
     if (expectedPin) {
       if (!comparePins(expectedPin, actualPin)) {
         // Surface a user-friendly remediation path. The session file carries
@@ -438,6 +498,7 @@ export class RelayTransport extends EventEmitter implements Transport {
         )
       }
       this.pushLog(`[tofu] pin match for ${key}`)
+      this.pinnedCertificatePem = certificateDerToPem(verified.der)
 
       return
     }
@@ -485,6 +546,12 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (this.cfg.deviceName) {
       payload.device_name = this.cfg.deviceName
     }
+
+    if (this.cfg.deviceHostname) payload.device_hostname = this.cfg.deviceHostname
+    if (this.cfg.deviceModel) payload.device_model = this.cfg.deviceModel
+    if (this.cfg.devicePlatform) payload.device_platform = this.cfg.devicePlatform
+    if (this.cfg.clientSurface) payload.client_surface = this.cfg.clientSurface
+    if (this.cfg.deviceFormFactor) payload.device_form_factor = this.cfg.deviceFormFactor
 
     if (this.cfg.deviceId) {
       payload.device_id = this.cfg.deviceId
@@ -631,7 +698,17 @@ export class RelayTransport extends EventEmitter implements Transport {
             : null
       const rawHint = payload.transport_hint
       const transportHint = typeof rawHint === 'string' ? rawHint : null
-      this.authMeta = { grants, ttlExpiresAt, transportHint }
+      let routeCredential: AuthMeta['routeCredential'] = null
+      const rawRoute = payload.route_credential
+      if (this.cfg.broker && rawRoute && typeof rawRoute === 'object' && !Array.isArray(rawRoute)) {
+        const route = rawRoute as Record<string, unknown>
+        const sameAuthority = (() => { try { return new URL(String(route.broker_url)).origin === new URL(this.cfg.broker!.url).origin } catch { return false } })()
+        const expiresAt = route.expires_at === null ? null : typeof route.expires_at === 'number' && Number.isFinite(route.expires_at) && route.expires_at > Date.now() / 1000 ? route.expires_at : undefined
+        if (route.kind === 'broker_route' && sameAuthority && route.host_id === this.cfg.broker.hostId && typeof route.credential_id === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(route.credential_id) && typeof route.token === 'string' && /^[A-Za-z0-9_-]{32,512}$/.test(route.token) && expiresAt !== undefined) {
+          routeCredential = { kind: 'broker_route', brokerUrl: String(route.broker_url), hostId: String(route.host_id), credentialId: route.credential_id, token: route.token, expiresAt }
+        }
+      }
+      this.authMeta = { grants, ttlExpiresAt, transportHint, routeCredential }
 
       this.pushLog(
         `[auth] ok (server ${this.serverVersion ?? '?'}, transport=${transportHint ?? '?'}, ttl=${

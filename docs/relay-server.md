@@ -137,6 +137,12 @@ python -m relay_server [OPTIONS]
   --no-ssl           Disable TLS requirement (dev/localhost only)
   --log-level LEVEL  DEBUG, INFO, WARNING, ERROR (default: INFO)
   --config PATH      Path to hermes config.yaml
+  --secure-link / --no-secure-link
+                     Enable or disable Hermes Secure Link (opt-in)
+  --secure-link-host HOST
+                     Secure Link bind and advertised host
+  --secure-link-port PORT
+                     Secure Link port (default: 9443)
   --allow-insecure-api-key
                      Allow API-key voice auth over plain LAN HTTP at startup
 ```
@@ -154,6 +160,16 @@ All settings can be configured via environment variables. These override CLI def
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server base URL |
 | `RELAY_HERMES_CONFIG` | `~/.hermes/config.yaml` | Hermes config path (for profile loading) |
 | `RELAY_LOG_LEVEL` | `INFO` | Python logging level |
+| `RELAY_SECURE_LINK_ENABLED` | `0` | Enable optional Hermes Secure Link. Restart and re-pair so the QR carries the exact origin and SPKI pin. |
+| `RELAY_SECURE_LINK_HOST` | `0.0.0.0` | Secure Link bind and advertised host. The listener must already be reachable through LAN, VPN/Tailscale, or operator-managed public routing. |
+| `RELAY_SECURE_LINK_PORT` | `9443` | Secure Link HTTPS port. |
+| `RELAY_SECURE_LINK_CERT` | generated | Optional TLS certificate path. Changing the identity requires explicit re-pairing. |
+| `RELAY_SECURE_LINK_KEY` | generated | Optional TLS private-key path. |
+| `RELAY_SECURE_LINK_DASHBOARD_URL` | `http://127.0.0.1:9119` | Loopback Dashboard upstream for the fixed `/dashboard` namespace. |
+| `RELAY_EXPERIMENTAL_REACH_ENABLED` | `0` | Explicitly enable experimental Hermes Reach. Not recommended for normal remote access. |
+| `RELAY_SECURE_LINK_BROKER_URL` | — | Experimental Reach broker `wss://` base URL. Requires Secure Link and the explicit Reach flag. |
+| `RELAY_SECURE_LINK_BROKER_HOST_TOKEN` | — | Raw host-registration token for the outbound connector. Configure with the broker URL; never put it in a QR or broker credential file. |
+| `RELAY_SECURE_LINK_BROKER_HOST_ID_FILE` | `~/.hermes/relay-secure-link/host-id` | Persistent opaque Reach host-ID file. Changing it requires broker credential reconciliation. |
 | `RELAY_TRUST_PROXY_HEADERS` | `0` | When `1`, trust `X-Forwarded-Proto: https` from your own reverse proxy for Hermes API bearer auth on `/voice/*`. Only enable when the proxy strips untrusted incoming forwarded headers. |
 | `RELAY_ALLOW_INSECURE_API_BEARER` | `0` | Dev-only escape hatch. When `1`, allows Hermes API bearer auth on non-loopback plaintext `/voice/*` requests. Leave off for production. For a running relay, prefer `hermes relay insecure-api-key on` or the standalone `hermes-relay insecure-api-key on` shim so no restart is needed. |
 | `RELAY_VOICE_OUTPUT_CONFIG` | `~/.hermes-relay/config.yaml` | Relay-owned config file for assistant speech rendering defaults under `voice_output:`. This is intentionally separate from upstream Hermes `~/.hermes/config.yaml`, which still owns legacy `stt:` and `tts:` fallback helpers. |
@@ -191,6 +207,69 @@ python -m relay_server
 ```
 
 Or use a reverse proxy (nginx/Caddy) to terminate TLS in front of the relay. Full decision matrix (Tailscale / Caddy / Cloudflare Tunnel / WireGuard / plaintext-over-VPN) with setup recipes lives in [`docs/remote-access.md`](remote-access.md).
+
+### Hermes Secure Link
+
+Hermes Secure Link is the Relay plugin's optional pinned-TLS ingress. One exact
+origin exposes only `/relay`, `/api`, and `/dashboard`; Relay sessions, API
+bearers, and Dashboard cookies/native bearers remain independently authenticated.
+The pairing QR establishes the endpoint authority and SPKI pin before the first
+request. The pin verifies continuity with the paired endpoint, not the physical
+host's identity. Secure Link does not supply reachability or traverse NAT.
+
+After enabling it, check the ordinary Relay `/health` response for
+`secure_link.status` (`disabled`, `available`, or `unavailable`) and re-pair.
+The pinned endpoint also exposes `GET /relay/health`. Legacy
+`RELAY_SECURE_PROXY_*` variable names remain accepted for compatibility.
+
+### Hermes Reach broker (experimental)
+
+Hermes Reach is an optional, separately deployable outbound rendezvous service:
+
+```bash
+python -m plugin.rendezvous \
+  --credentials /etc/hermes-reach/hosts.json \
+  --state /var/lib/hermes-reach/routes.json \
+  --listen 0.0.0.0 --port 9444 \
+  --tls-cert /etc/hermes-reach/fullchain.pem \
+  --tls-key /etc/hermes-reach/privkey.pem
+```
+
+Its public contract is `GET /health` plus WSS `/v1/connect`. Hosts and clients
+connect outward; the broker matches streams and forwards opaque records. The
+inner connection is QR-pinned Secure Link TLS, so the broker never terminates
+the Hermes security session and never receives Relay/API/Dashboard credentials
+or plaintext. It can still observe routing identity, source, timing, and byte
+metadata and can deny, delay, drop, or misroute streams.
+
+Reach is not part of the ordinary Relay listener and is not required for LAN,
+Tailscale, public TLS, or direct Secure Link routes. A self-hosted broker is
+supported by the architecture. The required state file contains only bounded,
+expiring credential hashes and revocation/replay metadata, never raw client
+tokens. Its parent directory and file are maintained with private permissions
+and atomic replacement so broker maintenance restarts preserve paired routes.
+
+The host connector requires `RELAY_EXPERIMENTAL_REACH_ENABLED=1` plus
+`RELAY_SECURE_LINK_BROKER_URL` and `RELAY_SECURE_LINK_BROKER_HOST_TOKEN`, which
+must be configured together.
+Hermes Secure Link must also be enabled and available. The ordinary Relay
+`/health` response exposes the connector under `secure_link.reach`: `state` is
+`disabled`, `unavailable`, `stopped`, `connecting`, `connected`, or `backoff`.
+Connected status also includes the broker URL, opaque host ID, loopback target,
+active/maximum and completed streams, connection attempts, connection time, and
+a bounded last error. `transport: "opaque_inner_tls"` describes the inner
+stream and does not claim broker metadata is hidden.
+
+The credential file is private JSON with a `hosts` object keyed by the opaque
+22-character base64url host ID (128 random bits). Each value contains only
+`host_token_sha256`, a base64url SHA-256 digest—not the raw host registration
+token. Public listeners require both TLS files. `--insecure-dev` is accepted
+only on loopback. `GET /health` returns `service: "hermes_reach"`, protocol
+version, online-host count, and active-stream count; it never returns host IDs
+or credentials.
+
+The broker has no environment-variable configuration in v1; use the command
+arguments and private credential file above.
 
 ## Tailscale helper
 
@@ -294,9 +373,10 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code so it can appear in a QR payload before the phone scans it. Request body: `{"code": "ABCD12", "ttl_seconds": 2592000, "grants": {"terminal": 604800, "bridge": 86400}, "transport_hint": "wss"}` — `ttl_seconds` / `grants` / `transport_hint` are all optional; if omitted the SessionManager's bounded defaults are used. Client-supplied policy in the WebSocket auth envelope is never authoritative. Response: `{"ok": true, "code": "ABCD12"}`. Returns HTTP 403 for any `request.remote` other than `127.0.0.1` / `::1`. **As of ADR 15 this endpoint clears all rate-limit blocks on success** — the operator is explicitly re-pairing, stale blocks should not prevent the new code from being consumed. Used by `hermes pair` / `/hermes-relay-pair`; `hermes-pair` remains a compatibility shim. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and return the signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) used by dashboard and desktop pair/repair flows. Reads `API_SERVER_KEY` from the host-local config chain when the dashboard does not pass `api_key` explicitly. Optional request field `dashboard_url` is mirrored into the QR payload and response. |
 | `/pairing/approve` | POST | **Loopback only, Phase 3 stub.** Same wire shape and loopback gate as `/pairing/register` — present so the Android client can target the route today. The semantic difference (operator reviewing a phone-initiated pending code before approval) still needs the pending-codes store + approval UX, marked `# TODO(Phase 3)` in the handler. |
-| `/sessions` | GET | Bearer-auth'd. Returns `{"sessions": [ {token_prefix, device_name, device_id, created_at, last_seen, expires_at, grants, transport_hint, is_current}, ... ]}` for all currently-active paired devices. `token_prefix` is the first 8 characters of the session token — full tokens are NEVER included, so a caller holding one session token can't extract another. `expires_at` and grant values that are `math.inf` serialize as `null` (never expire). `is_current` is true for the session matching the caller's bearer. 401 on missing/invalid bearer. Used by the Android Paired Devices screen. **Loopback branch (2026-04-18):** callers on `127.0.0.1` / `::1` may skip the bearer and receive the same `{sessions: [...]}` payload without the `is_current` flag (no caller context). Added so the dashboard plugin proxy can list paired devices without needing to mint its own bearer. Non-loopback callers still require the bearer and retain `is_current`. |
-| `/sessions/{token_prefix}` | DELETE | Bearer-auth'd. Revoke a paired device by first-N-char token prefix (N ≥ 4). Returns 200 `{"ok": true, "revoked_self": bool}` on exact match; 404 on zero matches; 409 on ambiguous (2+) matches with the count in the body. Self-revoke is allowed and flagged via `revoked_self: true` so the caller knows to wipe local state. Any paired device can revoke any other — see ADR 15 for the trade-off rationale. |
+| `/sessions` | GET | Bearer-auth'd. Returns `{"sessions": [ {token_prefix, device_name, device_id, device_model, device_platform, client_surface, device_form_factor, created_at, last_seen, expires_at, grants, transport_hint, is_current}, ... ]}` for all currently-active paired devices. `device_name` is the primary display identity; model, platform, client surface, and form factor are informational details only. `token_prefix` is the first 8 characters of the session token — full tokens are NEVER included, so a caller holding one session token can't extract another. `expires_at` and grant values that are `math.inf` serialize as `null` (never expire). `is_current` is true for the session matching the caller's bearer. 401 on missing/invalid bearer. Used by the Android Paired Devices screen. **Loopback branch (2026-04-18):** callers on `127.0.0.1` / `::1` may skip the bearer and receive the same `{sessions: [...]}` payload without the `is_current` flag (no caller context). Added so the dashboard plugin proxy can list paired devices without needing to mint its own bearer. Non-loopback callers still require the bearer and retain `is_current`. |
+| `/sessions/{token_prefix}` | DELETE | Bearer-auth'd for network callers; loopback callers may omit the bearer for host-operator management. Revoke a paired device by first-N-char token prefix (N ≥ 4). Returns 200 `{"ok": true, "revoked_self": bool}` on exact match; 404 on zero matches; 409 on ambiguous (2+) matches with the count in the body. Self-revoke is allowed and flagged via `revoked_self: true` so the caller knows to wipe local state. Any paired phone can revoke any other — see ADR 15 for the trade-off rationale. The Dashboard Relay tab and `/relay revoke <token-prefix>` use the loopback operator path. |
 | `/sessions/{token_prefix}` | PATCH | Bearer-auth'd, self-targeted, and reduction-only. Body `{"ttl_seconds": 3600}`, `{"grants": {"terminal": 600}}`, or both may shorten the caller's current session policy. A bearer cannot target another session, extend its lifetime, add or lengthen grants, or change a finite expiry to never-expire; authority-increasing changes require a fresh operator-approved pairing flow. Omitted grants retain their existing absolute ceilings and are clamped if the parent session is shortened. Returns 200 with the reduced `{expires_at, grants}`; 400 on missing/invalid or unknown grants; 403 on cross-session targets or policy expansion; 404 on prefix miss; 409 on ambiguous prefix. |
+| `/chat/image-activity` | GET | Optional read-only Standard Gateway compatibility route. Requires a valid Relay bearer with an active `chat` grant and query parameters `profile`, `session_id`, and `since` (Unix seconds). Reads the selected profile's Hermes `state.db` without mutation and returns persisted `image_generate` calls as `running` or `completed`. Android polls only during an active turn, deduplicates against native Gateway tool events, and silently disables the bridge when the route is absent. |
 | `/clipboard/inbox` | POST | Bearer-auth'd clipboard rendezvous used by remote clients before native platform clipboard fallback. |
 | `/media/register` | POST | **Loopback only.** Register a file path with the in-memory `MediaRegistry` and receive an opaque token. Used by host-local tools (`android_screenshot` etc.) to make a file fetchable by the paired phone without leaking the filesystem path. Request body: `{"path": "/abs/path", "content_type": "image/jpeg", "file_name": "screenshot.jpg"}`. Response: `{"ok": true, "token": "<url-safe-16>", "expires_at": <unix>}`. Returns 403 for non-loopback callers, 400 on validation failure (relative path, missing file, oversized, outside allowed roots, etc). Path sandboxing is enforced server-side — see ADR 14. |
 | `/media/upload` | POST | Bearer-auth'd small upload endpoint for phone-originated media. Accepts JSON `{file_name, content_type, content}` where `content` is base64 and registers the decoded bytes with the media registry. |
@@ -323,8 +403,79 @@ See [`docs/spec.md` §3.3](spec.md) for the full auth flow and the QR wire forma
 | `/bridge/activity` | GET | **Loopback only.** Returns the `BridgeHandler.recent_commands` ring buffer (max 100 entries) as `{"activity": [ {request_id, method, path, params, sent_at, response_status, result_summary, error, decision}, ... ]}` — newest first. Query param: `?limit=N` (1–500, default 100) caps the response size. `params` is redacted for any key in `{password, token, secret, otp, bearer}`; `decision` is one of `pending` / `executed` / `blocked` / `confirmed` / `timeout` / `error`. 403 for non-loopback callers. Consumed by the dashboard plugin's Bridge Activity tab. |
 | Device Control routes (`/screen`, `/tap`, `/type`, and peers) | GET/POST | Require `Authorization: Bearer <session_token>` and an active `bridge` grant before any request data is forwarded to a connected Android client. Host tools supply the token through `ANDROID_BRIDGE_TOKEN`; loopback callers do not bypass this gate. |
 | `/media/inspect` | GET | **Loopback only.** Returns `{"media": [ {token, file_name, content_type, size, created_at, expires_at, last_accessed, is_expired}, ... ]}` — `MediaRegistry.list_all()` snapshot, newest first. Absolute file paths are **never** included — only `file_name` (basename). Query param: `?include_expired=true` includes evicted entries (default false, hides them). 403 for non-loopback callers. Consumed by the dashboard plugin's Media Inspector tab. |
-| `/relay/info` | GET | Aggregate status and capability contract. Loopback dashboard calls may omit auth; remote callers require a paired-device bearer. Returns backward-compatible `version` plus `plugin_version`, `protocol_version`, stable `capabilities`, per-profile `relay_state`, counters, and `health`. |
+| `/relay/info` | GET | Aggregate status and capability contract. Loopback dashboard calls may omit auth; remote callers require a paired-device bearer. Returns backward-compatible `version` plus `plugin_version`, `protocol_version`, stable `capabilities`, per-profile `relay_state`, counters, `health`, and an optional sanitized `gateway_heartbeat` assessment. The heartbeat is diagnostic-only and never changes Relay health, fallback, or restart policy. |
+| `/relay/model-capabilities` | POST | Resolve reasoning-effort metadata for up to 64 exact `{provider, model}` pairs. Loopback callers may omit auth; remote callers require a paired-device bearer with an active `chat` grant. Request schema v1 accepts optional `profile` and `refresh`; response rows include `reasoning`, ordered `reasoning_efforts`, `reasoning_efforts_exact`, and `source`. Provider credentials and internal cache scopes never leave the host. Advertised by `/relay/info` as `model_reasoning_capabilities_v1`. |
 | `/relay/security` | GET/PATCH | **Loopback only.** Runtime security toggles for local operators, `hermes relay insecure-api-key`, and `hermes-relay insecure-api-key`. `GET` returns `{"allow_insecure_api_bearer": false, "trust_proxy_headers": false, "scope": "runtime"}`. `PATCH {"allow_insecure_api_bearer": true}` enables plain-LAN API-key voice auth immediately for the running relay; `false` disables it. This is not persisted across restarts. |
+
+### Model capability overlay
+
+`POST /relay/model-capabilities` is an optional metadata overlay for clients
+that already obtained coherent provider/model identities from upstream Hermes.
+It does not list models, select a model, proxy chat, or make Relay a requirement
+for reasoning controls.
+
+Request schema v1:
+
+```json
+{
+  "schema_version": 1,
+  "profile": "default",
+  "refresh": false,
+  "models": [
+    {"provider": "example-provider", "model": "reasoner-v1"}
+  ]
+}
+```
+
+`profile` defaults to `default`, and `refresh` defaults to `false`. `models`
+must contain 1–64 exact pairs; provider values are limited to 128 characters,
+model values to 512 characters, and profile values to 128 characters. An
+unsupported schema, malformed pair, unknown profile, or over-limit request is
+rejected with a structured 4xx response.
+
+Response contract 1.0:
+
+```json
+{
+  "schema_version": 1,
+  "contract_version": "1.0",
+  "capabilities": [
+    {
+      "provider": "example-provider",
+      "model": "reasoner-v1",
+      "reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high"],
+      "reasoning_efforts_exact": true,
+      "source": "provider-adapter"
+    }
+  ]
+}
+```
+
+`reasoning_efforts_exact: true` means the ordered list is verified for that
+specific provider/model pair. `false` means the row is advisory; clients should
+label it as standard compatibility choices rather than guaranteed provider
+support. `source` is diagnostic provenance, not UI copy or a precedence signal.
+Android merges the overlay after an exact upstream effort list and before an
+explicit upstream `reasoning: false`; otherwise it retains the canonical
+advisory set `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
+`ultra`.
+
+Loopback callers may omit authentication. Remote callers must send a valid
+Relay session bearer with an active `chat` grant. The route is profile-isolated:
+it reads only the selected profile's configuration and credential scope. Some
+providers can be answered from static or upstream metadata; others require
+short, bounded provider requests. The resolver caps provider concurrency,
+applies per-request timeouts, caches results for five minutes by profile,
+endpoint, model, and credential fingerprint, and fences an explicit refresh so
+stale in-flight work cannot repopulate the refreshed profile cache.
+
+Provider credentials stay on the Hermes host. Responses never include secrets,
+credential fingerprints, endpoint probe details, or internal cache keys. A
+provider timeout or unsupported provider produces a safe non-exact row; an old
+Relay `404`, absent pairing, expired grant, unsupported response schema, or
+network failure is handled client-side by keeping the advisory choices. These
+fail-soft cases never block model selection or chat.
 
 ### Dashboard plugin proxy routes
 

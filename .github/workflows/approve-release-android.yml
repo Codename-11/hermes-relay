@@ -89,7 +89,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           gh workflow run release-android.yml \
-            --ref="android-v${VERSION}" \
+            --ref=main \
             -f version="$VERSION"
 
       - name: Approval summary
@@ -97,4 +97,4 @@ jobs:
           echo "## Android release approved" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Created \`android-v${{ steps.metadata.outputs.version }}\` from main at \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
-          echo "The release workflow was dispatched at that tag. It will submit the preflighted Play draft before creating the public GitHub Release." >> "$GITHUB_STEP_SUMMARY"
+          echo "The current release workflow was dispatched from main and will check out that immutable tag. It will submit the preflighted Play draft before creating the public GitHub Release." >> "$GITHUB_STEP_SUMMARY"

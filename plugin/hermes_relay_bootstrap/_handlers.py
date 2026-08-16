@@ -64,8 +64,10 @@ legacy skill detail/toggle, available-models, and session search.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -86,6 +88,13 @@ def _resolve_upstream():
     from aiohttp import web
 
     from hermes_state import SessionDB
+    try:
+        from hermes_state import AsyncSessionDB
+    except ImportError:
+        # AsyncSessionDB was added after the compatibility bootstrap. Older
+        # supported Hermes installs still get event-loop-safe access through
+        # asyncio.to_thread() in _call_session_db().
+        AsyncSessionDB = None  # type: ignore[assignment]
     from hermes_cli.config import load_config, save_config
     from hermes_cli.models import (
         curated_models_for_provider,
@@ -107,6 +116,7 @@ def _resolve_upstream():
     return {
         "web": web,
         "SessionDB": SessionDB,
+        "AsyncSessionDB": AsyncSessionDB,
         "MemoryStore": MemoryStore,
         "load_config": load_config,
         "save_config": save_config,
@@ -140,13 +150,56 @@ def _state_for(adapter) -> Dict[str, Any]:
     return state
 
 
-def _get_session_db(adapter, upstream):
+async def _get_session_db(adapter, upstream):
+    """Return the cached SessionDB without constructing it on the event loop."""
     state = _state_for(adapter)
     db = state.get("session_db")
-    if db is None:
-        db = upstream["SessionDB"]()
-        state["session_db"] = db
+    if db is not None:
+        return db
+
+    # Cache the in-flight task as well as the completed instance. Two first
+    # requests can arrive before SQLite schema/FTS initialization completes;
+    # they must share one constructor rather than opening competing stores.
+    init_task = state.get("session_db_init_task")
+    if init_task is None:
+        init_task = asyncio.create_task(asyncio.to_thread(upstream["SessionDB"]))
+        state["session_db_init_task"] = init_task
+
+    try:
+        # A disconnected HTTP client must not cancel the shared constructor
+        # while another first request is waiting for the same database.
+        db = await asyncio.shield(init_task)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        if state.get("session_db_init_task") is init_task:
+            state.pop("session_db_init_task", None)
+        raise
+
+    state["session_db"] = db
+    if state.get("session_db_init_task") is init_task:
+        state.pop("session_db_init_task", None)
     return db
+
+
+async def _call_session_db(adapter, upstream, method: str, *args, **kwargs):
+    """Call a SessionDB method without blocking aiohttp's event loop.
+
+    Newer Hermes versions provide AsyncSessionDB as the canonical async door.
+    The explicit to_thread fallback keeps the same behavior on older upstream
+    versions instead of making the compatibility hook depend on a new symbol.
+    """
+    state = _state_for(adapter)
+    async_db_cls = upstream.get("AsyncSessionDB")
+    if async_db_cls is not None:
+        db = state.get("async_session_db")
+        if db is None:
+            db = async_db_cls(await _get_session_db(adapter, upstream))
+            state["async_session_db"] = db
+        return await getattr(db, method)(*args, **kwargs)
+
+    db = await _get_session_db(adapter, upstream)
+    return await asyncio.to_thread(getattr(db, method), *args, **kwargs)
 
 
 def _get_memory_store(adapter, upstream):
@@ -185,6 +238,49 @@ def _current_model_settings(config: Dict[str, Any]) -> Dict[str, Any]:
     return {"model": "", "provider": "", "api_mode": "", "base_url": ""}
 
 
+def _normalized_route_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw.rstrip("/")
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return raw.rstrip("/")
+    port = parsed.port
+    netloc = host
+    if port is not None and not (
+        (scheme == "http" and port == 80) or
+        (scheme == "https" and port == 443)
+    ):
+        netloc = f"{host}:{port}"
+    path = parsed.path.rstrip("/")
+    query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+    return urlunsplit((scheme, netloc, path, query, ""))
+
+
+def _model_route_identity(model_cfg: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(model_cfg.get("default") or model_cfg.get("model") or "").strip(),
+        str(model_cfg.get("provider") or "").strip().lower(),
+        _normalized_route_url(model_cfg.get("base_url")),
+    )
+
+
+def _maybe_clear_context_pin(
+    original_model_cfg: Dict[str, Any],
+    updated_model_cfg: Dict[str, Any],
+) -> None:
+    """Drop stale route-owned context pins when the configured route changes."""
+    if "context_length" not in updated_model_cfg:
+        return
+    if _model_route_identity(original_model_cfg) != _model_route_identity(updated_model_cfg):
+        updated_model_cfg.pop("context_length", None)
+
+
 def _parse_int(value: Any, default: int, minimum: int = 0) -> int:
     """Parse an integer query parameter with bounds."""
     if value in (None, ""):
@@ -219,8 +315,14 @@ def _make_session_search_handlers(adapter, upstream):
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
-        db = _get_session_db(adapter, upstream)
-        results = db.search_messages(query=query, limit=limit, offset=offset)
+        results = await _call_session_db(
+            adapter,
+            upstream,
+            "search_messages",
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
         return web.json_response({"query": query, "count": len(results), "results": results})
 
     return {
@@ -240,6 +342,12 @@ def _make_memory_handlers(adapter, upstream):
             {"error": "MemoryStore unavailable in this hermes-agent install"},
             status=503,
         )
+
+    def _reset_request_failure_budget(store) -> None:
+        """Treat each REST mutation as its own upstream memory turn."""
+        reset = getattr(store, "reset_consolidation_failures", None)
+        if callable(reset):
+            reset()
 
     async def get_memory(request):
         auth_err = adapter._check_auth(request)
@@ -286,6 +394,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.add(target, content)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
@@ -307,6 +416,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.replace(target, old_text, content)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
@@ -327,6 +437,7 @@ def _make_memory_handlers(adapter, upstream):
         store = _get_memory_store(adapter, upstream)
         if store is None:
             return _memory_unavailable_response()
+        _reset_request_failure_budget(store)
         result = store.remove(target, old_text)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
@@ -444,10 +555,13 @@ def _make_config_handlers(adapter, upstream):
         model_cfg = config.get("model")
         if isinstance(model_cfg, dict):
             updated_model_cfg = dict(model_cfg)
+            original_model_cfg = dict(model_cfg)
         elif isinstance(model_cfg, str) and model_cfg.strip():
             updated_model_cfg = {"default": model_cfg.strip()}
+            original_model_cfg = {"default": model_cfg.strip()}
         else:
             updated_model_cfg = {}
+            original_model_cfg = {}
 
         if "model" in body:
             updated_model_cfg["default"] = str(body.get("model") or "").strip()
@@ -455,6 +569,7 @@ def _make_config_handlers(adapter, upstream):
             updated_model_cfg["provider"] = str(body.get("provider") or "").strip()
         if "base_url" in body:
             updated_model_cfg["base_url"] = str(body.get("base_url") or "").strip()
+        _maybe_clear_context_pin(original_model_cfg, updated_model_cfg)
 
         config["model"] = updated_model_cfg
         try:

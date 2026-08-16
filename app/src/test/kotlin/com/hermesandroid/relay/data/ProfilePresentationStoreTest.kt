@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProfilePresentationStoreTest {
@@ -24,9 +25,14 @@ class ProfilePresentationStoreTest {
     fun orderAndHiddenProfilesRoundTripPerConnection() = runBlocking {
         store.setOrder("one", listOf("beta", "alpha"))
         store.setHidden("one", setOf("gamma"))
+        store.setColors("one", mapOf("alpha" to "#356CFF"))
 
         assertEquals(
-            ProfilePresentation(order = listOf("beta", "alpha"), hidden = setOf("gamma")),
+            ProfilePresentation(
+                order = listOf("beta", "alpha"),
+                hidden = setOf("gamma"),
+                colors = mapOf("alpha" to "#356CFF"),
+            ),
             store.presentationFlow("one").first(),
         )
         assertEquals(ProfilePresentation(), store.presentationFlow("two").first())
@@ -40,11 +46,11 @@ class ProfilePresentationStoreTest {
         )
 
         assertEquals(
-            listOf("beta", AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "alpha", "gamma"),
+            listOf("beta", AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "alpha", "default", "gamma"),
             ProfilePresentationPolicy.orderedKeys(profiles, presentation),
         )
         assertEquals(
-            listOf("beta", AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "gamma"),
+            listOf("beta", AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "default", "gamma"),
             ProfilePresentationPolicy.visibleKeys(
                 profiles,
                 presentation,
@@ -58,7 +64,7 @@ class ProfilePresentationStoreTest {
         val presentation = ProfilePresentation(hidden = setOf("beta"))
 
         assertEquals(
-            listOf(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "alpha", "beta", "gamma"),
+            listOf(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "alpha", "default", "beta", "gamma"),
             ProfilePresentationPolicy.visibleKeys(profiles, presentation, selectedKey = "beta"),
         )
     }
@@ -80,9 +86,30 @@ class ProfilePresentationStoreTest {
     }
 
     @Test
+    fun shelfHidesForOneVisibleIdentityAndShowsForTwo() {
+        val onlyDefault = listOf(Profile(name = "default", model = "root"))
+
+        assertTrue(
+            ProfilePresentationPolicy.shouldShowShelf(
+                profiles = onlyDefault,
+                presentation = ProfilePresentation(hidden = setOf("default")),
+                selectedKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            ).not(),
+        )
+        assertTrue(
+            ProfilePresentationPolicy.shouldShowShelf(
+                profiles = onlyDefault,
+                presentation = ProfilePresentation(),
+                selectedKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            ),
+        )
+    }
+
+    @Test
     fun clearRemovesOnlyOneConnectionsPreferences() = runBlocking {
         store.setOrder("one", listOf("beta"))
         store.setHidden("one", setOf("alpha"))
+        store.setColors("one", mapOf("beta" to "#ED4E8B"))
         store.setOrder("two", listOf("gamma"))
 
         store.clear("one")

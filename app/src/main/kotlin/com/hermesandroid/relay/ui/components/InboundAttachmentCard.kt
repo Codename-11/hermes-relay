@@ -2,7 +2,6 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -155,7 +154,7 @@ private fun LoadingCard(
                 val sizeHint = attachment.fileSize?.takeIf { it > 0 }
                     ?.let { " · ${formatBytes(it)}" } ?: ""
                 Text(
-                    text = if (isManualCta) stringResource(R.string.inbound_attach_tap_download) else stringResource(R.string.inbound_attach_downloading, sizeHint),
+                    text = if (isManualCta) stringResource(R.string.attach_tap_download) else stringResource(R.string.inbound_attach_downloading, sizeHint),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -290,7 +289,7 @@ private fun ImageRender(
                         android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
                     else -> null
                 }
-                bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+                bytes?.let { decodeOrientedBitmap(it)?.asImageBitmap() }
             }.getOrNull()
         }
         if (decoded != null) bitmap = decoded else decodeFailed = true

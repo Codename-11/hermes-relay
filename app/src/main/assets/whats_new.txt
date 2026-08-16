@@ -1,5 +1,7 @@
-v1.4.9 - Clearer Hermes connections
+v1.9.0 - Better sessions, reactions, and voice
 
-* Connect through the Hermes dashboard with one sign-in; API fallback and optional Relay remain available.
-* Onboarding and connection details now explain nearby, remote, Tailscale, custom-port, route, and security choices.
-* Server default consistently displays Hermes' pinned active profile, and discovered servers show useful host identity.
+* Browse all profiles without switching away from the selected scope.
+* Start new chats with the default profile and hydrate history with the session owner.
+* Pin reactions to both user and assistant messages.
+* Keep Vanilla Hermes voice on the authenticated Gateway.
+* Use an ungrouped session list by default, with project grouping available in Customize Sessions.

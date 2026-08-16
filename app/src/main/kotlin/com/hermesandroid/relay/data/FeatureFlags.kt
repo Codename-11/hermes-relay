@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.map
 /**
  * Feature flags with compile-time defaults and runtime overrides.
  *
- * In debug builds, all features are unlocked by default.
+ * In debug builds, Developer Options are unlocked by default until the user
+ * explicitly locks them.
  * In release builds, experimental features are hidden unless the user
  * enables Developer Options (tap version 7 times in Settings > About).
  *
@@ -21,7 +22,7 @@ object FeatureFlags {
 
     // DataStore keys
     private val KEY_DEV_OPTIONS_UNLOCKED = booleanPreferencesKey("dev_options_unlocked")
-    private val KEY_RELAY_ENABLED = booleanPreferencesKey("feature_relay_enabled")
+    private val KEY_PET_TERRAIN_OVERLAY = booleanPreferencesKey("pet_terrain_overlay")
 
     /** Whether the app is running a debug build. */
     val isDevBuild: Boolean get() = BuildConfig.DEV_MODE
@@ -29,14 +30,37 @@ object FeatureFlags {
     /** Observe whether Developer Options have been unlocked. */
     fun devOptionsUnlocked(context: Context): Flow<Boolean> =
         context.relayDataStore.data.map { prefs ->
-            if (isDevBuild) true else prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: false
+            prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: isDevBuild
         }
 
-    /** Observe whether relay features (settings, pairing, onboarding pages) are enabled. */
-    fun relayEnabled(context: Context): Flow<Boolean> =
+    /**
+     * Developer-only visualization of the floating pet's measured terrain.
+     *
+     * The persisted request is intentionally weaker than both gates: release
+     * builds can never enable it, and explicitly locking Developer Options
+     * suppresses it immediately.
+     */
+    fun petTerrainOverlayEnabled(context: Context): Flow<Boolean> =
         context.relayDataStore.data.map { prefs ->
-            if (isDevBuild) true else prefs[KEY_RELAY_ENABLED] ?: false
+            petTerrainOverlayEffective(
+                isDevBuild = isDevBuild,
+                devOptionsUnlocked = prefs[KEY_DEV_OPTIONS_UNLOCKED] ?: isDevBuild,
+                requested = prefs[KEY_PET_TERRAIN_OVERLAY] ?: false,
+            )
         }
+
+    internal fun petTerrainOverlayEffective(
+        isDevBuild: Boolean,
+        devOptionsUnlocked: Boolean,
+        requested: Boolean,
+    ): Boolean = isDevBuild && devOptionsUnlocked && requested
+
+    /** Persist the developer's overlay request. Runtime gates remain authoritative. */
+    suspend fun setPetTerrainOverlayEnabled(context: Context, enabled: Boolean) {
+        context.relayDataStore.edit { prefs ->
+            prefs[KEY_PET_TERRAIN_OVERLAY] = enabled
+        }
+    }
 
     /** Unlock Developer Options. */
     suspend fun unlockDevOptions(context: Context) {
@@ -45,18 +69,11 @@ object FeatureFlags {
         }
     }
 
-    /** Lock Developer Options and disable all experimental features. */
+    /** Lock Developer Options, including in debug builds. */
     suspend fun lockDevOptions(context: Context) {
         context.relayDataStore.edit { prefs ->
             prefs[KEY_DEV_OPTIONS_UNLOCKED] = false
-            prefs[KEY_RELAY_ENABLED] = false
-        }
-    }
-
-    /** Toggle relay features (terminal/bridge settings, pairing, onboarding relay page). */
-    suspend fun setRelayEnabled(context: Context, enabled: Boolean) {
-        context.relayDataStore.edit { prefs ->
-            prefs[KEY_RELAY_ENABLED] = enabled
+            prefs[KEY_PET_TERRAIN_OVERLAY] = false
         }
     }
 

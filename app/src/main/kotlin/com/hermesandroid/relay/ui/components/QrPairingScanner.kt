@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import android.util.Log
 import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -13,6 +14,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -52,6 +54,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -63,6 +70,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.hermesandroid.relay.data.ApiEndpoint
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
@@ -79,6 +87,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
 import java.util.concurrent.Executors
 import kotlin.math.max
+
+internal fun scannerSettleDelayMs(motionEnabled: Boolean): Long = if (motionEnabled) 200L else 0L
 
 /**
  * Parsed result from a Hermes pairing QR code.
@@ -182,7 +192,11 @@ data class HermesPairingPayload(
 ) {
     /** Build the full API server URL from host, port, and tls flag. */
     val serverUrl: String
-        get() = "${if (tls) "https" else "http"}://$host:$port"
+        get() = if (host.isBlank()) "" else "${if (tls) "https" else "http"}://$host:$port"
+
+    /** Whether this setup payload explicitly configures the optional API server. */
+    val hasApiServer: Boolean
+        get() = host.isNotBlank()
 }
 
 /**
@@ -239,14 +253,17 @@ private val json = Json {
  * Try to parse a scanned string as a Hermes connection QR payload.
  *
  * Accepts v1, v2, and v3 (or anything without a `hermes` field — we default
- * to `1`). Returns null when the payload is not valid JSON, has no `host`
- * field, or fails strict decoding.
+ * to `1`). Returns null when the payload is not valid JSON, configures neither
+ * a recognized API nor Dashboard surface, or fails strict decoding.
  *
  * For standard Hermes setup, also accepts generic API-only QRs:
  *  - a plain `http://host:8642` or `https://host:8642` URL
  *  - JSON with `api_url`, `apiUrl`, `server_url`, `serverUrl`, or `url`, plus
  *    optional `api_key`, `apiKey`, or `key`, and optional `dashboard_url` or
  *    `dashboardUrl`
+ *  - JSON with only `dashboard_url` or `dashboardUrl`, containing a fully
+ *    qualified HTTP(S) Dashboard/Gateway URL. This represents the upstream
+ *    standard surface without inventing an API server or Relay endpoint.
  *
  * **Endpoint synthesis (ADR 24):** when the payload has no `endpoints`
  * array (v1/v2 QRs), a single priority-0 [EndpointCandidate] is materialized
@@ -261,6 +278,7 @@ fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
     val trimmed = raw.trim()
     return parseHermesRelayQr(trimmed)
         ?: parseGenericApiJsonQr(trimmed)
+        ?: parseGenericDashboardJsonQr(trimmed)
         ?: parseGenericApiUrlQr(trimmed)
 }
 
@@ -325,6 +343,38 @@ private fun parseGenericApiJsonQr(raw: String): HermesPairingPayload? {
 
 private fun parseGenericApiUrlQr(raw: String): HermesPairingPayload? {
     return payloadFromApiUrl(raw, apiKey = "")
+}
+
+private fun parseGenericDashboardJsonQr(raw: String): HermesPairingPayload? {
+    return try {
+        val obj = json.decodeFromString<JsonObject>(raw)
+        // Do not silently downgrade a malformed API setup into Dashboard-only
+        // setup. When an API alias is present, parseGenericApiJsonQr owns the
+        // payload and must either accept or reject it as a whole.
+        val apiAliases = setOf("api_url", "apiUrl", "server_url", "serverUrl", "url")
+        if (obj.keys.any { it in apiAliases }) return null
+
+        val dashboardUrl = firstString(obj, "dashboard_url", "dashboardUrl")
+            ?.trimEnd('/')
+            ?: return null
+        val uri = runCatching { URI(dashboardUrl) }.getOrNull() ?: return null
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrBlank()) {
+            return null
+        }
+
+        HermesPairingPayload(
+            dashboardUrl = dashboardUrl,
+            endpoints = listOf(
+                EndpointCandidate(
+                    role = Connection.inferRouteRole(dashboardUrl),
+                    priority = 0,
+                    dashboard = DashboardEndpoint(dashboardUrl),
+                ),
+            ),
+        )
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private fun firstString(obj: JsonObject, vararg names: String): String? {
@@ -547,6 +597,12 @@ fun QrPairingScanner(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val motion = rememberAccessibleMotionState()
+    val motionEnabled = motion.osAnimations && !motion.touchExploration
+    val scannerPaneTitle = stringResource(
+        if (relayOnly) R.string.qr_scanner_relay_title else R.string.qr_scanner_title,
+    )
+    BackHandler(onBack = onDismiss)
     // Pre-resolve strings used inside non-Composable contexts (CameraX
     // listeners, exception handlers, etc. don't have a Composable scope).
     val cameraErrorMsg = stringResource(R.string.qr_scanner_camera_error)
@@ -609,7 +665,8 @@ fun QrPairingScanner(
     // ~450ms so the user perceives the lock-on, then forward to onPairingDetected.
     LaunchedEffect(lockedPayload) {
         val payload = lockedPayload ?: return@LaunchedEffect
-        kotlinx.coroutines.delay(450)
+        val settleDelayMs = scannerSettleDelayMs(motionEnabled)
+        if (settleDelayMs > 0) kotlinx.coroutines.delay(settleDelayMs)
         onPairingDetected(payload)
     }
 
@@ -617,6 +674,7 @@ fun QrPairingScanner(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f))
+            .semantics { paneTitle = scannerPaneTitle }
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -645,7 +703,7 @@ fun QrPairingScanner(
                     ),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.align(Alignment.Center)
+                    modifier = Modifier.align(Alignment.Center).semantics { heading() }
                 )
             }
 
@@ -796,6 +854,7 @@ fun QrPairingScanner(
                 ScannerCornersOverlay(
                     detected = detectedBox,
                     locked = lockedPayload != null,
+                    motionEnabled = motionEnabled,
                     modifier = Modifier.fillMaxSize(),
                 )
                 }
@@ -832,6 +891,19 @@ fun QrPairingScanner(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
+                )
+                Text(
+                    text = stringResource(
+                        if (lockedPayload == null) R.string.qr_scanner_ready
+                        else R.string.qr_scanner_found,
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (lockedPayload == null) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
             }
         }
@@ -905,6 +977,7 @@ private fun CameraUnavailableCard(
 private fun ScannerCornersOverlay(
     detected: ViewportRect?,
     locked: Boolean,
+    motionEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     // Themed idle: two-tone gradient between primary (top-left/bottom-right)
@@ -922,22 +995,28 @@ private fun ScannerCornersOverlay(
 
     // Slow breathing pulse on alpha when idle. Locked state stays solid +
     // gets its own one-shot ramp so the green burst is unmistakable.
-    val infiniteTransition = rememberInfiniteTransition(label = "scan-corners")
-    val idlePulse by infiniteTransition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "idle-pulse",
-    )
+    val idlePulse = if (motionEnabled) {
+        val infiniteTransition = rememberInfiniteTransition(label = "scan-corners")
+        infiniteTransition.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "idle-pulse",
+        ).value
+    } else {
+        1f
+    }
 
     // One-shot ramp that fires when `locked` flips true. Drives the
     // outward scale pop on the corners + the green tint flash overlay.
     val lockRamp by animateFloatAsState(
         targetValue = if (locked) 1f else 0f,
-        animationSpec = if (locked) {
+        animationSpec = if (!motionEnabled) {
+            snap()
+        } else if (locked) {
             spring(dampingRatio = 0.55f, stiffness = 220f)
         } else {
             tween(180)
@@ -973,14 +1052,15 @@ private fun ScannerCornersOverlay(
         targetBottom = 0f
     }
 
-    val springSpec = spring<Float>(
-        dampingRatio = 0.7f,
-        stiffness = 280f,
-    )
-    val animLeft by animateFloatAsState(targetLeft, springSpec, label = "snap-l")
-    val animTop by animateFloatAsState(targetTop, springSpec, label = "snap-t")
-    val animRight by animateFloatAsState(targetRight, springSpec, label = "snap-r")
-    val animBottom by animateFloatAsState(targetBottom, springSpec, label = "snap-b")
+    val positionSpec = if (motionEnabled) {
+        spring<Float>(dampingRatio = 0.7f, stiffness = 280f)
+    } else {
+        snap()
+    }
+    val animLeft by animateFloatAsState(targetLeft, positionSpec, label = "snap-l")
+    val animTop by animateFloatAsState(targetTop, positionSpec, label = "snap-t")
+    val animRight by animateFloatAsState(targetRight, positionSpec, label = "snap-r")
+    val animBottom by animateFloatAsState(targetBottom, positionSpec, label = "snap-b")
 
     Canvas(
         modifier = modifier.onSizeChanged { size = it }
@@ -1100,7 +1180,7 @@ private fun ScannerCornersOverlay(
         // Lock flash — brief green tint over the entire viewport that fades
         // out as lockRamp settles. Driven by the same spring as the corner
         // pop so they read as one event.
-        if (lockRamp > 0f) {
+        if (motionEnabled && lockRamp > 0f) {
             drawRect(
                 color = successCore.copy(alpha = 0.18f * lockRamp),
                 topLeft = Offset.Zero,

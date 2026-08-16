@@ -80,6 +80,31 @@ python scripts/screenshots.py validate
 - The README sources are currently `1080x2244`. The Play export crops them to
   `1080x2160` because Google Play requires screenshot dimensions between
   320 and 3840 pixels and the long side cannot exceed twice the short side.
+
+## Foreground-service policy video
+
+`scripts/android-fgs-demo.py` drives a real connected phone through the Google
+Play foreground-service evidence sequence and records it with Android's native
+`screenrecord`. It verifies each expected control and notification through the
+UI hierarchy, and aborts rather than producing misleading evidence when a step
+is unavailable.
+
+Use an explicit device serial so a connected emulator cannot receive the run by
+accident:
+
+```bash
+python scripts/android-fgs-demo.py --serial <adb-serial>
+```
+
+The sequence enables Persistent connection, shows its ongoing notification,
+sends and backgrounds a chat turn, returns through the notification, disables
+the setting and proves the notification clears, then repeats the evidence flow
+for the app-owned voice overlay and its **Stop voice** notification action.
+
+Run `--no-record --pause-scale 0.25` first after material UI changes. Before
+publishing the resulting MP4, review every notification-shade frame for private
+network names and unrelated notification content; the driver does not clear or
+alter the user's other notifications.
 - Google Play listing upload stays on Gradle Play Publisher, matching the
   existing Android publishing toolchain. Fastlane is not required.
 
@@ -98,9 +123,32 @@ Play 2:1 clipping), and only mock public-safe data.
 # Output: app/build/store-shots/<scene>.png  (1080x2160, exactly 2:1)
 ```
 
-Then promote into the committed pipeline (rename `01_landing -> 01_startup`, copy
-the rest by name into `assets/screenshots/`) and run the `export` + `validate`
-commands above.
+Then visually review all eight store candidates and promote them into the
+committed pipeline (rename `01_landing -> 01_startup`, copy the rest by name
+into `assets/screenshots/`). Run the `export` + `validate` commands above.
+
+The canonical marketing lineup intentionally exercises current product seams:
+
+- `02_chat` uses the grouped production bubble layout and code renderer rather
+  than the older long-answer fixture that could overflow its chrome, with the
+  real app-level `FloatingPetCompanion` layered over chat exactly as `RelayApp`
+  hosts it.
+- `03_voice` renders the real `VoiceModeOverlay` with a fixed sphere frame,
+  public-safe transcript, waveform, and session controls.
+- `01_voice_conversation` renders the real `ConversationVoiceDock` inside the
+  chat composer, so the Play lineup covers both Voice presentation modes.
+- `04_sessions` renders the real `SessionDrawerContent` with deterministic
+  `ChatSession` fixtures, including pinned and Thread states.
+- `05_themes` renders the real Appearance preview and expanded customizer.
+- `07_connections` renders the real `ConnectionsSettingsScreen` with
+  deterministic connection and dashboard-status fixtures.
+- `08_appearance` renders the real floating-pet controls with a deterministic
+  pinned Teknium idle frame from Petdex passed through `PetAvatar`; provenance
+  lives beside the fixture in `app/src/test/resources/marketing/`.
+- Supplemental `12_theme_customizer` and `13_font_picker` expand Appearance
+  coverage beyond the two Play-listing frames.
+- Supplemental `14_startup` preserves the lower-information empty-chat frame
+  outside the eight-slot Play lineup.
 
 ### Render any view going forward
 
@@ -118,8 +166,9 @@ Add a `@Test` that calls the `capture(name, themeId) { ... }` helper:
   scaffolds wrap content in real chrome.
 - **Theme** — any `AppThemes.ALL` id; `capture()` wraps the body in
   `HermesRelayTheme` + provides the `Adaptive` sphere skin (the app's real default).
-- **Resolution** — the class `@Config(qualifiers = "w360dp-h720dp-xxhdpi")` = 1080x2160.
-  Change it for other sizes.
+- **Resolution** — the class uses
+  `@Config(qualifiers = "w400dp-h800dp-432dpi")`: a Galaxy Ultra-like 400x800dp
+  viewport rendered at exactly 1080x2160 for Play's 2:1 limit.
 
 ### Constraints
 
@@ -149,10 +198,13 @@ compose.onNodeWithText("Solar").performScrollTo(); compose.onRoot().captureRoboI
   populated** and the shot tracks any layout change. Scenes `05`/`08` do this.
 - **Data-driven screens (Chat, Sessions, Connections, Manage)** — the real screen
   renders its real layout but **empty** with a fresh VM (no paired connection, no
-  messages). To get 1:1 *and* populated, feed mock data through a stubbed VM
-  (mockk the flows the screen collects). Until then those scenes use **curated
-  frames** built from real leaf components — pixel-faithful, but they can drift
-  from layout changes, so re-check them when the screen changes.
+  messages). Prefer direct deterministic input seams where the production
+  composable already exposes them: scenes `04_sessions` and `07_connections`
+  now render the real populated surfaces this way. Chat still uses production
+  chrome/leaf components plus the real app-level pet host; Manage remains a
+  curated production-component composition until its network-owned overview
+  state has a direct render seam. Those two must be visually re-checked when
+  their owning screen layout changes.
 
 ### Build notes (non-obvious)
 

@@ -1,7 +1,7 @@
 # Localization
 
 English is the canonical product language. Android also ships Brazilian
-Portuguese, German, Japanese, Simplified Chinese, and Spanish catalogs;
+Portuguese, German, Japanese, Russian, Simplified Chinese, and Spanish catalogs;
 additional languages can be added without changing the runtime architecture.
 
 Translation coverage and linguistic verification are separate. Shipped locale
@@ -12,7 +12,7 @@ See `docs/translation-playbook.md` for the required translation and critique
 workflow.
 
 Users can switch between System default, English, Brazilian Portuguese, German,
-Japanese, Spanish, and Simplified Chinese from Settings → Appearance → Language.
+Japanese, Russian, Spanish, and Simplified Chinese from Settings → Appearance → Language.
 The picker stays synchronized with Android's per-app language setting; Android
 12 and lower use AppCompat's automatic locale storage.
 
@@ -93,7 +93,8 @@ status. README and user-documentation translations may follow app translation;
 maintainer `docs/` and ADRs remain canonical English.
 
 The public documentation currently localizes a deliberately bounded first-run
-set for every Android locale:
+set for German, Spanish, Japanese, Brazilian Portuguese, and Simplified Chinese.
+Russian currently falls back to the canonical English documentation:
 
 - documentation home;
 - Quick Start;
@@ -126,9 +127,11 @@ VitePress runs this gate automatically before development and production builds.
 
 ## Marketing website
 
-The product site ships the same locale set under `/de/`, `/es/`, `/ja/`,
-`/pt-BR/`, and `/zh-CN/`. Marketing copy, navigation, accessibility labels, and
-page metadata are localized. Product screenshots, command examples, and live UI
+The product site ships German, Spanish, Japanese, Brazilian Portuguese, and
+Simplified Chinese under `/de/`, `/es/`, `/ja/`, `/pt-BR/`, and `/zh-CN/`.
+Russian currently falls back to the canonical English site. Marketing copy,
+navigation, accessibility labels, and page metadata are localized. Product
+screenshots, command examples, and live UI
 recreations remain unchanged so they continue to represent the shipped product.
 
 Validate the typed copy dictionaries and their English-source freshness with:

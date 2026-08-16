@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+import types
 import unittest
 from typing import Any, Optional
+from unittest.mock import patch
 
 from plugin import phone_platform as pp
 
@@ -59,6 +62,7 @@ class _FakeAsyncClient:
     """
 
     last_call: dict[str, Any] = {}
+    call_count = 0
 
     def __init__(self, response: _FakeResponse, *, raises: Optional[Exception] = None):
         self._response = response
@@ -71,6 +75,7 @@ class _FakeAsyncClient:
         return None
 
     async def post(self, url, json=None, headers=None, timeout=None) -> _FakeResponse:
+        type(self).call_count += 1
         type(self).last_call = {
             "url": url,
             "json": json,
@@ -114,6 +119,8 @@ class _EnvIsolated(unittest.TestCase):
             os.environ.pop(k, None)
         self._saved_httpx = pp.httpx
         self._saved_avail = pp.HTTPX_AVAILABLE
+        _FakeAsyncClient.call_count = 0
+        _FakeAsyncClient.last_call = {}
 
     def tearDown(self) -> None:
         for k, v in self._saved.items():
@@ -248,6 +255,7 @@ class EnvEnablementTests(_EnvIsolated):
         self.assertTrue(seed["enabled"])
         self.assertEqual(seed["home_channel"], {"chat_id": "myphone", "name": "Phone"})
         self.assertEqual(seed["relay_url"], "http://localhost:8767")
+        self.assertFalse(seed["typing_indicator"])
 
 
 # ── standalone sender ──────────────────────────────────────────────────────
@@ -278,6 +286,7 @@ class StandaloneSendTests(_EnvIsolated):
         call = _FakeAsyncClient.last_call
         self.assertTrue(call["url"].endswith("/phone/message"))
         self.assertEqual(call["json"]["text"], "hello")
+        self.assertEqual(_FakeAsyncClient.call_count, 1)
 
     def test_no_phone_503(self) -> None:
         os.environ["PHONE_ENABLED"] = "1"
@@ -324,6 +333,7 @@ class NormalizeReplyTests(_EnvIsolated):
                 "chat_id": "phone",
                 "reply_to": "m-1",
                 "message_id": "r-1",
+                "metadata": {"source": "notification", "priority": "high"},
             },
             "home",
         )
@@ -332,6 +342,31 @@ class NormalizeReplyTests(_EnvIsolated):
         self.assertEqual(out["chat_id"], "phone")
         self.assertEqual(out["reply_to"], "m-1")
         self.assertEqual(out["message_id"], "r-1")
+        self.assertEqual(out["metadata"], {"source": "notification", "priority": "high"})
+
+    def test_reply_metadata_defaults_to_empty_dict(self) -> None:
+        out = pp._normalize_reply({"text": "hi", "metadata": "bad"}, "home")
+        assert out is not None
+        self.assertEqual(out["metadata"], {})
+
+    def test_reply_metadata_is_sanitized(self) -> None:
+        out = pp._normalize_reply(
+            {
+                "text": "hi",
+                "metadata": {
+                    "safe": "x",
+                    "items": ["a", 1, {"drop": "nested"}],
+                    "nested": {"drop": "dict"},
+                    "long": "x" * 600,
+                },
+            },
+            "home",
+        )
+        assert out is not None
+        self.assertEqual(out["metadata"]["safe"], "x")
+        self.assertEqual(out["metadata"]["items"], ["a", 1])
+        self.assertNotIn("nested", out["metadata"])
+        self.assertEqual(len(out["metadata"]["long"]), 512)
 
     def test_chat_id_defaults_to_home(self) -> None:
         out = pp._normalize_reply({"text": "hi"}, "home-chan")
@@ -390,9 +425,36 @@ class _FakeCtx:
     """Minimal plugin ctx capturing the ``register_platform`` kwargs."""
 
     def __init__(self) -> None:
+        self.calls = 0
+        self.platform_kwargs: Optional[dict] = None
+
+    def register_platform(
+        self,
+        *,
+        parse_target_ref_fn=None,
+        validate_target_ref_fn=None,
+        **kwargs: Any,
+    ) -> None:
+        self.calls += 1
+        self.platform_kwargs = {
+            **kwargs,
+            "parse_target_ref_fn": parse_target_ref_fn,
+            "validate_target_ref_fn": validate_target_ref_fn,
+        }
+
+
+class _LegacyFakeCtx:
+    """Old register_platform/PlatformEntry shape with no typed target hooks."""
+
+    def __init__(self) -> None:
+        self.calls = 0
         self.platform_kwargs: Optional[dict] = None
 
     def register_platform(self, **kwargs: Any) -> None:
+        self.calls += 1
+        unsupported = {"parse_target_ref_fn", "validate_target_ref_fn"} & kwargs.keys()
+        if unsupported:
+            raise TypeError(f"unsupported kwargs: {sorted(unsupported)}")
         self.platform_kwargs = kwargs
 
 
@@ -433,6 +495,109 @@ class HomeChannelDefaultTests(_EnvIsolated):
         # PHONE_ENABLED is popped by _EnvIsolated.setUp — platform opted out.
         pp.register_phone_platform(_FakeCtx())
         self.assertNotIn("PHONE_HOME_CHANNEL", os.environ)
+
+    def test_current_host_registers_typed_hooks_once(self) -> None:
+        os.environ["PHONE_ENABLED"] = "1"
+        ctx = _FakeCtx()
+        pp.register_phone_platform(ctx)
+        self.assertEqual(ctx.calls, 1)
+        assert ctx.platform_kwargs is not None
+        self.assertIs(ctx.platform_kwargs["parse_target_ref_fn"], pp.parse_target_ref)
+        self.assertIs(
+            ctx.platform_kwargs["validate_target_ref_fn"], pp.validate_target_ref
+        )
+        self.assertIs(ctx.platform_kwargs["standalone_sender_fn"], pp._standalone_send)
+
+    def test_legacy_host_omits_unsupported_hooks_and_registers_once(self) -> None:
+        os.environ["PHONE_ENABLED"] = "1"
+        ctx = _LegacyFakeCtx()
+        legacy_entry = type("LegacyPlatformEntry", (), {"__dataclass_fields__": {}})
+        gateway_module = types.ModuleType("gateway")
+        registry_module = types.ModuleType("gateway.platform_registry")
+        registry_module.PlatformEntry = legacy_entry
+        gateway_module.platform_registry = registry_module
+        with patch.dict(
+            sys.modules,
+            {
+                "gateway": gateway_module,
+                "gateway.platform_registry": registry_module,
+            },
+        ):
+            pp.register_phone_platform(ctx)
+        self.assertEqual(ctx.calls, 1)
+        assert ctx.platform_kwargs is not None
+        self.assertNotIn("parse_target_ref_fn", ctx.platform_kwargs)
+        self.assertNotIn("validate_target_ref_fn", ctx.platform_kwargs)
+        self.assertIs(ctx.platform_kwargs["standalone_sender_fn"], pp._standalone_send)
+
+
+class TypedTargetTests(_EnvIsolated):
+    def test_default_home_and_explicit_phone_target(self) -> None:
+        # Upstream strips the platform prefix from ``phone:phone`` before
+        # invoking the plugin parser, so both home and explicit forms present
+        # the canonical ``phone`` ref here.
+        self.assertEqual(pp.parse_target_ref("phone"), ("phone", None))
+        self.assertEqual(pp.parse_target_ref("  phone  "), ("phone", None))
+        self.assertIs(pp.validate_target_ref("phone"), True)
+
+    def test_custom_home_is_the_only_accepted_ref(self) -> None:
+        os.environ["PHONE_HOME_CHANNEL"] = "family-phone"
+        self.assertEqual(
+            pp.parse_target_ref("family-phone"), ("family-phone", None)
+        )
+        self.assertIsNone(pp.parse_target_ref("phone"))
+        self.assertIs(pp.validate_target_ref("family-phone"), True)
+        error = pp.validate_target_ref("phone")
+        self.assertIsInstance(error, str)
+        self.assertIn("family-phone", error)
+
+    def test_empty_and_foreign_refs_fail_closed(self) -> None:
+        self.assertIsNone(pp.parse_target_ref(""))
+        self.assertIsNone(pp.parse_target_ref("   "))
+        self.assertIsNone(pp.parse_target_ref("another-phone"))
+        self.assertEqual(pp.validate_target_ref(""), "Phone target cannot be empty")
+        self.assertIsInstance(pp.validate_target_ref("another-phone"), str)
+
+    def test_parser_and_validator_reject_wrong_types_without_raising(self) -> None:
+        self.assertIsNone(pp.parse_target_ref(None))  # type: ignore[arg-type]
+        verdict = pp.validate_target_ref(None)  # type: ignore[arg-type]
+        self.assertEqual(verdict, "Phone target cannot be empty")
+
+
+class LiveAdapterSendTests(_EnvIsolated):
+    def test_live_adapter_uses_one_post_and_not_standalone_sender(self) -> None:
+        client = _FakeAsyncClient(
+            _FakeResponse(200, {"delivered": True, "message_id": "live-1"})
+        )
+        adapter = pp.PhoneAdapter.__new__(pp.PhoneAdapter)
+        adapter._http_client = client
+
+        result = _run(adapter.send("phone", "hello live"))
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.message_id, "live-1")
+        self.assertEqual(_FakeAsyncClient.call_count, 1)
+        self.assertEqual(_FakeAsyncClient.last_call["json"]["text"], "hello live")
+
+
+class ChannelDirectoryTests(_EnvIsolated):
+    """The adapter enumerates its home through upstream's directory hook."""
+
+    def test_lists_default_phone_home(self) -> None:
+        adapter = pp.PhoneAdapter.__new__(pp.PhoneAdapter)
+        self.assertEqual(
+            _run(adapter.list_channels()),
+            [{"id": "phone", "name": "Phone", "type": "dm"}],
+        )
+
+    def test_lists_operator_configured_home(self) -> None:
+        os.environ["PHONE_HOME_CHANNEL"] = "family-phone"
+        os.environ["PHONE_HOME_CHANNEL_NAME"] = "Family phone"
+        adapter = pp.PhoneAdapter.__new__(pp.PhoneAdapter)
+        self.assertEqual(
+            _run(adapter.list_channels()),
+            [{"id": "family-phone", "name": "Family phone", "type": "dm"}],
+        )
 
 
 if __name__ == "__main__":

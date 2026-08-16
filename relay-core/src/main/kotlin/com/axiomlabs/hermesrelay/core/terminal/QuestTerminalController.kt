@@ -280,6 +280,8 @@ class QuestTerminalController(
             if (token != null) put("session_token", token) else put("pairing_code", code!!)
             put("device_id", store.deviceId)
             put("device_name", deviceName)
+            put("device_model", Build.MODEL)
+            put("device_platform", "Android ${Build.VERSION.RELEASE}")
             put("client_surface", "quest")
             put("device_form_factor", "xr")
         }

@@ -41,12 +41,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +65,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -69,6 +73,7 @@ import com.hermesandroid.relay.update.UpdateCheckResult
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.UpdateViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -100,6 +105,25 @@ fun AboutScreen(
     var showWhatsNew by remember { mutableStateOf(false) }
     var showChangelog by remember { mutableStateOf(false) }
 
+    val aboutScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(aboutScrollState, petCompanionCoordinator) {
+        snapshotFlow {
+            aboutScrollState.isScrollInProgress to (showWhatsNew || showChangelog)
+        }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = "settings/about",
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface("settings/about") }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,7 +146,7 @@ fun AboutScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(aboutScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -206,10 +230,16 @@ fun AboutScreen(
                                 val remaining = 7 - versionTapCount
                                 when {
                                     remaining <= 0 -> {
-                                        scope.launch { FeatureFlags.unlockDevOptions(context) }
-                                        Toast.makeText(context, devUnlockedMsg, Toast.LENGTH_SHORT).show()
                                         versionTapCount = 0
-                                        onUnlockDeveloperOptions()
+                                        scope.launch {
+                                            FeatureFlags.unlockDevOptions(context)
+                                            Toast.makeText(
+                                                context,
+                                                devUnlockedMsg,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                            onUnlockDeveloperOptions()
+                                        }
                                     }
                                     remaining <= 3 -> {
                                         val tapsMsg = context.getString(R.string.about_taps_to_unlock, remaining)

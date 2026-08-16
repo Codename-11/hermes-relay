@@ -81,6 +81,7 @@ class ProfileControllerLockTest {
 
     private val mizu = Profile(name = "mizu", model = "model-a")
     private val coder = Profile(name = "coder", model = "model-b")
+    private val literalDefault = Profile(name = "default", model = "root-model")
 
     @Before
     fun setUp() {
@@ -154,6 +155,14 @@ class ProfileControllerLockTest {
     }
 
     @Test
+    fun lockProfile_keepsLiteralDefaultDistinctFromServerDefault() {
+        runBlocking { controller.lockProfile(literalDefault) }
+
+        assertEquals("default", awaitLocked("default"))
+        assertEquals(literalDefault, awaitSelected("default"))
+    }
+
+    @Test
     fun lockProfileNull_locksToServerDefault() {
         runBlocking { controller.lockProfile(null) }
 
@@ -182,11 +191,17 @@ class ProfileControllerLockTest {
         coEvery { dashboardClient.listProfiles() } returns Result.success(
             listOf(serverDefault, pinned),
         )
-        coEvery { dashboardClient.listSessions(profile = "pinned", limit = 200) } returns
+        coEvery {
+            dashboardClient.listSessions(profile = "pinned", limit = 200, archived = "include")
+        } returns
             Result.success(emptyList<SessionItem>())
         coEvery { dashboardClient.deleteSession("session-1", profile = "pinned") } returns
             Result.success(buildJsonObject { })
         coEvery { dashboardClient.renameSession("session-1", "Renamed", profile = "pinned") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionPinned("session-1", true, profile = "pinned") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionArchived("session-1", true, profile = "pinned") } returns
             Result.success(buildJsonObject { })
         controller.setPendingConnectionId(connectionId)
         controller.setPendingName(null)
@@ -200,10 +215,58 @@ class ProfileControllerLockTest {
         runBlocking { controller.listProfileScopedSessions()?.getOrThrow() }
         assertTrue(runBlocking { controller.deleteProfileScopedSession("session-1") })
         assertTrue(runBlocking { controller.renameProfileScopedSession("session-1", "Renamed") })
-        coVerify(exactly = 1) { dashboardClient.listSessions(profile = "pinned", limit = 200) }
+        assertFalse(
+            runBlocking {
+                controller.setProfileScopedSessionPinned(
+                    "session-1",
+                    true,
+                    expectedContextKey = "another-connection-profile",
+                )
+            },
+        )
+        assertTrue(runBlocking { controller.setProfileScopedSessionPinned("session-1", true) })
+        assertTrue(runBlocking { controller.setProfileScopedSessionArchived("session-1", true) })
+        coVerify(exactly = 1) {
+            dashboardClient.listSessions(profile = "pinned", limit = 200, archived = "include")
+        }
         coVerify(exactly = 1) { dashboardClient.deleteSession("session-1", profile = "pinned") }
         coVerify(exactly = 1) {
             dashboardClient.renameSession("session-1", "Renamed", profile = "pinned")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionPinned("session-1", true, profile = "pinned")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionArchived("session-1", true, profile = "pinned")
+        }
+    }
+
+    @Test
+    fun explicitProfileSessionMutations_useOwningProfileWithoutChangingSelection() {
+        dashboardUrl = "https://dashboard.example"
+        coEvery { dashboardClient.deleteSession("session-2", profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.renameSession("session-2", "Updated", profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionPinned("session-2", true, profile = "coder") } returns
+            Result.success(buildJsonObject { })
+        coEvery { dashboardClient.setSessionArchived("session-2", true, profile = "coder") } returns
+            Result.success(buildJsonObject { })
+
+        assertTrue(runBlocking { controller.deleteSession("coder", "session-2") })
+        assertTrue(runBlocking { controller.renameSession("coder", "session-2", "Updated") })
+        assertTrue(runBlocking { controller.setSessionPinned("coder", "session-2", true) })
+        assertTrue(runBlocking { controller.setSessionArchived("coder", "session-2", true) })
+
+        coVerify(exactly = 1) { dashboardClient.deleteSession("session-2", profile = "coder") }
+        coVerify(exactly = 1) {
+            dashboardClient.renameSession("session-2", "Updated", profile = "coder")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionPinned("session-2", true, profile = "coder")
+        }
+        coVerify(exactly = 1) {
+            dashboardClient.setSessionArchived("session-2", true, profile = "coder")
         }
     }
 

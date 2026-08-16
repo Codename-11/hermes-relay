@@ -375,18 +375,18 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
     def test_prefer_none_keeps_natural_order(self) -> None:
         endpoints = self._build(prefer=None)
         roles = [c["role"] for c in endpoints]
-        self.assertEqual(roles, ["lan", "tailscale", "public"])
+        self.assertEqual(roles, ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
     def test_prefer_tailscale_promotes_to_priority_0(self) -> None:
         endpoints = self._build(prefer="tailscale")
         roles = [c["role"] for c in endpoints]
-        self.assertEqual(roles, ["tailscale", "lan", "public"])
+        self.assertEqual(roles, ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
-    def test_prefer_public_promotes_even_when_last(self) -> None:
+    def test_prefer_public_promotes_a_secure_alternative(self) -> None:
         endpoints = self._build(prefer="public")
-        self.assertEqual([c["role"] for c in endpoints], ["public", "lan", "tailscale"])
+        self.assertEqual([c["role"] for c in endpoints], ["public", "tailscale", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
     def test_prefer_is_case_insensitive(self) -> None:
@@ -396,12 +396,12 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
     def test_prefer_unknown_role_is_soft_warn(self) -> None:
         # Unknown role → unchanged natural order, no exception.
         endpoints = self._build(prefer="wireguard-eu")
-        self.assertEqual([c["role"] for c in endpoints], ["lan", "tailscale", "public"])
+        self.assertEqual([c["role"] for c in endpoints], ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
     def test_prefer_role_already_at_zero_is_noop(self) -> None:
-        endpoints = self._build(prefer="lan")
-        self.assertEqual([c["role"] for c in endpoints], ["lan", "tailscale", "public"])
+        endpoints = self._build(prefer="tailscale")
+        self.assertEqual([c["role"] for c in endpoints], ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
     def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:

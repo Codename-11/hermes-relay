@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Shield
@@ -29,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,12 +50,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
+import com.hermesandroid.relay.data.secureLinkCoversAllServices
+import com.hermesandroid.relay.data.secureLinkServices
 import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
 import com.hermesandroid.relay.data.isTlsUrl
@@ -61,6 +68,7 @@ import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
+import java.net.URI
 
 /**
  * ADR 24 — per-endpoint visibility + override card for the Connection
@@ -75,9 +83,9 @@ import kotlinx.coroutines.launch
  *   on app start, tried first on every resolve; cleared by
  *   [onClearPreferred].
  *
- * Verbose by design: per-route visibility is retained instead of collapsing
- * into a master row. The card itself is wrapped in a
- * [SettingsExpandableCard] by the caller for page layout hygiene.
+ * Each route stays visible, while its Dashboard/API/Relay topology uses
+ * progressive disclosure: the active route opens by default and fallback
+ * routes keep a compact surface-and-port summary.
  *
  * Not visible on legacy installs: when [endpoints] is empty we render a
  * helpful one-liner instead of an empty card, so freshly-upgraded users
@@ -109,6 +117,9 @@ fun EndpointsCard(
      * resolver's cache-key scheme.
      */
     outcomeFor: (EndpointCandidate) -> RouteProbeOutcome? = { null },
+    /** Auth state applies only to the currently active Dashboard route. */
+    dashboardAuthenticated: Boolean? = null,
+    dashboardSignInRequired: Boolean = false,
     /**
      * Route management — the standard path's manual equivalent of a v3 QR's
      * `endpoints` array. Null callbacks hide the corresponding affordance.
@@ -177,6 +188,13 @@ fun EndpointsCard(
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
                 isProbing = isProbing,
                 outcome = outcomeFor(candidate),
+                dashboardAuthenticated = dashboardAuthenticated.takeIf { activeEndpoint != null &&
+                    activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
+                    activeEndpoint.routeAuthority() == candidate.routeAuthority()
+                },
+                dashboardSignInRequired = dashboardSignInRequired && activeEndpoint != null &&
+                    activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
+                    activeEndpoint.routeAuthority() == candidate.routeAuthority(),
                 onUseNow = { onUseNow(candidate) },
                 onPrefer = { onPreferEndpoint(candidate) },
                 onClearPrefer = onClearPreferred,
@@ -221,6 +239,8 @@ private fun EndpointRow(
     isPreferred: Boolean,
     isProbing: Boolean = false,
     outcome: RouteProbeOutcome? = null,
+    dashboardAuthenticated: Boolean? = null,
+    dashboardSignInRequired: Boolean = false,
     onUseNow: () -> Unit,
     onPrefer: () -> Unit,
     onClearPrefer: () -> Unit,
@@ -232,6 +252,7 @@ private fun EndpointRow(
     var menuOpen by remember { mutableStateOf(false) }
     var pinDialogText by remember { mutableStateOf<String?>(null) }
     var confirmRemove by remember { mutableStateOf(false) }
+    var detailsExpanded by remember(isActive) { mutableStateOf(isActive) }
     val scope = rememberCoroutineScope()
     val noPinRecordedText = stringResource(R.string.endpoints_no_pin_recorded)
 
@@ -280,17 +301,6 @@ private fun EndpointRow(
                         )
                     }
                 }
-                // Full URL, scheme included: http vs https decides whether
-                // the health probe TLS-handshakes, so two rows that both
-                // read "host:8642" can behave completely differently. The
-                // scheme must be visible to be debuggable.
-                Text(
-                    text = candidate.primaryRouteUrl().orEmpty() +
-                        (candidate.relay?.transportHint?.let { " · $it" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace,
-                )
                 when {
                     isProbing -> Text(
                         text = stringResource(R.string.endpoints_checking),
@@ -307,6 +317,80 @@ private fun EndpointRow(
                         text = stringResource(R.string.endpoints_unreachable, outcome.detail ?: stringResource(R.string.endpoints_unreachable_no_detail)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                val dashboardSurfaceUrl = candidate.dashboard?.url
+                    ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
+                val dashboardLabel = stringResource(R.string.active_section_dashboard)
+                val apiLabel = stringResource(R.string.active_section_api_server)
+                val relayLabel = stringResource(R.string.active_section_relay)
+                val surfaceSummary = listOfNotNull(
+                    candidate.proxy?.takeIf { candidate.hasSecureProxy() }?.let {
+                        stringResource(R.string.secure_link_pinned_tls_short)
+                    },
+                    dashboardSurfaceUrl?.let { "$dashboardLabel ${displayPort(it)}" },
+                    candidate.api?.url?.let { "$apiLabel ${displayPort(it)}" },
+                    candidate.relay?.url?.let { "$relayLabel ${displayPort(it)}" },
+                ).joinToString("  ·  ")
+                if (surfaceSummary.isNotBlank()) {
+                    Row(
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { detailsExpanded = !detailsExpanded }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = surfaceSummary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(
+                            imageVector = if (detailsExpanded) {
+                                Icons.Filled.ExpandLess
+                            } else {
+                                Icons.Filled.ExpandMore
+                            },
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                if (candidate.hasSecureProxy()) {
+                    val secureRelayLabel = stringResource(R.string.secure_link_service_relay)
+                    val secureApiLabel = stringResource(R.string.secure_link_service_api)
+                    val secureDashboardLabel = stringResource(R.string.secure_link_service_dashboard)
+                    val services = candidate.secureLinkServices().map { service ->
+                        when (service) {
+                            "relay" -> secureRelayLabel
+                            "api" -> secureApiLabel
+                            "dashboard" -> secureDashboardLabel
+                            else -> service
+                        }
+                    }.joinToString(" · ")
+                    Text(
+                        text = stringResource(R.string.secure_link_protects, services),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (!candidate.secureLinkCoversAllServices()) {
+                        Text(
+                            text = stringResource(R.string.secure_link_partial_warning),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.secure_link_auth_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -394,6 +478,15 @@ private fun EndpointRow(
                 }
             }
         }
+
+        if (detailsExpanded) {
+            RouteSurfaceMap(
+                candidate = candidate,
+                dashboardAuthenticated = dashboardAuthenticated,
+                dashboardSignInRequired = dashboardSignInRequired,
+                modifier = Modifier.padding(start = 26.dp, end = 4.dp, top = 8.dp),
+            )
+        }
     }
 
     if (confirmRemove && onRemove != null) {
@@ -436,6 +529,106 @@ private fun EndpointRow(
             },
         )
     }
+}
+
+@Composable
+private fun RouteSurfaceMap(
+    candidate: EndpointCandidate,
+    dashboardAuthenticated: Boolean? = null,
+    dashboardSignInRequired: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val dashboardUrl = candidate.dashboard?.url
+        ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
+    val apiUrl = candidate.api?.url
+    val relayUrl = candidate.relay?.url
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            RouteSurfaceRow(
+                label = stringResource(R.string.active_section_dashboard),
+                url = dashboardUrl,
+                status = when {
+                    dashboardSignInRequired -> stringResource(R.string.active_section_sign_in_required)
+                    dashboardAuthenticated == true -> stringResource(R.string.active_section_signed_in)
+                    dashboardUrl != null -> stringResource(R.string.active_section_configured)
+                    else -> stringResource(R.string.active_section_not_configured)
+                },
+                warning = dashboardSignInRequired,
+            )
+            RouteSurfaceRow(
+                label = stringResource(R.string.active_section_api_server),
+                url = apiUrl,
+                status = stringResource(
+                    if (apiUrl != null) R.string.active_section_configured
+                    else R.string.active_section_not_configured,
+                ),
+            )
+            RouteSurfaceRow(
+                label = stringResource(R.string.active_section_relay),
+                url = relayUrl,
+                status = stringResource(
+                    if (relayUrl != null) R.string.active_section_configured
+                    else R.string.active_section_not_configured,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RouteSurfaceRow(
+    label: String,
+    url: String?,
+    status: String,
+    warning: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = url ?: "—",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (warning) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+private fun displayPort(url: String): String {
+    val uri = runCatching { URI(url) }.getOrNull()
+    val port = uri?.port?.takeIf { it > 0 } ?: when (uri?.scheme?.lowercase()) {
+        "https", "wss" -> 443
+        else -> 80
+    }
+    return ":$port"
 }
 
 @Composable
@@ -523,6 +716,7 @@ private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
  * be classified independently before it's the active route.
  */
 private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
+    hasSecureProxy() -> SurfaceSecurityKind.Tls
     isTlsUrl(primaryRouteUrl().orEmpty()) -> SurfaceSecurityKind.Tls
     isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
     else -> SurfaceSecurityKind.Plain
@@ -533,19 +727,21 @@ private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
  * v3 pairing QR's `endpoints` array, so standard (no-Relay) connections can
  * set up LAN ↔ Tailscale roaming without the plugin.
  *
- * The relay URL is derived from the API URL (same `:8767` convention the
- * wizard uses); routes that need a custom relay URL still come from a QR.
+ * The editor is host-first: Dashboard/Gateway uses `:9119`, direct API
+ * fallback uses `:8642`, and an already-enabled Relay uses `:8767`.
+ * Routes that need custom per-surface hosts or ports still come from a QR.
  *
  * @param original null = add a new route; non-null = edit (pre-fills role +
  *   URL, keeps the stored priority).
- * @param onSave invoked with (role, apiUrl, resultCallback); the callback
+ * @param onSave invoked with (role, dashboardUrl, resultCallback); the callback
  *   receives a user-facing error string to render inline, or null on
  *   success (the dialog then closes itself).
  */
 @Composable
 fun RouteEditorDialog(
     original: EndpointCandidate?,
-    onSave: (role: String, apiUrl: String, onResult: (String?) -> Unit) -> Unit,
+    relayEnabled: Boolean = false,
+    onSave: (role: String, dashboardUrl: String, onResult: (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -618,12 +814,20 @@ fun RouteEditorDialog(
                 // Live preview of what will actually be saved — scheme and
                 // port defaults applied — so "what, which port, http or
                 // https?" is answered before Save, not after a failed probe.
-                val previewCandidate = remember(url, effectiveRole) {
+                val previewCandidate = remember(url, effectiveRole, relayEnabled) {
                     url.takeIf { it.isNotBlank() }?.let {
+                        val dashboardUrl = Connection.normalizeDashboardUrlInput(it)
+                        val apiUrl = Connection.deriveDefaultApiUrl(dashboardUrl)
                         Connection.endpointCandidateFromDashboardUrl(
                             role = effectiveRole.ifBlank { "custom" },
                             priority = original?.priority ?: 1,
-                            dashboardUrl = Connection.normalizeDashboardUrlInput(it),
+                            dashboardUrl = dashboardUrl,
+                            apiServerUrl = apiUrl,
+                            relayUrl = if (relayEnabled) {
+                                apiUrl?.let(Connection::deriveDefaultRelayUrl)
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
@@ -654,6 +858,9 @@ fun RouteEditorDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                previewCandidate?.let { candidate ->
+                    RouteSurfaceMap(candidate = candidate)
+                }
                 if (selectedRole == "tailscale") {
                     Text(
                         text = stringResource(R.string.endpoints_tailscale_setup_hint),

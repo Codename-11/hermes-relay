@@ -3,6 +3,8 @@ package com.hermesandroid.relay.diagnostics
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.hermesandroid.relay.reliability.ReliabilityCenter
+import com.hermesandroid.relay.reliability.ReliabilityRedactor
 
 enum class DiagnosticCategory(val label: String) {
     Api("API"),
@@ -25,7 +27,16 @@ data class DiagnosticLogEntry(
     val severity: DiagnosticSeverity,
     val title: String,
     val detail: String? = null,
+    /** Human-readable action that produced this event, not merely its subsystem. */
+    val operation: String? = null,
     val endpointRole: String? = null,
+    /** User/configuration-facing route before protocol/path normalization. */
+    val configuredUrl: String? = null,
+    /** Exact sanitized URL attempted on the wire, including the diagnostic path. */
+    val requestUrl: String? = null,
+    /** Concrete next troubleshooting step for failures with a known interpretation. */
+    val suggestion: String? = null,
+    /** Legacy single-URL field retained for diagnostics that have not needed split context. */
     val url: String? = null,
     val elapsedMs: Long? = null,
     /**
@@ -34,7 +45,11 @@ data class DiagnosticLogEntry(
      * the detail view shows this. Null for non-error / manually-recorded entries.
      */
     val stacktrace: String? = null,
-)
+) {
+    /** Best route for mode inference and compact list rendering. */
+    val primaryUrl: String?
+        get() = configuredUrl ?: requestUrl ?: url
+}
 
 /**
  * Current health of a single subsystem on the Diagnostics status timeline.
@@ -81,19 +96,29 @@ object DiagnosticsLog {
         severity: DiagnosticSeverity = DiagnosticSeverity.Info,
         title: String,
         detail: String? = null,
+        operation: String? = null,
         endpointRole: String? = null,
+        configuredUrl: String? = null,
+        requestUrl: String? = null,
+        suggestion: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
         stacktrace: String? = null,
     ) {
+        val safeConfiguredUrl = sanitizeUrl(configuredUrl)
+        val safeRequestUrl = sanitizeUrl(requestUrl)
         val entry = DiagnosticLogEntry(
             timestampMs = System.currentTimeMillis(),
             category = category,
             severity = severity,
             title = clean(title) ?: title.take(MAX_TEXT_LENGTH),
             detail = clean(detail),
+            operation = clean(operation),
             endpointRole = clean(endpointRole),
-            url = sanitizeUrl(url),
+            configuredUrl = safeConfiguredUrl,
+            requestUrl = safeRequestUrl,
+            suggestion = clean(suggestion),
+            url = if (safeConfiguredUrl == null && safeRequestUrl == null) sanitizeUrl(url) else null,
             elapsedMs = elapsedMs,
             stacktrace = redactTrace(stacktrace),
         )
@@ -121,20 +146,40 @@ object DiagnosticsLog {
         title: String,
         detail: String? = null,
         throwable: Throwable? = null,
+        operation: String? = null,
         endpointRole: String? = null,
+        configuredUrl: String? = null,
+        requestUrl: String? = null,
+        suggestion: String? = null,
         url: String? = null,
         elapsedMs: Long? = null,
+        reliabilityContext: String? = null,
     ) {
         record(
             category = category,
             severity = DiagnosticSeverity.Error,
             title = title,
             detail = detail ?: throwable?.message,
+            operation = operation,
             endpointRole = endpointRole,
+            configuredUrl = configuredUrl,
+            requestUrl = requestUrl,
+            suggestion = suggestion,
             url = url,
             elapsedMs = elapsedMs,
             stacktrace = throwable?.let { stackTraceText(it) },
         )
+        if (throwable != null) {
+            runCatching {
+                ReliabilityCenter.recordHandled(
+                    title = title,
+                    detail = detail ?: throwable.message,
+                    throwable = throwable,
+                    context = reliabilityContext,
+                    routeRole = endpointRole,
+                )
+            }
+        }
     }
 
     private fun stackTraceText(t: Throwable): String =
@@ -167,10 +212,8 @@ object DiagnosticsLog {
             val prefix = noQuery.substring(0, schemeEnd + 3)
             val rest = noQuery.substring(schemeEnd + 3)
             val slash = rest.indexOf('/').let { if (it < 0) rest.length else it }
-            val authority = rest.substring(0, slash)
             val path = rest.substring(slash)
-            val safeAuthority = authority.substringAfterLast('@')
-            prefix + safeAuthority + path
+            prefix + "[host]" + path
         } else {
             noQuery
         }
@@ -197,7 +240,7 @@ object DiagnosticsLog {
      */
     private fun redactTrace(value: String?): String? {
         val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        val redacted = redact(trimmed)
+        val redacted = ReliabilityRedactor.redact(trimmed, MAX_TRACE_LENGTH)
         return if (redacted.length > MAX_TRACE_LENGTH) {
             redacted.take(MAX_TRACE_LENGTH) + "\n… (truncated)"
         } else {
@@ -205,8 +248,5 @@ object DiagnosticsLog {
         }
     }
 
-    private fun redact(value: String): String =
-        value.replace(Regex("""(?i)(bearer|token|api[_-]?key|session[_-]?token)\s*[:=]\s*\S+""")) {
-            "${it.groupValues[1]}=[hidden]"
-        }
+    private fun redact(value: String): String = ReliabilityRedactor.redact(value, MAX_TRACE_LENGTH)
 }

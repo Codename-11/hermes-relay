@@ -1,0 +1,8 @@
+{
+  "name": "hermes-relay-desktop-plugin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-loader ./test/loader.mjs test/*.test.mjs"
+  }
+}

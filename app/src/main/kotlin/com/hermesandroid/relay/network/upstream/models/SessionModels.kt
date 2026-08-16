@@ -1,21 +1,27 @@
 package com.hermesandroid.relay.network.upstream.models
 
+import com.hermesandroid.relay.data.MessageReaction
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import java.time.Instant
 
 /**
@@ -76,6 +82,56 @@ object FlexibleIdNonNullSerializer : KSerializer<String> {
     }
 }
 
+/** Unknown-safe durable SQLite row id used by current Gateway history. */
+@OptIn(ExperimentalSerializationApi::class)
+object FlexibleLongSerializer : KSerializer<Long?> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleLong", PrimitiveKind.LONG)
+
+    override fun deserialize(decoder: Decoder): Long? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: return decoder.decodeLong()
+            (jsonDecoder.decodeJsonElement() as? JsonPrimitive)?.longOrNull
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Long?) {
+        if (value != null) encoder.encodeLong(value) else encoder.encodeNull()
+    }
+}
+
+/**
+ * Dashboard versions may expose SQLite JSON columns either as an object or as
+ * their raw JSON string. Normalize both shapes so persisted presentation data
+ * (notably message reactions) survives a history reload on every supported
+ * upstream version.
+ */
+object FlexibleJsonObjectSerializer : KSerializer<JsonObject?> {
+    override val descriptor = JsonObject.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): JsonObject? {
+        return try {
+            val jsonDecoder = decoder as? JsonDecoder ?: return null
+            when (val element = jsonDecoder.decodeJsonElement()) {
+                is JsonObject -> element
+                is JsonPrimitive -> element.content.takeIf { it.isNotBlank() }
+                    ?.let { Json.parseToJsonElement(it) as? JsonObject }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: JsonObject?) {
+        val jsonEncoder = encoder as? JsonEncoder
+            ?: throw SerializationException("FlexibleJsonObjectSerializer requires JSON")
+        jsonEncoder.encodeJsonElement(value ?: JsonNull)
+    }
+}
+
 /** Timestamp serializer for Hermes session metadata.
  *
  * Upstream currently returns epoch seconds for `started_at` / `last_active`;
@@ -113,6 +169,32 @@ object FlexibleTimestampSerializer : KSerializer<Double?> {
     }
 }
 
+/**
+ * Boolean serializer for session flags backed by SQLite integer columns.
+ *
+ * Older Dashboard responses can expose those columns as `0` / `1` instead of
+ * JSON booleans. Accept the equivalent primitive forms without making arbitrary
+ * numbers or strings truthy, and always serialize back to a real JSON boolean.
+ */
+object FlexibleBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeBoolean()
+        val element = jsonDecoder.decodeJsonElement()
+        val value = (element as? JsonPrimitive)?.content?.trim()?.lowercase()
+        return when (value) {
+            "true", "1" -> true
+            "false", "0" -> false
+            else -> throw SerializationException("Expected a boolean-compatible value, got $element")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}
+
 // --- Session CRUD responses ---
 
 @Serializable
@@ -142,6 +224,8 @@ data class SessionItem(
     val preview: String? = null,
     val model: String? = null,
     val source: String? = null,
+    /** Owning profile on the cross-profile `/api/profiles/sessions` endpoint. */
+    val profile: String? = null,
     @SerialName("started_at")
     @Serializable(with = FlexibleTimestampSerializer::class)
     val startedAt: Double? = null,
@@ -163,11 +247,50 @@ data class SessionItem(
     @SerialName("message_count") val messageCount: Int? = null,
     @SerialName("tool_call_count") val toolCallCount: Int? = null,
     @SerialName("input_tokens") val inputTokens: Int? = null,
-    @SerialName("output_tokens") val outputTokens: Int? = null
+    @SerialName("output_tokens") val outputTokens: Int? = null,
+    @SerialName("actual_cost_usd") val actualCostUsd: Double? = null,
+    @SerialName("estimated_cost_usd") val estimatedCostUsd: Double? = null,
+    @SerialName("is_active") val isActive: Boolean = false,
+    @SerialName("has_model_config")
+    @Serializable(with = FlexibleBooleanSerializer::class)
+    val hasModelConfig: Boolean = false,
+    /** Durable flags returned by current Dashboard and API-server session resources. */
+    @Serializable(with = FlexibleBooleanSerializer::class)
+    val pinned: Boolean = false,
+    @Serializable(with = FlexibleBooleanSerializer::class)
+    val archived: Boolean = false,
+    /** Optional workspace metadata added by newer Dashboard session lists. */
+    val cwd: String? = null,
+    @SerialName("git_branch") val gitBranch: String? = null,
+    @SerialName("git_repo_root") val gitRepoRoot: String? = null,
+    /** Best-effort association from the Dashboard's read-only transcript scan. */
+    val pullRequest: SessionPullRequest? = null,
 ) {
     val resolvedLastActivity: Double?
         get() = lastActive ?: lastActivity ?: lastActivityAt ?: updatedAt
 }
+
+@Serializable
+data class SessionPullRequest(
+    val number: Int,
+    val url: String,
+    val branch: String? = null,
+    val state: String? = null,
+    val draft: Boolean = false,
+    val title: String? = null,
+)
+
+@Serializable
+data class SessionPullRequestScanResponse(
+    @SerialName("pull_requests") val pullRequests: Map<String, SessionPullRequest> = emptyMap(),
+    val scanned: List<String> = emptyList(),
+)
+
+@Serializable
+data class RepositoryPullRequestListResponse(
+    val ghReady: Boolean = false,
+    val prs: List<SessionPullRequest> = emptyList(),
+)
 
 @Serializable
 data class CreateSessionRequest(
@@ -240,7 +363,16 @@ data class MessageListResponse(
     val items: List<MessageItem>? = null,
     val messages: List<MessageItem>? = null, // alternate key
     val data: List<MessageItem>? = null, // upstream /api/sessions/{id}/messages list envelope
-    val total: Int? = null
+    val total: Int? = null,
+    val pagination: MessagePagination? = null,
+)
+
+@Serializable
+data class MessagePagination(
+    val limit: Int? = null,
+    val offset: Int? = null,
+    val order: String? = null,
+    val returned: Int? = null,
 )
 
 @Serializable
@@ -250,6 +382,9 @@ data class MessageItem(
     @SerialName("session_id")
     @Serializable(with = FlexibleIdSerializer::class)
     val sessionId: String? = null,
+    @SerialName("row_id")
+    @Serializable(with = FlexibleLongSerializer::class)
+    val rowId: Long? = null,
     val role: String,
     val content: JsonElement? = null,
     @SerialName("tool_calls") val toolCalls: JsonElement? = null,
@@ -259,6 +394,10 @@ data class MessageItem(
     val toolCallId: String? = null,
     val timestamp: Double? = null,
     @SerialName("finish_reason") val finishReason: String? = null,
+    @SerialName("display_kind") val displayKind: String? = null,
+    @SerialName("display_metadata")
+    @Serializable(with = FlexibleJsonObjectSerializer::class)
+    val displayMetadata: JsonObject? = null,
     // Reasoning persisted with the assistant message (upstream serializes
     // both names; reasoning is the canonical one). Restored into
     // ChatMessage.thinkingContent so the Thought-process block survives a
@@ -266,10 +405,23 @@ data class MessageItem(
     val reasoning: String? = null,
     @SerialName("reasoning_content") val reasoningContent: String? = null,
 ) {
+    /**
+     * Dashboard history uses the SQLite row id as numeric `id`; Gateway
+     * history exposes the same value explicitly as `row_id`. Match Desktop by
+     * accepting either representation so persisted rows remain directly
+     * reactable after reload.
+     */
+    val resolvedRowId: Long?
+        get() = rowId ?: id?.toLongOrNull()
+
     /** Reasoning text under whichever field name the server used. */
     val resolvedReasoning: String?
         get() = reasoning?.takeIf { it.isNotBlank() }
             ?: reasoningContent?.takeIf { it.isNotBlank() }
+
+    /** Persisted tapbacks stored by Hermes in display_metadata.reactions. */
+    val reactions: List<MessageReaction>
+        get() = parseMessageReactions(displayMetadata?.get("reactions"))
 
     /** Extract content as plain text string. Handles both string and array-of-parts formats. */
     val contentText: String?
@@ -297,6 +449,21 @@ data class MessageItem(
             else -> emptyList()
         }
 }
+
+fun parseMessageReactions(element: JsonElement?): List<MessageReaction> =
+    (element as? JsonArray).orEmpty().mapNotNull { raw ->
+        val reaction = raw as? JsonObject ?: return@mapNotNull null
+        val emoji = (reaction["emoji"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+            ?: return@mapNotNull null
+        val author = (reaction["author"] as? JsonPrimitive)?.content
+            ?.takeIf { it == "user" || it == "agent" }
+            ?: return@mapNotNull null
+        MessageReaction(
+            emoji = emoji,
+            author = author,
+            at = (reaction["at"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
+        )
+    }
 
 // --- SSE streaming events from /api/sessions/{id}/chat/stream ---
 //
@@ -389,7 +556,9 @@ data class HermesSseEvent(
     @SerialName("thinking_delta") val thinkingDelta: String? = null,
     val text: String? = null,              // /v1/runs reasoning.available text
     // Usage/token fields (on assistant.completed / run.completed)
-    val usage: UsageInfo? = null
+    val usage: UsageInfo? = null,
+    // Native session routing proof on run.started and terminal events.
+    val runtime: JsonObject? = null,
 ) {
     /** Resolve the event type from whichever field is populated. */
     val resolvedType: String?

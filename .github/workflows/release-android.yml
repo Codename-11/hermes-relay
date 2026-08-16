@@ -12,8 +12,9 @@ on:
     tags:
       - "android-v*"
   # Approve Android Release creates its tag with GITHUB_TOKEN, whose tag event
-  # does not recursively start workflows. It explicitly dispatches this file
-  # at that tag instead. Manual tag pushes continue to use the push trigger.
+  # does not recursively start workflows. It dispatches the current workflow
+  # definition from main, while every job checks out the immutable tag. Manual
+  # tag pushes continue to use the push trigger.
   workflow_dispatch:
     inputs:
       version:
@@ -37,19 +38,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('android-v{0}', inputs.version) || github.ref }}
 
       - name: Extract version from tag
         id: version
         env:
           DISPATCHED_VERSION: ${{ inputs.version }}
         run: |
-          REF_VERSION="${GITHUB_REF#refs/tags/android-v}"
-          if [ "$GITHUB_REF" = "$REF_VERSION" ]; then
+          if [ -n "$DISPATCHED_VERSION" ]; then
             REF_VERSION="$DISPATCHED_VERSION"
-          fi
-          if [ -n "$DISPATCHED_VERSION" ] && [ "$DISPATCHED_VERSION" != "$REF_VERSION" ]; then
-            echo "::error::Dispatched version $DISPATCHED_VERSION does not match ref version $REF_VERSION"
-            exit 1
+            TAG_COMMIT=$(git rev-list -n 1 "android-v${REF_VERSION}")
+            if [ -z "$TAG_COMMIT" ] || [ "$TAG_COMMIT" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::Checked-out commit does not match immutable tag android-v${REF_VERSION}"
+              exit 1
+            fi
+          else
+            REF_VERSION="${GITHUB_REF#refs/tags/android-v}"
           fi
           VERSION_CODE=$(grep -oP 'appVersionCode\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
           echo "version=$REF_VERSION" >> "$GITHUB_OUTPUT"
@@ -67,8 +71,8 @@ jobs:
             echo "::error::Tag version ($TAG_VERSION) does not match appVersionName ($TOML_VERSION) in gradle/libs.versions.toml"
             exit 1
           fi
-          if ! grep -Fq "## [$TAG_VERSION]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no release heading for $TAG_VERSION"
+          if ! grep -Eq "^## \\[(Android )?${TAG_VERSION}\\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no Android release heading for $TAG_VERSION"
             exit 1
           fi
 
@@ -111,6 +115,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('android-v{0}', inputs.version) || github.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -119,7 +125,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v6.3.0
         with:
           cache-read-only: false
 
@@ -147,6 +153,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('android-v{0}', inputs.version) || github.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -155,7 +163,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v6.3.0
         with:
           cache-read-only: false
 
@@ -182,6 +190,19 @@ jobs:
         #   app/build/outputs/bundle/googlePlayRelease/hermes-relay-<version>-googlePlay-release.aab
         #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
         run: ./gradlew bundleRelease assembleRelease
+
+      # The Play AAB carries its mapping for Play Console deobfuscation, but
+      # sideload issue reports need the exact mapping from this immutable build.
+      # Keep both variants as a workflow artifact (not a public release asset).
+      - name: Retain R8 mappings for retrace
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-r8-mappings-${{ needs.validate.outputs.version }}-${{ github.sha }}
+          path: |
+            app/build/outputs/mapping/googlePlayRelease/mapping.txt
+            app/build/outputs/mapping/sideloadRelease/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Scan release DEX for unsupported collection APIs
         run: |

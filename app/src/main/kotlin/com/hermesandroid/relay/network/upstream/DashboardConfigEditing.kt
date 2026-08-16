@@ -84,7 +84,44 @@ fun parseConfigSchema(schemaRoot: JsonObject): List<ConfigSchemaField> {
  * `category` field so it is robust to upstream's category-merging.
  */
 fun voiceConfigFields(fields: List<ConfigSchemaField>): List<ConfigSchemaField> =
-    fields.filter { it.key.startsWith("tts.") || it.key.startsWith("stt.") }
+    fields.filter {
+        it.key.startsWith("tts.") ||
+            it.key.startsWith("stt.") ||
+            it.key.startsWith("voice.")
+    }
+
+/** A TTS provider advertised by upstream's `hermes tools` provider registry. */
+data class TtsToolsetProvider(
+    val id: String,
+    val name: String,
+    val status: String? = null,
+    val isActive: Boolean = false,
+)
+
+/**
+ * Parse `GET /api/tools/toolsets/tts/config` into provider choices.
+ *
+ * Unlike the config-schema enum, this payload adds readiness metadata and
+ * reliably discovered plugin providers. Command providers remain schema-owned.
+ * Older upstream builds may omit `tts_provider`;
+ * those rows are ignored because their picker label is not a stable config ID.
+ */
+fun parseTtsToolsetProviders(root: JsonObject): List<TtsToolsetProvider> {
+    val providers = root["providers"] as? JsonArray ?: return emptyList()
+    return providers.mapNotNull { element ->
+        val provider = element as? JsonObject ?: return@mapNotNull null
+        val id = provider.configString("tts_provider")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return@mapNotNull null
+        TtsToolsetProvider(
+            id = id,
+            name = provider.configString("name")?.takeIf { it.isNotBlank() } ?: id,
+            status = provider.configString("status"),
+            isActive = (provider["is_active"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false,
+        )
+    }.distinctBy { it.id }
+}
 
 /** Read the value at a dot-path from the nested config values tree, or null. */
 fun configValueAt(tree: JsonObject, dotPath: String): JsonElement? {

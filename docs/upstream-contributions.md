@@ -190,6 +190,137 @@ prove that the request metadata and expiry event carry the effective value,
 that a late response resolves zero entries, and that expiry affects only the
 active session's approval.
 
+## 10. First-Class Gateway Interim Assistant Events
+
+**Current state:** Upstream TUI gateway now emits completed interim assistant
+text as `message.interim` and annotates duplicate final-answer commits with
+`response_previewed`. Relay Android and desktop consume the additive event:
+older servers keep working through `message.delta` / `message.complete`, while
+newer servers can show commentary and verify-candidate text before the final
+assistant commit.
+
+**Historical proposal:** Before `message.interim` landed, the desired contract
+was a dedicated, optional gateway event for a completed commentary item, for
+example:
+
+```json
+{
+  "type": "commentary.complete",
+  "session_id": "...",
+  "commentary_id": "...",
+  "text": "Checking the deployment state now."
+}
+```
+
+Wire `interim_assistant_callback` in `tui_gateway`, emit only the callback's
+already-redacted and deduplicated completed value, and keep commentary separate
+from `message.delta`, reasoning deltas, and durable final-answer history. The
+event should be suppressed when `display.show_commentary` is false. Its id must
+be stable within a live turn so reconnect replay cannot duplicate a commentary
+item.
+
+**Compatibility:** The event is additive. Older clients ignore it. Relay
+Android and desktop now treat `message.interim` as a completed assistant
+candidate and suppress duplicate final backfill when `response_previewed`
+indicates the final message has already been previewed.
+
+**Verification gate:** TUI-gateway and Relay fixtures should emit interim
+assistant text, a tool lifecycle, and a final answer in that order; prove
+`show_commentary: false` suppresses only commentary; prove analysis/reasoning is
+not leaked; and prove replay does not duplicate the interim or final answer.
+
+## 11. Profile-Scoped Cron Execution Attempts API
+
+**Current state:** Hermes records every cron dispatch attempt in the profile's
+`cron/executions.db`, including pre-session failures and restart-ambiguous
+`unknown` outcomes. The dashboard job list exposes only `latest_execution`, and
+`/api/cron/jobs/{id}/runs` reports session-backed runs rather than the complete
+attempt ledger. Relay Android must not read the host database directly.
+
+**Proposed:** Add a bounded dashboard endpoint:
+
+```text
+GET /api/cron/jobs/{job_id}/executions?profile=<profile>&limit=<n>&before=<cursor>
+```
+
+The response should contain an opaque pagination cursor and immutable attempts
+with `id`, `job_id`, `profile`, `claimed_at`, `started_at`, `finished_at`, and
+`status` (`claimed|running|completed|failed|unknown`). Include a sanitized error
+summary when appropriate, but never raw terminal output, environment values,
+tokens, or provider credentials. The existing session-backed runs endpoint
+remains distinct and may be linked by an optional session id.
+
+Profile authorization and defaulting must match the other dashboard cron
+routes. `limit` must have a conservative server maximum, and old profiles or
+builds without the execution ledger should return an empty supported response
+or the normal unsupported status rather than synthesizing attempts from
+sessions.
+
+**Verification gate:** Dashboard tests cover profile isolation, pagination and
+limit bounds, redaction, every terminal state, recovery of an interrupted owner
+as `unknown`, and the distinction between a failed attempt and a successfully
+created session. Relay Android consumption waits for this public contract.
+
+## 12. Atomic One-Turn Model Arm and Prompt Submit
+
+**Current state:** `/model <name> --once` safely avoids persistence and restores
+the previous model after the next turn completes, errors, or is interrupted.
+Gateway clients must currently issue `slash.exec` and `prompt.submit` as two
+separate RPCs. If the client disconnects or the user stops during that narrow
+gap, the armed override has not been consumed by a turn and can apply to a later
+prompt unexpectedly.
+
+**Proposed:** Add one atomic gateway operation that validates and arms a
+one-turn model/provider override and accepts the prompt under the same
+session/turn ownership boundary. An alternative is to make
+`session.interrupt`/an explicit cancellation RPC clear an armed-but-unconsumed
+override and report whether it did so. Do not make clients restore by writing a
+persistent session/global model: that can race with another client and defeats
+the non-persistence guarantee.
+
+**Compatibility:** Existing `/model --once` and `prompt.submit` behavior remains
+unchanged. The new method or capability is additive; clients use it only when
+advertised and otherwise retain the current ordered two-RPC path.
+
+**Verification gate:** Gateway tests cover disconnect, explicit interrupt, RPC
+cancellation, and process failure between arm and submit; prove no later prompt
+inherits the stale override; and prove success/error/interrupt after submission
+still restores the prior model exactly once without a config write-through.
+
+## 13. Authoritative Gateway Session Reset Event
+
+**Current state:** `/new` is available through `slash.exec`, but that RPC runs in
+a separate slash worker. It can create a fresh conversation while the active TUI
+gateway session's agent, model override, reasoning override, and service-tier
+state remain attached to the prior live agent. A client that clears local state
+only because the slash command returned success can therefore show controls that
+no longer describe the agent that will answer the next prompt.
+
+**Proposed:** Add an authoritative reset operation or event on the active
+gateway session. Two compatible shapes would work:
+
+- `session.reset` RPC, scoped to the live session id, that performs the same
+  state transition as `/new` against the active gateway agent and returns the new
+  stored/live session ids plus the effective model/reasoning/fast settings.
+- A `session.reset` or `session.replaced` event emitted by `/new` only after the
+  active gateway session has actually been rebound, with the same new-session
+  metadata.
+
+The important contract is that the event/RPC is owned by the same active gateway
+session whose subsequent `prompt.submit` will consume the state. It should not be
+derived from a helper worker's success message alone.
+
+**Compatibility:** Existing `/new` text command behavior remains unchanged.
+Clients that do not understand the new RPC/event keep their current behavior.
+Relay Android should continue treating `/new` as blocked for local control reset
+until this contract exists.
+
+**Verification gate:** Gateway tests should prove that `/new` or `session.reset`
+clears per-session model, reasoning, fast, yolo, queued prompt, pending ask, and
+in-flight turn state on the active session; that it emits exactly one
+authoritative replacement event; and that a prompt submitted after reset reaches
+the newly created agent rather than the stale pre-reset one.
+
 ## Notes
 
 - These are suggestions, not requirements. The app works without any of them.

@@ -5,8 +5,9 @@ import org.junit.Test
 
 /**
  * Resolution matrix for [resolveStreamingEndpointPreference] — the gateway
- * tier sits above the capability-preferred SSE endpoint, but only for "auto"
- * and only when the dashboard probe reports Ready.
+ * tier sits above the capability-preferred SSE endpoint for "auto". An
+ * unresolved cold-start probe remains on Gateway until it produces a
+ * definitive fallback verdict.
  */
 class GatewayEndpointResolutionTest {
 
@@ -35,9 +36,16 @@ class GatewayEndpointResolutionTest {
     }
 
     @Test
-    fun `auto falls back to capability preference for every non-ready state`() {
+    fun `auto stays on gateway while cold-start availability is unresolved`() {
+        assertEquals(
+            "gateway",
+            resolveStreamingEndpointPreference("auto", GatewayAvailability.Unknown, fullCaps),
+        )
+    }
+
+    @Test
+    fun `auto falls back after a definitive non-ready verdict`() {
         listOf(
-            GatewayAvailability.Unknown,
             GatewayAvailability.SignInRequired,
             GatewayAvailability.Unreachable,
             GatewayAvailability.Unsupported,

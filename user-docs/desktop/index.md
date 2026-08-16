@@ -7,7 +7,7 @@
 It also includes a terminal escape hatch for when *you* want to drive: bare `hermes-relay` attaches your server's own Hermes TUI over a PTY, tmux-backed so disconnects lose nothing.
 
 ::: warning Experimental phase
-Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional native systray is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
+Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional compact management UI is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
 :::
 
 ::: info Where this track is headed
@@ -115,15 +115,30 @@ The third command (`hermes-relay` with no args) drops you into `shell` mode — 
 
 See **[Installation](./installation.md)** for the full walkthrough (Bun-compiled binaries, version-aware install, `hermes` alias, self-update flow) and **[Pairing](./pairing.md)** for minting a 6-char code on the server.
 
-## Windows systray: menu only, no desktop window
+## Windows management UI
 
-The optional Windows systray is a native right-click menu over the installed CLI. It has no dashboard, WebView, embedded terminal, chat window, settings window, or background GUI framework. Choosing an interactive action opens the real CLI in a terminal.
+The optional **Hermes-Relay CLI UI** is a compact popup anchored above its notification-area icon. Click the icon to open or hide it. It manages paired Hermes hosts, connection and daemon state, per-host access, local approvals, activity, updates, and settings. Pairing can be completed directly from **Hosts → Pair host** with the relay URL and six-character code. Prefer a `wss://` URL: the UI labels `ws://` connections as unencrypted instead of implying that connectivity provides transport security. It deliberately does not embed chat, the Hermes TUI, a terminal emulator, plugins, voice, or agent sessions.
 
-The menu reports the daemon's connection and privilege state, opens the Hermes TUI, starts/stops/restarts the daemon, requests an explicit UAC elevation when you choose **Start/Restart daemon as Administrator…**, opens pairing, pending grants, recent activity, diagnostics, and logs, and provides an emergency stop. The tray itself remains a normal user process even when it starts an elevated daemon.
+Access is scoped to the selected host. **Restricted** keeps the daemon connected without attaching desktop tools. **Ask Every Time**, the default for a newly paired host, requests local approval for each available command, file, screen/input, or USB operation. **Standard** enables typed operations but withholds terminal, PowerShell, detached-process, and command-job launch. **Full Access** is a true override that allows every available capability without task grants for that host; authentication, audit, client revocation, emergency stop, and Windows UAC boundaries still apply. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera share one capability ledger. Individual changes select a matching preset automatically and otherwise become **Custom**. Existing hosts keep their effective permissions. Raw USB covers direct USB utilities, with ADB shown as a secondary service. Approval requests appear directly as focused local cards, include a bounded command/action preview, and can open the same request in the main UI for full review without requiring a terminal.
 
-Desktop use is independently disabled by default. **Enable desktop use…** stores the preference in `~/.hermes/desktop-settings.json`, restarts the daemon at its existing privilege level, and allows the experimental screenshot/input tool family to be advertised. Pending assist/control approvals raise a native security alert; **Review pending grants…** opens `hermes-relay grants` in a terminal, and **Cancel active desktop grant** ends the current task-scoped grant. The status rows show the grant mode and expiry, with an explicit warning when an Administrator control grant is active.
+The Windows one-liner installs the checksum-verified CLI and UI bundle by default. A CLI-only install can add the UI later with `hermes-relay ui install`, open it with `hermes-relay ui` or `hermes-relay ui open`, and inspect it with `hermes-relay ui status`. **Start UI at sign-in** controls the per-user tray startup entry. **Start daemon with UI** is separate and decides whether opening the UI also connects remote access; it is off for existing installs until explicitly enabled. Neither setting creates a Windows service or automatically elevates the daemon.
 
-The installer can register **Start tray at sign-in**, and the same setting is available from the menu. This is per-user startup—not a Windows service. The tray starts the daemon on launch; choosing **Exit tray** intentionally leaves the daemon running.
+**Hosts** owns Relay-specific management. Select a host card to rename it locally, inspect its connection and pairing/session details, change access or capabilities, deauthorize its clients, re-pair it, or use the guarded **Forget host** action. Opening the detail page does not silently make that host active. Forget removes the local pairing, display name, and access policy; use client deauthorization when the server-side session must also be revoked.
+
+**Settings** owns this PC. Its daemon section can restart the daemon, explicitly **Restart as Administrator...** through Windows UAC, or **Return to user mode** by stopping the elevated daemon once and starting it normally. The UI itself never elevates. Administrator mode is intentionally an action instead of a sticky toggle: approved commands and input actions inherit the daemon's elevated privileges.
+
+The CLI section can **Open terminal** at a normal prompt, **Open Hermes CLI** directly into the paired Hermes TUI, **View daemon log**, or **Run diagnostics**. Updates manage the CLI and UI bundle together. **Help & About** shows the UI, CLI, and connected Relay versions and links to the [desktop documentation](https://hermes-relay.dev/docs/desktop/), [troubleshooting guide](https://hermes-relay.dev/docs/desktop/troubleshooting/), [release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop), logs, and diagnostics. External links open in the default browser.
+
+**Settings → Computer control** reports whether the preferred CUA Driver engine
+is absent, incompatible, degraded, or ready. A ready runtime handles structured
+actions against a named
+window in the background, and display a separate animated virtual cursor for
+each agent control session without moving the physical mouse. CUA remains
+optional: Windows input is the explicit compatibility backend, this release
+keeps foreground escalation disabled, and the chosen backend cannot change
+during an active control session. The same card provides explicit **Install**,
+**Check**, and **Update** actions; none run automatically.
+See [Computer-use engines](./tools.md#computer-use-engines).
 
 ## Why both shell AND chat modes?
 

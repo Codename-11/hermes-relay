@@ -43,6 +43,22 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun deriveDefaultApiUrl_usesSameHostAndApiPort() {
+        assertEquals(
+            "http://100.75.1.2:8642",
+            Connection.deriveDefaultApiUrl("http://100.75.1.2:9119"),
+        )
+    }
+
+    @Test
+    fun deriveDefaultApiUrl_preservesHttpsAndIpv6Host() {
+        assertEquals(
+            "https://[fd7a:115c:a1e0::1]:8642",
+            Connection.deriveDefaultApiUrl("https://[fd7a:115c:a1e0::1]:9119"),
+        )
+    }
+
+    @Test
     fun resolvedDashboardUrl_usesExplicitOverride() {
         val connection = sampleConnection(
             dashboardUrl = "https://dashboard.example.com",
@@ -93,6 +109,75 @@ class ConnectionDashboardFieldsTest {
         assertEquals("tailscale", routes[1].role)
         assertEquals("hermes.tail1234.ts.net", routes[1].api?.host)
         assertEquals("wss://hermes.tail1234.ts.net:8767", routes[1].relay?.url)
+    }
+
+    @Test
+    fun buildRouteCandidates_preservesExplicitSameHostHttpsDashboard() {
+        val routes = Connection.buildRouteCandidates(
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+            dashboardUrl = "https://hermes.example.com:443",
+        )
+
+        assertEquals(1, routes.size)
+        assertEquals("https://hermes.example.com:443", routes.single().dashboard?.url)
+        assertEquals("https://hermes.example.com:8643", routes.single().api?.url)
+    }
+
+    @Test
+    fun reconcileDashboardRoutes_repairsStoredSameHostDerivedPort() {
+        val stored = Connection.buildRouteCandidates(
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+        )
+
+        val repaired = Connection.reconcileDashboardRoutes(
+            dashboardUrl = "https://hermes.example.com:443",
+            candidates = stored,
+        )
+
+        assertEquals("https://hermes.example.com:443", repaired.single().dashboard?.url)
+    }
+
+    @Test
+    fun reconcileDashboardRoutes_keepsDifferentHostRoamingDashboard() {
+        val stored = Connection.buildRouteCandidates(
+            apiServerUrl = "http://100.71.8.56:8642",
+            relayUrl = "ws://100.71.8.56:8767",
+        )
+
+        val repaired = Connection.reconcileDashboardRoutes(
+            dashboardUrl = "https://hermes.example.com:443",
+            candidates = stored,
+        )
+
+        assertEquals("http://100.71.8.56:9119", repaired.single().dashboard?.url)
+    }
+
+    @Test
+    fun persistedSecureDashboard_repairsDerivedGatewayRouteOnReload() {
+        val stored = Connection(
+            id = "conn-https",
+            label = "Secure Hermes",
+            apiServerUrl = "https://hermes.example.com:8643",
+            relayUrl = "wss://hermes.example.com:8767",
+            tokenStoreKey = "hermes_auth_https",
+            dashboardUrl = "https://hermes.example.com:443",
+            routeCandidates = Connection.buildRouteCandidates(
+                apiServerUrl = "https://hermes.example.com:8643",
+                relayUrl = "wss://hermes.example.com:8767",
+            ),
+        )
+
+        val reloaded = json.decodeFromString<Connection>(
+            json.encodeToString(Connection.serializer(), stored),
+        ).withDashboardDefaults()
+
+        assertEquals("https://hermes.example.com:443", reloaded.dashboardUrl)
+        assertEquals(
+            "https://hermes.example.com:443",
+            reloaded.routeCandidates.single().dashboard?.url,
+        )
     }
 
     @Test
@@ -150,6 +235,56 @@ class ConnectionDashboardFieldsTest {
                 currentLabel = "Home Hermes",
                 primaryHost = "192.168.1.25",
                 discoveredHostname = "hermes-box.local",
+            ),
+        )
+    }
+
+    @Test
+    fun cloudDashboardDefaultLabel_usesOfficialAgentSlug() {
+        assertEquals(
+            "agent-1",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://agent-1.agents.nousresearch.com/chat",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+    }
+
+    @Test
+    fun cloudDashboardDefaultLabel_requiresExactSingleLabelOfficialOrigin() {
+        assertEquals(
+            "agent-1.agents.nousresearch.com.example.test",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://agent-1.agents.nousresearch.com.example.test",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+        assertEquals(
+            "nested.agent-1.agents.nousresearch.com",
+            Connection.extractDefaultLabel(
+                dashboardUrl = "https://nested.agent-1.agents.nousresearch.com",
+                apiServerUrl = "",
+                relayUrl = "",
+            ),
+        )
+    }
+
+    @Test
+    fun cloudDashboardDefaultLabel_doesNotReplaceUserEditedName() {
+        val automatic = Connection.extractDefaultLabel(
+            dashboardUrl = "https://agent-1.agents.nousresearch.com",
+            apiServerUrl = "",
+            relayUrl = "",
+        )
+
+        assertEquals(
+            "My research agent",
+            Connection.chooseDiscoveredLabel(
+                currentLabel = "My research agent",
+                primaryHost = automatic,
+                discoveredHostname = null,
             ),
         )
     }

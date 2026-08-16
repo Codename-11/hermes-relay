@@ -1,6 +1,16 @@
 package com.hermesandroid.relay.network.upstream
 
 import android.util.Log
+import com.hermesandroid.relay.data.GatewayProfileConfigureResult
+import com.hermesandroid.relay.data.GatewayProfileDescription
+import com.hermesandroid.relay.data.GatewayProfileEditorClient
+import com.hermesandroid.relay.data.GatewayProfileEditorUnsupportedException
+import com.hermesandroid.relay.data.GatewayProfilePatch
+import com.hermesandroid.relay.data.GatewayProfileSection
+import com.hermesandroid.relay.data.GatewayProfileSkill
+import com.hermesandroid.relay.data.GatewayProfileToolset
+import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.CompletableDeferred
@@ -16,17 +26,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import com.hermesandroid.relay.network.shared.fullJitterDelayMs
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -81,7 +96,13 @@ class GatewayChatClient(
     private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
-) {
+    /** Random source for ordinary reconnect full-jitter. */
+    private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
+) : GatewayProfileEditorClient {
+    /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
+    private val sessionSource = "webui"
+    @Volatile
+    private var profileEditorSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
 
@@ -128,6 +149,7 @@ class GatewayChatClient(
          * not enough.
          */
         private const val ATTACH_RPC_TIMEOUT_MS = 60_000L
+        private const val COMPRESS_RPC_TIMEOUT_MS = 120_000L
 
         /** Upstream image byte-upload RPC (underscore — `image.attach_bytes`, content_base64). */
         private const val ATTACH_METHOD_UPSTREAM = "image.attach_bytes"
@@ -157,6 +179,7 @@ class GatewayChatClient(
         private const val CONNECT_ATTEMPTS = 2
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
         private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
+        private const val MAX_RECOVERY_BUFFERED_EVENTS = 256
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -251,6 +274,9 @@ class GatewayChatClient(
     private val _serverProvider = MutableStateFlow<String?>(null)
     val serverProvider: StateFlow<String?> = _serverProvider.asStateFlow()
 
+    private val _serverModelIdentity = MutableStateFlow<GatewayModelIdentity?>(null)
+    val serverModelIdentity: StateFlow<GatewayModelIdentity?> = _serverModelIdentity.asStateFlow()
+
     /**
      * Active reasoning EFFORT from `session.info` (string; "" when reasoning is
      * disabled). The reasoning DISPLAY mode is NOT on session.info — it stays a
@@ -259,6 +285,10 @@ class GatewayChatClient(
      */
     private val _serverReasoningEffort = MutableStateFlow<String?>(null)
     val serverReasoningEffort: StateFlow<String?> = _serverReasoningEffort.asStateFlow()
+
+    private val _serverReasoningIdentity = MutableStateFlow<GatewayReasoningIdentity?>(null)
+    val serverReasoningIdentity: StateFlow<GatewayReasoningIdentity?> =
+        _serverReasoningIdentity.asStateFlow()
 
     /**
      * Server-reported credential warning (upstream `session.info.credential_warning`)
@@ -277,6 +307,14 @@ class GatewayChatClient(
     private val _serverYolo = MutableStateFlow<Boolean?>(null)
     val serverYolo: StateFlow<Boolean?> = _serverYolo.asStateFlow()
 
+    private val _serverApprovalMode = MutableStateFlow<GatewayApprovalMode?>(null)
+    val serverApprovalMode: StateFlow<GatewayApprovalMode?> = _serverApprovalMode.asStateFlow()
+
+    private val _approvalModeCapability =
+        MutableStateFlow(GatewayApprovalModeCapability.Unknown)
+    val approvalModeCapability: StateFlow<GatewayApprovalModeCapability> =
+        _approvalModeCapability.asStateFlow()
+
     private val _serverFast = MutableStateFlow<Boolean?>(null)
     val serverFast: StateFlow<Boolean?> = _serverFast.asStateFlow()
 
@@ -288,6 +326,10 @@ class GatewayChatClient(
      */
     private val _serverContext = MutableStateFlow<Pair<Int, Int>?>(null)
     val serverContext: StateFlow<Pair<Int, Int>?> = _serverContext.asStateFlow()
+
+    /** Optional upstream project identity for the active session. */
+    private val _serverProject = MutableStateFlow<GatewaySessionProject?>(null)
+    val serverProject: StateFlow<GatewaySessionProject?> = _serverProject.asStateFlow()
 
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
@@ -351,6 +393,15 @@ class GatewayChatClient(
     @Volatile
     private var activeTurn: GatewayTurn? = null
 
+    private data class RecoveryEvent(
+        val sessionId: String,
+        val type: String,
+        val payload: JsonObject?,
+    )
+
+    private val recoveryEventLock = Any()
+    private var recoveryEvents: MutableList<RecoveryEvent>? = null
+
     /**
      * Turns deliberately detached when the user switches profile/session.
      * Upstream continues them server-side; retain the live→durable binding so
@@ -361,6 +412,7 @@ class GatewayChatClient(
     private data class BackgroundTurn(
         val storedSessionId: String,
         val profile: String?,
+        @Volatile var pendingAsk: GatewayAsk? = null,
     )
 
     /**
@@ -398,6 +450,11 @@ class GatewayChatClient(
     @Volatile
     private var unmatchedTurnCompleteListener:
         ((GatewayBackgroundTurnCompletion) -> Unit)? = null
+
+    /** Input requested or resolved on a deliberately detached turn. */
+    @Volatile
+    private var backgroundInteractionListener:
+        ((GatewayBackgroundInteractionEvent) -> Unit)? = null
 
     /**
      * Connection-level process listener. Unlike [GatewayTurnCallbacks], this is
@@ -466,6 +523,14 @@ class GatewayChatClient(
      *   into the session's USER messages (counted from the first user
      *   message). The server drops that message and everything after it
      *   before running [text] as a fresh turn.
+     * @param truncateBeforeRowId durable identity of the same target user row
+     *   when current Gateway history supplied one. Sent alongside the ordinal
+     *   so the server can fail closed if local position and durable identity
+     *   diverge; omitted for older Gateway history without row ids.
+     * @param queuedFollowUp true only when Android is draining a prompt the
+     *   user explicitly queued behind an active turn. Newer gateways use the
+     *   additive `queued:true` marker to preserve run-after semantics while
+     *   the previous turn is still settling; older gateways ignore it.
      * @param onPreflightFailure invoked INSTEAD of starting the turn when the
      *   gateway could not be reached / authenticated / the prompt could not
      *   be submitted — i.e. nothing started server-side, so the caller can
@@ -479,6 +544,9 @@ class GatewayChatClient(
         callbacks: GatewayTurnCallbacks,
         attachments: List<GatewayAttachment> = emptyList(),
         truncateBeforeUserOrdinal: Int? = null,
+        truncateBeforeRowId: Long? = null,
+        queuedFollowUp: Boolean = false,
+        onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
         val turn = GatewayTurn(dispatchOn(callbacks))
@@ -500,21 +568,43 @@ class GatewayChatClient(
                     turn.tracer.mark("session")
                 }
                 if (turn.cancelled) return@launch
-                attachments.forEach { attachment ->
-                    uploadAttachment(attachment).getOrElse { e ->
+                val attachmentRefs = attachments.mapNotNull { attachment ->
+                    val upload = uploadAttachment(attachment).getOrElse { e ->
                         throw GatewayPreflightException("attachment upload failed: ${e.message}")
+                    }
+                    if (attachment.requiresPromptReference()) {
+                        upload.stringField("ref_text")
+                            ?: throw GatewayPreflightException(
+                                "attachment upload failed: Hermes returned no readable file reference",
+                            )
+                    } else {
+                        null
                     }
                 }
                 if (turn.cancelled) return@launch
                 if (!awaitCancelledTurnDrain(turn, storedSessionId)) return@launch
                 activeTurn = turn
                 turn.armWatchdog()
+                // Generic `file.attach` uploads are staged artifacts, not
+                // session-owned image/PDF attachments. The gateway returns
+                // the exact workspace/sandbox-safe `@file:` reference that
+                // must accompany this prompt. Keep the user's prose last,
+                // matching upstream Desktop's context-reference contract.
+                val submittedText = (attachmentRefs + text)
+                    .filter(String::isNotBlank)
+                    .joinToString("\n\n")
                 val submitted = rpc(
                     "prompt.submit",
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
-                        put("text", text)
-                        truncateBeforeUserOrdinal?.let { put("truncate_before_user_ordinal", it) }
+                        put("text", submittedText)
+                        truncateBeforeUserOrdinal?.let { ordinal ->
+                            put("truncate_before_user_ordinal", ordinal)
+                            put("confirm_truncate", true)
+                            if (ordinal == 0) put("confirm_empty_truncate", true)
+                        }
+                        truncateBeforeRowId?.let { put("truncate_before_row_id", it) }
+                        if (queuedFollowUp) put("queued", true)
                     },
                     // Long-running RPC, not a generic 15s ack — see the
                     // constant's doc. The idle watchdog (armed above, reset by
@@ -528,19 +618,39 @@ class GatewayChatClient(
                     // into the SSE fallback, which would resubmit the same
                     // prompt as a duplicate turn. Recovery belongs to the
                     // stream: the watchdog and mid-turn rejoin own it.
-                    if (turn.started || turn.ended) {
+                    if (turn.started || turn.ended || turn.transportRecoveryStarted) {
                         Log.w(
                             TAG,
-                            "prompt.submit ack failed after turn start " +
+                            "prompt.submit ack failed after turn start/rejoin " +
                                 "(${submitted.exceptionOrNull()?.message}) — no SSE fallback",
                         )
                         return@launch
                     }
                     if (activeTurn === turn) activeTurn = null
                     turn.disarmWatchdog()
+                    val submitError = submitted.exceptionOrNull()
+                    if (submitError.isAuthoritativePromptSubmitRejection()) {
+                        // Authoritative policy rejection: the gateway received
+                        // the prompt and deliberately refused to create the
+                        // first turn. Falling back to SSE would bypass the cap
+                        // and duplicate the optimistic user turn on another
+                        // transport. Surface the holder-aware upstream message
+                        // through the normal failed-turn callback instead.
+                        turn.tracer.done("submit-rejected")
+                        turn.callbacks.onError(
+                            submitError?.message ?: "Hermes rejected the new session",
+                        )
+                        return@launch
+                    }
                     throw GatewayPreflightException(
-                        submitted.exceptionOrNull()?.message ?: "prompt.submit failed",
+                        submitError?.message ?: "prompt.submit failed",
                     )
+                }
+                (submitted.getOrNull()?.get("survivor_user_row_ids") as? JsonArray)?.let { raw ->
+                    val rebound = raw.map { element ->
+                        (element as? JsonPrimitive)?.longOrNull
+                    }
+                    callbackDispatcher { onSurvivorUserRowIds(rebound) }
                 }
                 turn.tracer.mark("submit")
                 // One INFO line per turn so logcat shows which transport
@@ -548,6 +658,13 @@ class GatewayChatClient(
                 // a silent happy path here made on-device verification a
                 // read-the-absence exercise.
                 Log.i(TAG, "Gateway turn submitted (session=$storedSessionId)")
+            } catch (e: GatewayAuthoritativeResumeException) {
+                if (activeTurn === turn) activeTurn = null
+                if (!turn.cancelled) {
+                    turn.disarmWatchdog()
+                    turn.tracer.done("resume-rejected")
+                    turn.callbacks.onError(e.message ?: "Hermes could not resume this session")
+                }
             } catch (e: Exception) {
                 if (activeTurn === turn) activeTurn = null
                 if (!turn.cancelled) {
@@ -580,10 +697,23 @@ class GatewayChatClient(
         val turn = activeTurn?.takeIf { !it.ended } ?: return false
         val liveId = liveSessionId ?: return false
         val storedId = storedSessionId ?: return false
-        backgroundTurns[liveId] = BackgroundTurn(
+        val backgroundTurn = BackgroundTurn(
             storedSessionId = storedId,
             profile = liveSessionProfile,
+            pendingAsk = turn.pendingInteraction,
         )
+        backgroundTurns[liveId] = backgroundTurn
+        backgroundTurn.pendingAsk?.let { ask ->
+            callbackDispatcher {
+                backgroundInteractionListener?.invoke(
+                    GatewayBackgroundInteractionEvent.Requested(
+                        storedSessionId = storedId,
+                        profile = backgroundTurn.profile,
+                        ask = ask,
+                    ),
+                )
+            }
+        }
         turn.detach()
         return true
     }
@@ -653,6 +783,12 @@ class GatewayChatClient(
         unmatchedTurnCompleteListener = listener
     }
 
+    fun setBackgroundInteractionListener(
+        listener: ((GatewayBackgroundInteractionEvent) -> Unit)?,
+    ) {
+        backgroundInteractionListener = listener
+    }
+
     fun setProcessEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
         processEventListener = listener
     }
@@ -720,14 +856,15 @@ class GatewayChatClient(
      * New Hermes gateways expose `session.activate`, which attaches the new
      * WebSocket transport to the exact live id saved in the client checkpoint.
      * If that id has already been reaped (or the method is unavailable), fall
-     * back to `session.resume` by durable session id. Its `running` + `inflight`
-     * fields decide whether a live mapper is installed or history should settle
-     * the turn instead.
+     * back to `session.resume` by durable session id. Its `running`, `inflight`,
+     * and optional `queued` fields decide whether a live mapper is installed or
+     * history should settle the turn instead.
      */
     suspend fun recoverTurn(
         storedId: String,
         preferredLiveId: String?,
         callbacks: GatewayTurnCallbacks,
+        queuedTurnProvider: ((GatewayQueuedTurn) -> GatewayInboundTurnRegistration?)? = null,
     ): Result<GatewaySessionRecovery> = runCatching {
         require(storedId.isNotBlank()) { "stored session id required" }
         val requestedProfile = currentSessionProfile()
@@ -757,6 +894,7 @@ class GatewayChatClient(
                 boundTurn = GatewayTurn(
                     callbacks = dispatchOn(callbacks),
                     dedupeAdjacentMessageStarts = true,
+                    deferEvents = true,
                 ).also { turn ->
                     turn.markRecoveredStarted()
                     activeTurn = turn
@@ -770,6 +908,7 @@ class GatewayChatClient(
                 response = activated.getOrNull()
                 if (response == null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                     boundTurn = null
                     Log.d(
@@ -781,23 +920,33 @@ class GatewayChatClient(
             }
 
             if (response == null) {
-                response = rpc(
-                    "session.resume",
-                    buildJsonObject {
-                        put("session_id", storedId)
-                        put("cols", DEFAULT_COLS)
-                        requestedProfile?.let { put("profile", it) }
-                    },
-                ).getOrElse { error ->
-                    preferredLiveId?.let { liveId ->
-                        claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                synchronized(recoveryEventLock) {
+                    recoveryEvents = mutableListOf()
+                }
+                response = try {
+                    rpc(
+                        "session.resume",
+                        buildJsonObject {
+                            put("session_id", storedId)
+                            put("cols", DEFAULT_COLS)
+                            put("source", sessionSource)
+                            requestedProfile?.let { put("profile", it) }
+                        },
+                    ).getOrElse { error ->
+                        preferredLiveId?.let { liveId ->
+                            claimedBackground?.let { backgroundTurns.putIfAbsent(liveId, it) }
+                        }
+                        throw error
                     }
+                } catch (error: Throwable) {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     throw error
                 }
             }
 
             val recoveredLiveId = response.stringField("session_id")
                 ?: run {
+                    synchronized(recoveryEventLock) { recoveryEvents = null }
                     if (!preferredLiveId.isNullOrBlank()) {
                         claimedBackground?.let { backgroundTurns.putIfAbsent(preferredLiveId, it) }
                     }
@@ -807,18 +956,48 @@ class GatewayChatClient(
             storedSessionId = storedId
             liveSessionProfile = requestedProfile
             updateCancelledDrainLiveSession(storedId, recoveredLiveId)
-            (response["info"] as? JsonObject)?.let { applySessionInfo(it) }
+            applySessionResultInfo(response)
 
             val inflight = (response["inflight"] as? JsonObject)?.let { value ->
                 GatewayInflightTurn(
                     user = value.stringField("user").orEmpty(),
                     assistant = value.stringField("assistant").orEmpty(),
                     streaming = value.booleanField("streaming") == true,
+                    corrections = (value["corrections"] as? JsonArray)
+                        ?.mapNotNull { correction ->
+                            (correction as? JsonPrimitive)
+                                ?.contentOrNull
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() }
+                                ?.take(MAX_RECOVERED_CORRECTION_CHARS)
+                        }
+                        ?.take(MAX_RECOVERED_CORRECTIONS)
+                        .orEmpty(),
+                    status = value.stringField("status"),
+                    error = value.stringField("error"),
+                    recoverable = value.booleanField("recoverable") == true,
                 )
             }
+            val queued = (response["queued"] as? JsonObject)?.let { value ->
+                value.stringField("user")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::GatewayQueuedTurn)
+            }
             val running = response.booleanField("running") == true || inflight?.streaming == true
+            val autoContinue = (response["auto_continue"] as? JsonObject)?.let { value ->
+                val attempt = value.stringField("attempt")?.toIntOrNull()
+                    ?: (value["attempt"] as? JsonPrimitive)?.intOrNull
+                if (attempt != null && attempt > 0) {
+                    GatewayAutoContinue(
+                        attempt = attempt,
+                        interruptedAt = value.stringField("interrupted_at")?.toDoubleOrNull(),
+                    )
+                } else {
+                    null
+                }
+            }
 
-            if (running) {
+            if (running || autoContinue != null) {
                 if (boundTurn == null || boundTurn.ended) {
                     boundTurn = GatewayTurn(
                         callbacks = dispatchOn(callbacks),
@@ -828,10 +1007,59 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                val buffered = synchronized(recoveryEventLock) {
+                    recoveryEvents
+                        ?.filter { it.sessionId == recoveredLiveId }
+                        .orEmpty()
+                        .also { recoveryEvents = null }
+                }
+                buffered.forEach { event -> boundTurn?.onEvent(event.type, event.payload) }
+                queued?.let { queuedTurn ->
+                    queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
+                        boundTurn.installQueuedSuccessor(registration)
+                    }
+                }
+                boundTurn.releaseDeferredEvents()
+                claimedBackground?.pendingAsk?.let { ask ->
+                    boundTurn.restoreInteraction(ask)
+                }
                 boundTurn.armWatchdog()
+            } else if (queued != null) {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
+                // A queued-only snapshot belongs to the NEXT turn. Never let
+                // its events flow through the completed checkpoint's mapper.
+                val priorBoundTurn = boundTurn
+                boundTurn = null
+                val registration = queuedTurnProvider?.invoke(queued)
+                if (registration != null) {
+                    val queuedTurn = GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                    )
+                    // recoverTurn is resumed on its caller's coroutine context;
+                    // ChatViewModel calls it from Main, so this admission runs
+                    // atomically with the checkpoint handoff. Posting back
+                    // through bindInboundTurn would deadlock waiting on the
+                    // same paused Main dispatcher during cold-start recovery.
+                    if (registration.onHandle(queuedTurn)) {
+                        priorBoundTurn?.redirectDeferredEventsTo(queuedTurn)
+                        boundTurn = queuedTurn
+                        activeTurn = queuedTurn
+                        queuedTurn.armWatchdog()
+                        priorBoundTurn?.detach()
+                    } else {
+                        priorBoundTurn?.discardDeferredEvents()
+                        priorBoundTurn?.detach()
+                    }
+                } else {
+                    priorBoundTurn?.discardDeferredEvents()
+                    priorBoundTurn?.detach()
+                }
             } else {
+                synchronized(recoveryEventLock) { recoveryEvents = null }
                 if (boundTurn != null) {
                     if (activeTurn === boundTurn) activeTurn = null
+                    boundTurn.discardDeferredEvents()
                     boundTurn.detach()
                 }
                 boundTurn = null
@@ -843,72 +1071,170 @@ class GatewayChatClient(
                 running = running,
                 status = response.stringField("status"),
                 inflight = inflight,
-                handle = boundTurn?.takeUnless { it.ended },
+                queued = queued,
+                autoContinue = autoContinue,
+                handle = (if (boundTurn?.ended == true) activeTurn else boundTurn)
+                    ?.takeUnless { it.ended },
             )
         }
     }
 
     /**
-     * Inject [text] into the in-flight turn (`session.steer`). The server
-     * only accepts a steer while a tool batch is running — [SteerResult.Rejected]
-     * means "no batch in flight, queue it instead". [SteerResult.Failed]
-     * covers transport/RPC failure (no live session, socket down, 4010 …) —
-     * callers should fall back to the local queue for both non-queued cases.
+     * Inject [text] into the in-flight turn. Current upstream exposes this as
+     * `session.redirect`, which can redirect an active model turn while keeping
+     * valid work/context. Older gateways only expose `session.steer`; fall back
+     * to that legacy RPC only when the redirect method is absent/unsupported so
+     * old installs still queue the correction instead of dropping it.
      */
     suspend fun steer(text: String): SteerResult {
         val sid = liveSessionId ?: return SteerResult.Failed
-        val result = rpc(
-            "session.steer",
-            buildJsonObject {
-                put("session_id", sid)
-                put("text", text)
-            },
-        )
+        val params = buildJsonObject {
+            put("session_id", sid)
+            put("text", text)
+        }
+        val redirect = rpc("session.redirect", params)
+        val result = if (redirect.isLegacyRedirectUnsupported()) {
+            Log.i(TAG, "session.redirect unsupported — falling back to session.steer (session=$storedSessionId)")
+            rpc("session.steer", params)
+        } else {
+            redirect
+        }
         val outcome = when (result.getOrNull()?.stringField("status")) {
-            "queued" -> SteerResult.Queued
+            "redirected", "queued" -> SteerResult.Queued
             "rejected" -> SteerResult.Rejected
             else -> SteerResult.Failed
         }
-        Log.i(TAG, "Steer → $outcome (session=$storedSessionId)")
+        Log.i(TAG, "Active-turn correction → $outcome (session=$storedSessionId)")
         return outcome
     }
 
+    /**
+     * Compress the live gateway session through the dedicated upstream RPC.
+     * `/compress` is intentionally not sent through generic slash execution on
+     * modern gateways because `session.compress` returns authoritative transcript,
+     * usage, title/model/session-info, and compute-host isolation metadata.
+     */
+    suspend fun compressSession(focusTopic: String? = null): Result<GatewayCompressResult> {
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        val params = buildJsonObject {
+            put("session_id", sid)
+            focusTopic?.trim()?.takeIf { it.isNotBlank() }?.let { put("focus_topic", it) }
+        }
+        val direct = rpc("session.compress", params, timeoutMs = COMPRESS_RPC_TIMEOUT_MS)
+        val result = if (direct.exceptionOrNull().isMethodNotFound()) {
+            val legacyCommand = "/compress" + focusTopic
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { " $it" }
+                .orEmpty()
+            slashExec(legacyCommand).map { slashResult ->
+                buildJsonObject {
+                    put("status", "legacy")
+                    slashResult.stringField("output")?.let { put("output", it) }
+                }
+            }
+        } else {
+            direct
+        }
+        return result.map { payload ->
+            applySessionResultInfo(payload)
+            payload.toGatewayCompressResult()
+        }
+    }
+
+    private fun Result<JsonObject>.isLegacyRedirectUnsupported(): Boolean {
+        val error = exceptionOrNull() ?: return false
+        val message = error.message.orEmpty()
+        return error.isMethodNotFound() ||
+            (error as? GatewayRpcException)?.code == 4010 ||
+            message.contains("does not support active-turn redirect", ignoreCase = true)
+    }
+
+    private fun JsonObject.toGatewayCompressResult(): GatewayCompressResult =
+        GatewayCompressResult(
+            status = stringField("status") ?: if (
+                (this["compressed"] as? JsonPrimitive)?.booleanOrNull == false
+            ) {
+                "noop"
+            } else {
+                "completed"
+            },
+            output = stringField("output") ?: stringField("message"),
+            removed = (this["removed"] as? JsonPrimitive)?.intOrNull,
+            beforeMessages = (this["before_messages"] as? JsonPrimitive)?.intOrNull,
+            afterMessages = (this["after_messages"] as? JsonPrimitive)?.intOrNull,
+            beforeTokens = (this["before_tokens"] as? JsonPrimitive)?.intOrNull,
+            afterTokens = (this["after_tokens"] as? JsonPrimitive)?.intOrNull,
+            usage = GatewayEventMapper.parseGatewayUsage(this["usage"] as? JsonObject),
+            info = this["info"] as? JsonObject,
+            messages = (this["messages"] as? JsonArray)?.let { messages ->
+                runCatching {
+                    json.decodeFromJsonElement(
+                        ListSerializer(MessageItem.serializer()),
+                        messages,
+                    )
+                }.getOrElse {
+                    Log.w(TAG, "session.compress returned unreadable messages", it)
+                    emptyList()
+                }
+            }.orEmpty(),
+        )
+
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
-    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondClarify(requestId: String, answer: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "clarify.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("answer", answer)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.SUDO] ask. The password must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondSudo(requestId: String, password: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "sudo.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("password", password)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.SUDO, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.SECRET] ask. Empty [value] = skip (upstream
      * returns `skipped: true` to the tool). The value must NEVER be logged
      * or persisted — it exists only inside this outbound frame.
      */
-    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> =
-        rpc(
+    suspend fun respondSecret(requestId: String, value: String): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
+        return rpc(
             "secret.respond",
             buildJsonObject {
                 put("request_id", requestId)
                 put("value", value)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.SECRET, requestId))
+            }
+        }
+    }
 
     /**
      * Answer a [GatewayAsk.Kind.APPROVAL] ask — correlated by the live
@@ -916,6 +1242,7 @@ class GatewayChatClient(
      * resolves every pending approval on the session at once.
      */
     suspend fun respondApproval(choice: String, all: Boolean = false): Result<GatewayAskResponse> {
+        val respondingTurn = activeTurn
         val sid = liveSessionId
             ?: return Result.failure(GatewayRpcException("no live session"))
         return rpc(
@@ -925,7 +1252,11 @@ class GatewayChatClient(
                 put("choice", choice)
                 put("all", all)
             },
-        ).map { it.gatewayAskResponse() }
+        ).map {
+            it.gatewayAskResponse().also {
+                respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.APPROVAL, null))
+            }
+        }
     }
 
     /**
@@ -947,6 +1278,173 @@ class GatewayChatClient(
         }
         return rpc("commands.catalog", JsonObject(emptyMap()))
             .onSuccess { commandsCatalogCache = it }
+    }
+
+    /**
+     * Capability probe and authoritative editor snapshot. A method-not-found
+     * response is sticky for this client so older Hermes builds keep using the
+     * existing Relay inspector without repeatedly sending unsupported RPCs.
+     */
+    override suspend fun describeProfile(
+        profileName: String,
+    ): Result<GatewayProfileDescription> {
+        if (profileEditorSupported == false) {
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.describe",
+            buildJsonObject { put("name", name) },
+        )
+        val error = response.exceptionOrNull()
+        if (error.isMethodNotFound()) {
+            profileEditorSupported = false
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        return response.mapCatching { payload ->
+            parseProfileDescription(payload, expectedName = name)
+        }.onSuccess {
+            profileEditorSupported = true
+        }
+    }
+
+    /** Apply only fields explicitly present in [patch]; requires a successful describe first. */
+    override suspend fun configureProfile(
+        profileName: String,
+        patch: GatewayProfilePatch,
+    ): Result<GatewayProfileConfigureResult> {
+        if (profileEditorSupported != true) {
+            return Result.failure(GatewayProfileEditorUnsupportedException())
+        }
+        val name = profileName.trim()
+        if (name.isEmpty()) return Result.failure(IllegalArgumentException("profile name required"))
+        if ((patch.provider == null) != (patch.model == null)) {
+            return Result.failure(IllegalArgumentException("provider and model must be saved together"))
+        }
+        val requested = patch.requestedSections
+        if (requested.isEmpty()) return Result.success(GatewayProfileConfigureResult(emptySet(), emptySet()))
+        val params = buildJsonObject {
+            put("name", name)
+            patch.description?.let { put("description", it) }
+            patch.soul?.let { put("soul", it) }
+            patch.provider?.let { put("provider", it) }
+            patch.model?.let { put("model", it) }
+            patch.disabledSkills?.let { names ->
+                put("disabled_skills", JsonArray(names.map(::JsonPrimitive)))
+            }
+            patch.enabledToolsets?.let { names ->
+                put("enabled_toolsets", JsonArray(names.map(::JsonPrimitive)))
+            }
+        }
+        return rpc("profiles.configure", params).mapCatching { payload ->
+            val appliedObject = payload["applied"] as? JsonObject
+                ?: throw GatewayRpcException("profiles.configure returned no applied map")
+            val applied = requested.filterTo(linkedSetOf()) { section ->
+                (appliedObject[section.wireName] as? JsonPrimitive)?.booleanOrNull == true
+            }
+            GatewayProfileConfigureResult(requested = requested, applied = applied)
+        }
+    }
+
+    private fun parseProfileDescription(
+        payload: JsonObject,
+        expectedName: String,
+    ): GatewayProfileDescription {
+        val name = payload.stringField("name")
+            ?: throw GatewayRpcException("profiles.describe returned no profile name")
+        if (name != expectedName) {
+            throw GatewayRpcException("profiles.describe returned a different profile")
+        }
+        val model = payload["model"] as? JsonObject ?: JsonObject(emptyMap())
+        val skills = (payload["skills"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            val skillName = obj.stringField("name")?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            GatewayProfileSkill(
+                name = skillName,
+                enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            )
+        }
+        val toolsets = (payload["toolsets"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            val toolsetName = obj.stringField("name")?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            GatewayProfileToolset(
+                name = toolsetName,
+                description = obj.stringField("description").orEmpty(),
+                toolCount = (obj["tool_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+                enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            )
+        }
+        return GatewayProfileDescription(
+            name = name,
+            description = payload.stringField("description").orEmpty(),
+            soul = payload.stringField("soul").orEmpty(),
+            provider = model.stringField("provider").orEmpty(),
+            model = model.stringField("default").orEmpty(),
+            skills = skills,
+            toolsets = toolsets,
+            toolsetsPinned = (payload["toolsets_pinned"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
+    }
+
+    /**
+     * Fetch the upstream gateway's cropped preview for a Petdex pet.
+     *
+     * A missing thumbnail is represented by a successful `null`, matching the
+     * gateway's fail-open `{ "ok": false }` response. RPC errors, including
+     * method-not-found on older upstream gateways, remain failures so callers
+     * can distinguish an unavailable capability from a missing image.
+     */
+    suspend fun petThumbnail(
+        slug: String,
+        spritesheetUrl: String? = null,
+        profile: String? = currentSessionProfile(),
+    ): Result<String?> {
+        val normalizedSlug = slug.trim()
+        if (!PETDEX_SLUG.matches(normalizedSlug)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex slug"))
+        }
+
+        val normalizedUrl = spritesheetUrl?.trim()?.takeIf { it.isNotEmpty() }
+        if (normalizedUrl != null && !isTrustedPetdexAssetUrl(normalizedUrl)) {
+            return Result.failure(IllegalArgumentException("invalid Petdex spritesheet URL"))
+        }
+
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+
+        return rpc(
+            "pet.thumb",
+            buildJsonObject {
+                put("slug", normalizedSlug)
+                normalizedUrl?.let { put("url", it) }
+                profile?.trim()?.takeIf { it.isNotEmpty() }?.let { put("profile", it) }
+            },
+        ).mapCatching { response ->
+            val ok = (response["ok"] as? JsonPrimitive)?.booleanOrNull
+                ?: throw GatewayRpcException("pet.thumb returned an invalid response")
+            val responseSlug = (response["slug"] as? JsonPrimitive)?.contentOrNull
+            if (responseSlug != normalizedSlug) {
+                throw GatewayRpcException("pet.thumb returned a mismatched slug")
+            }
+            if (!ok) return@mapCatching null
+
+            val dataUri = (response["dataUri"] as? JsonPrimitive)?.contentOrNull
+            if (dataUri == null || !isValidPetThumbnailDataUri(dataUri)) {
+                throw GatewayRpcException("pet.thumb returned an invalid thumbnail")
+            }
+            dataUri
+        }
     }
 
     /**
@@ -1061,6 +1559,22 @@ class GatewayChatClient(
     }
 
     /**
+     * List personalities through upstream's slash completer. Unlike the
+     * dashboard config schema, this resolves the CLI config that contains both
+     * built-in and profile-defined personalities, matching `/personality` in
+     * the desktop and TUI.
+     */
+    suspend fun personalityOptions(): Result<List<String>> {
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            return Result.failure(GatewayRpcException("not connected"))
+        }
+        return rpc(
+            "complete.slash",
+            buildJsonObject { put("text", "/personality ") },
+        ).map(::parseGatewayPersonalityOptions)
+    }
+
+    /**
      * Set the personality the way the desktop + TUI do (`config.set
      * {key:"personality"}`). The gateway persists `display.personality` +
      * `agent.system_prompt` to the active profile's config AND applies the
@@ -1109,23 +1623,12 @@ class GatewayChatClient(
             if (refresh) put("refresh", true)
         }
         return rpc("model.options", params).map { result ->
-            val providers = (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
-                val obj = el as? JsonObject ?: return@mapNotNull null
-                val slug = obj.stringField("slug") ?: return@mapNotNull null
-                GatewayModelProvider(
-                    name = obj.stringField("name") ?: slug,
-                    slug = slug,
-                    models = (obj["models"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-                    isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
-                    warning = obj.stringField("warning"),
-                    authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
-                    unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-                    freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
-                    totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
-                )
-            }
+            val providers = normalizeGatewayModelProviders(
+                (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
+                    val obj = el as? JsonObject ?: return@mapNotNull null
+                    parseGatewayModelProvider(obj)
+                },
+            )
             GatewayModelOptions(
                 providers = providers,
                 currentModel = result.stringField("model") ?: "",
@@ -1152,6 +1655,43 @@ class GatewayChatClient(
                 liveSessionId?.let { put("session_id", it) }
             },
         )
+
+    /**
+     * React to the newest message for a role without guessing a transcript row
+     * id. This follows the upstream gateway contract, which resolves the row
+     * atomically inside the active session. A null emoji removes the reaction.
+     */
+    suspend fun reactToMessage(rowId: Long?, role: String, emoji: String?): Result<JsonObject> {
+        require(role == "user" || role == "assistant") { "unsupported reaction role" }
+        val sid = liveSessionId
+            ?: return Result.failure(GatewayRpcException("no live session"))
+        return rpc(
+            "message.react",
+            buildJsonObject {
+                put("session_id", sid)
+                if (rowId != null) put("row_id", rowId) else put("newest_role", role)
+                if (emoji == null) put("emoji", JsonNull) else put("emoji", emoji)
+                put("author", "user")
+            },
+        )
+    }
+
+    /** Redirect one running child agent without interrupting the parent turn. */
+    suspend fun steerSubagent(subagentId: String, text: String): Result<JsonObject> {
+        val sessionId = liveSessionId
+            ?: return Result.failure(IllegalStateException("No live gateway session"))
+        if (subagentId.isBlank() || text.isBlank()) {
+            return Result.failure(IllegalArgumentException("Subagent and instruction are required"))
+        }
+        return rpc(
+            "subagent.steer",
+            buildJsonObject {
+                put("session_id", sessionId)
+                put("subagent_id", subagentId)
+                put("text", text.trim())
+            },
+        )
+    }
 
     /** Fetch the session/global reasoning effort and display mode. */
     suspend fun getReasoningSettings(): Result<GatewayReasoningSettings> {
@@ -1220,6 +1760,84 @@ class GatewayChatClient(
     }
 
     /**
+     * Read the profile-persisted approval policy added in gateway contract v3.
+     * Older gateways either reject the key or return no recognized value; both
+     * downgrade this optional control without affecting chat or per-session YOLO.
+     */
+    suspend fun getApprovalMode(): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.get",
+            buildJsonObject { put("key", "approvals.mode") },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val mode = GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+            ?: run {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                return Result.failure(approvalModeUnsupported())
+            }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = mode
+        return Result.success(mode)
+    }
+
+    /** Persist the selected approval policy for the active gateway profile. */
+    suspend fun setApprovalMode(mode: GatewayApprovalMode): Result<GatewayApprovalMode> {
+        if (_approvalModeCapability.value == GatewayApprovalModeCapability.Unsupported) {
+            return Result.failure(approvalModeUnsupported())
+        }
+        if (currentSessionProfile() != null) {
+            return Result.failure(approvalModeRequiresLaunchProfile())
+        }
+        if (webSocket == null || readySignal?.isCompleted != true) {
+            try {
+                connectMutex.withLock { ensureConnected() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+        }
+        val response = rpc(
+            "config.set",
+            buildJsonObject {
+                put("key", "approvals.mode")
+                put("value", mode.wireValue)
+            },
+        )
+        response.exceptionOrNull()?.let { error ->
+            if (error.isApprovalModeUnsupported()) {
+                _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+            }
+            return Result.failure(error)
+        }
+        val authoritative =
+            GatewayApprovalMode.fromWire(response.getOrThrow().stringField("value"))
+                ?: run {
+                    _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+                    return Result.failure(approvalModeUnsupported())
+                }
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+        _serverApprovalMode.value = authoritative
+        return Result.success(authoritative)
+    }
+
+    /**
      * Toggle fast mode (priority service tier) via `config.set {key:"fast"}` —
      * desktop parity (`value` "fast"/"normal", session-scoped). Capability-gated
      * upstream: enabling fails (error 4002) when the current model has no fast
@@ -1251,6 +1869,7 @@ class GatewayChatClient(
         unsolicitedTurnProvider = null
         coldPrewarmSessionReadyListener = null
         unmatchedTurnCompleteListener = null
+        backgroundInteractionListener = null
         processEventListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
@@ -1293,6 +1912,7 @@ class GatewayChatClient(
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
@@ -1350,6 +1970,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
+                put("source", sessionSource)
                 requestedProfile?.let { put("profile", it) }
             },
         )
@@ -1368,34 +1989,66 @@ class GatewayChatClient(
             // resume result's embedded `info` (same shape session.info carries),
             // so a reopened session shows its ACTUAL model immediately instead of
             // a misleading default until the first turn's async session.info.
-            (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+            applySessionResultInfo(result)
         }
     }
 
     /**
      * Apply connection-level session info (model / provider / reasoning effort /
-     * personality / yolo / fast / context usage) into the `_server*` state flows.
+     * personality / yolo / fast / context usage / project) into the `_server*`
+     * state flows.
      * Shared by the `session.info` event handler and the `session.resume` RPC
      * result — the resume response embeds the same `info` object, so reopening a
      * session can paint its real model up front rather than waiting for a turn.
      */
     private fun applySessionInfo(info: JsonObject) {
+        val contract = (info["desktop_contract"] as? JsonPrimitive)?.intOrNull
+        if (contract != null && contract < 3) {
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Unsupported
+        }
+        GatewayApprovalMode.fromWire(info.stringField("approval_mode"))?.let { mode ->
+            _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
+            _serverApprovalMode.value = mode
+        }
         if (info.containsKey("personality")) {
             _serverPersonality.value =
                 (info.stringField("personality") ?: "").ifBlank { "none" }
         }
-        info.stringField("model")?.takeIf { it.isNotBlank() }?.let { _serverModel.value = it }
-        info.stringField("provider")?.takeIf { it.isNotBlank() }?.let { _serverProvider.value = it }
+        val model = info.stringField("model")?.takeIf { it.isNotBlank() }
+        val provider = info.stringField("provider")?.takeIf { it.isNotBlank() }
+        model?.let { _serverModel.value = it }
+        provider?.let { _serverProvider.value = it }
+        if (model != null && provider != null) {
+            _serverModelIdentity.value = GatewayModelIdentity(model = model, provider = provider)
+        }
         // reasoning effort: ignore "" (reasoning disabled) so it can't clobber
         // the chip; display mode is config.get-only, not here.
-        info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
-            ?.let { _serverReasoningEffort.value = it }
+        val reasoningEffort = info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
+        reasoningEffort?.let { _serverReasoningEffort.value = it }
+        if (model != null && provider != null && reasoningEffort != null) {
+            _serverReasoningIdentity.value = GatewayReasoningIdentity(
+                identity = GatewayModelIdentity(model = model, provider = provider),
+                effort = reasoningEffort,
+            )
+        }
         // credential_warning: present only when the provider key is missing/
         // invalid. ABSENT means healthy — clear to null so it self-resolves.
         _serverCredentialWarning.value =
             info.stringField("credential_warning")?.takeIf { it.isNotBlank() }
         (info["yolo"] as? JsonPrimitive)?.booleanOrNull?.let { _serverYolo.value = it }
         (info["fast"] as? JsonPrimitive)?.booleanOrNull?.let { _serverFast.value = it }
+        _serverProject.value = (info["project"] as? JsonObject)?.let { project ->
+            project.stringField("name")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { name ->
+                    GatewaySessionProject(
+                        id = project.stringField("id")?.takeIf { it.isNotBlank() },
+                        slug = project.stringField("slug")?.takeIf { it.isNotBlank() },
+                        name = name,
+                        primaryPath = project.stringField("primary_path")?.takeIf { it.isNotBlank() },
+                    )
+                }
+        }
         // Context usage: require used > 0 — a COLD resume resets counters and
         // reports 0 until the first turn rebuilds the prompt; painting 0 would
         // mislead on a session that actually has history.
@@ -1406,6 +2059,12 @@ class GatewayChatClient(
                 _serverContext.value = used to max
             }
         }
+    }
+
+    /** Apply a session create/resume result without leaking metadata from the prior session. */
+    private fun applySessionResultInfo(result: JsonObject) {
+        _serverProject.value = null
+        (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
     }
 
     /** Resolve a process RPC against the exact live id, resuming after reconnect when possible. */
@@ -1495,17 +2154,24 @@ class GatewayChatClient(
                 buildJsonObject {
                     put("session_id", requestedStoredId)
                     put("cols", DEFAULT_COLS)
+                    put("source", sessionSource)
                     requestedProfile?.let { put("profile", it) }
                 },
             )
             val result = resumed.getOrNull()
+            val resumeError = resumed.exceptionOrNull()
+            if ((resumeError as? GatewayRpcException)?.code == 4130) {
+                throw GatewayAuthoritativeResumeException(
+                    resumeError.message ?: "Session transcript exceeds the configured resume limit",
+                )
+            }
             val live = result?.stringField("session_id")
             if (live != null) {
                 liveSessionId = live
                 storedSessionId = requestedStoredId
                 liveSessionProfile = requestedProfile
                 updateCancelledDrainLiveSession(requestedStoredId, live)
-                (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
+                applySessionResultInfo(result)
                 return
             }
             Log.w(
@@ -1519,6 +2185,7 @@ class GatewayChatClient(
             "session.create",
             buildJsonObject {
                 put("cols", DEFAULT_COLS)
+                put("source", sessionSource)
                 if (!newSessionTitle.isNullOrBlank()) put("title", newSessionTitle)
                 requestedProfile?.let { put("profile", it) }
                 // Bind the in-chat overrides to the new session as its
@@ -1640,6 +2307,85 @@ class GatewayChatClient(
             return
         }
 
+        // Upstream emits session.reclaimed process-wide, so it is identified
+        // by payload rather than params.session_id. Retire only an exact live
+        // runtime we own; preserve the durable id so the next send resumes it.
+        if (type == "session.reclaimed") {
+            val reclaimedLiveId = payload?.stringField("session_id")
+            val reclaimedStoredId = payload?.stringField("stored_session_id")
+            val reason = payload?.stringField("reason")
+            val supportedReason = reason in setOf("idle_timeout", "lru_evict", "ws_orphan_reap")
+            if (!reclaimedLiveId.isNullOrBlank() && supportedReason) {
+                val background = backgroundTurns.remove(reclaimedLiveId)
+                if (background != null) {
+                    callbackDispatcher {
+                        unmatchedTurnCompleteListener?.invoke(
+                            GatewayBackgroundTurnCompletion(
+                                storedSessionId = reclaimedStoredId?.takeIf(String::isNotBlank)
+                                    ?: background.storedSessionId,
+                                liveSessionId = reclaimedLiveId,
+                                profile = background.profile,
+                                expectedAssistantText = null,
+                            ),
+                        )
+                    }
+                }
+                if (reclaimedLiveId == liveSessionId) {
+                    liveSessionId = null
+                    reclaimedStoredId?.takeIf(String::isNotBlank)?.let { storedSessionId = it }
+                    val turn = activeTurn
+                    if (turn != null && !turn.ended) {
+                        activeTurn = null
+                        turn.failFromTransport("Gateway reclaimed the inactive session")
+                    }
+                }
+            }
+            return
+        }
+
+        // read_terminal is a renderer query, not a user decision. Android has
+        // no xterm pane on the Gateway chat surface, so mirror upstream
+        // desktop's no-live-pane behavior and answer with empty text instead
+        // of blocking the agent for the server's 30-second timeout.
+        if (type == "terminal.read.request") {
+            val requestId = payload?.stringField("request_id")
+            val ownedSession = !eventSessionId.isNullOrBlank() &&
+                (eventSessionId == liveSessionId || backgroundTurns.containsKey(eventSessionId))
+            if (!requestId.isNullOrBlank() && ownedSession) {
+                scope.launch {
+                    rpc(
+                        "terminal.read.respond",
+                        buildJsonObject {
+                            put("request_id", requestId)
+                            put("text", "")
+                        },
+                    ).onFailure {
+                        Log.w(TAG, "terminal.read.respond failed: ${it.message}")
+                    }
+                }
+            }
+            return
+        }
+
+        // A cold session.resume may schedule auto-continue before its RPC
+        // response reaches Android. The recovery buffer is an ownership gate,
+        // not an observational copy: an event is either claimed here for
+        // replay or routed live below, never both. The resume response drains
+        // and closes the gate under this same lock, so later frames route live.
+        // Already-owned sibling sessions retain their background routing.
+        val claimedByRecovery = !eventSessionId.isNullOrBlank() &&
+            !backgroundTurns.containsKey(eventSessionId) &&
+            synchronized(recoveryEventLock) {
+                recoveryEvents?.let { buffered ->
+                    if (buffered.size >= MAX_RECOVERY_BUFFERED_EVENTS) {
+                        buffered.removeAt(0)
+                    }
+                    buffered += RecoveryEvent(eventSessionId, type, payload)
+                    true
+                } ?: false
+            }
+        if (claimedByRecovery) return
+
         // A profile/session switch may leave an upstream turn running while a
         // different profile becomes visible. Its events must never paint the
         // new transcript, but the terminal event still needs to reconcile the
@@ -1647,6 +2393,48 @@ class GatewayChatClient(
         // switches back.
         val backgroundTurn = eventSessionId?.let(backgroundTurns::get)
         if (backgroundTurn != null) {
+            val interactionRequest = GatewayEventMapper.interactionRequest(type, payload)
+            if (interactionRequest != null) {
+                val previous = backgroundTurn.pendingAsk
+                backgroundTurn.pendingAsk = interactionRequest
+                if (previous?.kind != interactionRequest.kind ||
+                    previous.requestId != interactionRequest.requestId
+                ) {
+                    callbackDispatcher {
+                        backgroundInteractionListener?.invoke(
+                            GatewayBackgroundInteractionEvent.Requested(
+                                storedSessionId = backgroundTurn.storedSessionId,
+                                profile = backgroundTurn.profile,
+                                ask = interactionRequest,
+                            ),
+                        )
+                    }
+                }
+                return
+            }
+
+            val expiry = GatewayEventMapper.interactionExpiry(type, payload)
+            val pendingAsk = backgroundTurn.pendingAsk
+            val explicitlyExpired = expiry != null && pendingAsk != null &&
+                pendingAsk.kind == expiry.kind &&
+                (pendingAsk.kind == GatewayAsk.Kind.APPROVAL ||
+                    pendingAsk.requestId == expiry.requestId)
+            // Ordinary turn activity is not a decision acknowledgement. It can
+            // be replayed or buffered. Only an authoritative expiry retires a
+            // detached ask; an explicit response is retired by its foreground VM.
+            if (explicitlyExpired) {
+                backgroundTurn.pendingAsk = null
+                callbackDispatcher {
+                    backgroundInteractionListener?.invoke(
+                        GatewayBackgroundInteractionEvent.Expired(
+                            storedSessionId = backgroundTurn.storedSessionId,
+                            profile = backgroundTurn.profile,
+                            ask = pendingAsk,
+                        ),
+                    )
+                }
+            }
+
             if (type == "message.complete" || type == "error") {
                 backgroundTurns.remove(eventSessionId, backgroundTurn)
                 val expectedText = if (type == "message.complete") payload?.stringField("text") else null
@@ -1654,6 +2442,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = backgroundTurn.storedSessionId,
+                            liveSessionId = eventSessionId,
                             profile = backgroundTurn.profile,
                             expectedAssistantText = expectedText,
                         ),
@@ -1670,7 +2459,7 @@ class GatewayChatClient(
         // `/personality`, desktop, or TUI change keeps the app in sync. Falls
         // through to the turn dispatch below so an in-flight turn still sees it.
         if (type == "session.info" &&
-            (eventSessionId == null || liveSessionId == null || eventSessionId == liveSessionId)
+            (eventSessionId == null || eventSessionId == liveSessionId)
         ) {
             // Connection-level session info (model / provider / effort / persona /
             // yolo / fast / usage) — shared with the session.resume result via
@@ -1728,6 +2517,7 @@ class GatewayChatClient(
                     unmatchedTurnCompleteListener?.invoke(
                         GatewayBackgroundTurnCompletion(
                             storedSessionId = storedId,
+                            liveSessionId = eventSessionId,
                             profile = liveSessionProfile,
                             expectedAssistantText = expectedText,
                         ),
@@ -1800,6 +2590,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -1870,19 +2661,21 @@ class GatewayChatClient(
                 Log.i(TAG, "Gateway socket rejoined for ${backgroundTurns.size} detached turn(s)")
                 return
             }
-            delay(backoffMs)
+            delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
             backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
         }
     }
 
     /**
      * Recover an in-flight turn after a mid-turn socket loss by reconnecting
-     * the SOCKET ONLY and keeping [preservedLiveId] as the live session id.
+     * the socket and rebinding [preservedLiveId] to the new transport.
      *
-     * A bare reconnect lets the tail — including the final
-     * `message.complete` — keep matching without another RPC. Current upstream
-     * can rebind live sessions too, but older builds cannot, so this remains the
-     * lowest-common-denominator same-client recovery path.
+     * Current upstream detaches a live session from a closed WebSocket; a new
+     * socket receives no tail until `session.activate` attaches that exact live
+     * id. Older gateways do not expose the method, so method-not-found alone
+     * retains the legacy bare-socket behavior. We never call `session.resume`
+     * here: resuming a durable id can create a different live runtime and
+     * orphan the turn already executing server-side.
      *
      * Retries with backoff for up to [midTurnRejoinWindowMs] so a multi-second
      * radio blip doesn't abandon the turn. Events emitted while the socket was
@@ -1900,7 +2693,39 @@ class GatewayChatClient(
                     connectCooldownUntil = 0L
                     ensureConnected()
                 }
-                true
+                if (preservedLiveId == null) {
+                    true
+                } else {
+                    // Bind before activation so a tail event racing the RPC ack
+                    // still matches the original active turn.
+                    liveSessionId = preservedLiveId
+                    val activated = rpc(
+                        "session.activate",
+                        buildJsonObject { put("session_id", preservedLiveId) },
+                    )
+                    when {
+                        activated.isSuccess -> {
+                            activated.getOrNull()?.let(::applySessionResultInfo)
+                            true
+                        }
+                        activated.exceptionOrNull().isMethodNotFound() -> {
+                            Log.i(
+                                TAG,
+                                "session.activate unsupported during mid-turn rejoin — " +
+                                    "using legacy socket recovery",
+                            )
+                            true
+                        }
+                        else -> {
+                            Log.d(
+                                TAG,
+                                "Mid-turn session.activate retry failed: " +
+                                    activated.exceptionOrNull()?.message,
+                            )
+                            false
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 Log.d(TAG, "Mid-turn reconnect retry failed: ${e.message}")
                 false
@@ -1912,7 +2737,8 @@ class GatewayChatClient(
                 if (preservedLiveId != null) liveSessionId = preservedLiveId
                 Log.i(
                     TAG,
-                    "Gateway socket rejoined mid-turn (session=$storedSessionId) — kept live session, awaiting tail",
+                    "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
+                        "rebound live session, awaiting tail",
                 )
                 // A reconnect that followed a route RETARGET gets a short settle
                 // (the fresh socket won't replay the in-flight turn); a normal
@@ -1928,7 +2754,7 @@ class GatewayChatClient(
                 )
                 return
             }
-            delay(backoffMs)
+            delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
             backoffMs = (backoffMs * 2).coerceAtMost(5_000L)
         }
         if (activeTurn === turn) activeTurn = null
@@ -1943,6 +2769,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -2028,6 +2855,11 @@ class GatewayChatClient(
         }
     }
 
+    private fun GatewayAttachment.requiresPromptReference(): Boolean {
+        val mime = contentType.substringBefore(';').trim().lowercase()
+        return !mime.startsWith("image/") && mime != "application/pdf"
+    }
+
     /**
      * Upload one image. Tries the upstream RPC name first; on method-not-found
      * falls back ONCE per socket to the legacy dotted name (older builds
@@ -2084,15 +2916,29 @@ class GatewayChatClient(
     private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
         "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
         "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        "approval.request", "terminal.read.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+        "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
         else -> turnIdleTimeoutMs
     }
 
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
+        deferEvents: Boolean = false,
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
+        val pendingInteraction: GatewayAsk?
+            get() = mapper.currentInteraction
+        fun restoreInteraction(ask: GatewayAsk) {
+            mapper.restoreInteraction(ask)
+        }
+        fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+            mapper.acknowledgeInteraction(expiry)
+        }
+        private val deferredEventLock = Any()
+        private val deferredEvents = mutableListOf<Pair<String, JsonObject?>>()
+        private var eventsDeferred = deferEvents
+        private var redirectedTo: GatewayTurn? = null
+        private var queuedSuccessor: Pair<GatewayInboundTurnRegistration, GatewayTurn>? = null
 
         /** t0 = construction ≈ sendTurn entry (the moment the user sent). */
         val tracer = TurnLatencyTracer("gateway")
@@ -2113,9 +2959,21 @@ class GatewayChatClient(
          */
         fun beginRejoin(): Boolean {
             val shouldRejoin = !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
-            if (shouldRejoin) reconcileRequired = true
+            if (shouldRejoin) {
+                reconcileRequired = true
+                transportRecoveryStarted = true
+            }
             return shouldRejoin
         }
+
+        /**
+         * A socket loss after `prompt.submit` makes server acceptance ambiguous
+         * even when no turn event or RPC ack reached Android. Once recovery has
+         * started, the caller must not resubmit through SSE.
+         */
+        @Volatile
+        var transportRecoveryStarted = false
+            private set
 
         private var watchdog: Job? = null
 
@@ -2133,6 +2991,21 @@ class GatewayChatClient(
             private set
 
         fun onEvent(type: String, payload: JsonObject?) {
+            val redirect = synchronized(deferredEventLock) {
+                if (eventsDeferred) {
+                    deferredEvents += type to payload
+                    return
+                }
+                redirectedTo
+            }
+            if (redirect != null) {
+                redirect.onEvent(type, payload)
+                return
+            }
+            processEvent(type, payload)
+        }
+
+        private fun processEvent(type: String, payload: JsonObject?) {
             if (type != "session.info") started = true
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
@@ -2152,6 +3025,74 @@ class GatewayChatClient(
             if (mapper.turnEnded) {
                 disarmWatchdog()
                 tracer.done()
+                handoffQueuedSuccessor()
+            }
+        }
+
+        /**
+         * Preserve a queued prompt reported beside an in-flight recovery as a
+         * distinct next turn. Its mapper starts deferred so events that race
+         * the resume acknowledgement cannot paint the completing prior turn.
+         */
+        fun installQueuedSuccessor(registration: GatewayInboundTurnRegistration) {
+            synchronized(deferredEventLock) {
+                if (queuedSuccessor == null) {
+                    queuedSuccessor = registration to GatewayTurn(
+                        callbacks = dispatchOn(registration.callbacks),
+                        dedupeAdjacentMessageStarts = true,
+                        deferEvents = true,
+                    )
+                }
+            }
+        }
+
+        private fun handoffQueuedSuccessor() {
+            val successor = synchronized(deferredEventLock) {
+                queuedSuccessor?.also {
+                    queuedSuccessor = null
+                    redirectedTo = it.second
+                }
+            } ?: return
+            val (registration, turn) = successor
+
+            // Claim socket ownership immediately so the next message.start is
+            // buffered by this exact successor instead of being admitted as a
+            // generic unsolicited turn. UI admission is ordered after the
+            // prior turn's terminal callbacks on the shared dispatcher.
+            activeTurn = turn
+            callbackDispatcher {
+                if (registration.onHandle(turn)) {
+                    turn.releaseDeferredEvents()
+                    turn.armWatchdog()
+                } else {
+                    turn.discardDeferredEvents()
+                    turn.detach()
+                }
+            }
+        }
+
+        fun releaseDeferredEvents() {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> onEvent(type, payload) }
+        }
+
+        fun redirectDeferredEventsTo(target: GatewayTurn) {
+            val pending = synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = target
+                deferredEvents.toList().also { deferredEvents.clear() }
+            }
+            pending.forEach { (type, payload) -> target.onEvent(type, payload) }
+        }
+
+        fun discardDeferredEvents() {
+            synchronized(deferredEventLock) {
+                eventsDeferred = false
+                redirectedTo = null
+                deferredEvents.clear()
             }
         }
 
@@ -2315,8 +3256,16 @@ class GatewayChatClient(
         onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
         onStart = { callbackDispatcher { callbacks.onStart() } },
         onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
+        onInterimMessage = { text, alreadyStreamed ->
+            callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
+        },
+        onInterimReconciled = { text ->
+            callbackDispatcher { callbacks.onInterimReconciled(text) }
+        },
         onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
-        onToolCallStart = { a, b -> callbackDispatcher { callbacks.onToolCallStart(a, b) } },
+        onToolCallStart = { id, name, args ->
+            callbackDispatcher { callbacks.onToolCallStart(id, name, args) }
+        },
         onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
         onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
         onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
@@ -2327,6 +3276,7 @@ class GatewayChatClient(
         onError = { v -> callbackDispatcher { callbacks.onError(v) } },
         onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
         onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
+        onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
@@ -2340,12 +3290,28 @@ class GatewayChatClient(
     )
 }
 
-/** Outcome of [GatewayChatClient.steer] — Rejected and Failed both mean "queue locally instead". */
+internal fun parseGatewayPersonalityOptions(result: JsonObject): List<String> =
+    (result["items"] as? JsonArray)
+        .orEmpty()
+        .mapNotNull { item ->
+            (item as? JsonObject)
+                ?.stringField("text")
+                ?.trim()
+                ?.removePrefix("/personality")
+                ?.trim()
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        it.lowercase() !in setOf("none", "default", "neutral")
+                }
+        }
+        .distinctBy { it.lowercase() }
+
+/** Outcome of an active-turn correction — Rejected and Failed both mean "queue locally instead". */
 enum class SteerResult {
-    /** Server accepted — text lands in the next tool batch's last result. */
+    /** Server accepted the active-turn correction. */
     Queued,
 
-    /** Server reachable but no tool batch in flight to steer. */
+    /** Server reachable but no active turn is available to correct. */
     Rejected,
 
     /** Transport/RPC failure (no live session, socket down, unsupported …). */
@@ -2372,10 +3338,70 @@ internal class GatewayPreflightException(message: String) : Exception(message)
 /** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
 internal class GatewayConnectAttemptException(message: String) : Exception(message)
 
+/** Server intentionally refused a durable resume; never create/fallback into a context-free turn. */
+internal class GatewayAuthoritativeResumeException(message: String) : Exception(message)
+
 /** [code] is the JSON-RPC error code when the failure came from the server (e.g. 4018, -32601). */
 internal class GatewayRpcException(message: String, val code: Int? = null) : Exception(message)
 
 private const val JSONRPC_METHOD_NOT_FOUND = -32601
+private val AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS = setOf(
+    4004, // malformed truncation target
+    4018, // durable/ordinal target is no longer present
+    4028, // first-turn truncate requires explicit empty-history confirmation
+    4029, // every destructive truncate requires explicit confirmation
+    4030, // durable row id and client ordinal disagree
+    4090, // active-session capacity policy
+    5008, // durable truncation could not be persisted
+    5070, // initial session persistence failed: storage full
+    5071, // other authoritative initial session persistence failure
+)
+private const val MAX_RECOVERED_CORRECTIONS = 32
+private const val MAX_RECOVERED_CORRECTION_CHARS = 32_768
+private const val PET_THUMB_DATA_PREFIX = "data:image/png;base64,"
+private const val MAX_PET_THUMB_BASE64_CHARS = 512 * 1024
+private val PETDEX_SLUG = Regex("[a-z0-9][a-z0-9-]{0,127}")
+private val STANDARD_BASE64 = Regex("[A-Za-z0-9+/]*={0,2}")
+
+private fun isTrustedPetdexAssetUrl(raw: String): Boolean {
+    val url = raw.toHttpUrlOrNull() ?: return false
+    return url.scheme == "https" &&
+        url.host == "assets.petdex.dev" &&
+        url.port == 443 &&
+        url.username.isEmpty() &&
+        url.password.isEmpty()
+}
+
+private fun isValidPetThumbnailDataUri(raw: String): Boolean {
+    if (!raw.startsWith(PET_THUMB_DATA_PREFIX)) return false
+    val payload = raw.substring(PET_THUMB_DATA_PREFIX.length)
+    return payload.isNotEmpty() &&
+        payload.length <= MAX_PET_THUMB_BASE64_CHARS &&
+        payload.length % 4 == 0 &&
+        STANDARD_BASE64.matches(payload)
+}
+
+data class GatewayCompressResult(
+    val status: String,
+    val output: String? = null,
+    val removed: Int? = null,
+    val beforeMessages: Int? = null,
+    val afterMessages: Int? = null,
+    val beforeTokens: Int? = null,
+    val afterTokens: Int? = null,
+    val usage: UsageInfo? = null,
+    val info: JsonObject? = null,
+    val messages: List<MessageItem> = emptyList(),
+) {
+    val effectiveUsage: UsageInfo?
+        get() = usage ?: GatewayEventMapper.parseGatewayUsage(info?.get("usage") as? JsonObject)
+
+    val title: String?
+        get() = info?.stringField("title")?.takeIf { it.isNotBlank() }
+
+    val isAuthoritative: Boolean
+        get() = messages.isNotEmpty()
+}
 
 private fun Throwable?.isMethodNotFound(): Boolean {
     val rpcError = this as? GatewayRpcException ?: return false
@@ -2384,6 +3410,32 @@ private fun Throwable?.isMethodNotFound(): Boolean {
     return msg.contains("method not found", ignoreCase = true) ||
         msg.contains("unknown method", ignoreCase = true)
 }
+
+private fun Throwable?.isAuthoritativePromptSubmitRejection(): Boolean =
+    (this as? GatewayRpcException)?.code in AUTHORITATIVE_PROMPT_SUBMIT_REJECTIONS
+
+private fun Throwable?.isApprovalModeUnsupported(): Boolean {
+    val rpcError = this as? GatewayRpcException ?: return false
+    val message = rpcError.message.orEmpty()
+    return rpcError.code == JSONRPC_METHOD_NOT_FOUND ||
+        rpcError.code == 4002 ||
+        message.contains("approval mode", ignoreCase = true) &&
+        (
+            message.contains("unknown", ignoreCase = true) ||
+                message.contains("unsupported", ignoreCase = true)
+        )
+}
+
+private fun approvalModeUnsupported(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval modes are not supported by this gateway",
+        JSONRPC_METHOD_NOT_FOUND,
+    )
+
+private fun approvalModeRequiresLaunchProfile(): GatewayRpcException =
+    GatewayRpcException(
+        "profile approval mode is read-only for multiplexed non-launch profiles",
+    )
 
 private fun JsonObject.stringField(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull

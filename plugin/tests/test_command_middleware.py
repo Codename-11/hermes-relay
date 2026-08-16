@@ -368,6 +368,8 @@ class TestMiddlewareIntegration(unittest.TestCase):
         app["api_server_adapter"] = adapter
         app.router.add_post("/v1/chat/completions", chat_completions_handler)
         app.router.add_post("/v1/runs", runs_handler)
+        app.router.add_post("/p/{profile}/v1/chat/completions", chat_completions_handler)
+        app.router.add_post("/p/{profile}/v1/runs", runs_handler)
         app.router.add_get("/v1/runs/{run_id}/events", run_events_handler)
         app.router.add_get("/health", health_handler)
 
@@ -441,6 +443,33 @@ class TestMiddlewareIntegration(unittest.TestCase):
                         if l.startswith("data: ") and l != "data: [DONE]"
                     ]
                     self.assertEqual(len(lines), 3)  # role, content, finish
+
+        self._run(_test())
+
+    def test_prefixed_completions_help_is_intercepted(self):
+        """Multiplex paths match without changing upstream request scope."""
+        async def _test():
+            app, adapter = self._make_app()
+            async with TestClient(TestServer(app)) as cli:
+                with patch(
+                    "hermes_relay_bootstrap._command_middleware._STATELESS_HANDLERS",
+                    {"help": lambda _: "**Profile Help**"},
+                ), patch.dict("sys.modules", {
+                    "hermes_cli.commands": MagicMock(
+                        resolve_command=_mock_resolve_command,
+                    ),
+                }):
+                    resp = await cli.post(
+                        "/p/coder/v1/chat/completions",
+                        json={"messages": [{"role": "user", "content": "/help"}]},
+                    )
+                    self.assertEqual(resp.status, 200)
+                    self.assertIn("Profile Help", (await resp.json())["choices"][0]["message"]["content"])
+                    adapter._check_auth.assert_called_once()
+                    self.assertEqual(
+                        adapter._check_auth.call_args.args[0].path,
+                        "/p/coder/v1/chat/completions",
+                    )
 
         self._run(_test())
 
@@ -537,6 +566,28 @@ class TestMiddlewareIntegration(unittest.TestCase):
                     ev1 = q.get_nowait()
                     self.assertEqual(ev1["event"], "message.delta")
                     self.assertIn("Run Help", ev1["delta"])
+
+        self._run(_test())
+
+    def test_prefixed_runs_help_injects_events(self):
+        async def _test():
+            app, adapter = self._make_app()
+            async with TestClient(TestServer(app)) as cli:
+                with patch(
+                    "hermes_relay_bootstrap._command_middleware._STATELESS_HANDLERS",
+                    {"help": lambda _: "**Profile Run Help**"},
+                ), patch.dict("sys.modules", {
+                    "hermes_cli.commands": MagicMock(
+                        resolve_command=_mock_resolve_command,
+                    ),
+                }):
+                    resp = await cli.post(
+                        "/p/coder/v1/runs",
+                        json={"input": "/help"},
+                    )
+                    self.assertEqual(resp.status, 202)
+                    run_id = (await resp.json())["run_id"]
+                    self.assertIn("Profile Run Help", adapter._run_streams[run_id].get_nowait()["delta"])
 
         self._run(_test())
 

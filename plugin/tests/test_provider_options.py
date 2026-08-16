@@ -66,9 +66,49 @@ class ProviderOptionsTests(unittest.TestCase):
 
         self.assertEqual(result["dynamic"]["status"], "auth_missing")
         self.assertFalse(result["dynamic"]["attempted"])
+        self.assertEqual(len(result["provider"]["voices"]), 26)
+        self.assertEqual(
+            set(result["provider"]["voices"]),
+            {
+                "carina",
+                "zagan",
+                "helix",
+                "orion",
+                "luna",
+                "iris",
+                "altair",
+                "zenith",
+                "perseus",
+                "helios",
+                "lux",
+                "kepler",
+                "rigel",
+                "cosmo",
+                "celeste",
+                "ursa",
+                "sirius",
+                "lumen",
+                "castor",
+                "naksh",
+                "atlas",
+                "ara",
+                "eve",
+                "leo",
+                "rex",
+                "sal",
+            },
+        )
         self.assertIn("eve", result["provider"]["voices"])
+        self.assertEqual(
+            result["provider"]["voice_labels"]["carina"],
+            "Carina - soft, empathetic, soothing",
+        )
         self.assertEqual(result["provider"]["voice_labels"]["rex"], "Rex - confident, clear")
         self.assertEqual(result["provider"]["voice_groups"][0]["id"], "xai_builtin")
+        self.assertEqual(
+            result["provider"]["voice_metadata"]["atlas"]["label"],
+            "Atlas - confident, commanding, reassuring",
+        )
 
     def test_elevenlabs_provider_options_fetches_voices_models_and_languages(self) -> None:
         def fake_get_json(url, **kwargs):

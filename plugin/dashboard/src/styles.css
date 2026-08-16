@@ -124,6 +124,36 @@
   height: auto;
 }
 
+.hermes-relay-plugin .hr-selectable {
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.hermes-relay-plugin .hr-mobile-setup-qr {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+  animation: hr-mobile-setup-ready 180ms ease-out both;
+}
+
+@keyframes hr-mobile-setup-ready {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hermes-relay-plugin .hr-mobile-setup-qr {
+    transition: none;
+    animation: none;
+  }
+}
+
 .hermes-relay-plugin .space-y-1 > * + * {
   margin-top: 0.25rem;
 }

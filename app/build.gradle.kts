@@ -7,6 +7,15 @@ plugins {
     alias(libs.plugins.play.publisher)
 }
 
+val supportedHermesDevAbis = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val hermesDevAbi = providers.gradleProperty("hermes.devAbi").orNull
+hermesDevAbi?.let { requestedAbi ->
+    require(requestedAbi in supportedHermesDevAbis) {
+        "Unsupported hermes.devAbi '$requestedAbi'. Expected one of: " +
+            supportedHermesDevAbis.sorted().joinToString()
+    }
+}
+
 // Rename output artifacts to include the app version. AGP respects
 // `archivesName` for both APK (assemble*) and AAB (bundle*) outputs, so
 // this single line produces `hermes-relay-<version>-<flavor>-<buildType>`
@@ -37,11 +46,22 @@ android {
         // exempt from Play's 14-day closed-testing rule. See RELEASE.md.
         applicationId = "com.axiomlabs.hermesrelay"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = libs.versions.appVersionCode.get().toInt()
         versionName = libs.versions.appVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Optional local-only fast path for device iteration. Native voice/VAD
+        // dependencies make the universal sideload APK very large, while a
+        // connected phone needs only its own ABI. Release and normal debug
+        // builds remain universal unless the developer explicitly supplies
+        // -Phermes.devAbi=<abi>.
+        hermesDevAbi?.let { requestedAbi ->
+            ndk {
+                abiFilters += requestedAbi
+            }
+        }
 
         // Feature flags — DEV_MODE enables all experimental features in debug builds
         buildConfigField("boolean", "DEV_MODE", "false")
@@ -125,6 +145,7 @@ android {
         }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             ndk {
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
@@ -161,6 +182,21 @@ android {
         }
         getByName("androidTest") {
             kotlin.srcDirs("src/androidTest/kotlin")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // sherpa-onnx v1.13.4 and the Silero VAD both use ONNX Runtime.
+            // Keep them on sherpa's 1.27.0 baseline and package one shared core.
+            pickFirsts += "**/libonnxruntime.so"
+
+            // The Android app calls only sherpa's JNI facade. These native C/C++
+            // API facades are development surfaces and are not loaded by the app.
+            excludes += setOf(
+                "**/libsherpa-onnx-c-api.so",
+                "**/libsherpa-onnx-cxx-api.so",
+            )
         }
     }
 
@@ -245,6 +281,7 @@ dependencies {
 
     // Activity
     implementation(libs.activity.compose)
+    implementation(libs.browser)
     implementation(libs.appcompat)
 
     // Core
@@ -260,6 +297,12 @@ dependencies {
     // android-vad Silero — on-device VAD for barge-in (B2)
     // Bundled ONNX Silero model (~2.2 MB); pulled from JitPack.
     implementation(libs.android.vad.silero)
+
+    // Experimental, opt-in local keyword spotting. Models are downloaded only
+    // after the user enables the feature; no model binary is bundled in APKs.
+    // Keep the shared runtime aligned with sherpa-onnx v1.13.4.
+    implementation(libs.onnxruntime.android)
+    implementation(libs.sherpa.onnx)
 
     // Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
     // Scoped via the `googlePlayImplementation` configuration so it never
@@ -277,9 +320,11 @@ dependencies {
     // Coil 3 — async image loading for generated images in chat
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.exifinterface)
 
     // QR Code scanning (ML Kit + CameraX)
     implementation(libs.mlkit.barcode)
+    implementation(libs.zxing.core)
     implementation(libs.camera.core)
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
@@ -326,8 +371,8 @@ dependencies {
     // [POC] Roborazzi host-side screenshot rendering (src/test, Robolectric).
     // Renders real composables on the JVM at an exact canvas — no device, no
     // status bar, no clipping. See StoreScreenshotTest.
-    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.68.0")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.68.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.71.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.71.0")
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.compose.ui.test.manifest)
     testImplementation("androidx.test.ext:junit:1.3.0")

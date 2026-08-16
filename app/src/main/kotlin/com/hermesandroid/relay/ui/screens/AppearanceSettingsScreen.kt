@@ -10,27 +10,49 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +61,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -51,6 +74,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,38 +83,75 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AppLanguage
+import com.hermesandroid.relay.data.MAX_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.MIN_PET_SIZE_SCALE
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.ui.components.SphereSkin
 import com.hermesandroid.relay.ui.components.SphereSkinSource
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.reactivityLabels
+import com.hermesandroid.relay.ui.components.floatingPetDimensions
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
-import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.AccentSwatches
+import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.theme.BrandPalette
 import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.ui.theme.contrastRatio
+import com.hermesandroid.relay.ui.theme.toColorScheme
+import com.hermesandroid.relay.ui.theme.withAccent
+import com.hermesandroid.relay.ui.theme.appearanceShapes
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+private const val APPEARANCE_PET_SURFACE_ROUTE = "settings/appearance"
+private val APPEARANCE_PET_SURFACE_ROUTES = setOf(APPEARANCE_PET_SURFACE_ROUTE)
+
+/** Each card remains a top-edge ledge while its controls stay forbidden terrain. */
+private fun Modifier.appearancePetSurface(key: String): Modifier {
+    val surfaceKey = "appearance-card:$key"
+    return petPerchSurface(
+        key = surfaceKey,
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    ).petObstacleSurface(
+        key = "$surfaceKey:controls",
+        routes = APPEARANCE_PET_SURFACE_ROUTES,
+    )
+}
 
 /**
  * Dedicated Appearance settings screen. Hosts theme picker (auto/light/dark),
@@ -102,17 +163,55 @@ import kotlinx.coroutines.launch
 fun AppearanceSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onBrowsePetdex: () -> Unit = {},
+    onCreatePet: () -> Unit = {},
+    initialCustomizerExpanded: Boolean = false,
 ) {
     val theme by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
     val selectedTheme = AppThemes.byId(appThemeId)
     val isDarkTheme = LocalBrand.current.isDark
+    val appliedAccent by connectionViewModel.appearanceAccent.collectAsState()
+    val appliedShape by connectionViewModel.appearanceShape.collectAsState()
+    var customizeExpanded by remember { mutableStateOf(initialCustomizerExpanded) }
+    var draftAccent by remember { mutableStateOf(appliedAccent) }
+    var draftShape by remember { mutableStateOf(appliedShape) }
+    LaunchedEffect(appliedAccent, appliedShape) {
+        if (!customizeExpanded) {
+            draftAccent = appliedAccent
+            draftShape = appliedShape
+        }
+    }
+    val previewPalette = selectedTheme.paletteFor(isDarkTheme)
+        .withAccent(if (customizeExpanded) draftAccent else appliedAccent)
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
+    val appearanceScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(appearanceScrollState, petCompanionCoordinator) {
+        snapshotFlow { appearanceScrollState.isScrollInProgress to (pendingDelete != null) }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = APPEARANCE_PET_SURFACE_ROUTE,
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface(APPEARANCE_PET_SURFACE_ROUTE) }
+    }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { connectionViewModel.importPet(it) } }
+    val sphereImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { connectionViewModel.importSphereSkin(it) } }
+    val backgroundImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { connectionViewModel.importBackgroundAnimation(it) } }
 
     // Re-scan pets/ when this screen opens (surfaces a pack added out-of-band,
     // e.g. via adb), and relay add/remove results as snackbars.
@@ -140,74 +239,148 @@ fun AppearanceSettingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.appearance_title)) },
-                navigationIcon = {
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.appearance_back),
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            )
+                    Text(
+                        stringResource(R.string.appearance_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        connectionViewModel.setAppTheme(AppThemes.DEFAULT_ID)
+                        connectionViewModel.setTheme("auto")
+                        connectionViewModel.setAppearanceAccent(null)
+                        connectionViewModel.setAppearanceShape(AppearanceShape.DEFAULT.id)
+                        draftAccent = null
+                        draftShape = AppearanceShape.DEFAULT.id
+                    }) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text(stringResource(R.string.appearance_reset), modifier = Modifier.padding(start = 6.dp))
+                    }
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            // Theme gallery section
-            Text(
-                text = stringResource(R.string.appearance_theme),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+        bottomBar = {
+            if (customizeExpanded) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 4.dp,
+                    shadowElevation = 8.dp,
                 ) {
-                    Text(
-                        text = stringResource(R.string.appearance_theme_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        AppThemes.ALL.forEach { appTheme ->
-                            ThemeSwatchChip(
-                                appTheme = appTheme,
-                                selected = appTheme.id == selectedTheme.id,
-                                onClick = { connectionViewModel.setAppTheme(appTheme.id) },
+                        Text(
+                            stringResource(R.string.appearance_accent_preview_only_short),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                        )
+                        TextButton(onClick = {
+                            draftAccent = appliedAccent
+                            draftShape = appliedShape
+                            customizeExpanded = false
+                        }) {
+                            Text(stringResource(R.string.appearance_cancel), style = MaterialTheme.typography.labelLarge)
+                        }
+                        Button(
+                            onClick = {
+                                connectionViewModel.setAppearanceAccent(draftAccent)
+                                connectionViewModel.setAppearanceShape(draftShape)
+                                customizeExpanded = false
+                            },
+                        ) {
+                            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(
+                                stringResource(R.string.appearance_apply_changes),
+                                modifier = Modifier.padding(start = 6.dp),
+                                style = MaterialTheme.typography.labelLarge,
                             )
                         }
                     }
                 }
             }
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(appearanceScrollState)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.appearance_intro),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            AppearanceLivePreview(previewPalette, appearanceShapes(if (customizeExpanded) draftShape else appliedShape))
+
+            // Preset-first gallery, matching the live preview above.
+            Text(
+                text = stringResource(R.string.appearance_preset_gallery),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AppThemes.ALL.forEach { appTheme ->
+                    ThemeSwatchChip(
+                        appTheme = appTheme,
+                        selected = appTheme.id == selectedTheme.id,
+                        onClick = { connectionViewModel.setAppTheme(appTheme.id) },
+                    )
+                }
+            }
+
+            AppearanceModeControl(
+                theme = theme,
+                selectedTheme = selectedTheme,
+                isDarkTheme = isDarkTheme,
+                onThemeModeSelected = connectionViewModel::setTheme,
+            )
+
+            AccentCustomizer(
+                selectedTheme = selectedTheme,
+                expanded = customizeExpanded,
+                draftAccent = draftAccent,
+                draftShape = draftShape,
+                onToggle = {
+                    if (!customizeExpanded) {
+                        draftAccent = appliedAccent
+                        draftShape = appliedShape
+                    }
+                    customizeExpanded = !customizeExpanded
+                },
+                onDraftSelected = { draftAccent = it },
+                onShapeSelected = { draftShape = it },
+                onReset = {
+                    draftAccent = null
+                    draftShape = AppearanceShape.DEFAULT.id
+                },
+            )
 
             // Language section — AppCompat keeps this synchronized with the
             // Android 13+ per-app language setting and persists it on older OSes.
@@ -219,6 +392,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("language")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -249,6 +423,7 @@ fun AppearanceSettingsScreen(
                         AppLanguage.JAPANESE to stringResource(R.string.appearance_language_japanese),
                         AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
                         AppLanguage.SPANISH to stringResource(R.string.appearance_language_spanish),
+                        AppLanguage.RUSSIAN to stringResource(R.string.appearance_language_russian),
                     )
 
                     FlowRow(
@@ -280,7 +455,8 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Appearance (mode + font) section
+            // Readability section. Theme mode and accent customization live
+            // directly under the preset gallery above.
             Text(
                 text = stringResource(R.string.appearance_appearance),
                 style = MaterialTheme.typography.titleMedium,
@@ -289,6 +465,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("display")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -303,47 +480,10 @@ fun AppearanceSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.appearance_light_dark),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = stringResource(R.string.appearance_readability_summary),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-
-                    val themeOptions = listOf("auto", "light", "dark")
-                    val themeLabels = listOf(stringResource(R.string.appearance_theme_auto), stringResource(R.string.appearance_theme_light), stringResource(R.string.appearance_theme_dark))
-                    val selectedIndex = themeOptions.indexOf(theme).coerceAtLeast(0)
-                    // The mode toggle only applies to themes that ship both a
-                    // light and dark palette (Hermes Relay). Fixed-mode themes
-                    // are their own complete look, so we disable + explain.
-                    val modeApplies = selectedTheme.mode == ThemeMode.BOTH
-
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        themeOptions.forEachIndexed { index, option ->
-                            SegmentedButton(
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = themeOptions.size
-                                ),
-                                onClick = { connectionViewModel.setTheme(option) },
-                                selected = index == selectedIndex,
-                                enabled = modeApplies
-                            ) {
-                                Text(themeLabels[index])
-                            }
-                        }
-                    }
-
-                    if (!modeApplies) {
-                        Text(
-                            text = when (selectedTheme.mode) {
-                                ThemeMode.LIGHT_ONLY ->
-                                    stringResource(R.string.appearance_fixed_light, selectedTheme.label)
-                                else ->
-                                    stringResource(R.string.appearance_fixed_dark, selectedTheme.label)
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
 
                     // ── Font size ──────────────────────────────────────────
                     //
@@ -408,6 +548,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("font")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -449,6 +590,7 @@ fun AppearanceSettingsScreen(
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("animation")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -460,6 +602,7 @@ fun AppearanceSettingsScreen(
             ) {
                 val animEnabled by connectionViewModel.animationEnabled.collectAsState()
                 val animBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+                val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
 
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -526,20 +669,214 @@ fun AppearanceSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
+                    HorizontalDivider()
+
+                    Text(
+                        text = stringResource(R.string.appearance_image_generation_style),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.appearance_image_generation_style_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val imageStyleOptions = listOf(
+                        "rotate" to stringResource(R.string.appearance_image_generation_rotate),
+                        "grid" to stringResource(R.string.appearance_image_generation_grid),
+                        "sphere" to stringResource(R.string.appearance_image_generation_sphere),
+                        "nodes" to stringResource(R.string.appearance_image_generation_nodes),
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        imageStyleOptions.forEach { (id, label) ->
+                            FilterChip(
+                                selected = imageGenerationStyle == id,
+                                onClick = { connectionViewModel.setImageGenerationStyle(id) },
+                                label = { Text(label) },
+                                leadingIcon = if (imageGenerationStyle == id) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Filled.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
-            // Agent avatar section — choose the avatar first (the built-in sphere
-            // plus any imported "pets"; add/remove pets in-app below). When the
-            // sphere avatar is selected its skin chips nest below: avatar → skin.
             Text(
-                text = stringResource(R.string.appearance_agent_avatar),
+                text = stringResource(R.string.appearance_background_visualization),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier
+                    .appearancePetSurface("background")
+                    .fillMaxWidth()
+                    .gradientBorder(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkTheme = isDarkTheme,
+                    ),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                val backgroundVisualizationEnabled by
+                    connectionViewModel.backgroundVisualizationEnabled.collectAsState()
+                val backgroundAvatarId by connectionViewModel.backgroundAvatar.collectAsState()
+                val availableBackgroundAnimations = LocalAvailablePets.current
+                val effectiveBackgroundAvatarId = backgroundAvatarId.takeIf { selectedId ->
+                    selectedId == SphereAvatar.id || availableBackgroundAnimations.any { it.id == selectedId }
+                } ?: SphereAvatar.id
+                val availableSkins = LocalAvailableSphereSkins.current
+                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+                val effectiveSkinId = SphereRegistry.resolve(
+                    selectedId = sphereSkinId,
+                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
+                    available = availableSkins,
+                ).id
+                val brand = LocalBrand.current
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_background_visualization_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = !backgroundVisualizationEnabled,
+                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
+                            label = { Text(stringResource(R.string.appearance_background_off)) },
+                        )
+                        FilterChip(
+                            selected = backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id,
+                            onClick = { connectionViewModel.setBackgroundAvatar(SphereAvatar.id) },
+                            label = { Text(stringResource(R.string.appearance_background_sphere)) },
+                        )
+                    }
+
+                    if (availableBackgroundAnimations.isNotEmpty()) {
+                        Text(
+                            text = stringResource(R.string.appearance_background_installed),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            availableBackgroundAnimations.forEach { avatar ->
+                                AgentAvatarChip(
+                                    avatar = avatar,
+                                    brand = brand,
+                                    selected = backgroundVisualizationEnabled && avatar.id == effectiveBackgroundAvatarId,
+                                    onClick = { connectionViewModel.setBackgroundAvatar(avatar.id) },
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            backgroundImportLauncher.launch(
+                                arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_import_background),
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.appearance_import_background_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    if (backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id) {
+                        HorizontalDivider()
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_skin),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            availableSkins.forEach { skin ->
+                                SphereSkinChip(
+                                    skin = skin,
+                                    brand = brand,
+                                    selected = skin.id == effectiveSkinId,
+                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(R.string.appearance_sphere_custom_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                sphereImportLauncher.launch(arrayOf("application/json", "text/json", "text/plain", "*/*"))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.appearance_import_sphere),
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Floating pets are companions, not agent identity or background art.
+            Text(
+                text = stringResource(R.string.appearance_floating_pet),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
 
             Card(
                 modifier = Modifier
+                    .appearancePetSurface("floating-pet")
                     .fillMaxWidth()
                     .gradientBorder(
                         shape = RoundedCornerShape(12.dp),
@@ -550,22 +887,15 @@ fun AppearanceSettingsScreen(
                 )
             ) {
                 val brand = LocalBrand.current
-                val availableAvatars = LocalAvailableAvatars.current
-                val activeAvatar = LocalAgentAvatar.current
-                val availableSkins = LocalAvailableSphereSkins.current
-                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
-                val effectiveSkinId = SphereRegistry.resolve(
-                    selectedId = sphereSkinId,
-                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
-                    available = availableSkins,
-                ).id
+                val availablePets = LocalAvailablePets.current
+                val activePet = LocalFloatingPet.current
 
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.appearance_agent_avatar_desc),
+                        text = stringResource(R.string.appearance_floating_pet_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -575,27 +905,29 @@ fun AppearanceSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        availableAvatars.forEach { avatar ->
+                        FilterChip(
+                            selected = activePet == null,
+                            onClick = { connectionViewModel.setFloatingPet(null) },
+                            label = { Text(stringResource(R.string.appearance_floating_pet_none)) },
+                        )
+                        availablePets.forEach { pet ->
                             AgentAvatarChip(
-                                avatar = avatar,
+                                avatar = pet,
                                 brand = brand,
-                                selected = avatar.id == activeAvatar.id,
-                                // Persist + switch. RelayApp re-resolves
-                                // LocalAgentAvatar from this pref, so every
-                                // surface (and these chips) updates.
-                                onClick = { connectionViewModel.setAgentAvatar(avatar.id) },
+                                selected = pet.id == activePet?.id,
+                                onClick = { connectionViewModel.setFloatingPet(pet.id) },
                             )
                         }
                     }
 
                     // Add / manage user pets in-app — the reliable alternative to
                     // adb push (scoped storage blocks or stalls it on many devices).
-                    val userAvatars = availableAvatars.filter { it.source == AvatarSource.USER }
+                    val userAvatars = availablePets.filter { it.source == AvatarSource.USER }
 
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(
                             onClick = {
@@ -616,6 +948,20 @@ fun AppearanceSettingsScreen(
                         }
                         TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
                             Text(stringResource(R.string.appearance_rescan))
+                        }
+                        TextButton(onClick = onBrowsePetdex) {
+                            Text(stringResource(R.string.appearance_browse_petdex))
+                        }
+                        TextButton(onClick = onCreatePet) {
+                            Icon(
+                                imageVector = Icons.Filled.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.appearance_create_pet),
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
                         }
                     }
 
@@ -656,10 +1002,13 @@ fun AppearanceSettingsScreen(
 
                     // Pet playback-speed tuning (selected pet only) — scales the
                     // authored fps live, no re-authoring or re-importing needed.
-                    if (activeAvatar.source == AvatarSource.USER) {
+                    if (activePet?.source == AvatarSource.USER) {
                         HorizontalDivider()
 
                         val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                        val petSizeScale by connectionViewModel.petSizeScale.collectAsState()
+                        val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+                        val petTemperament by connectionViewModel.petTemperament.collectAsState()
                         Text(
                             text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
                             style = MaterialTheme.typography.labelLarge,
@@ -673,6 +1022,26 @@ fun AppearanceSettingsScreen(
                         )
                         Text(
                             text = stringResource(R.string.appearance_playback_speed_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.appearance_pet_size,
+                                (petSizeScale * 100f).roundToInt(),
+                            ),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Slider(
+                            value = petSizeScale,
+                            onValueChange = connectionViewModel::setPetSizeScale,
+                            valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
+                            steps = 5,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_size_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -698,6 +1067,68 @@ fun AppearanceSettingsScreen(
                                 checked = petStabilize,
                                 onCheckedChange = { connectionViewModel.setPetStabilize(it) },
                             )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_pet_roaming_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = petRoamingEnabled,
+                                onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
+                            )
+                        }
+
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_pet_temperament_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(if (petRoamingEnabled) 1f else 0.6f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            petTemperamentOptions.forEach { option ->
+                                FilterChip(
+                                    selected = option.temperament == petTemperament,
+                                    onClick = {
+                                        connectionViewModel.setPetTemperament(option.temperament)
+                                    },
+                                    enabled = petRoamingEnabled,
+                                    label = { Text(stringResource(option.labelRes)) },
+                                )
+                            }
+                        }
+                        Text(
+                            text = stringResource(
+                                petTemperamentOption(petTemperament).descriptionRes,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.alpha(if (petRoamingEnabled) 1f else 0.6f),
+                        )
+                        TextButton(onClick = connectionViewModel::resetPetPlacement) {
+                            Text(stringResource(R.string.floating_pet_action_reset))
                         }
 
                         // Live state preview — drive the pet through each state to
@@ -734,9 +1165,16 @@ fun AppearanceSettingsScreen(
                                 .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(modifier = Modifier.size(140.dp)) {
+                            Box(
+                                modifier = Modifier.size(
+                                    floatingPetDimensions(
+                                        compact = false,
+                                        sizeScale = petSizeScale,
+                                    ).visualSizeDp.dp,
+                                ),
+                            ) {
                                 key(greetKey) {
-                                    activeAvatar.Render(
+                                    activePet.Render(
                                         state = AvatarRenderState(
                                             state = previewSphereState,
                                             toolCallBurst = previewBurst,
@@ -789,41 +1227,458 @@ fun AppearanceSettingsScreen(
                         )
                     }
 
-                    // Second level of the model: skin chips, shown only when the
-                    // sphere avatar is active (a pet carries no skins).
-                    if (activeAvatar.id == SphereAvatar.id) {
-                        HorizontalDivider()
+                }
+            }
+        }
+    }
+}
 
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_skin),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface
+@Composable
+private fun AppearanceModeControl(
+    theme: String,
+    selectedTheme: AppTheme,
+    isDarkTheme: Boolean,
+    onThemeModeSelected: (String) -> Unit,
+) {
+    val options = listOf("auto", "light", "dark")
+    val labels = listOf(
+        stringResource(R.string.appearance_theme_auto),
+        stringResource(R.string.appearance_theme_light),
+        stringResource(R.string.appearance_theme_dark),
+    )
+    val modeApplies = selectedTheme.mode == ThemeMode.BOTH
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+            options.forEachIndexed { index, option ->
+                if (index > 0) {
+                    VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+                }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(
+                            if (option == theme) MaterialTheme.colorScheme.surfaceContainerHigh
+                            else Color.Transparent,
                         )
+                        .clickable(enabled = modeApplies) { onThemeModeSelected(option) },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (option == theme) {
+                        Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                    }
+                    Text(labels[index], style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            }
+        }
+        if (!modeApplies) {
+            Text(
+                text = if (selectedTheme.mode == ThemeMode.LIGHT_ONLY) {
+                    stringResource(R.string.appearance_fixed_light, selectedTheme.label)
+                } else {
+                    stringResource(R.string.appearance_fixed_dark, selectedTheme.label)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
 
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            availableSkins.forEach { skin ->
-                                SphereSkinChip(
-                                    skin = skin,
-                                    brand = brand,
-                                    selected = skin.id == effectiveSkinId,
-                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
-                                )
+@Composable
+private fun AccentCustomizer(
+    selectedTheme: AppTheme,
+    expanded: Boolean,
+    draftAccent: String?,
+    draftShape: String,
+    onToggle: () -> Unit,
+    onDraftSelected: (String?) -> Unit,
+    onShapeSelected: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    val draftPalette = selectedTheme.paletteFor(LocalBrand.current.isDark).withAccent(draftAccent)
+    val scheme = draftPalette.toColorScheme()
+    val ratio = contrastRatio(scheme.onPrimary, scheme.primary)
+    Card(
+        modifier = Modifier.fillMaxWidth().border(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant,
+            RoundedCornerShape(12.dp),
+        ),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Tune,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        stringResource(
+                            R.string.appearance_customize_theme,
+                            selectedTheme.label.removePrefix("Hermes "),
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                    Text(
+                        stringResource(R.string.appearance_customize_summary),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                )
+            }
+            AnimatedVisibility(expanded) {
+                Column(
+                    Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    HorizontalDivider()
+                    Text(stringResource(R.string.appearance_accent), style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        listOf<String?>(null).plus(AccentSwatches).forEach { accent ->
+                            val color = if (accent == null) selectedTheme.swatch[1] else Color(
+                                0xFF000000L or accent.drop(1).toLong(16)
+                            )
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .border(
+                                        width = if (draftAccent == accent) 3.dp else 1.dp,
+                                        color = if (draftAccent == accent) MaterialTheme.colorScheme.onSurface
+                                        else MaterialTheme.colorScheme.outline,
+                                        shape = CircleShape,
+                                    )
+                                    .clickable { onDraftSelected(accent) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (draftAccent == accent) {
+                                    Icon(Icons.Filled.Check, null, tint = com.hermesandroid.relay.ui.theme.readableContentColor(color))
+                                }
                             }
                         }
+                    }
 
-                        HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.appearance_shape), style = MaterialTheme.typography.labelLarge)
+                        SingleChoiceSegmentedButtonRow(
+                            modifier = Modifier.padding(start = 12.dp).weight(1f),
+                        ) {
+                            AppearanceShape.entries.forEachIndexed { index, shape ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(index, AppearanceShape.entries.size),
+                                    onClick = { onShapeSelected(shape.id) },
+                                    selected = shape.id == draftShape,
+                                    icon = {
+                                        if (shape.id == draftShape) Icon(Icons.Filled.Check, null, Modifier.size(14.dp))
+                                    },
+                                ) {
+                                    Text(
+                                        when (shape) {
+                                            AppearanceShape.SOFT -> stringResource(R.string.appearance_shape_soft)
+                                            AppearanceShape.BALANCED -> stringResource(R.string.appearance_shape_balanced)
+                                            AppearanceShape.SHARP -> stringResource(R.string.appearance_shape_sharp)
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
 
+                    AppearanceSummaryRow(
+                        leading = {
+                            Icon(
+                                Icons.Filled.Check,
+                                null,
+                                tint = if (ratio >= 4.5f) LocalBrand.current.green else MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        label = if (ratio >= 4.5f) stringResource(R.string.appearance_contrast_passes)
+                        else stringResource(R.string.appearance_contrast_fails),
+                        value = stringResource(R.string.appearance_contrast_aa),
+                    )
+                    AppearanceSummaryRow(
+                        label = stringResource(R.string.appearance_typography_density),
+                        value = stringResource(R.string.appearance_default),
+                    )
+                    AppearanceSummaryRow(
+                        label = stringResource(R.string.appearance_readability),
+                        value = stringResource(R.string.appearance_font_normal_summary),
+                    )
+                    TextButton(onClick = onReset, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.appearance_reset_draft))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppearanceSummaryRow(
+    label: String,
+    value: String,
+    leading: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp).size(18.dp),
+        )
+    }
+}
+
+/** Representative, theme-live chat sample so presets are judged in context. */
+@Composable
+private fun AppearanceLivePreview(
+    palette: BrandPalette,
+    shapes: androidx.compose.material3.Shapes,
+) {
+    CompositionLocalProvider(LocalBrand provides palette) {
+        MaterialTheme(colorScheme = palette.toColorScheme(), shapes = shapes) {
+            AppearanceLivePreviewContent()
+        }
+    }
+}
+
+@Composable
+private fun AppearanceLivePreviewContent() {
+    val backgroundEnabled = LocalBackgroundVisualizationEnabled.current
+    val backgroundAvatar = LocalAgentAvatar.current
+    Card(
+        modifier = Modifier.fillMaxWidth().height(294.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                Text(
+                    text = stringResource(R.string.appearance_preview_relay),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 6.dp).weight(1f),
+                )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.LightMode,
+                            contentDescription = null,
+                            modifier = Modifier.padding(5.dp).size(15.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(9.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Icon(
+                                Icons.Filled.DarkMode,
+                                contentDescription = null,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp).size(15.dp),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth(0.76f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    LocalBrand.current.relay,
+                                ),
+                            ),
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_preview_user_message),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = stringResource(R.string.appearance_sphere_custom_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = stringResource(R.string.appearance_preview_time),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            Icons.Filled.DoneAll,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
                         )
                     }
                 }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    modifier = Modifier.size(30.dp),
+                    shape = CircleShape,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    color = Color.Transparent,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.splash_icon),
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.padding(4.dp),
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.appearance_preview_agent),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+                Surface(
+                    shape = RoundedCornerShape(7.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.padding(start = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(13.dp))
+                        Text(
+                            stringResource(R.string.appearance_preview_voice),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(start = 3.dp),
+                        )
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.appearance_preview_agent_message),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 13.sp),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(R.string.appearance_preview_time),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(LocalBrand.current.green))
+                        Text(
+                            text = stringResource(R.string.appearance_preview_tool_meta),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = LocalBrand.current.green,
+                            modifier = Modifier.padding(start = 5.dp),
+                        )
+                    }
+                }
+                Box(modifier = Modifier.padding(start = 6.dp).size(38.dp), contentAlignment = Alignment.Center) {
+                    if (backgroundEnabled) {
+                        backgroundAvatar.Render(
+                            state = AvatarRenderState(state = SphereState.Idle),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                color = Color.Transparent,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("gpt-5.6-sol", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                    Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
+                    Text("High", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                    Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
+                    Text(
+                        stringResource(R.string.appearance_preview_message_placeholder),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(Icons.Filled.GraphicEq, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Row(
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Bolt, null, Modifier.size(14.dp), tint = LocalBrand.current.amber)
+                Text(
+                    text = stringResource(R.string.appearance_preview_gateway),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = LocalBrand.current.green,
+                )
             }
         }
     }
@@ -910,7 +1765,7 @@ private fun ThemeSwatchChip(
     val accents = appTheme.swatch.drop(1)
     Column(
         modifier = Modifier
-            .width(96.dp)
+            .width(77.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .border(
@@ -922,37 +1777,48 @@ private fun ThemeSwatchChip(
                 },
                 shape = RoundedCornerShape(12.dp),
             )
-            .padding(6.dp),
+            .padding(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(50.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(background),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.TopStart,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                Modifier.fillMaxSize().padding(7.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                accents.forEach { accent ->
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clip(CircleShape)
-                            .background(accent),
-                    )
+                Box(
+                    Modifier.align(Alignment.End).fillMaxWidth(0.68f).height(12.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(accents.getOrElse(0) { MaterialTheme.colorScheme.primary }.copy(alpha = 0.72f)),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    accents.take(3).forEachIndexed { index, accent ->
+                        Box(
+                            Modifier.width(if (index == 0) 7.dp else 12.dp).height(5.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(accent.copy(alpha = 0.9f)),
+                        )
+                    }
                 }
+                Box(
+                    Modifier.fillMaxWidth(0.72f).height(15.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                )
             }
             if (selected) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(3.dp)
-                        .size(16.dp)
+                        .size(18.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center,
@@ -967,7 +1833,7 @@ private fun ThemeSwatchChip(
             }
         }
         Text(
-            text = appTheme.label,
+            text = appTheme.label.removePrefix("Hermes "),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,

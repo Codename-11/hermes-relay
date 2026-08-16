@@ -630,6 +630,26 @@ class RealtimeAgentRoutesTests(AioHTTPTestCase):
         self.assertGreaterEqual(body["resume_ttl_ms"], 1000)
         self.assertTrue(body["experimental"])
 
+    async def test_final_answer_only_overrides_spoken_progress_for_one_session(self) -> None:
+        token = await self._make_session()
+
+        resp = await self.client.post(
+            "/voice/realtime-agent/session",
+            json={"final_answer_only": True},
+            headers=self._bearer(token),
+        )
+
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        session = self._server().realtime_agent.sessions[body["session_id"]]
+        self.assertTrue(session.final_answer_only)
+        self.assertFalse(session.spoken_handoff)
+        self.assertEqual(session.progress_spoken_after_seconds, 0.0)
+        self.assertEqual(session.result_delivery, "speak_verbatim")
+        instructions = broker_module._native_instructions(session)
+        self.assertIn("Do not speak acknowledgements", instructions)
+        self.assertIn("wait to speak until its settled final answer", instructions)
+
     async def test_provider_native_instructions_include_recent_context(self) -> None:
         token = await self._make_session()
         fake_provider = FakeNativeProvider()

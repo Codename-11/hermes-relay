@@ -78,7 +78,6 @@ import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
-import com.hermesandroid.relay.viewmodel.statusText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -621,7 +620,12 @@ private fun ConnectionSurfaceSummary(
 
     val relayText = when {
         !relayConfigured -> stringResource(R.string.conn_relay_optional)
-        liveState != null -> liveState.statusText(connectedLabel = stringResource(R.string.conn_relay_ready))
+        liveState == RelayUiState.Connected -> stringResource(R.string.relay_state_ready)
+        liveState == RelayUiState.Connecting -> stringResource(R.string.relay_state_reconnecting)
+        liveState == RelayUiState.Stale || liveState == RelayUiState.Disconnected ->
+            stringResource(R.string.relay_state_unavailable)
+        liveState == RelayUiState.Expired -> stringResource(R.string.relay_state_needs_repair)
+        liveState == RelayUiState.NotConfigured -> stringResource(R.string.relay_state_optional)
         connection.pairedAt != null -> stringResource(R.string.conn_relay_paired)
         connection.relayUrl.isNotBlank() -> stringResource(R.string.conn_relay_configured)
         else -> stringResource(R.string.conn_relay_configure)
@@ -629,7 +633,9 @@ private fun ConnectionSurfaceSummary(
     val relayTone = when {
         !relayConfigured -> SummaryTone.Neutral
         liveState == RelayUiState.Connected -> SummaryTone.Good
-        liveState == RelayUiState.Stale || liveState == RelayUiState.Disconnected -> SummaryTone.Warning
+        liveState == RelayUiState.Stale ||
+            liveState == RelayUiState.Disconnected ||
+            liveState == RelayUiState.Expired -> SummaryTone.Warning
         else -> SummaryTone.Info
     }
 

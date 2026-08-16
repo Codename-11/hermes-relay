@@ -9,12 +9,15 @@
     - Visible warning badge when connected over http:// or ws://
     - Users are encouraged to set up TLS for production deployments
 
-    The app makes NO connections to external services — only user-configured endpoints.
+    System CAs and CAs deliberately installed in Android's user credential store
+    are accepted. This expands the available trust anchors without bypassing
+    certificate-chain, hostname, or Relay certificate-pin verification.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
-            <certificates src="system" />
+            <certificates src="system" overridePins="false" />
+            <certificates src="user" overridePins="false" />
         </trust-anchors>
     </base-config>
 </network-security-config>

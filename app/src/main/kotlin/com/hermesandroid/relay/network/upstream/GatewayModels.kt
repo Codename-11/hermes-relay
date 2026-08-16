@@ -1,6 +1,11 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Shared types for the Gateway chat transport — upstream hermes-agent's
@@ -50,6 +55,29 @@ enum class GatewayConnectionState {
     Ready,
 }
 
+/** Profile-persisted approval policy introduced by upstream gateway contract v3. */
+enum class GatewayApprovalMode(val wireValue: String) {
+    Manual("manual"),
+    Smart("smart"),
+    Off("off");
+
+    companion object {
+        fun fromWire(value: String?): GatewayApprovalMode? = when (value?.trim()?.lowercase()) {
+            "manual" -> Manual
+            "smart" -> Smart
+            "off" -> Off
+            else -> null
+        }
+    }
+}
+
+/** Whether this gateway exposes the contract-v3 profile approval-mode RPCs. */
+enum class GatewayApprovalModeCapability {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
 /**
  * Streaming-endpoint resolution with the gateway tier — pure so the matrix
  * is unit-testable without an AndroidViewModel. ConnectionViewModel
@@ -57,8 +85,9 @@ enum class GatewayConnectionState {
  *
  * Manual picks pass through untouched (ChatViewModel handles per-turn
  * fallback when a "gateway" pick can't serve a send); "auto" prefers the
- * gateway only when the dashboard probe says [GatewayAvailability.Ready],
- * otherwise it falls back to the capability-preferred SSE endpoint.
+ * gateway while the dashboard probe is unresolved or ready. A capability-
+ * preferred SSE fallback is selected only after a definitive unavailable,
+ * unsupported, or sign-in-required verdict.
  */
 fun resolveStreamingEndpointPreference(
     preference: String,
@@ -66,7 +95,10 @@ fun resolveStreamingEndpointPreference(
     capabilities: ServerCapabilities,
 ): String = when (preference) {
     "sessions", "completions", "runs", "gateway" -> preference
-    else -> if (gateway == GatewayAvailability.Ready) {
+    else -> if (
+        gateway == GatewayAvailability.Ready ||
+        gateway == GatewayAvailability.Unknown
+    ) {
         "gateway"
     } else {
         capabilities.preferredChatEndpoint()
@@ -95,6 +127,30 @@ data class GatewayInflightTurn(
     val user: String,
     val assistant: String,
     val streaming: Boolean,
+    /** Accepted active-turn redirects in display order; additive on newer Hermes. */
+    val corrections: List<String> = emptyList(),
+    val status: String? = null,
+    val error: String? = null,
+    val recoverable: Boolean = false,
+)
+
+/** A next-turn prompt accepted by upstream while the current turn was busy. */
+data class GatewayQueuedTurn(
+    val user: String,
+)
+
+/** A fresh crash marker caused `session.resume` to schedule one continuation. */
+data class GatewayAutoContinue(
+    val attempt: Int,
+    val interruptedAt: Double?,
+)
+
+/** Optional project identity attached to newer upstream session metadata. */
+data class GatewaySessionProject(
+    val id: String?,
+    val slug: String?,
+    val name: String,
+    val primaryPath: String?,
 )
 
 /** Result of reattaching Android to an existing durable Gateway session. */
@@ -104,16 +160,43 @@ data class GatewaySessionRecovery(
     val running: Boolean,
     val status: String?,
     val inflight: GatewayInflightTurn?,
+    val queued: GatewayQueuedTurn?,
     /** Non-null only when subsequent turn events are bound to [GatewayTurnCallbacks]. */
     val handle: ActiveTurnHandle?,
-)
+    val autoContinue: GatewayAutoContinue? = null,
+) {
+    /** Whether upstream still owes this client live turn events. */
+    val hasPendingWork: Boolean
+        get() = running || queued != null || autoContinue != null
+}
 
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
 data class GatewayBackgroundTurnCompletion(
     val storedSessionId: String,
+    val liveSessionId: String,
     val profile: String?,
     val expectedAssistantText: String?,
 )
+
+/** Input lifecycle from a deliberately detached Gateway turn. */
+sealed interface GatewayBackgroundInteractionEvent {
+    val storedSessionId: String
+    val profile: String?
+    val ask: GatewayAsk
+
+    data class Requested(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+
+    /** An authoritative upstream `*.expire` event ended this request. */
+    data class Expired(
+        override val storedSessionId: String,
+        override val profile: String?,
+        override val ask: GatewayAsk,
+    ) : GatewayBackgroundInteractionEvent
+}
 
 /**
  * One server-side interactive ask. The agent thread upstream is BLOCKED
@@ -135,13 +218,15 @@ data class GatewayAsk(
     val text: String,
     /** Server-advertised answers for clarify and approval requests. */
     val choices: List<String>? = null,
+    /** Clarify-only: several advertised choices may be returned together. */
+    val multiSelect: Boolean = false,
     /** Approval-only: the smart observer denied and the owner may override once. */
     val smartDenied: Boolean = false,
     /** Secret-only: the env var the value will be stored under. */
     val envVar: String? = null,
     /**
-     * Upstream blocking timeout (clarify/secret 300s, sudo 120s). 0 means no
-     * countdown — approvals are session-scoped and never expire on their own.
+     * Server-advertised blocking timeout. 0 means no client countdown; the
+     * authoritative `*.expire` event still retires the interaction.
      */
     val timeoutSeconds: Int,
 ) {
@@ -187,6 +272,7 @@ data class GatewaySubagentEvent(
     val toolName: String? = null,
     val preview: String? = null,
     val durationSeconds: Double? = null,
+    val subagentId: String? = null,
 ) {
     enum class Phase { START, THINKING, TOOL, PROGRESS, COMPLETE }
 }
@@ -271,6 +357,128 @@ data class GatewayModelProvider(
     val unavailableModels: List<String> = emptyList(),
     val freeTier: Boolean = false,
     val totalModels: Int = 0,
+    /** Per-model capability rows keyed by the exact model id. */
+    val capabilities: Map<String, GatewayModelCapabilities> = emptyMap(),
+)
+
+/** Shared tolerant parser for the gateway RPC and API-server REST twins. */
+internal fun parseGatewayModelProvider(obj: JsonObject): GatewayModelProvider? {
+    val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
+        ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val capabilities = (obj["capabilities"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+        val row = raw as? JsonObject ?: return@mapNotNull null
+        val effortsElement = row["reasoning_efforts"]
+        val efforts = if (effortsElement is JsonArray) {
+            effortsElement
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+                .distinct()
+        } else {
+            null
+        }
+        val modelId = model.trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        modelId to GatewayModelCapabilities(
+            reasoning = (row["reasoning"] as? JsonPrimitive)?.booleanOrNull,
+            reasoningEfforts = efforts,
+            reasoningEffortsExact =
+                (row["reasoning_efforts_exact"] as? JsonPrimitive)?.booleanOrNull,
+        )
+    }.toMap()
+    return GatewayModelProvider(
+        name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
+        slug = slug,
+        models = (obj["models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct(),
+        isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
+        authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
+        unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct(),
+        freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
+        capabilities = capabilities,
+    )
+}
+
+/**
+ * Publish one coherent row per provider identity.
+ *
+ * Dynamic catalogs and compatibility payloads can repeat a provider row or a
+ * model inside that row. Provider slugs are case-insensitive upstream, while
+ * model ids remain exact request values. Merge only equal provider slugs so a
+ * model intentionally offered by two different providers stays selectable.
+ */
+internal fun normalizeGatewayModelProviders(
+    providers: List<GatewayModelProvider>,
+): List<GatewayModelProvider> {
+    val normalized = linkedMapOf<String, GatewayModelProvider>()
+    providers.forEach { raw ->
+        val slug = raw.slug.trim()
+        if (slug.isEmpty()) return@forEach
+        val models = raw.models.map(String::trim).filter(String::isNotEmpty).distinct()
+        val unavailable = raw.unavailableModels
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+        val capabilities = raw.capabilities.mapNotNull { (model, capability) ->
+            model.trim().takeIf(String::isNotEmpty)?.let { it to capability }
+        }.toMap()
+        val row = raw.copy(
+            name = raw.name.trim().ifEmpty { slug },
+            slug = slug,
+            models = models,
+            unavailableModels = unavailable,
+            totalModels = maxOf(raw.totalModels, models.size),
+            capabilities = capabilities,
+        )
+        val identity = slug.lowercase()
+        val existing = normalized[identity]
+        normalized[identity] = if (existing == null) {
+            row
+        } else {
+            val mergedModels = (existing.models + row.models).distinct()
+            existing.copy(
+                models = mergedModels,
+                isCurrent = existing.isCurrent || row.isCurrent,
+                warning = existing.warning ?: row.warning,
+                authenticated = existing.authenticated || row.authenticated,
+                unavailableModels = (existing.unavailableModels + row.unavailableModels).distinct(),
+                freeTier = existing.freeTier || row.freeTier,
+                totalModels = maxOf(existing.totalModels, row.totalModels, mergedModels.size),
+                capabilities = mergeGatewayModelCapabilities(existing.capabilities, row.capabilities),
+            )
+        }
+    }
+    return normalized.values.toList()
+}
+
+private fun mergeGatewayModelCapabilities(
+    existing: Map<String, GatewayModelCapabilities>,
+    incoming: Map<String, GatewayModelCapabilities>,
+): Map<String, GatewayModelCapabilities> {
+    val merged = existing.toMutableMap()
+    incoming.forEach { (model, next) ->
+        val current = merged[model]
+        merged[model] = if (current == null) {
+            next
+        } else {
+            GatewayModelCapabilities(
+                reasoning = next.reasoning ?: current.reasoning,
+                reasoningEfforts = next.reasoningEfforts ?: current.reasoningEfforts,
+                reasoningEffortsExact = next.reasoningEffortsExact ?: current.reasoningEffortsExact,
+            )
+        }
+    }
+    return merged
+}
+
+data class GatewayMoaReference(
+    val index: Int?,
+    val count: Int?,
+    val label: String,
+    val text: String,
+    val available: Boolean = true,
 )
 
 /** Result of the gateway `model.options` RPC. */
@@ -279,6 +487,39 @@ data class GatewayModelOptions(
     val currentModel: String,
     val currentProvider: String,
 )
+
+/** Coherent model identity from a single `session.info` payload. */
+data class GatewayModelIdentity(val model: String, val provider: String)
+
+/** Model identity and effort observed together in one `session.info` payload. */
+data class GatewayReasoningIdentity(
+    val identity: GatewayModelIdentity,
+    val effort: String,
+)
+
+/** Reject provider catalogs that completed after a profile/context switch. */
+internal fun isCurrentModelOptionsResponse(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean =
+    requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
+
+/**
+ * Selects the identity a model-options response may publish into chat UI state.
+ * Catalog-only requests populate picker choices without changing session identity.
+ */
+internal fun modelOptionsIdentityToPublish(
+    catalogOnly: Boolean,
+    hasLiveSession: Boolean,
+    sessionIdentity: GatewayModelIdentity?,
+    options: GatewayModelOptions,
+): GatewayModelIdentity? = when {
+    catalogOnly -> null
+    hasLiveSession && sessionIdentity != null -> sessionIdentity
+    else -> GatewayModelIdentity(options.currentModel, options.currentProvider)
+}
 
 /**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
@@ -296,7 +537,9 @@ data class GatewayModelOptions(
  *
  * [model] is the model id (e.g. `grok-4.3`); [provider] is the authenticated
  * provider slug (e.g. `xai`). [reasoningEffort] is the upstream effort string
- * (`low`/`medium`/`high`/…). [fast] pins the priority service tier when true.
+ * (`low`/`medium`/`high`/…). [fast] follows the contract-v4 tri-state: `true`
+ * pins priority, `false` explicitly pins normal, and `null` omits the field so
+ * the profile's service tier is inherited.
  * Note `yolo` is intentionally absent — upstream `session.create` does NOT
  * accept it as a per-session override, so it is applied post-create instead.
  */
@@ -328,8 +571,21 @@ class GatewayTurnCallbacks(
     /** A gateway `message.start` opened an assistant response for this turn. */
     val onStart: () -> Unit,
     val onTextDelta: (String) -> Unit,
+    /**
+     * Gateway `message.interim` sealed an attempted assistant message before
+     * the terminal `message.complete`. When [alreadyStreamed] is false, [text]
+     * has not arrived through `message.delta` and should be rendered before
+     * sealing the current assistant segment.
+     */
+    val onInterimMessage: (text: String, alreadyStreamed: Boolean) -> Unit = { _, _ -> },
+    /**
+     * The terminal text is equal/prefix-related to the sealed interim, so the
+     * existing segment should be replaced in place instead of opening a second
+     * assistant bubble.
+     */
+    val onInterimReconciled: (text: String) -> Unit = { _ -> },
     val onThinkingDelta: (String) -> Unit,
-    val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
+    val onToolCallStart: (toolCallId: String, toolName: String, argsPreview: String?) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
     val onToolCallFailed: (toolCallId: String, errorMsg: String?) -> Unit,
     /** Attach deterministic output-risk metadata to the matching tool card. */
@@ -352,6 +608,8 @@ class GatewayTurnCallbacks(
     val onToolGenerating: (toolName: String?) -> Unit,
     /** `subagent.*` lifecycle on the parent session — feeds the subagent lanes. */
     val onSubagentEvent: (GatewaySubagentEvent) -> Unit,
+    /** Successful MoA advisor output for a transient labelled reference block. */
+    val onMoaReference: (GatewayMoaReference) -> Unit,
     /**
      * Server-side interactive ask (clarify/approval/sudo/secret) that blocks
      * the turn until answered via the matching respond RPC or the turn is

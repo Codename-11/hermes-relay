@@ -62,11 +62,54 @@ export interface SessionCreateResponse {
 }
 
 export interface SessionResumeResponse {
+  inflight?: {
+    assistant?: string
+    streaming?: boolean
+    user?: string
+  }
   info?: SessionInfo
   message_count?: number
   messages: GatewayTranscriptMessage[]
+  queued?: { user?: string }
   resumed?: string
+  running?: boolean
   session_id: string
+  status?: string
+}
+
+export type SessionResumeActivity = 'idle' | 'queued' | 'running' | 'running-and-queued'
+
+/** Sanitize untrusted gateway text for a bounded, single-line terminal status. */
+export function terminalStatusPreview(value: string | undefined, maxChars: number): string | null {
+  const compact = value
+    ?.replaceAll(/\x1b\[[?\d;]*[a-zA-Z~]/g, '')
+    .replaceAll(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replaceAll(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!compact) return null
+  const limit = Math.max(2, maxChars)
+  return compact.length <= limit ? compact : `${compact.slice(0, limit - 1).trimEnd()}…`
+}
+
+/** Classify optional live-work fields added by newer vanilla Hermes gateways. */
+export function sessionResumeActivity(response: SessionResumeResponse): SessionResumeActivity {
+  const running = response.running === true || response.inflight?.streaming === true
+  const queued = typeof response.queued?.user === 'string' && response.queued.user.trim().length > 0
+  if (running && queued) return 'running-and-queued'
+  if (running) return 'running'
+  if (queued) return 'queued'
+  return 'idle'
+}
+
+/** Return the accepted next-turn prompt as a safe one-line status preview. */
+export function sessionQueuedPromptPreview(response: SessionResumeResponse, maxChars = 120): string | null {
+  return terminalStatusPreview(response.queued?.user, maxChars)
+}
+
+/** Return a displayable project name without requiring newer gateway metadata. */
+export function sessionProjectName(info: SessionInfo | undefined): string | null {
+  return terminalStatusPreview(info?.project?.name, 80)
 }
 
 export interface SessionListItem {
@@ -139,6 +182,18 @@ export type GatewayEvent =
   | { payload: SessionInfo; session_id?: string; type: 'session.info' }
   | { payload?: { text?: string }; session_id?: string; type: 'thinking.delta' }
   | { payload?: undefined; session_id?: string; type: 'message.start' }
+  | {
+      payload?: {
+        already_streamed?: boolean
+        message?: string
+        preview?: string
+        rendered?: string
+        response_previewed?: boolean
+        text?: string
+      }
+      session_id?: string
+      type: 'message.interim'
+    }
   | { payload?: { kind?: string; text?: string }; session_id?: string; type: 'status.update' }
   | { payload: { line: string }; session_id?: string; type: 'gateway.stderr' }
   | { payload?: { cwd?: string; python?: string }; session_id?: string; type: 'gateway.start_timeout' }
@@ -175,7 +230,7 @@ export type GatewayEvent =
   | { payload: SubagentEventPayload; session_id?: string; type: 'subagent.complete' }
   | { payload: { rendered?: string; text?: string }; session_id?: string; type: 'message.delta' }
   | {
-      payload?: { reasoning?: string; rendered?: string; text?: string; usage?: Usage }
+      payload?: { reasoning?: string; rendered?: string; response_previewed?: boolean; text?: string; usage?: Usage }
       session_id?: string
       type: 'message.complete'
     }

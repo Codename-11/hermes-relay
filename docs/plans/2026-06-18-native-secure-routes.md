@@ -1,5 +1,12 @@
 # Native Secure Routes And Split Connection Model Plan
 
+> **Naming and status update (2026-08-13):** The shipped operator-facing name
+> is **Hermes Secure Link**. Historical `secure_proxy` and `plugin_proxy` terms
+> below describe internal configuration and wire identifiers. The current
+> three-namespace, pairing-pinned contract is documented in
+> [`../security-native-proxy.md`](../security-native-proxy.md); it is opt-in and
+> protects transport to the paired endpoint but does not provide reachability.
+
 **Status:** Ready for implementation
 **Date:** 2026-06-18
 **Owner surface:** Android app, Relay plugin, pairing payloads, security docs, user docs

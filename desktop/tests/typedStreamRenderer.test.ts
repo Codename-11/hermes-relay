@@ -71,6 +71,44 @@ test('typed stream renderer drops duplicates and reports sequence gaps', () => {
   assert.deepEqual(gap?.events.map(event => event.type), ['status.update', 'message.delta'])
 })
 
+test('typed stream renderer maps interim candidates and previewed completion metadata', () => {
+  const renderer = new TypedStreamRenderer()
+
+  const interim = renderer.accept({
+    type: 'stream.event',
+    schema_version: 1,
+    session_id: 'sess',
+    run_id: 'run',
+    seq: 1,
+    event: 'message.interim',
+    payload: { text: 'candidate', already_streamed: false }
+  })
+  const complete = renderer.accept({
+    type: 'stream.event',
+    schema_version: 1,
+    session_id: 'sess',
+    run_id: 'run',
+    seq: 2,
+    event: 'assistant.completed',
+    payload: { text: 'candidate', response_previewed: true }
+  })
+
+  assert.deepEqual(interim?.events, [
+    {
+      type: 'message.interim',
+      session_id: 'sess',
+      payload: { text: 'candidate', already_streamed: false }
+    }
+  ])
+  assert.deepEqual(complete?.events, [
+    {
+      type: 'message.complete',
+      session_id: 'sess',
+      payload: { text: 'candidate', response_previewed: true }
+    }
+  ])
+})
+
 test('typed stream renderer rejects incompatible schemas', () => {
   const renderer = new TypedStreamRenderer()
   assert.equal(

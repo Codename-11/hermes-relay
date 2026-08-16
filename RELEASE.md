@@ -119,19 +119,23 @@ artifacts.
 ### CLI / tray versioning
 
 `desktop/package.json` is the Desktop/CLI release track's source of truth. Its version
-must match the generated CLI and native Windows systray metadata. The systray is
-a menu-only controller for the installed CLI; it has no application window,
-WebView, embedded terminal, or separate desktop product surface. The public
+must match the generated CLI and Windows tray metadata. The tray is a compact
+management popup over the installed CLI and shared state; it has no chat,
+embedded terminal, plugins, voice, or separate desktop product surface. The public
 release remains one `Hermes-Relay-Desktop` track containing CLI binaries plus the
 optional Windows installer.
 
 | File | Purpose |
 |---|---|
 | `desktop/package.json` | canonical CLI version |
+| `desktop/.bun-version` | exact Bun compiler/runtime for standalone binaries |
 | `desktop/package-lock.json` | npm root/workspace package metadata |
 | `desktop/src/version.ts` | compiled CLI runtime version |
 | `desktop/tray/Cargo.toml` | native systray package version |
 | `desktop/tray/Cargo.lock` | locked systray package version |
+| `desktop/tray/tauri.conf.json` | tray application and bundle version |
+| `desktop/tray/package.json` | tray UI package version |
+| `desktop/tray/package-lock.json` | locked tray UI package version |
 
 Prepare a new CLI version on `dev` without creating a tag or npm-generated
 commit:
@@ -149,6 +153,8 @@ manually, run `npm run sync:version` before checking. `npm run verify` is the
 single Windows release-parity gate: version sync, type-check, tests, TypeScript
 build, compiled CLI smoke, and tray formatting, Clippy, check, and tests. CI runs
 the portable portions on every desktop change and the Windows tray gates separately.
+Release jobs read `desktop/.bun-version`; cross-built and Windows-built artifacts
+must not silently embed different Bun runtime versions.
 
 ## Branching policy
 
@@ -494,6 +500,14 @@ the new app version and a higher `appVersionCode`.
   in `app/build.gradle.kts`. Never rename the sideload APK — the
   in-app update checker matches assets by `.apk` + `sideload` in the
   name, and user-docs verify steps cite the filename.
+  The release workflow also retains
+  `app/build/outputs/mapping/{googlePlayRelease,sideloadRelease}/mapping.txt`
+  for 90 days in the `android-r8-mappings-<version>-<sha>` workflow
+  artifact. It is intentionally not a GitHub Release asset. To symbolicate an
+  in-app or sideload report, download the artifact for the exact version/SHA and
+  run Android's retrace tool with the matching flavor mapping:
+  `retrace <mapping.txt> <obfuscated-trace.txt>`. Play reports can additionally
+  use the mapping bundled into the uploaded AAB through Play Console.
 - `app/src/main/assets/whats_new.txt` — in-app "What's New" content
   shown in the settings/about screen. Update with the version number
   and a brief feature summary. Gets stale silently if forgotten
@@ -509,7 +523,11 @@ the new app version and a higher `appVersionCode`.
   the version reference and the "Release Notes" section that gets
   pasted into the Play Console "What's new" field. Keep the Play
   "What's new" within **500 characters** and framed around the
-  release's themes, not a feature dump.
+  release's themes, not a feature dump. Compare its **Foreground service
+  permissions** section with the merged `googlePlayRelease` manifest and
+  complete Play Console declarations for every declared service type before
+  approval; the Publisher API can upload a draft and still reject promotion
+  when an App content declaration is missing.
 
 #### Scrub for public distribution
 
@@ -610,8 +628,12 @@ git push origin dev
 Then open **Actions → Approve Android Release**, choose **Run workflow**, select
 `main`, and enter the version. Starting the workflow is the release approval. It
 verifies that `main` has the exact preflighted tree and creates the
-`android-v<version>` tag. Manual stable tags are still guarded by the same
-preflight proof in the tag workflow.
+`android-v<version>` tag. Because tags created with `GITHUB_TOKEN` do not trigger
+another workflow, approval dispatches the current release workflow definition
+from `main`; every release job explicitly checks out and verifies the immutable
+`android-v<version>` tag. This lets release-workflow fixes apply without moving
+an existing tag or changing its artifact tree. Manual stable tags are still
+guarded by the same preflight proof in the tag workflow.
 
 The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
 artifacts, changes the existing Play Production draft to `completed` (submitting

@@ -1,14 +1,17 @@
 package com.hermesandroid.relay.network.upstream.models
 
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 
@@ -71,7 +74,10 @@ class SessionModelsTest {
                 "message_count": 5,
                 "tool_call_count": 2,
                 "input_tokens": 100,
-                "output_tokens": 200
+                "output_tokens": 200,
+                "actual_cost_usd": 1.25,
+                "estimated_cost_usd": 1.50,
+                "is_active": true
             }
         """.trimIndent()
 
@@ -82,6 +88,69 @@ class SessionModelsTest {
         assertEquals(1700000900.0, item.resolvedLastActivity!!, 0.001)
         assertEquals(5, item.messageCount)
         assertEquals(2, item.toolCallCount)
+        assertEquals(100, item.inputTokens)
+        assertEquals(200, item.outputTokens)
+        assertEquals(1.25, item.actualCostUsd!!, 0.001)
+        assertEquals(1.50, item.estimatedCostUsd!!, 0.001)
+        assertTrue(item.isActive)
+    }
+
+    @Test
+    fun sessionItem_deserializesDurableSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","pinned":true,"archived":true}""",
+        )
+
+        assertTrue(item.pinned)
+        assertTrue(item.archived)
+    }
+
+    @Test
+    fun sessionItem_deserializesNumericSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","has_model_config":1,"pinned":0,"archived":1}""",
+        )
+
+        assertTrue(item.hasModelConfig)
+        assertFalse(item.pinned)
+        assertTrue(item.archived)
+    }
+
+    @Test
+    fun sessionItem_deserializesStringBooleanSessionFlags() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","has_model_config":"false","pinned":"1","archived":"0"}""",
+        )
+
+        assertFalse(item.hasModelConfig)
+        assertTrue(item.pinned)
+        assertFalse(item.archived)
+    }
+
+    @Test
+    fun sessionItem_rejectsNonBooleanSessionFlagValues() {
+        assertThrows(SerializationException::class.java) {
+            json.decodeFromString<SessionItem>(
+                """{"id":"s1","pinned":2}""",
+            )
+        }
+        assertThrows(SerializationException::class.java) {
+            json.decodeFromString<SessionItem>(
+                """{"id":"s1","archived":"yes"}""",
+            )
+        }
+    }
+
+    @Test
+    fun sessionItem_deserializesOptionalWorkspaceMetadata() {
+        val item = json.decodeFromString<SessionItem>(
+            """{"id":"s1","cwd":"/work/repo","git_branch":"feature/mobile","git_repo_root":"/work/repo"}""",
+        )
+
+        assertEquals("/work/repo", item.cwd)
+        assertEquals("feature/mobile", item.gitBranch)
+        assertEquals("/work/repo", item.gitRepoRoot)
+        assertNull(item.pullRequest)
     }
 
     @Test
@@ -121,6 +190,12 @@ class SessionModelsTest {
         assertNull(item.toolCallCount)
         assertNull(item.inputTokens)
         assertNull(item.outputTokens)
+        assertEquals(false, item.pinned)
+        assertEquals(false, item.archived)
+        assertNull(item.cwd)
+        assertNull(item.gitBranch)
+        assertNull(item.gitRepoRoot)
+        assertNull(item.pullRequest)
     }
 
     // --- SessionListResponse ---
@@ -271,6 +346,46 @@ class SessionModelsTest {
         assertNull(item.toolCallId)
         assertNull(item.timestamp)
         assertNull(item.finishReason)
+    }
+
+    @Test
+    fun messageItem_rowIdIsMixedVersionSafe() {
+        assertEquals(
+            73L,
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":73}""",
+            ).rowId,
+        )
+        assertEquals(
+            74L,
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":"74"}""",
+            ).rowId,
+        )
+        assertNull(
+            json.decodeFromString<MessageItem>(
+                """{"role":"user","row_id":{"unexpected":true}}""",
+            ).rowId,
+        )
+        assertEquals(
+            75L,
+            json.decodeFromString<MessageItem>(
+                """{"id":75,"role":"assistant"}""",
+            ).resolvedRowId,
+        )
+    }
+
+    @Test
+    fun messageItem_readsReactionsFromObjectOrRawJsonMetadata() {
+        val objectBacked = json.decodeFromString<MessageItem>(
+            """{"role":"assistant","display_metadata":{"reactions":[{"emoji":"👍","author":"user","at":1.0}]}}""",
+        )
+        val stringBacked = json.decodeFromString<MessageItem>(
+            """{"role":"assistant","display_metadata":"{\"reactions\":[{\"emoji\":\"❤️\",\"author\":\"user\",\"at\":2.0}]}"}""",
+        )
+
+        assertEquals("👍", objectBacked.reactions.single().emoji)
+        assertEquals("❤️", stringBacked.reactions.single().emoji)
     }
 
     @Test

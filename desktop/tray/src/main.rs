@@ -1,48 +1,241 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(not(windows))]
 compile_error!("hermes-relay-tray is a Windows-only optional systray");
 
 #[cfg(windows)]
-mod windows_tray {
-    use hermes_relay_tray::{
-        cli_candidates, cmd_k_raw_args, daemon_menu_state, menu_entries, DaemonMenuInput,
-        DaemonMenuState, TrayAction,
+mod bounded_process;
+
+#[cfg(windows)]
+mod app {
+    use super::bounded_process::{self, ProcessOutcome, RunOptions};
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+    use std::{
+        collections::BTreeMap,
+        env, fs,
+        fs::OpenOptions,
+        io::Write,
+        os::windows::process::CommandExt,
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+        sync::{mpsc, Arc, Mutex, OnceLock},
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
-    use serde::Deserialize;
-    use std::collections::HashMap;
-    use std::env;
-    use std::ffi::OsStr;
-    use std::fs;
-    use std::io::Write;
-    use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::process::CommandExt;
-    use std::path::PathBuf;
-    use std::process::{Command, Output};
-    use std::sync::mpsc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use tray_icon::{
-        menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-        Icon, TrayIconBuilder,
+    use tauri::{
+        image::Image,
+        menu::{MenuBuilder, MenuItemBuilder},
+        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+        AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Position,
+        RunEvent, Size, State, WindowEvent,
     };
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{
-        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, LPARAM, STILL_ACTIVE, WPARAM,
-    };
-    use windows::Win32::System::Threading::{
-        CreateMutexW, GetCurrentThreadId, GetExitCodeProcess, OpenProcess, CREATE_NEW_CONSOLE,
-        CREATE_NO_WINDOW, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, KillTimer, MessageBoxW, PostQuitMessage, PostThreadMessageW,
-        SetTimer, TranslateMessage, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_TOPMOST,
-        MB_YESNO, MSG, SW_HIDE, WM_APP, WM_TIMER,
+    use windows::{
+        core::{IUnknown, PCWSTR},
+        Win32::{
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, POINT},
+            System::{
+                Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+                Diagnostics::Debug::{
+                    SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
+                    SEM_NOOPENFILEERRORBOX,
+                },
+                Threading::{CreateMutexW, CREATE_NO_WINDOW},
+                Variant::VARIANT,
+            },
+            UI::{
+                Accessibility::{
+                    CUIAutomation, IUIAutomation, TreeScope_Descendants,
+                    UIA_AutomationIdPropertyId, UIA_NamePropertyId,
+                },
+                HiDpi::{
+                    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                },
+                WindowsAndMessaging::GetCursorPos,
+            },
+        },
     };
 
-    const ACTION_MESSAGE: u32 = WM_APP + 17;
-    const STATUS_TIMER: usize = 1;
-    const STATUS_REFRESH_MS: u32 = 2_000;
+    const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    const RUN_VALUE: &str = "HermesRelayTray";
+    const SETTINGS_KEY: &str = r"HKCU\Software\Hermes-Relay CLI UI";
+    const DAEMON_AUTOSTART_VALUE: &str = "DaemonAutostart";
+    const POPUP_GAP: f64 = 10.0;
+    const MONITOR_MARGIN: f64 = 8.0;
+    const MAIN_LOGICAL_WIDTH: f64 = 380.0;
+    const MAIN_LOGICAL_HEIGHT: f64 = 620.0;
+    const MAIN_MIN_LOGICAL_WIDTH: f64 = 340.0;
+    const MAIN_MIN_LOGICAL_HEIGHT: f64 = 460.0;
+    const TRAY_LOG_MAX_BYTES: u64 = 512 * 1024;
+    const PROCESS_CAPTURE_LIMIT: usize = 1024 * 1024;
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+    const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
+    const LONG_ACTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+    const OFFICIAL_URLS: &[&str] = &[
+        "https://hermes-relay.dev/docs/",
+        "https://hermes-relay.dev/docs/desktop/",
+        "https://hermes-relay.dev/docs/desktop/troubleshooting/",
+        "https://github.com/Codename-11/hermes-relay",
+        "https://github.com/Codename-11/hermes-relay/releases",
+    ];
+
+    static TRAY_LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static TRAY_LOG_LAST_EVENT: OnceLock<Mutex<BTreeMap<String, Instant>>> = OnceLock::new();
+
+    fn append_tray_log(event: &str, probe: Option<&str>, detail: Option<&str>) {
+        let key = format!("{event}:{}", probe.unwrap_or_default());
+        let recent = TRAY_LOG_LAST_EVENT.get_or_init(|| Mutex::new(BTreeMap::new()));
+        if let Ok(mut guard) = recent.lock() {
+            if guard
+                .get(&key)
+                .is_some_and(|seen| seen.elapsed() < Duration::from_secs(30))
+            {
+                return;
+            }
+            guard.insert(key, Instant::now());
+        }
+        let Ok(directory) = home_dir().map(|home| home.join(".hermes")) else {
+            return;
+        };
+        let _guard = match TRAY_LOG_LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let path = directory.join("tray.log");
+        if fs::metadata(&path).is_ok_and(|metadata| metadata.len() >= TRAY_LOG_MAX_BYTES) {
+            let backup = directory.join("tray.log.1");
+            let _ = fs::remove_file(&backup);
+            let _ = fs::rename(&path, backup);
+        }
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let event = serde_json::json!({
+            "ts": timestamp_ms,
+            "event": event,
+            "probe": probe,
+            "detail": detail.map(|value| value.chars().take(512).collect::<String>()),
+        });
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{event}");
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct TrayAnchor {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    }
+
+    fn tray_rect_anchor(position: Position, size: Size) -> TrayAnchor {
+        match (position, size) {
+            (Position::Physical(position), Size::Physical(size)) => TrayAnchor {
+                x: position.x as f64,
+                y: position.y as f64,
+                width: size.width as f64,
+                height: size.height as f64,
+            },
+            (position, size) => {
+                let logical_position = match position {
+                    Position::Physical(value) => (value.x as f64, value.y as f64),
+                    Position::Logical(value) => (value.x, value.y),
+                };
+                let logical_size = match size {
+                    Size::Physical(value) => (value.width as f64, value.height as f64),
+                    Size::Logical(value) => (value.width, value.height),
+                };
+                TrayAnchor {
+                    x: logical_position.0,
+                    y: logical_position.1,
+                    width: logical_size.0,
+                    height: logical_size.1,
+                }
+            }
+        }
+    }
+
+    fn tray_event_anchor(position: Position, size: Size) -> TrayAnchor {
+        let fallback = tray_rect_anchor(position, size);
+
+        // Windows can report notification-area bounds in logical coordinates while
+        // Tauri's window and monitor APIs below consume physical coordinates. The
+        // cursor is necessarily over the icon for a click event, so use its physical
+        // position as the stable anchor across mixed-DPI and multi-monitor layouts.
+        let mut cursor = POINT::default();
+        if unsafe { GetCursorPos(&mut cursor) }.is_ok() {
+            let width = fallback.width.max(1.0);
+            let height = fallback.height.max(1.0);
+            return TrayAnchor {
+                x: cursor.x as f64 - width / 2.0,
+                y: cursor.y as f64 - height / 2.0,
+                width,
+                height,
+            };
+        }
+
+        fallback
+    }
+
+    fn tray_anchor_from_bounds(left: i32, top: i32, right: i32, bottom: i32) -> Option<TrayAnchor> {
+        if right <= left || bottom <= top {
+            return None;
+        }
+        Some(TrayAnchor {
+            x: left as f64,
+            y: top as f64,
+            width: (right - left) as f64,
+            height: (bottom - top) as f64,
+        })
+    }
+
+    fn notification_area_anchor() -> Option<TrayAnchor> {
+        // Shell_NotifyIconGetRect can briefly return the neighboring icon's slot
+        // while Explorer is settling the notification area. UI Automation gives
+        // us the bounds of the exact visible Hermes icon by its accessible name.
+        unsafe {
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None::<&IUnknown>, CLSCTX_INPROC_SERVER).ok()?;
+            let root = automation.GetRootElement().ok()?;
+            let name = VARIANT::from("Hermes-Relay CLI UI");
+            let automation_id = VARIANT::from("NotifyItemIcon");
+            let name_condition = automation
+                .CreatePropertyCondition(UIA_NamePropertyId, &name)
+                .ok()?;
+            let id_condition = automation
+                .CreatePropertyCondition(UIA_AutomationIdPropertyId, &automation_id)
+                .ok()?;
+            let condition = automation
+                .CreateAndCondition(&name_condition, &id_condition)
+                .ok()?;
+            let element = root.FindFirst(TreeScope_Descendants, &condition).ok()?;
+            let bounds = element.CurrentBoundingRectangle().ok()?;
+            tray_anchor_from_bounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+        }
+    }
+
+    fn current_tray_anchor(app: &AppHandle) -> Option<TrayAnchor> {
+        notification_area_anchor().or_else(|| {
+            app.tray_by_id("hermes-relay")
+                .and_then(|tray| tray.rect().ok().flatten())
+                .map(|rect| tray_rect_anchor(rect.position, rect.size))
+        })
+    }
+
+    #[derive(Clone, Default)]
+    struct TrayPositionState(Arc<Mutex<Option<TrayAnchor>>>);
+
+    enum TrayAction {
+        Toggle(Option<TrayAnchor>),
+        RestartDaemon,
+        StopDaemon,
+    }
 
     struct InstanceMutex(HANDLE);
 
@@ -55,9 +248,11 @@ mod windows_tray {
     }
 
     fn acquire_instance_mutex() -> Result<Option<InstanceMutex>, String> {
-        let name = wide(OsStr::new("Local\\HermesRelayMenuOnlyTray"));
+        let name = "Local\\HermesRelayManagementTray\0"
+            .encode_utf16()
+            .collect::<Vec<_>>();
         let handle = unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())) }
-            .map_err(|error| format!("cannot create systray instance mutex: {error}"))?;
+            .map_err(|error| format!("cannot create tray instance mutex: {error}"))?;
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             unsafe {
                 let _ = CloseHandle(handle);
@@ -67,89 +262,282 @@ mod windows_tray {
         Ok(Some(InstanceMutex(handle)))
     }
 
-    #[derive(Debug, Deserialize)]
+    fn reveal_existing_instance() -> bool {
+        let Ok(path) = activation_request_path() else {
+            return false;
+        };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        fs::create_dir_all(parent).is_ok()
+            && fs::write(path, std::process::id().to_string()).is_ok()
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
     struct DaemonStatus {
-        pid: u32,
+        #[serde(default = "stopped")]
         state: String,
-        updated_at: u64,
+        #[serde(default, alias = "alive")]
+        running: bool,
+        url: Option<String>,
+        configured_url: Option<String>,
+        active_route: Option<String>,
         privilege: Option<String>,
         username: Option<String>,
-        computer_use_enabled: Option<bool>,
-        computer_grant: Option<ComputerGrantStatus>,
+        updated_at: Option<u64>,
+        last_event: Option<String>,
+        reconnect_attempt: Option<u64>,
+        retry_at: Option<u64>,
+        last_error: Option<String>,
     }
 
-    #[derive(Debug, Deserialize)]
-    struct ComputerGrantStatus {
-        active: bool,
-        mode: String,
-        expires_at: Option<String>,
+    fn stopped() -> String {
+        "stopped".to_string()
     }
 
-    #[derive(Debug, Deserialize)]
-    struct DesktopUseSettings {
-        computer_use_enabled: bool,
-    }
-
-    fn wide(value: &OsStr) -> Vec<u16> {
-        value.encode_wide().chain(Some(0)).collect()
-    }
-
-    pub fn show_error(message: impl AsRef<str>) {
-        let message = wide(OsStr::new(message.as_ref()));
-        let title = wide(OsStr::new("Hermes Relay Systray"));
-        unsafe {
-            let _ = MessageBoxW(
-                None,
-                PCWSTR(message.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                MB_OK | MB_ICONERROR,
-            );
-        }
-    }
-
-    fn confirm_computer_use_enable() -> bool {
-        let message = wide(OsStr::new(
-            "Enable experimental desktop use?\n\nHermes may request screenshots after an observe grant. Mouse and keyboard control still require a local, task-scoped approval and expire automatically.\n\nIf the daemon is running as Administrator, approved input actions also run as Administrator.",
-        ));
-        let title = wide(OsStr::new("Hermes Relay Desktop Use"));
-        unsafe {
-            MessageBoxW(
-                None,
-                PCWSTR(message.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                MB_YESNO | MB_ICONWARNING | MB_TOPMOST,
-            ) == IDYES
-        }
-    }
-
-    fn show_pending_grant_notification(count: usize) {
-        let message = wide(OsStr::new(&format!(
-            "{count} desktop control grant request{} waiting.\n\nRight-click the Hermes Relay tray icon and choose Review pending grants.",
-            if count == 1 { " is" } else { "s are" }
-        )));
-        let title = wide(OsStr::new("Hermes Relay Approval Required"));
-        unsafe {
-            let _ = MessageBoxW(
-                None,
-                PCWSTR(message.as_ptr()),
-                PCWSTR(title.as_ptr()),
-                MB_OK | MB_ICONWARNING | MB_TOPMOST,
-            );
-        }
-    }
-
-    pub fn log_startup_error(message: &str) {
-        if let Ok(home) = home_dir() {
-            let log_dir = home.join(".hermes");
-            let _ = fs::create_dir_all(&log_dir);
-            if let Ok(mut file) = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_dir.join("tray.log"))
-            {
-                let _ = writeln!(file, "startup error: {message}");
+    impl Default for DaemonStatus {
+        fn default() -> Self {
+            Self {
+                state: stopped(),
+                running: false,
+                url: None,
+                configured_url: None,
+                active_route: None,
+                privilege: None,
+                username: None,
+                updated_at: None,
+                last_event: None,
+                reconnect_attempt: None,
+                retry_at: None,
+                last_error: None,
             }
         }
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct Host {
+        url: String,
+        #[serde(default, alias = "host", alias = "hostname")]
+        name: String,
+        server_version: Option<String>,
+        endpoint_role: Option<String>,
+        paired_at: Option<u64>,
+        #[serde(default)]
+        is_active: bool,
+        #[serde(default = "ask_mode")]
+        access_mode: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, String>,
+        #[serde(default)]
+        broker_configured: bool,
+    }
+
+    fn ask_mode() -> String {
+        "ask".to_string()
+    }
+
+    #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+    struct Activity {
+        ts: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        category: Option<String>,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        aborted: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        host_url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        backend: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dispatch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        control_session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_app: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_pid: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_window_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verification: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args_preview: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_evidence_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_mime_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_width: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        screenshot_height: Option<u64>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct PendingGrantRequest {
+        id: String,
+        mode: String,
+        duration_seconds: u64,
+        reason: String,
+        created_at: String,
+        scope: Option<Value>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct PendingGrantContext {
+        grant: Option<PendingGrantRequest>,
+        active_url: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize)]
+    struct Snapshot {
+        hosts: Vec<Host>,
+        active_url: Option<String>,
+        daemon: DaemonStatus,
+        activity: Vec<Activity>,
+        activity_screenshot_retention: ActivityScreenshotRetention,
+        pending_grants: Vec<PendingGrantRequest>,
+        startup_enabled: bool,
+        daemon_autostart_enabled: bool,
+        hardware_availability: HardwareAvailability,
+        computer_control_engine: Option<ComputerControlEngine>,
+        ui_version: &'static str,
+        cli_version: Option<String>,
+        cli_path: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct ActivityScreenshotRetention {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default = "default_retention_days")]
+        days: u64,
+        #[serde(default)]
+        count: u64,
+        #[serde(default)]
+        bytes: u64,
+    }
+
+    fn default_retention_days() -> u64 {
+        7
+    }
+
+    impl Default for ActivityScreenshotRetention {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                days: 7,
+                count: 0,
+                bytes: 0,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct ComputerControlEngine {
+        selected: String,
+        effective: String,
+        available: bool,
+        state: String,
+        version: Option<String>,
+        health: Option<String>,
+        path: Option<String>,
+        #[serde(default)]
+        cursor_enabled: bool,
+        #[serde(default)]
+        foreground_escalation_enabled: bool,
+        #[serde(default)]
+        active_sessions: Option<u64>,
+        active_backend: Option<String>,
+        last_action: Option<Value>,
+        message: Option<String>,
+    }
+
+    type ComputerControlEngineCache = Option<(SystemTime, Option<ComputerControlEngine>)>;
+
+    static COMPUTER_CONTROL_ENGINE_CACHE: OnceLock<Mutex<ComputerControlEngineCache>> =
+        OnceLock::new();
+    type SnapshotCache = Option<(Instant, Snapshot)>;
+    static SNAPSHOT_CACHE: OnceLock<Mutex<SnapshotCache>> = OnceLock::new();
+    type HardwareAvailabilityCache = Option<(Instant, HardwareAvailability)>;
+    static HARDWARE_AVAILABILITY_CACHE: OnceLock<Mutex<HardwareAvailabilityCache>> =
+        OnceLock::new();
+    static CLI_DETAILS_CACHE: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
+    type BooleanProbeCache = Option<(Instant, bool)>;
+    static STARTUP_ENABLED_CACHE: OnceLock<Mutex<BooleanProbeCache>> = OnceLock::new();
+    static DAEMON_AUTOSTART_CACHE: OnceLock<Mutex<BooleanProbeCache>> = OnceLock::new();
+
+    fn probe_computer_control_engine() -> Option<ComputerControlEngine> {
+        run_json(&["computer-use", "status", "--json"])
+            .ok()
+            .and_then(|value| value.get("computer_control_engine").cloned())
+            .and_then(|value| serde_json::from_value::<ComputerControlEngine>(value).ok())
+    }
+
+    fn cached_computer_control_engine() -> Option<ComputerControlEngine> {
+        let cache = COMPUTER_CONTROL_ENGINE_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, status)) = guard.as_ref() {
+                if checked_at.elapsed().unwrap_or_default() < Duration::from_secs(30) {
+                    return status.clone();
+                }
+            }
+        }
+        let status = probe_computer_control_engine();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((SystemTime::now(), status.clone()));
+        }
+        status
+    }
+
+    fn clear_computer_control_engine_cache() {
+        if let Some(cache) = COMPUTER_CONTROL_ENGINE_CACHE.get() {
+            if let Ok(mut guard) = cache.lock() {
+                *guard = None;
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize)]
+    struct HardwareAvailability {
+        usb: bool,
+        adb: bool,
+        microphone: bool,
+        camera: bool,
     }
 
     fn home_dir() -> Result<PathBuf, String> {
@@ -159,14 +547,62 @@ mod windows_tray {
             .ok_or_else(|| "USERPROFILE is not available".to_string())
     }
 
+    fn activation_request_path() -> Result<PathBuf, String> {
+        Ok(home_dir()?.join(".hermes").join("tray-show-request"))
+    }
+
     fn grant_bridge_dir() -> Result<PathBuf, String> {
-        Ok(home_dir()?.join(".hermes").join("grant-bridge"))
+        Ok(env::var_os("HERMES_RELAY_GRANT_BRIDGE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or(home_dir()?.join(".hermes").join("grant-bridge")))
+    }
+
+    fn pending_grants_from_bridge() -> Vec<PendingGrantRequest> {
+        let Ok(directory) = grant_bridge_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut requests = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.starts_with("request-") || !name.ends_with(".json") {
+                    return None;
+                }
+                let request =
+                    serde_json::from_slice::<PendingGrantRequest>(&fs::read(entry.path()).ok()?)
+                        .ok()?;
+                (name == format!("request-{}.json", request.id)).then_some(request)
+            })
+            .collect::<Vec<_>>();
+        requests.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        requests
+    }
+
+    fn first_pending_grant_id() -> Option<String> {
+        pending_grants_from_bridge()
+            .first()
+            .map(|request| request.id.clone())
+    }
+
+    fn cli_candidates(explicit: Option<&Path>, current_exe: &Path, home: &Path) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(path) = explicit {
+            candidates.push(path.to_path_buf());
+        }
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join("hermes-relay.exe"));
+        }
+        candidates.push(home.join(".hermes").join("bin").join("hermes-relay.exe"));
+        candidates
     }
 
     fn resolve_cli() -> Result<PathBuf, String> {
         let explicit = env::var_os("HERMES_RELAY_CLI_PATH").map(PathBuf::from);
-        let current = env::current_exe()
-            .map_err(|error| format!("cannot locate systray executable: {error}"))?;
+        let current =
+            env::current_exe().map_err(|e| format!("cannot locate tray executable: {e}"))?;
         let home = home_dir()?;
         for candidate in cli_candidates(explicit.as_deref(), &current, &home) {
             if candidate.is_file() {
@@ -182,170 +618,1211 @@ mod windows_tray {
             }
         }
         Err(
-            "hermes-relay.exe was not found beside the systray, in ~/.hermes/bin, or on PATH"
+            "hermes-relay.exe was not found beside the tray app, in ~/.hermes/bin, or on PATH"
                 .to_string(),
         )
     }
 
-    fn cli_command(args: &[&str]) -> Result<Command, String> {
+    fn run_bounded(
+        command: &mut Command,
+        probe: &str,
+        timeout: Duration,
+        direct_child_only: bool,
+    ) -> Result<ProcessOutcome, String> {
+        let mut options = RunOptions::new(timeout, PROCESS_CAPTURE_LIMIT);
+        if direct_child_only {
+            options = options.direct_child_only();
+        }
+        let outcome = bounded_process::run(command, options).map_err(|error| {
+            let detail = format!(
+                "stage={:?} duration_ms={}",
+                error.stage,
+                error.duration.as_millis()
+            );
+            append_tray_log("process_error", Some(probe), Some(&detail));
+            format!("{probe} failed to start or wait: {error}")
+        })?;
+        if outcome.timed_out {
+            let detail = format!("duration_ms={}", outcome.duration.as_millis());
+            append_tray_log("process_timeout", Some(probe), Some(&detail));
+            return Err(format!(
+                "{probe} timed out after {} seconds",
+                timeout.as_secs()
+            ));
+        }
+        if outcome.stdout.truncated || outcome.stderr.truncated {
+            let detail = format!(
+                "duration_ms={} stdout_bytes={} stderr_bytes={}",
+                outcome.duration.as_millis(),
+                outcome.stdout.total_bytes,
+                outcome.stderr.total_bytes
+            );
+            append_tray_log("process_output_truncated", Some(probe), Some(&detail));
+            return Err(format!(
+                "{probe} produced more output than the safety limit"
+            ));
+        }
+        if !outcome.status.success() {
+            let detail = format!(
+                "duration_ms={} exit_code={:?}",
+                outcome.duration.as_millis(),
+                outcome.status.code()
+            );
+            append_tray_log("process_exit_failure", Some(probe), Some(&detail));
+        }
+        Ok(outcome)
+    }
+
+    fn run_cli_with_timeout(args: &[&str], timeout: Duration) -> Result<ProcessOutcome, String> {
+        let direct_child_only = matches!(args, ["daemon", "start" | "restart", ..]);
         let mut command = Command::new(resolve_cli()?);
-        command.args(args).creation_flags(CREATE_NO_WINDOW.0);
-        if let Ok(dir) = grant_bridge_dir() {
-            command.env("HERMES_RELAY_GRANT_BRIDGE_DIR", dir);
-        }
-        Ok(command)
+        command.args(args).env("NODE_USE_SYSTEM_CA", "1");
+        let probe = format!("cli.{}", args.first().copied().unwrap_or("unknown"));
+        run_bounded(&mut command, &probe, timeout, direct_child_only)
     }
 
-    fn run_cli(args: &[&str]) -> Result<Output, String> {
-        cli_command(args)?
-            .output()
-            .map_err(|error| format!("failed to run hermes-relay {}: {error}", args.join(" ")))
+    fn run_cli(args: &[&str]) -> Result<ProcessOutcome, String> {
+        run_cli_with_timeout(args, ACTION_TIMEOUT)
     }
 
-    fn run_cli_checked(args: &[&str]) -> Result<(), String> {
+    fn run_cli_checked(args: &[&str]) -> Result<String, String> {
         let output = run_cli(args)?;
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
         if output.status.success() {
-            return Ok(());
+            return Ok(stdout);
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        Err(if detail.is_empty() {
-            format!(
-                "hermes-relay {} exited with {}",
-                args.join(" "),
-                output.status
-            )
-        } else {
-            detail
-        })
+        let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+            .trim()
+            .to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
-    fn open_cli_terminal(args: &[&str]) -> Result<(), String> {
-        let cli = resolve_cli()?;
-        let mut command = Command::new("cmd.exe");
+    fn run_cli_checked_with_env(args: &[&str], key: &str, value: &str) -> Result<String, String> {
+        let mut command = Command::new(resolve_cli()?);
         command
-            .raw_arg(cmd_k_raw_args(&cli, args))
-            .creation_flags(CREATE_NEW_CONSOLE.0)
-            .env("HERMES_RELAY_GRANT_BRIDGE_DIR", grant_bridge_dir()?)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| format!("failed to open terminal: {error}"))
-    }
-
-    fn open_log() -> Result<(), String> {
-        let log = home_dir()?.join(".hermes").join("daemon.log");
-        Command::new("notepad.exe")
-            .arg(log)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| format!("failed to open daemon log: {error}"))
-    }
-
-    fn read_daemon_status() -> Option<DaemonStatus> {
-        let path = match home_dir() {
-            Ok(home) => home.join(".hermes").join("daemon-status.json"),
-            Err(_) => return None,
-        };
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<DaemonStatus>(&text).ok())
-    }
-
-    fn computer_use_preference() -> bool {
-        let path = match home_dir() {
-            Ok(home) => home.join(".hermes").join("desktop-settings.json"),
-            Err(_) => return false,
-        };
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<DesktopUseSettings>(&text).ok())
-            .is_some_and(|settings| settings.computer_use_enabled)
-    }
-
-    fn process_alive(pid: u32) -> bool {
-        let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
-            Ok(handle) => handle,
-            Err(_) => return false,
-        };
-        let mut exit_code = 0_u32;
-        let active = unsafe { GetExitCodeProcess(handle, &mut exit_code) }.is_ok()
-            && exit_code == STILL_ACTIVE.0 as u32;
-        unsafe {
-            let _ = CloseHandle(handle);
+            .args(args)
+            .env("NODE_USE_SYSTEM_CA", "1")
+            .env(key, value);
+        let probe = format!("cli.{}", args.first().copied().unwrap_or("unknown"));
+        let output = run_bounded(&mut command, &probe, ACTION_TIMEOUT, false)?;
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
+        if output.status.success() {
+            return Ok(stdout);
         }
-        active
+        let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+            .trim()
+            .to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
     }
 
-    fn current_daemon_menu_state() -> DaemonMenuState {
-        let status = read_daemon_status();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or_default();
-        let Some(status) = status.as_ref() else {
-            return daemon_menu_state(DaemonMenuInput {
-                now,
-                computer_use_enabled: computer_use_preference(),
-                ..DaemonMenuInput::default()
-            });
-        };
-        let grant = status.computer_grant.as_ref();
-        daemon_menu_state(DaemonMenuInput {
-            state: Some(&status.state),
-            updated_at: Some(status.updated_at),
-            now,
-            pid_alive: process_alive(status.pid),
-            privilege: status.privilege.as_deref(),
-            username: status.username.as_deref(),
-            computer_use_enabled: status
-                .computer_use_enabled
-                .unwrap_or_else(computer_use_preference),
-            grant_active: grant.is_some_and(|grant| grant.active),
-            grant_mode: grant.map(|grant| grant.mode.as_str()),
-            grant_expires_at: grant.and_then(|grant| grant.expires_at.as_deref()),
-        })
+    fn run_json_with_timeout(args: &[&str], timeout: Duration) -> Result<Value, String> {
+        let output = run_cli_with_timeout(args, timeout)?;
+        let stdout = String::from_utf8_lossy(&output.stdout.bytes)
+            .trim()
+            .to_string();
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string();
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+        serde_json::from_str(&stdout)
+            .map_err(|e| format!("invalid JSON from hermes-relay {}: {e}", args.join(" ")))
     }
 
-    fn daemon_is_elevated() -> bool {
-        read_daemon_status().is_some_and(|status| {
-            process_alive(status.pid) && status.privilege.as_deref() == Some("administrator")
-        })
+    fn run_json(args: &[&str]) -> Result<Value, String> {
+        run_json_with_timeout(args, PROBE_TIMEOUT)
     }
 
-    fn pending_grant_count() -> usize {
-        let Ok(directory) = grant_bridge_dir() else {
-            return 0;
-        };
-        fs::read_dir(directory)
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.starts_with("request-") && name.ends_with(".json")
+    fn cli_details() -> (Option<String>, Option<String>) {
+        CLI_DETAILS_CACHE
+            .get_or_init(|| {
+                let Ok(path) = resolve_cli() else {
+                    return (None, None);
+                };
+                let mut command = Command::new(&path);
+                command.arg("--version").env("NODE_USE_SYSTEM_CA", "1");
+                let version = run_bounded(&mut command, "cli.version", PROBE_TIMEOUT, false)
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|output| clean_cli_version(&String::from_utf8_lossy(&output.stdout.bytes)))
+                    .filter(|value| !value.is_empty());
+                (version, Some(path.display().to_string()))
             })
-            .count()
+            .clone()
     }
 
-    const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-    const RUN_VALUE: &str = "HermesRelayTray";
+    fn clean_cli_version(output: &str) -> String {
+        output
+            .trim()
+            .strip_prefix("hermes-relay ")
+            .unwrap_or_else(|| output.trim())
+            .to_string()
+    }
+
+    fn is_official_url(url: &str) -> bool {
+        OFFICIAL_URLS.contains(&url)
+    }
+
+    fn active_url() -> Option<String> {
+        let path = home_dir()
+            .ok()?
+            .join(".hermes")
+            .join("desktop-control.json");
+        let value: Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+        value.get("relay_url")?.as_str().map(str::to_string)
+    }
+
+    fn hosts_from_status(active: Option<&str>) -> Result<Vec<Host>, String> {
+        let value = run_json(&["status", "--json"])?;
+        let Some(records) = value.as_object() else {
+            return Ok(Vec::new());
+        };
+        Ok(records
+            .iter()
+            .map(|(url, record)| Host {
+                url: url.clone(),
+                name: String::new(),
+                server_version: record
+                    .get("serverVersion")
+                    .or_else(|| record.get("server_version"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                endpoint_role: record
+                    .get("endpointRole")
+                    .or_else(|| record.get("endpoint_role"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                paired_at: record
+                    .get("pairedAt")
+                    .or_else(|| record.get("paired_at"))
+                    .and_then(Value::as_u64),
+                is_active: active == Some(url.as_str()),
+                access_mode: if record
+                    .get("toolsConsented")
+                    .or_else(|| record.get("tools_consented"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    "trusted".to_string()
+                } else {
+                    "ask".to_string()
+                },
+                capabilities: BTreeMap::new(),
+                broker_configured: false,
+            })
+            .collect())
+    }
+
+    fn read_activity() -> Vec<Activity> {
+        let Ok(path) = home_dir().map(|h| h.join(".hermes").join("desktop-audit.jsonl")) else {
+            return Vec::new();
+        };
+        let text = [path.with_extension("jsonl.1"), path]
+            .into_iter()
+            .filter_map(|file| fs::read_to_string(file).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut activity = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect::<Vec<Activity>>();
+        let evidence_directory = home_dir()
+            .ok()
+            .map(|home| home.join(".hermes").join("activity-evidence"));
+        for entry in &mut activity {
+            let available = entry
+                .screenshot_evidence_id
+                .as_ref()
+                .zip(evidence_directory.as_ref())
+                .is_some_and(|(id, directory)| directory.join(format!("{id}.png")).is_file());
+            if !available {
+                entry.screenshot_evidence_id = None;
+                entry.screenshot_mime_type = None;
+                entry.screenshot_width = None;
+                entry.screenshot_height = None;
+            }
+        }
+        activity.sort_by_key(|entry| entry.ts);
+        if activity.len() > 200 {
+            activity.drain(..activity.len() - 200);
+        }
+        activity
+    }
+
+    fn append_management_event(
+        tool: &str,
+        summary: &str,
+        host_url: Option<&str>,
+        request_id: Option<&str>,
+    ) {
+        let Ok(directory) = home_dir().map(|home| home.join(".hermes")) else {
+            return;
+        };
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let event = serde_json::json!({
+            "ts": timestamp,
+            "kind": "management.completed",
+            "tool": tool,
+            "category": "system",
+            "ok": true,
+            "host_url": host_url,
+            "request_id": request_id,
+            "summary": summary,
+        });
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("desktop-audit.jsonl"))
+        {
+            let _ = writeln!(file, "{event}");
+        }
+    }
+
+    #[tauri::command]
+    fn clear_activity() -> Result<(), String> {
+        let directory = home_dir()?.join(".hermes");
+        let path = directory.join("desktop-audit.jsonl");
+        fs::write(&path, []).map_err(|error| format!("cannot clear activity: {error}"))?;
+        let backup = directory.join("desktop-audit.jsonl.1");
+        if backup.exists() {
+            fs::remove_file(&backup)
+                .map_err(|error| format!("cannot remove rotated activity: {error}"))?;
+        }
+        let evidence = directory.join("activity-evidence");
+        if evidence.exists() {
+            fs::remove_dir_all(&evidence)
+                .map_err(|error| format!("cannot clear screenshot evidence: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn append_management_error(tool: &str, summary: &str, error: &str) {
+        let Ok(directory) = home_dir().map(|home| home.join(".hermes")) else {
+            return;
+        };
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let event = serde_json::json!({
+            "ts": timestamp,
+            "kind": "management.completed",
+            "tool": tool,
+            "category": "system",
+            "ok": false,
+            "summary": summary,
+            "error": error.chars().take(512).collect::<String>(),
+        });
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("desktop-audit.jsonl"))
+        {
+            let _ = writeln!(file, "{event}");
+        }
+    }
+
+    #[tauri::command]
+    fn get_activity_screenshot(evidence_id: String) -> Result<String, String> {
+        if evidence_id.len() != 32 || !evidence_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("invalid screenshot evidence identifier".to_string());
+        }
+        let path = home_dir()?
+            .join(".hermes")
+            .join("activity-evidence")
+            .join(format!("{}.png", evidence_id.to_ascii_lowercase()));
+        let bytes =
+            fs::read(path).map_err(|_| "screenshot evidence is no longer available".to_string())?;
+        if bytes.is_empty()
+            || bytes.len() > 10_000_000
+            || !bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+        {
+            return Err("screenshot evidence is invalid".to_string());
+        }
+        Ok(format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(bytes)
+        ))
+    }
+
+    #[tauri::command]
+    fn set_activity_screenshot_retention(enabled: bool, days: u64) -> Result<(), String> {
+        if !matches!(days, 1 | 7 | 30) {
+            return Err("screenshot retention must be 1, 7, or 30 days".to_string());
+        }
+        let days = days.to_string();
+        run_cli_checked(&[
+            "audit",
+            "screenshots",
+            if enabled { "on" } else { "off" },
+            "--days",
+            &days,
+            "--yes",
+        ])?;
+        append_management_event(
+            "activity.retention",
+            if enabled {
+                "Screenshot evidence retention changed"
+            } else {
+                "Screenshot evidence retention disabled"
+            },
+            None,
+            None,
+        );
+        Ok(())
+    }
+
+    fn cached_boolean_probe(
+        cache: &'static OnceLock<Mutex<BooleanProbeCache>>,
+        probe: impl FnOnce() -> bool,
+    ) -> bool {
+        let cache = cache.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, value)) = guard.as_ref() {
+                if checked_at.elapsed() < Duration::from_secs(60) {
+                    return *value;
+                }
+            }
+        }
+        let value = probe();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), value));
+        }
+        value
+    }
+
+    fn update_boolean_probe_cache(cache: &'static OnceLock<Mutex<BooleanProbeCache>>, value: bool) {
+        let cache = cache.get_or_init(|| Mutex::new(None));
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), value));
+        }
+    }
 
     fn startup_enabled() -> bool {
-        Command::new("reg.exe")
-            .args(["query", RUN_KEY, "/v", RUN_VALUE])
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .status()
-            .is_ok_and(|status| status.success())
+        cached_boolean_probe(&STARTUP_ENABLED_CACHE, || {
+            let mut command = Command::new("reg.exe");
+            command.args(["query", RUN_KEY, "/v", RUN_VALUE]);
+            run_bounded(&mut command, "registry.startup.query", PROBE_TIMEOUT, false)
+                .is_ok_and(|outcome| outcome.status.success())
+        })
     }
 
-    fn set_startup_enabled(enabled: bool) -> Result<(), String> {
+    fn daemon_autostart_enabled() -> bool {
+        cached_boolean_probe(&DAEMON_AUTOSTART_CACHE, || {
+            let mut command = Command::new("reg.exe");
+            command.args(["query", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE]);
+            run_bounded(
+                &mut command,
+                "registry.daemon_autostart.query",
+                PROBE_TIMEOUT,
+                false,
+            )
+            .is_ok_and(|outcome| outcome.status.success())
+        })
+    }
+
+    fn probe_hardware_availability() -> HardwareAvailability {
+        let adb = env::var_os("HERMES_RELAY_ADB_PATH")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "adb".into());
+        let mut command = Command::new(adb);
+        command.arg("version");
+        let adb = run_bounded(&mut command, "adb.version", PROBE_TIMEOUT, false)
+            .is_ok_and(|outcome| outcome.status.success());
+        HardwareAvailability {
+            usb: true,
+            adb,
+            microphone: false,
+            camera: false,
+        }
+    }
+
+    fn hardware_availability() -> HardwareAvailability {
+        let cache = HARDWARE_AVAILABILITY_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((checked_at, availability)) = guard.as_ref() {
+                if checked_at.elapsed() < Duration::from_secs(60) {
+                    return availability.clone();
+                }
+            }
+        }
+        let availability = probe_hardware_availability();
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), availability.clone()));
+        }
+        availability
+    }
+
+    fn daemon_status_from_probe(result: Result<Value, String>) -> DaemonStatus {
+        result
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    fn build_snapshot() -> Result<Snapshot, String> {
+        let selected = active_url();
+        let mut hosts = match run_json(&["hosts", "list", "--json"]) {
+            Ok(value) => serde_json::from_value::<Vec<Host>>(
+                value
+                    .get("hosts")
+                    .cloned()
+                    .unwrap_or(Value::Array(Vec::new())),
+            )
+            .map_err(|_| "the installed CLI returned an invalid host list".to_string())?,
+            Err(_) => hosts_from_status(selected.as_deref())?,
+        };
+        for host in &mut hosts {
+            if host.access_mode == "full_access" {
+                host.access_mode = "full-access".to_string();
+            } else if host.access_mode == "ask_every_time" {
+                host.access_mode = "ask-every-time".to_string();
+            }
+        }
+        let daemon = daemon_status_from_probe(run_json(&["daemon", "status", "--json"]));
+        let pending_grants = pending_grants_from_bridge();
+        let (cli_version, cli_path) = cli_details();
+        let computer_control_engine = cached_computer_control_engine();
+        let activity_screenshot_retention = run_json(&["audit", "screenshots", "--json"])
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        Ok(Snapshot {
+            hosts,
+            active_url: selected,
+            daemon,
+            activity: read_activity(),
+            activity_screenshot_retention,
+            pending_grants,
+            startup_enabled: startup_enabled(),
+            daemon_autostart_enabled: daemon_autostart_enabled(),
+            hardware_availability: hardware_availability(),
+            computer_control_engine,
+            ui_version: env!("CARGO_PKG_VERSION"),
+            cli_version,
+            cli_path,
+        })
+    }
+
+    fn build_snapshot_coalesced() -> Result<Snapshot, String> {
+        let cache = SNAPSHOT_CACHE.get_or_init(|| Mutex::new(None));
+        let mut guard = cache
+            .lock()
+            .map_err(|_| "snapshot cache is unavailable".to_string())?;
+        if let Some((built_at, snapshot)) = guard.as_ref() {
+            if built_at.elapsed() < Duration::from_millis(750) {
+                return Ok(snapshot.clone());
+            }
+        }
+        let snapshot = build_snapshot().inspect_err(|_| {
+            append_tray_log("snapshot_failed", None, None);
+        })?;
+        *guard = Some((Instant::now(), snapshot.clone()));
+        Ok(snapshot)
+    }
+
+    fn computer_control_engine_status() -> Result<ComputerControlEngine, String> {
+        run_json(&["computer-use", "status", "--json"])?
+            .get("computer_control_engine")
+            .cloned()
+            .ok_or_else(|| {
+                "the installed CLI does not report a computer control engine".to_string()
+            })
+            .and_then(|value| {
+                serde_json::from_value(value).map_err(|_| {
+                    "the installed CLI returned an invalid computer control status".to_string()
+                })
+            })
+    }
+
+    #[tauri::command]
+    async fn computer_cua_status() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "status", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA status task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_health() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json(&["computer-use", "cua", "health", "--json"])
+        })
+        .await
+        .map_err(|error| format!("CUA health task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_install() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json_with_timeout(
+                &["computer-use", "cua", "install", "--yes", "--json"],
+                LONG_ACTION_TIMEOUT,
+            )?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA install task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_check_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json_with_timeout(
+                &["computer-use", "cua", "check-update", "--json"],
+                ACTION_TIMEOUT,
+            )
+        })
+        .await
+        .map_err(|error| format!("CUA update check task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn computer_cua_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            let result = run_json_with_timeout(
+                &["computer-use", "cua", "update", "--yes", "--json"],
+                LONG_ACTION_TIMEOUT,
+            )?;
+            clear_computer_control_engine_cache();
+            Ok(result)
+        })
+        .await
+        .map_err(|error| format!("CUA update task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn set_computer_control_engine(engine: String) -> Result<(), String> {
+        if engine != "legacy" && engine != "cua" {
+            return Err("invalid computer control engine".to_string());
+        }
+        if engine == "cua" {
+            let status = computer_control_engine_status()?;
+            if !status.available || status.state != "ready" {
+                return Err("CUA Driver is not ready; engine selection was not changed".to_string());
+            }
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&["computer-use", "engine", engine.as_str()])?;
+        clear_computer_control_engine_cache();
+        restart_daemon_if_running(was_running)
+    }
+
+    #[tauri::command]
+    fn set_cua_cursor_enabled(enabled: bool) -> Result<(), String> {
+        let status = computer_control_engine_status()?;
+        if status.selected != "cua" || status.state != "ready" {
+            return Err(
+                "CUA Driver must be selected and ready before changing its cursor".to_string(),
+            );
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&["computer-use", "cursor", if enabled { "on" } else { "off" }])?;
+        clear_computer_control_engine_cache();
+        restart_daemon_if_running(was_running)
+    }
+
+    #[tauri::command]
+    async fn get_snapshot() -> Result<Snapshot, String> {
+        tauri::async_runtime::spawn_blocking(build_snapshot_coalesced)
+            .await
+            .map_err(|error| format!("snapshot task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn get_pending_grant_context() -> PendingGrantContext {
+        PendingGrantContext {
+            grant: pending_grants_from_bridge().into_iter().next(),
+            active_url: active_url(),
+        }
+    }
+
+    #[tauri::command]
+    async fn check_desktop_update() -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_json_with_timeout(
+                &["update", "--installer", "--check", "--json"],
+                ACTION_TIMEOUT,
+            )
+        })
+        .await
+        .map_err(|error| format!("desktop update check task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn install_desktop_update(app: AppHandle) -> Result<Value, String> {
+        let (report, restart_daemon) = tauri::async_runtime::spawn_blocking(|| {
+            let restart_daemon = run_json(&["daemon", "status", "--json"])
+                .ok()
+                .and_then(|value| serde_json::from_value::<DaemonStatus>(value).ok())
+                .is_some_and(|status| status.running);
+            // The tray owns exit/restart orchestration. Ask the CLI only to
+            // download and verify so setup is launched exactly once.
+            let report = run_json_with_timeout(
+                &[
+                    "update",
+                    "--installer",
+                    "--download-only",
+                    "--yes",
+                    "--json",
+                ],
+                LONG_ACTION_TIMEOUT,
+            )?;
+            Ok::<_, String>((report, restart_daemon))
+        })
+        .await
+        .map_err(|error| format!("desktop update download task failed: {error}"))??;
+
+        let installer = report
+            .get("installed_path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| "desktop updater did not return an installer path".to_string())?;
+        let tray_exe = env::current_exe()
+            .map_err(|error| format!("cannot resolve the tray executable: {error}"))?;
+        let cli_exe = tray_exe
+            .parent()
+            .map(|directory| directory.join("hermes-relay.exe"))
+            .ok_or_else(|| "cannot resolve the installed CLI path".to_string())?;
+        let install_dir = tray_exe
+            .parent()
+            .ok_or_else(|| "cannot resolve the desktop install directory".to_string())?;
+        let helper_script = "$ErrorActionPreference='Stop'; "
+            .to_string()
+            + "$targetPid=[int]$env:HERMES_UPDATE_PID; "
+            + "Wait-Process -Id $targetPid -ErrorAction SilentlyContinue; "
+            + "$exitCode=1; try { "
+            + "$installerArgs=@('/S',('/D=' + $env:HERMES_UPDATE_INSTALL_DIR)); "
+            + "$result=Start-Process -FilePath $env:HERMES_UPDATE_INSTALLER -ArgumentList $installerArgs -Wait -PassThru; "
+            + "$exitCode=$result.ExitCode; if ($exitCode -eq 0) { "
+            + "if ($env:HERMES_UPDATE_RESTART_DAEMON -eq '1') { & $env:HERMES_UPDATE_CLI daemon start | Out-Null }; "
+            + "Start-Process -FilePath $env:HERMES_UPDATE_TRAY } "
+            + "} finally { Remove-Item -LiteralPath $env:HERMES_UPDATE_INSTALLER -Force -ErrorAction SilentlyContinue }; "
+            + "exit $exitCode";
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &helper_script,
+            ])
+            .env("HERMES_UPDATE_PID", std::process::id().to_string())
+            .env("HERMES_UPDATE_INSTALLER", installer)
+            .env("HERMES_UPDATE_INSTALL_DIR", install_dir)
+            .env("HERMES_UPDATE_TRAY", tray_exe)
+            .env("HERMES_UPDATE_CLI", cli_exe)
+            .env(
+                "HERMES_UPDATE_RESTART_DAEMON",
+                if restart_daemon { "1" } else { "0" },
+            )
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .spawn()
+            .map_err(|error| format!("cannot launch desktop update helper: {error}"))?;
+
+        let exit_app = app.clone();
+        app.run_on_main_thread(move || exit_app.exit(0))
+            .map_err(|error| format!("cannot exit for desktop update: {error}"))?;
+        append_management_event("desktop.update", "Desktop update started", None, None);
+        Ok(report)
+    }
+
+    fn daemon_is_running() -> bool {
+        run_json(&["daemon", "status", "--json"])
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("running")
+                    .or_else(|| value.get("alive"))
+                    .and_then(Value::as_bool)
+            })
+            .unwrap_or(false)
+    }
+
+    fn restart_daemon_if_running(was_running: bool) -> Result<(), String> {
+        if was_running {
+            run_cli_checked(&["daemon", "restart"]).map(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[tauri::command]
+    async fn select_host(remote: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let was_running = daemon_is_running();
+            run_cli_checked(&["hosts", "select", &remote])?;
+            restart_daemon_if_running(was_running)?;
+            append_management_event(
+                "host.select",
+                "Connected host selected",
+                Some(&remote),
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("host selection task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn rename_host(remote: String, name: String) -> Result<(), String> {
+        let normalized = name.trim();
+        if normalized.is_empty() || normalized.len() > 64 || normalized.contains(['\r', '\n', '\t'])
+        {
+            return Err("host name must be 1-64 characters on one line".to_string());
+        }
+        run_cli_checked(&["hosts", "rename", &remote, normalized])?;
+        append_management_event(
+            "host.rename",
+            "Host display name changed",
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn set_host_access(remote: String, mode: String) -> Result<(), String> {
+        if !matches!(
+            mode.as_str(),
+            "ask" | "ask-every-time" | "structured" | "trusted" | "full-access"
+        ) {
+            return Err("invalid host access mode".to_string());
+        }
+        let mut args = vec![
+            "hosts",
+            "access",
+            mode.as_str(),
+            "--remote",
+            remote.as_str(),
+        ];
+        if mode == "full-access" {
+            args.push("--yes");
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&args)?;
+        restart_daemon_if_running(was_running)?;
+        append_management_event(
+            "host.access",
+            &format!("Access changed to {mode}"),
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn set_host_capability(remote: String, capability: String, mode: String) -> Result<(), String> {
+        if !matches!(
+            capability.as_str(),
+            "commands" | "files" | "screen-input" | "usb" | "microphone" | "camera"
+        ) {
+            return Err("invalid host capability".to_string());
+        }
+        if !matches!(mode.as_str(), "disabled" | "ask" | "allow") {
+            return Err("invalid capability access mode".to_string());
+        }
+        let mut args = vec![
+            "hosts",
+            "capability",
+            capability.as_str(),
+            mode.as_str(),
+            "--remote",
+            remote.as_str(),
+        ];
+        if mode == "allow" {
+            args.push("--yes");
+        }
+        let was_running = daemon_is_running();
+        run_cli_checked(&args)?;
+        restart_daemon_if_running(was_running)?;
+        append_management_event(
+            "host.capability",
+            &format!("{capability} capability changed to {mode}"),
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn list_authorized_clients(remote: String) -> Result<Value, String> {
+        run_json(&["devices", "list", "--remote", &remote, "--json"])
+    }
+
+    #[tauri::command]
+    fn revoke_authorized_client(remote: String, prefix: String) -> Result<(), String> {
+        run_cli_checked(&["devices", "revoke", &prefix, "--remote", &remote])?;
+        append_management_event(
+            "client.revoke",
+            "Authorized client deauthorized",
+            Some(&remote),
+            None,
+        );
+        Ok(())
+    }
+
+    #[tauri::command]
+    fn resolve_grant(id: String, approved: bool) -> Result<(), String> {
+        if id.is_empty()
+            || id.len() > 96
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err("invalid grant request id".to_string());
+        }
+        let directory = grant_bridge_dir()?;
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("cannot open grant bridge: {error}"))?;
+        let request_path = directory.join(format!("request-{id}.json"));
+        let request = fs::read(&request_path)
+            .map_err(|_| format!("pending grant request not found: {id}"))?;
+        let request = serde_json::from_slice::<PendingGrantRequest>(&request)
+            .map_err(|_| "pending grant request is invalid".to_string())?;
+        if request.id != id {
+            return Err("pending grant request identity does not match its file".to_string());
+        }
+        let resolved_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let response = serde_json::to_vec_pretty(&serde_json::json!({
+            "approved": approved,
+            "reason": if approved { "" } else { "Rejected from Hermes-Relay CLI UI" },
+            "resolved_at_ms": resolved_at_ms,
+        }))
+        .map_err(|error| format!("cannot serialize grant decision: {error}"))?;
+        let temporary_path = directory.join(format!(
+            ".response-{id}-{}-{resolved_at_ms}.tmp",
+            std::process::id()
+        ));
+        let mut temporary = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("cannot stage grant decision: {error}"))?;
+        temporary
+            .write_all(&response)
+            .and_then(|_| temporary.write_all(b"\n"))
+            .and_then(|_| temporary.sync_all())
+            .map_err(|error| format!("cannot persist grant decision: {error}"))?;
+        drop(temporary);
+        let response_path = directory.join(format!("response-{id}.json"));
+        if let Err(error) = fs::rename(&temporary_path, &response_path) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!("cannot publish grant decision: {error}"));
+        }
+        fs::remove_file(&request_path)
+            .map_err(|error| format!("cannot retire resolved grant request: {error}"))?;
+        append_management_event(
+            "grant.resolve",
+            if approved {
+                "Access request approved"
+            } else {
+                "Access request rejected"
+            },
+            None,
+            Some(&id),
+        );
+        Ok(())
+    }
+
+    fn spawn_cli_terminal(cli_args: &[&str]) -> Result<(), String> {
+        let cli = resolve_cli()?;
+        let args = serde_json::to_string(cli_args)
+            .map_err(|error| format!("cannot serialize CLI arguments: {error}"))?;
+        let powershell_args = [
+            "-NoLogo",
+            "-NoExit",
+            "-NoProfile",
+            "-Command",
+            "& $env:HERMES_RELAY_CLI @((ConvertFrom-Json $env:HERMES_RELAY_ARGS))",
+        ];
+        let terminal = Command::new("wt.exe")
+            .arg("new-tab")
+            .arg("powershell.exe")
+            .args(powershell_args)
+            .env("HERMES_RELAY_CLI", &cli)
+            .env("HERMES_RELAY_ARGS", &args)
+            .spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(powershell_args)
+                .env("HERMES_RELAY_CLI", cli)
+                .env("HERMES_RELAY_ARGS", args)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
+    }
+
+    #[tauri::command]
+    async fn pair_host(remote: String, code: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let remote = remote.trim().to_string();
+            let code = code.trim().to_ascii_uppercase();
+            if remote.is_empty()
+                || code.len() != 6
+                || !code.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                return Err(
+                    "Enter a ws:// or wss:// relay URL and a six-character pairing code"
+                        .to_string(),
+                );
+            }
+            run_cli_checked_with_env(
+                &["pair", "--remote", &remote, "--non-interactive"],
+                "HERMES_RELAY_CODE",
+                &code,
+            )?;
+            append_management_event("host.pair", "Host paired", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("pair host task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn test_host_route(remote: String) -> Result<Value, String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            run_json_with_timeout(
+                &["hosts", "test", "--remote", remote.trim(), "--json"],
+                ACTION_TIMEOUT,
+            )
+        })
+        .await
+        .map_err(|error| format!("Secure Link test task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_management_from_grant(
+        app: AppHandle,
+        tray_position: State<'_, TrayPositionState>,
+    ) -> Result<(), String> {
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        reveal_main_window(&app, anchor);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval("window.dispatchEvent(new CustomEvent('hermes-review-grant'))");
+        }
+        Ok(())
+    }
+
+    fn wait_for_daemon_privilege(expected: Option<&str>) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            let status = run_json(&["daemon", "status", "--json"])
+                .ok()
+                .and_then(|value| serde_json::from_value::<DaemonStatus>(value).ok());
+            let matches = match (expected, status) {
+                (None, None) => true,
+                (Some(privilege), Some(status)) => {
+                    status.running && status.privilege.as_deref() == Some(privilege)
+                }
+                _ => false,
+            };
+            if matches {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err(match expected {
+            Some(privilege) => format!("daemon did not become ready as {privilege}"),
+            None => "daemon did not stop after the Administrator request".to_string(),
+        })
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_administrator() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--administrator"])?;
+            wait_for_daemon_privilege(Some("administrator"))?;
+            append_management_event(
+                "daemon.restart_admin",
+                "Relay daemon restarted as Administrator",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("Administrator restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn restart_daemon_as_user() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            run_cli_checked(&["daemon", "restart", "--user"])?;
+            wait_for_daemon_privilege(Some("user"))?;
+            append_management_event(
+                "daemon.restart_user",
+                "Relay daemon restarted as standard user",
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("standard-user restart task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn open_terminal() -> Result<(), String> {
+        let home = home_dir()?;
+        let terminal = Command::new("wt.exe").args(["-d"]).arg(&home).spawn();
+        match terminal {
+            Ok(_) => Ok(()),
+            Err(_) => Command::new("powershell.exe")
+                .args(["-NoLogo", "-NoExit"])
+                .current_dir(home)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("failed to open a terminal: {error}")),
+        }
+    }
+
+    #[tauri::command]
+    fn open_cli_terminal() -> Result<(), String> {
+        spawn_cli_terminal(&[])
+    }
+
+    fn open_log_file(name: &str) -> Result<(), String> {
+        let path = home_dir()?.join(".hermes").join(name);
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("cannot create log directory: {error}"))?;
+            }
+            fs::write(&path, b"").map_err(|error| format!("cannot create log file: {error}"))?;
+        }
+        Command::new("notepad.exe")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("failed to open log: {error}"))
+    }
+
+    #[tauri::command]
+    fn open_logs() -> Result<(), String> {
+        open_log_file("daemon.log")
+    }
+
+    #[tauri::command]
+    fn open_tray_logs() -> Result<(), String> {
+        open_log_file("tray.log")
+    }
+
+    #[tauri::command]
+    fn run_diagnostics() -> Result<(), String> {
+        spawn_cli_terminal(&["doctor"])
+    }
+
+    #[tauri::command]
+    fn open_external_url(url: String) -> Result<(), String> {
+        if !is_official_url(&url) {
+            return Err("URL is not an approved Hermes-Relay destination".to_string());
+        }
+        Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("failed to open the link: {error}"))
+    }
+
+    #[tauri::command]
+    async fn forget_host(remote: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let selected_before = active_url();
+            let was_active = selected_before.as_deref() == Some(remote.as_str());
+            let was_running = daemon_is_running();
+            if was_active && was_running {
+                run_cli_checked(&["daemon", "stop"])?;
+            }
+            if let Err(error) = run_cli_checked(&["hosts", "forget", &remote, "--yes"]) {
+                if was_active && was_running {
+                    let _ = run_cli_checked(&["daemon", "start"]);
+                }
+                return Err(error);
+            }
+            let selected_after = active_url();
+            if was_active && was_running && selected_after.is_some() {
+                run_cli_checked(&["daemon", "start"])?;
+            }
+            append_management_event("host.forget", "Host forgotten", Some(&remote), None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("forget host task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    async fn connect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            if let Err(error) = run_cli_checked(&["daemon", "start"]) {
+                append_management_error("daemon.start", "Relay daemon failed to connect", &error);
+                return Err(error);
+            }
+            append_management_event("daemon.start", "Relay daemon connected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("connect daemon task failed: {error}"))?
+    }
+    #[tauri::command]
+    async fn disconnect_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            if let Err(error) = run_cli_checked(&["daemon", "stop"]) {
+                append_management_error("daemon.stop", "Relay daemon failed to disconnect", &error);
+                return Err(error);
+            }
+            append_management_event("daemon.stop", "Relay daemon disconnected", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("disconnect daemon task failed: {error}"))?
+    }
+    #[tauri::command]
+    async fn restart_daemon() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(|| {
+            if let Err(error) = run_cli_checked(&["daemon", "restart"]) {
+                append_management_error("daemon.restart", "Relay daemon failed to restart", &error);
+                return Err(error);
+            }
+            append_management_event("daemon.restart", "Relay daemon restarted", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("restart daemon task failed: {error}"))?
+    }
+
+    #[tauri::command]
+    fn set_startup(enabled: bool) -> Result<(), String> {
         let mut command = Command::new("reg.exe");
         if enabled {
-            let executable = env::current_exe()
-                .map_err(|error| format!("cannot locate systray executable: {error}"))?;
+            let executable =
+                env::current_exe().map_err(|e| format!("cannot locate tray executable: {e}"))?;
             let value = format!("\"{}\"", executable.display());
             command.args([
                 "add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &value, "/f",
@@ -353,308 +1830,863 @@ mod windows_tray {
         } else {
             command.args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]);
         }
-        let output = command
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .output()
-            .map_err(|error| format!("failed to update sign-in setting: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-        }
-    }
-
-    fn run_cli_elevated(args: &[&str]) -> Result<(), String> {
-        let executable = resolve_cli()?;
-        let verb = wide(OsStr::new("runas"));
-        let file = wide(executable.as_os_str());
-        let parameters = wide(OsStr::new(&args.join(" ")));
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                PCWSTR(verb.as_ptr()),
-                PCWSTR(file.as_ptr()),
-                PCWSTR(parameters.as_ptr()),
-                PCWSTR::null(),
-                SW_HIDE,
-            )
-        };
-        let code = result.0 as isize;
-        if code > 32 {
-            Ok(())
-        } else {
-            Err(format!(
-                "administrator action was cancelled or failed (ShellExecute code {code})"
-            ))
-        }
-    }
-
-    fn restart_daemon_preserving_privilege() -> Result<(), String> {
-        if daemon_is_elevated() {
-            run_cli_elevated(&["daemon", "restart"])
-        } else {
-            run_cli_checked(&["daemon", "restart"])
-        }
-    }
-
-    fn perform(action: TrayAction) -> Result<(), String> {
-        match action {
-            TrayAction::OpenTui => open_cli_terminal(&[]),
-            TrayAction::Status => open_cli_terminal(&["daemon", "status"]),
-            TrayAction::StartDaemon => run_cli_checked(&["daemon", "start"]),
-            TrayAction::ElevateDaemon => {
-                let command = if current_daemon_menu_state().stop_enabled {
-                    "restart"
-                } else {
-                    "start"
-                };
-                run_cli_elevated(&["daemon", command])
-            }
-            TrayAction::StopDaemon => {
-                if daemon_is_elevated() {
-                    run_cli_elevated(&["daemon", "stop"])
-                } else {
-                    run_cli_checked(&["daemon", "stop"])
-                }
-            }
-            TrayAction::RestartDaemon => {
-                if daemon_is_elevated() {
-                    run_cli_elevated(&["daemon", "restart"])
-                } else {
-                    run_cli_checked(&["daemon", "restart"])
-                }
-            }
-            TrayAction::Pair => open_cli_terminal(&["pair"]),
-            TrayAction::ReviewGrants => open_cli_terminal(&["grants"]),
-            TrayAction::Audit => open_cli_terminal(&["audit"]),
-            TrayAction::Diagnostics => open_cli_terminal(&["doctor"]),
-            TrayAction::OpenLogs => open_log(),
-            TrayAction::ToggleComputerUse => {
-                let state = current_daemon_menu_state();
-                let was_running = state.stop_enabled;
-                if state.computer_use_enabled {
-                    run_cli_checked(&["computer-use", "disable"])?;
-                } else {
-                    if !confirm_computer_use_enable() {
-                        return Ok(());
-                    }
-                    run_cli_checked(&["computer-use", "enable", "--yes"])?;
-                }
-                if was_running {
-                    restart_daemon_preserving_privilege()?;
-                }
-                Ok(())
-            }
-            TrayAction::CancelComputerGrant => run_cli_checked(&["computer-use", "cancel"]),
-            TrayAction::ToggleStartup => set_startup_enabled(!startup_enabled()),
-            TrayAction::EmergencyStop => {
-                if daemon_is_elevated() {
-                    run_cli_elevated(&["daemon", "stop"])
-                } else {
-                    run_cli_checked(&["daemon", "stop"])
-                }
-            }
-            TrayAction::Exit => {
-                unsafe { PostQuitMessage(0) };
-                Ok(())
-            }
-        }
-    }
-
-    fn load_icon() -> Result<Icon, String> {
-        let image = image::load_from_memory(include_bytes!("../icons/icon-256.png"))
-            .map_err(|error| format!("cannot decode systray icon: {error}"))?
-            .into_rgba8();
-        let (width, height) = image.dimensions();
-        Icon::from_rgba(image.into_raw(), width, height)
-            .map_err(|error| format!("cannot create systray icon: {error}"))
-    }
-
-    fn refresh_menu(
-        status_item: &MenuItem,
-        desktop_use_item: &MenuItem,
-        grant_item: &MenuItem,
-        safety_item: &MenuItem,
-        action_items: &HashMap<TrayAction, MenuItem>,
-    ) -> usize {
-        let state = current_daemon_menu_state();
-        status_item.set_text(&state.label);
-        desktop_use_item.set_text(&state.computer_use_label);
-        grant_item.set_text(&state.grant_label);
-        safety_item.set_text(&state.safety_label);
-        if let Some(item) = action_items.get(&TrayAction::StartDaemon) {
-            item.set_enabled(state.start_enabled);
-        }
-        if let Some(item) = action_items.get(&TrayAction::ElevateDaemon) {
-            item.set_text(&state.elevated_action_label);
-            item.set_enabled(state.elevated_action_enabled);
-        }
-        if let Some(item) = action_items.get(&TrayAction::StopDaemon) {
-            item.set_enabled(state.stop_enabled);
-        }
-        if let Some(item) = action_items.get(&TrayAction::RestartDaemon) {
-            item.set_enabled(state.restart_enabled);
-        }
-        if let Some(item) = action_items.get(&TrayAction::EmergencyStop) {
-            item.set_enabled(state.stop_enabled);
-        }
-        let pending = pending_grant_count();
-        if let Some(item) = action_items.get(&TrayAction::ReviewGrants) {
-            item.set_text(format!("Review pending grants ({})...", pending));
-            item.set_enabled(pending > 0);
-        }
-        if let Some(item) = action_items.get(&TrayAction::ToggleComputerUse) {
-            item.set_text(&state.computer_use_action_label);
-        }
-        if let Some(item) = action_items.get(&TrayAction::CancelComputerGrant) {
-            item.set_enabled(state.cancel_grant_enabled);
-        }
-        pending
-    }
-
-    pub fn run() -> Result<(), String> {
-        let Some(_instance_mutex) = acquire_instance_mutex()? else {
-            return Ok(());
-        };
-        let menu = Menu::new();
-        let status_item = MenuItem::with_id("daemon_state", "Daemon: loading...", false, None);
-        let desktop_use_item =
-            MenuItem::with_id("desktop_use_state", "Desktop use: loading...", false, None);
-        let grant_item = MenuItem::with_id("grant_state", "Active grant: loading...", false, None);
-        let safety_item = MenuItem::with_id("safety_state", "Safety: loading...", false, None);
-        menu.append(&status_item)
-            .map_err(|error| error.to_string())?;
-        menu.append(&desktop_use_item)
-            .map_err(|error| error.to_string())?;
-        menu.append(&grant_item)
-            .map_err(|error| error.to_string())?;
-        menu.append(&safety_item)
-            .map_err(|error| error.to_string())?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|error| error.to_string())?;
-
-        let mut action_items = HashMap::new();
-        let mut startup_item = None;
-        for entry in menu_entries() {
-            if entry.separator_before {
-                menu.append(&PredefinedMenuItem::separator())
-                    .map_err(|error| error.to_string())?;
-            }
-            if entry.action == TrayAction::ToggleStartup {
-                let item = CheckMenuItem::with_id(
-                    entry.action.id(),
-                    entry.label,
-                    true,
-                    startup_enabled(),
-                    None,
-                );
-                menu.append(&item).map_err(|error| error.to_string())?;
-                startup_item = Some(item);
-            } else {
-                let item = MenuItem::with_id(entry.action.id(), entry.label, true, None);
-                menu.append(&item).map_err(|error| error.to_string())?;
-                action_items.insert(entry.action, item);
-            }
-        }
-        let version_item = MenuItem::with_id(
-            "version",
-            format!("Hermes Relay {}", env!("CARGO_PKG_VERSION")),
+        let output = run_bounded(
+            &mut command,
+            "registry.startup.update",
+            PROBE_TIMEOUT,
             false,
-            None,
-        );
-        menu.append(&version_item)
-            .map_err(|error| error.to_string())?;
-        let startup_item =
-            startup_item.ok_or_else(|| "startup menu item is missing".to_string())?;
-        let mut last_pending_count = refresh_menu(
-            &status_item,
-            &desktop_use_item,
-            &grant_item,
-            &safety_item,
-            &action_items,
-        );
-
-        let _tray = TrayIconBuilder::new()
-            .with_id("hermes-relay")
-            .with_tooltip("Hermes Relay CLI")
-            .with_icon(load_icon()?)
-            .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false)
-            .with_menu_on_right_click(true)
-            .build()
-            .map_err(|error| format!("cannot create systray: {error}"))?;
-
-        let thread_id = unsafe { GetCurrentThreadId() };
-        let (sender, receiver) = mpsc::channel::<TrayAction>();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Some(action) = TrayAction::from_id(&event.id().0) {
-                let _ = sender.send(action);
-                unsafe {
-                    let _ = PostThreadMessageW(thread_id, ACTION_MESSAGE, WPARAM(0), LPARAM(0));
-                }
-            }
-        }));
-
-        unsafe {
-            if SetTimer(None, STATUS_TIMER, STATUS_REFRESH_MS, None) == 0 {
-                return Err("cannot create systray status timer".to_string());
-            }
-            let mut message = MSG::default();
-            loop {
-                let result = GetMessageW(&mut message, None, 0, 0).0;
-                if result == -1 {
-                    let _ = KillTimer(None, STATUS_TIMER);
-                    return Err("Windows message loop failed".to_string());
-                }
-                if result == 0 {
-                    break;
-                }
-                if message.message == ACTION_MESSAGE {
-                    while let Ok(action) = receiver.try_recv() {
-                        let toggled_startup = action == TrayAction::ToggleStartup;
-                        if let Err(error) = perform(action) {
-                            show_error(error);
-                        }
-                        if toggled_startup {
-                            startup_item.set_checked(startup_enabled());
-                        }
-                    }
-                    last_pending_count = refresh_menu(
-                        &status_item,
-                        &desktop_use_item,
-                        &grant_item,
-                        &safety_item,
-                        &action_items,
-                    );
-                    continue;
-                }
-                if message.message == WM_TIMER && message.wParam.0 == STATUS_TIMER {
-                    let pending_count = refresh_menu(
-                        &status_item,
-                        &desktop_use_item,
-                        &grant_item,
-                        &safety_item,
-                        &action_items,
-                    );
-                    if pending_count > last_pending_count {
-                        show_pending_grant_notification(pending_count);
-                    }
-                    last_pending_count = pending_count;
-                    continue;
-                }
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-            let _ = KillTimer(None, STATUS_TIMER);
+        )?;
+        if output.status.success() {
+            update_boolean_probe_cache(&STARTUP_ENABLED_CACHE, enabled);
+            append_management_event(
+                "startup.change",
+                if enabled {
+                    "Start at sign-in enabled"
+                } else {
+                    "Start at sign-in disabled"
+                },
+                None,
+                None,
+            );
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string())
         }
+    }
+
+    #[tauri::command]
+    fn set_daemon_autostart(enabled: bool) -> Result<(), String> {
+        if !enabled && !daemon_autostart_enabled() {
+            return Ok(());
+        }
+        let mut command = Command::new("reg.exe");
+        if enabled {
+            command.args([
+                "add",
+                SETTINGS_KEY,
+                "/v",
+                DAEMON_AUTOSTART_VALUE,
+                "/t",
+                "REG_SZ",
+                "/d",
+                "1",
+                "/f",
+            ]);
+        } else {
+            command.args(["delete", SETTINGS_KEY, "/v", DAEMON_AUTOSTART_VALUE, "/f"]);
+        }
+        let output = run_bounded(
+            &mut command,
+            "registry.daemon_autostart.update",
+            PROBE_TIMEOUT,
+            false,
+        )?;
+        if output.status.success() {
+            update_boolean_probe_cache(&DAEMON_AUTOSTART_CACHE, enabled);
+            append_management_event(
+                "daemon.autostart",
+                if enabled {
+                    "Automatic daemon start enabled"
+                } else {
+                    "Automatic daemon start disabled"
+                },
+                None,
+                None,
+            );
+            Ok(())
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_string();
+            Err(if error.is_empty() {
+                "failed to update daemon autostart setting".to_string()
+            } else {
+                error
+            })
+        }
+    }
+
+    fn clamped(value: f64, minimum: f64, maximum: f64) -> f64 {
+        if maximum < minimum {
+            minimum
+        } else {
+            value.clamp(minimum, maximum)
+        }
+    }
+
+    fn popup_position(
+        anchor: TrayAnchor,
+        window_size: PhysicalSize<u32>,
+        monitor_position: PhysicalPosition<i32>,
+        monitor_size: PhysicalSize<u32>,
+    ) -> PhysicalPosition<i32> {
+        let left = monitor_position.x as f64;
+        let top = monitor_position.y as f64;
+        let right = left + monitor_size.width as f64;
+        let bottom = top + monitor_size.height as f64;
+        let anchor_x = anchor.x + anchor.width / 2.0;
+        let anchor_y = anchor.y + anchor.height / 2.0;
+        let window_width = window_size.width as f64;
+        let window_height = window_size.height as f64;
+
+        let distances = [
+            (anchor_x - left, 0_u8),
+            (right - anchor_x, 1_u8),
+            (anchor_y - top, 2_u8),
+            (bottom - anchor_y, 3_u8),
+        ];
+        let nearest_edge = distances
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, edge)| edge)
+            .unwrap_or(3);
+
+        let (x, y) = match nearest_edge {
+            0 => (
+                anchor.x + anchor.width + POPUP_GAP,
+                anchor_y - window_height / 2.0,
+            ),
+            1 => (
+                anchor.x - window_width - POPUP_GAP,
+                anchor_y - window_height / 2.0,
+            ),
+            2 => (
+                anchor_x - window_width / 2.0,
+                anchor.y + anchor.height + POPUP_GAP,
+            ),
+            _ => (
+                anchor_x - window_width / 2.0,
+                anchor.y - window_height - POPUP_GAP,
+            ),
+        };
+
+        PhysicalPosition::new(
+            clamped(
+                x,
+                left + MONITOR_MARGIN,
+                right - window_width - MONITOR_MARGIN,
+            )
+            .round() as i32,
+            clamped(
+                y,
+                top + MONITOR_MARGIN,
+                bottom - window_height - MONITOR_MARGIN,
+            )
+            .round() as i32,
+        )
+    }
+
+    fn responsive_logical_window_size(
+        work_area: &PhysicalRect<i32, u32>,
+        scale: f64,
+    ) -> LogicalSize<f64> {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let available_width = (work_area.size.width as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let available_height =
+            (work_area.size.height as f64 / scale - MONITOR_MARGIN * 2.0).max(1.0);
+        let width = MAIN_LOGICAL_WIDTH
+            .min(available_width)
+            .max(MAIN_MIN_LOGICAL_WIDTH.min(available_width));
+        let height = MAIN_LOGICAL_HEIGHT
+            .min(available_height)
+            .max(MAIN_MIN_LOGICAL_HEIGHT.min(available_height));
+
+        LogicalSize::new(width, height)
+    }
+
+    fn position_window(app: &AppHandle, anchor: TrayAnchor) {
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        let center_x = anchor.x + anchor.width / 2.0;
+        let center_y = anchor.y + anchor.height / 2.0;
+        let Some(monitor) = window
+            .monitor_from_point(center_x, center_y)
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten())
+        else {
+            return;
+        };
+        let work_area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        let logical_size = responsive_logical_window_size(work_area, scale);
+
+        // Commit the tray monitor before applying its logical size. This avoids
+        // inheriting the hidden creation monitor's DPI on first launch.
+        let _ = window.set_position(PhysicalPosition::new(
+            center_x.round() as i32,
+            center_y.round() as i32,
+        ));
+        let _ = window.set_size(Size::Logical(logical_size));
+        // WebView frame metrics and monitor transitions can produce outer
+        // dimensions that differ from a logical-size times DPI calculation.
+        // Center from the authoritative post-resize bounds Windows reports.
+        let Ok(physical_size) = window.outer_size() else {
+            return;
+        };
+        let position = popup_position(anchor, physical_size, work_area.position, work_area.size);
+        let _ = window.set_position(position);
+    }
+
+    fn reveal_main_window(app: &AppHandle, anchor: Option<TrayAnchor>) {
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        // Refresh on every reveal. Explorer can move notification icons after
+        // startup, and a cached rectangle would make later resizes snap back.
+        let anchor = current_tray_anchor(app).or(anchor);
+        if let Some(anchor) = anchor {
+            position_window(app, anchor);
+        }
+        let _ = window.show();
+        // Showing commits the target monitor's DPI on Windows. Re-run the same
+        // calculation immediately so the now-final physical size is centered
+        // over the icon rather than the hidden creation monitor's scale.
+        if let Some(anchor) = anchor {
+            position_window(app, anchor);
+        }
+        let _ = window.set_focus();
+        let _ = window.eval(
+            "requestAnimationFrame(() => { window.dispatchEvent(new Event('hermes-show')); document.querySelector('.app-shell')?.animate([{ opacity: 0, transform: 'translateY(8px) scale(.985)' }, { opacity: 1, transform: 'translateY(0) scale(1)' }], { duration: 180, easing: 'cubic-bezier(.2, .8, .2, 1)' }); })",
+        );
+    }
+
+    fn request_main_hide(window: &tauri::WebviewWindow) {
+        let _ = window.eval("window.dispatchEvent(new Event('hermes-hide'))");
+        let _ = window.hide();
+    }
+
+    fn grant_window_size(expanded: bool, scale: f64) -> PhysicalSize<u32> {
+        let logical_height = if expanded { 343.0 } else { 211.0 };
+        PhysicalSize::new(
+            (360.0_f64 * scale).round() as u32,
+            (logical_height * scale).round() as u32,
+        )
+    }
+
+    fn bottom_right_position(
+        work_area: &PhysicalRect<i32, u32>,
+        window_size: PhysicalSize<u32>,
+        scale: f64,
+    ) -> PhysicalPosition<i32> {
+        let margin = (12.0_f64 * scale).round() as i32;
+        PhysicalPosition::new(
+            work_area.position.x + work_area.size.width as i32 - window_size.width as i32 - margin,
+            work_area.position.y + work_area.size.height as i32
+                - window_size.height as i32
+                - margin,
+        )
+    }
+
+    fn toggle_window(app: &AppHandle, anchor: Option<TrayAnchor>) {
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+        if window.is_visible().unwrap_or(false) {
+            request_main_hide(&window);
+        } else {
+            reveal_main_window(app, anchor);
+        }
+    }
+
+    fn start_tray_action_worker(app: AppHandle) -> mpsc::Sender<TrayAction> {
+        let (sender, receiver) = mpsc::channel::<TrayAction>();
+        thread::spawn(move || {
+            while let Ok(action) = receiver.recv() {
+                match action {
+                    TrayAction::Toggle(anchor) => {
+                        let toggle_app = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            toggle_window(&toggle_app, anchor);
+                        });
+                    }
+                    TrayAction::RestartDaemon => {
+                        if run_cli_checked(&["daemon", "restart"]).is_err() {
+                            append_tray_log("tray_action_failed", Some("daemon.restart"), None);
+                        }
+                    }
+                    TrayAction::StopDaemon => {
+                        if run_cli_checked(&["daemon", "stop"]).is_err() {
+                            append_tray_log("tray_action_failed", Some("daemon.stop"), None);
+                        }
+                    }
+                }
+            }
+        });
+        sender
+    }
+
+    fn present_grant_window_inner(
+        app: &AppHandle,
+        expanded: bool,
+        tray_position: &TrayPositionState,
+    ) -> Result<(), String> {
+        let window = app
+            .get_webview_window("grant")
+            .ok_or_else(|| "grant window is unavailable".to_string())?;
+        let scale = window.scale_factor().map_err(|error| error.to_string())?;
+        let size = grant_window_size(expanded, scale);
+        window
+            .set_size(Size::Physical(size))
+            .map_err(|error| error.to_string())?;
+
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        let monitor = anchor
+            .and_then(|value| {
+                let center_x = value.x + value.width / 2.0;
+                let center_y = value.y + value.height / 2.0;
+                window.monitor_from_point(center_x, center_y).ok().flatten()
+            })
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten())
+            .ok_or_else(|| "no monitor is available for the grant window".to_string())?;
+        let work_area = monitor.work_area();
+        let position = bottom_right_position(work_area, size, scale);
+        window
+            .set_position(position)
+            .map_err(|error| error.to_string())?;
+        window.show().map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    #[tauri::command]
+    fn present_grant_window(
+        app: AppHandle,
+        expanded: bool,
+        tray_position: State<'_, TrayPositionState>,
+    ) -> Result<(), String> {
+        present_grant_window_inner(&app, expanded, &tray_position)
+    }
+
+    #[derive(Serialize)]
+    struct ConnectionNotice<'a> {
+        tone: &'a str,
+        title: &'a str,
+        detail: String,
+    }
+
+    fn daemon_status_from_file() -> Option<DaemonStatus> {
+        let path = home_dir().ok()?.join(".hermes").join("daemon-status.json");
+        serde_json::from_slice(&fs::read(path).ok()?).ok()
+    }
+
+    fn present_connection_notice(app: &AppHandle, notice: ConnectionNotice<'_>) {
+        if app
+            .get_webview_window("main")
+            .is_some_and(|window| window.is_visible().unwrap_or(false))
+        {
+            if let Some(window) = app.get_webview_window("notice") {
+                let _ = window.hide();
+            }
+            return;
+        }
+        let Some(window) = app.get_webview_window("notice") else {
+            return;
+        };
+        let Some(monitor) = window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.primary_monitor().ok().flatten())
+        else {
+            return;
+        };
+        let scale = monitor.scale_factor();
+        let size = PhysicalSize::new(
+            (360.0 * scale).round() as u32,
+            (126.0 * scale).round() as u32,
+        );
+        let _ = window.set_size(Size::Physical(size));
+        let _ = window.set_position(bottom_right_position(monitor.work_area(), size, scale));
+        let Ok(payload) = serde_json::to_string(&notice) else {
+            return;
+        };
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-connection-notice', {{ detail: {payload} }}))"));
+        let _ = window.show();
+    }
+
+    fn start_connection_watcher(app: AppHandle) {
+        thread::spawn(move || {
+            let mut previous = None::<String>;
+            loop {
+                let status = daemon_status_from_file();
+                let state = status
+                    .as_ref()
+                    .map(|value| value.state.clone())
+                    .unwrap_or_else(|| "stopped".to_string());
+                if let Some(before) = previous.as_deref() {
+                    if before != state {
+                        let notice = match state.as_str() {
+                            "connected" => Some(ConnectionNotice {
+                                tone: "connected",
+                                title: if before == "reconnecting" {
+                                    "Tunnel restored"
+                                } else {
+                                    "Tunnel connected"
+                                },
+                                detail: status
+                                    .as_ref()
+                                    .and_then(|value| value.url.clone())
+                                    .unwrap_or_else(|| "Remote access is ready".to_string()),
+                            }),
+                            "reconnecting" => Some(ConnectionNotice {
+                                tone: "warning",
+                                title: "Connection interrupted",
+                                detail: format!(
+                                    "Retrying automatically · attempt {}",
+                                    status
+                                        .as_ref()
+                                        .and_then(|value| value.reconnect_attempt)
+                                        .unwrap_or(1)
+                                ),
+                            }),
+                            "stopped"
+                                if before == "connected"
+                                    || before == "reconnecting"
+                                    || before == "starting" =>
+                            {
+                                Some(ConnectionNotice {
+                                    tone: "offline",
+                                    title: "Tunnel disconnected",
+                                    detail: status
+                                        .as_ref()
+                                        .and_then(|value| value.last_error.clone())
+                                        .unwrap_or_else(|| "Remote access is offline".to_string()),
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some(notice) = notice {
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                present_connection_notice(&handle, notice)
+                            });
+                        }
+                    }
+                }
+                previous = Some(state);
+                thread::sleep(Duration::from_millis(500));
+            }
+        });
+    }
+
+    #[tauri::command]
+    fn open_management_from_notice(app: AppHandle, tray_position: State<'_, TrayPositionState>) {
+        if let Some(window) = app.get_webview_window("notice") {
+            let _ = window.hide();
+        }
+        let anchor = tray_position.0.lock().ok().and_then(|value| *value);
+        reveal_main_window(&app, anchor);
+    }
+
+    #[tauri::command]
+    fn present_activity_screenshot(app: AppHandle, evidence_id: String) -> Result<(), String> {
+        let _ = get_activity_screenshot(evidence_id.clone())?;
+        let window = app
+            .get_webview_window("evidence")
+            .ok_or_else(|| "screenshot viewer is unavailable".to_string())?;
+        let payload = serde_json::to_string(&serde_json::json!({ "evidenceId": evidence_id }))
+            .map_err(|error| error.to_string())?;
+        window.eval(format!("window.dispatchEvent(new CustomEvent('hermes-screenshot-evidence', {{ detail: {payload} }}))")).map_err(|error| error.to_string())?;
+        let monitor = app
+            .get_webview_window("main")
+            .and_then(|main| main.current_monitor().ok().flatten())
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten());
+        if let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) {
+            let work = monitor.work_area();
+            let x =
+                work.position.x + ((work.size.width as i64 - size.width as i64).max(0) / 2) as i32;
+            let y = work.position.y
+                + ((work.size.height as i64 - size.height as i64).max(0) / 2) as i32;
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+        }
+        window.show().map_err(|error| error.to_string())?;
+        let _ = window.set_focus();
+        Ok(())
+    }
+
+    fn start_grant_watcher(app: AppHandle, tray_position: TrayPositionState) {
+        thread::spawn(move || {
+            let mut active_id = None::<String>;
+            loop {
+                let next_id = first_pending_grant_id();
+                if next_id != active_id {
+                    active_id = next_id.clone();
+                    if next_id.is_some() {
+                        let handle = app.clone();
+                        let position = tray_position.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            let _ = present_grant_window_inner(&handle, false, &position);
+                        });
+                    }
+                }
+                thread::sleep(Duration::from_millis(500));
+            }
+        });
+    }
+
+    fn start_activation_watcher(app: AppHandle) {
+        thread::spawn(move || loop {
+            if let Ok(path) = activation_request_path() {
+                if path.exists() && fs::remove_file(&path).is_ok() {
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        let anchor = current_tray_anchor(&handle);
+                        reveal_main_window(&handle, anchor);
+                    });
+                }
+            }
+            thread::sleep(Duration::from_millis(100));
+        });
+    }
+
+    pub fn run() {
+        std::panic::set_hook(Box::new(|_| {
+            append_tray_log("tray_panic", None, None);
+        }));
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+        }
+        // Establish one physical coordinate space before Tauri creates any
+        // windows. Without this, Windows virtualizes tray/cursor coordinates on
+        // scaled monitors and the popup can anchor to the wrong screen edge.
+        let _ =
+            unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        let show_on_launch = env::args_os().any(|arg| arg == "--show");
+        let Some(_instance_mutex) = acquire_instance_mutex()
+            .expect("failed to enforce a single Hermes-Relay CLI UI instance")
+        else {
+            if show_on_launch {
+                let _ = reveal_existing_instance();
+            }
+            return;
+        };
+        let app = tauri::Builder::default()
+            .invoke_handler(tauri::generate_handler![
+                get_snapshot,
+                get_pending_grant_context,
+                check_desktop_update,
+                install_desktop_update,
+                select_host,
+                rename_host,
+                set_host_access,
+                set_host_capability,
+                list_authorized_clients,
+                revoke_authorized_client,
+                resolve_grant,
+                pair_host,
+                test_host_route,
+                open_management_from_grant,
+                open_management_from_notice,
+                forget_host,
+                connect_daemon,
+                disconnect_daemon,
+                restart_daemon,
+                restart_daemon_as_administrator,
+                restart_daemon_as_user,
+                open_terminal,
+                open_cli_terminal,
+                open_logs,
+                open_tray_logs,
+                run_diagnostics,
+                open_external_url,
+                set_startup,
+                set_daemon_autostart,
+                set_computer_control_engine,
+                set_cua_cursor_enabled,
+                computer_cua_status,
+                computer_cua_health,
+                computer_cua_install,
+                computer_cua_check_update,
+                computer_cua_update,
+                clear_activity,
+                get_activity_screenshot,
+                set_activity_screenshot_retention,
+                present_activity_screenshot,
+                present_grant_window
+            ])
+            .setup(|app| {
+                let anchor = TrayPositionState::default();
+                app.manage(anchor.clone());
+                let tray_anchor = anchor.clone();
+                let menu_anchor = anchor.clone();
+                start_grant_watcher(app.handle().clone(), anchor);
+                start_connection_watcher(app.handle().clone());
+                start_activation_watcher(app.handle().clone());
+                let tray_actions = start_tray_action_worker(app.handle().clone());
+                let click_actions = tray_actions.clone();
+                let menu_actions = tray_actions;
+                let open =
+                    MenuItemBuilder::with_id("open", "Open Hermes-Relay CLI UI").build(app)?;
+                let restart = MenuItemBuilder::with_id("restart", "Restart daemon").build(app)?;
+                let stop = MenuItemBuilder::with_id("stop", "Emergency stop daemon").build(app)?;
+                let quit = MenuItemBuilder::with_id("quit", "Quit tray").build(app)?;
+                let menu = MenuBuilder::new(app)
+                    .items(&[&open, &restart, &stop])
+                    .separator()
+                    .item(&quit)
+                    .build()?;
+                TrayIconBuilder::with_id("hermes-relay")
+                    .tooltip("Hermes-Relay CLI UI")
+                    .icon(Image::from_bytes(include_bytes!("../icons/icon-256.png"))?)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_tray_icon_event(move |_tray, event| {
+                        if let TrayIconEvent::Click {
+                            rect,
+                            button,
+                            button_state,
+                            ..
+                        } = event
+                        {
+                            let current = tray_event_anchor(rect.position, rect.size);
+                            if let Ok(mut stored) = tray_anchor.0.lock() {
+                                *stored = Some(current);
+                            }
+                            if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                                let _ = click_actions.send(TrayAction::Toggle(Some(current)));
+                            }
+                        }
+                    })
+                    .on_menu_event(move |app, event| match event.id().as_ref() {
+                        "open" => {
+                            let current = menu_anchor.0.lock().ok().and_then(|value| *value);
+                            let _ = menu_actions.send(TrayAction::Toggle(current));
+                        }
+                        "restart" => {
+                            let _ = menu_actions.send(TrayAction::RestartDaemon);
+                        }
+                        "stop" => {
+                            let _ = menu_actions.send(TrayAction::StopDaemon);
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .build(app)?;
+                Ok(())
+            })
+            .build(tauri::generate_context!())
+            .expect("failed to build Hermes-Relay CLI UI");
+
+        app.run(move |handle, event| match event {
+            RunEvent::Ready => {
+                if daemon_autostart_enabled() {
+                    thread::spawn(|| {
+                        if !daemon_is_running() {
+                            let _ = run_cli_checked(&["daemon", "start"]);
+                        }
+                    });
+                }
+                if show_on_launch {
+                    let anchor = current_tray_anchor(handle);
+                    if let (Some(anchor), Some(state)) =
+                        (anchor, handle.try_state::<TrayPositionState>())
+                    {
+                        if let Ok(mut stored) = state.0.lock() {
+                            *stored = Some(anchor);
+                        }
+                    }
+                    reveal_main_window(handle, anchor);
+                }
+            }
+            RunEvent::ExitRequested {
+                api, code: None, ..
+            } => api.prevent_exit(),
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                api.prevent_close();
+                if let Some(window) = handle.get_webview_window("main") {
+                    request_main_hide(&window);
+                }
+            }
+            _ => {}
+        });
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn installed_cli_resolution_prefers_explicit_then_sibling_then_home() {
+            let candidates = cli_candidates(
+                Some(Path::new(r"C:\custom\hermes-relay.exe")),
+                Path::new(r"C:\Program Files\Hermes\hermes-relay-tray.exe"),
+                Path::new(r"C:\Users\example"),
+            );
+
+            assert_eq!(candidates[0], Path::new(r"C:\custom\hermes-relay.exe"));
+            assert_eq!(
+                candidates[1],
+                Path::new(r"C:\Program Files\Hermes\hermes-relay.exe")
+            );
+            assert_eq!(
+                candidates[2],
+                Path::new(r"C:\Users\example\.hermes\bin\hermes-relay.exe")
+            );
+        }
+
+        #[test]
+        fn cli_version_is_clean_for_the_about_page() {
+            assert_eq!(
+                clean_cli_version("hermes-relay 0.4.0-alpha.7\r\n"),
+                "0.4.0-alpha.7"
+            );
+        }
+
+        #[test]
+        fn failed_daemon_status_probe_keeps_management_snapshot_stopped() {
+            for result in [
+                Err("daemon is not running".to_string()),
+                Ok(serde_json::json!({"running": "invalid"})),
+            ] {
+                let status = daemon_status_from_probe(result);
+                assert_eq!(status.state, "stopped");
+                assert!(!status.running);
+                assert!(status.url.is_none());
+            }
+        }
+
+        #[test]
+        fn live_daemon_status_probe_preserves_running_state() {
+            let status = daemon_status_from_probe(Ok(serde_json::json!({
+                "state": "connected",
+                "running": true,
+                "url": "wss://relay.example.test"
+            })));
+
+            assert_eq!(status.state, "connected");
+            assert!(status.running);
+            assert_eq!(status.url.as_deref(), Some("wss://relay.example.test"));
+        }
+
+        #[test]
+        fn external_links_require_an_exact_official_destination() {
+            assert!(is_official_url("https://hermes-relay.dev/docs/desktop/"));
+            assert!(is_official_url(
+                "https://github.com/Codename-11/hermes-relay/releases"
+            ));
+            assert!(!is_official_url("https://hermes-relay.dev.evil.test/docs/"));
+            assert!(!is_official_url(
+                "https://github.com/Codename-11/hermes-relay/issues/new"
+            ));
+        }
+
+        #[test]
+        fn popup_centers_above_a_bottom_taskbar_icon() {
+            let position = popup_position(
+                TrayAnchor {
+                    x: 1810.0,
+                    y: 1040.0,
+                    width: 24.0,
+                    height: 24.0,
+                },
+                PhysicalSize::new(530, 744),
+                PhysicalPosition::new(0, 0),
+                PhysicalSize::new(1920, 1080),
+            );
+
+            assert_eq!(position.y, 286);
+            assert_eq!(
+                position.x, 1382,
+                "horizontal placement is clamped on-screen"
+            );
+        }
+
+        #[test]
+        fn startup_uses_the_physical_tray_rectangle_as_its_anchor() {
+            let anchor = tray_rect_anchor(
+                Position::Physical(PhysicalPosition::new(3066, 1380)),
+                Size::Physical(PhysicalSize::new(40, 60)),
+            );
+
+            assert_eq!(anchor.x, 3066.0);
+            assert_eq!(anchor.y, 1380.0);
+            assert_eq!(anchor.width, 40.0);
+            assert_eq!(anchor.height, 60.0);
+        }
+
+        #[test]
+        fn accessibility_bounds_map_to_the_exact_notification_icon() {
+            let anchor = tray_anchor_from_bounds(3066, 1380, 3106, 1440).unwrap();
+
+            assert_eq!(anchor.x, 3066.0);
+            assert_eq!(anchor.y, 1380.0);
+            assert_eq!(anchor.width, 40.0);
+            assert_eq!(anchor.height, 60.0);
+            assert!(tray_anchor_from_bounds(10, 10, 10, 20).is_none());
+        }
+
+        #[test]
+        fn window_size_uses_monitor_dpi_not_taskbar_icon_geometry() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(3440, 1390),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.25);
+            assert_eq!(logical, LogicalSize::new(380.0, 620.0));
+        }
+
+        #[test]
+        fn window_height_compacts_to_a_small_scaled_work_area() {
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1366, 728),
+            };
+            let logical = responsive_logical_window_size(&work_area, 1.5);
+            assert_eq!(logical.width, 380.0);
+            assert!(logical.height < 480.0);
+        }
+
+        #[test]
+        fn popup_uses_the_icon_monitor_with_negative_coordinates() {
+            let position = popup_position(
+                TrayAnchor {
+                    x: -900.0,
+                    y: 1035.0,
+                    width: 24.0,
+                    height: 24.0,
+                },
+                PhysicalSize::new(530, 744),
+                PhysicalPosition::new(-1920, 0),
+                PhysicalSize::new(1920, 1080),
+            );
+
+            assert_eq!(position, PhysicalPosition::new(-1153, 281));
+        }
+
+        #[test]
+        fn grant_card_sizes_and_anchors_inside_the_monitor_work_area() {
+            let collapsed = grant_window_size(false, 1.25);
+            let expanded = grant_window_size(true, 1.25);
+            let work_area = PhysicalRect {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1920, 1040),
+            };
+
+            assert_eq!(collapsed, PhysicalSize::new(450, 264));
+            assert_eq!(expanded, PhysicalSize::new(450, 429));
+            assert_eq!(
+                bottom_right_position(&work_area, collapsed, 1.25),
+                PhysicalPosition::new(1455, 761)
+            );
+        }
     }
 }
 
 #[cfg(windows)]
 fn main() {
-    if let Err(error) = windows_tray::run() {
-        windows_tray::log_startup_error(&error);
-        windows_tray::show_error(error);
-    }
+    app::run();
 }

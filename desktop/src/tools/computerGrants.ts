@@ -1,3 +1,17 @@
+import { randomUUID } from 'node:crypto'
+
+import {
+  DEFAULT_CAPABILITY_POLICIES,
+  presetCapabilityPolicies,
+  type CapabilityPolicies,
+  type HostAccessMode
+} from '../lib/hostAccessPolicy.js'
+import {
+  LEGACY_CONTROL_SESSION_ID,
+  type ComputerControlAuthority,
+  type ComputerTarget
+} from './computerControlSecurity.js'
+
 export type ComputerGrantMode = 'observe' | 'assist' | 'control'
 
 export interface ComputerGrantScope {
@@ -19,14 +33,38 @@ export interface ComputerUseRuntime {
   url: string | null
   computerUseConsented: boolean
   consentSource: 'stored' | 'prompted' | 'override' | 'none'
+  accessMode: HostAccessMode
+  capabilities: CapabilityPolicies
 }
 
-let activeGrant: ComputerGrant | null = null
-let grantChangeListener: ((grant: ComputerGrant | null) => void) | null = null
-let runtime: ComputerUseRuntime = {
+interface ControlSessionState {
+  activeGrant: ComputerGrant | null
+  runtime: ComputerUseRuntime
+}
+
+const defaultRuntime = (): ComputerUseRuntime => ({
   url: null,
   computerUseConsented: false,
-  consentSource: 'none'
+  consentSource: 'none',
+  accessMode: 'ask',
+  capabilities: { ...DEFAULT_CAPABILITY_POLICIES }
+})
+
+const controlSessions = new Map<string, ControlSessionState>()
+let grantChangeListener: ((grant: ComputerGrant | null, controlSessionId?: string) => void) | null = null
+
+function authorityKey(authority?: ComputerControlAuthority): string {
+  return authority?.controlSessionId || LEGACY_CONTROL_SESSION_ID
+}
+
+function sessionState(authority?: ComputerControlAuthority): ControlSessionState {
+  const key = authorityKey(authority)
+  let state = controlSessions.get(key)
+  if (!state) {
+    state = { activeGrant: null, runtime: defaultRuntime() }
+    controlSessions.set(key, state)
+  }
+  return state
 }
 
 function nowMs(): number {
@@ -34,7 +72,7 @@ function nowMs(): number {
 }
 
 function newGrantId(): string {
-  return `computer-grant-${nowMs().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `computer-grant-${randomUUID()}`
 }
 
 function parseScope(value: unknown): ComputerGrantScope {
@@ -71,18 +109,19 @@ export function normalizeComputerGrantDurationSeconds(value: unknown): number {
     : 900
 }
 
-function expireIfNeeded(): void {
-  if (!activeGrant) {
+function expireIfNeeded(authority?: ComputerControlAuthority): void {
+  const state = sessionState(authority)
+  if (!state.activeGrant) {
     return
   }
-  if (Date.parse(activeGrant.expires_at) <= nowMs()) {
-    activeGrant = null
-    grantChangeListener?.(null)
+  if (Date.parse(state.activeGrant.expires_at) <= nowMs()) {
+    state.activeGrant = null
+    grantChangeListener?.(null, authorityKey(authority))
   }
 }
 
 export function setComputerGrantChangeListener(
-  listener: ((grant: ComputerGrant | null) => void) | null
+  listener: ((grant: ComputerGrant | null, controlSessionId?: string) => void) | null
 ): () => void {
   const previous = grantChangeListener
   grantChangeListener = listener
@@ -91,13 +130,25 @@ export function setComputerGrantChangeListener(
   }
 }
 
-export function getActiveComputerGrant(): ComputerGrant | null {
-  expireIfNeeded()
-  return activeGrant
+export function getActiveComputerGrant(authority?: ComputerControlAuthority): ComputerGrant | null {
+  expireIfNeeded(authority)
+  return sessionState(authority).activeGrant
 }
 
-export function getComputerGrantSummary(): Record<string, unknown> {
-  const grant = getActiveComputerGrant()
+export function getComputerGrantSummary(authority?: ComputerControlAuthority): Record<string, unknown> {
+  const state = sessionState(authority)
+  if (state.runtime.capabilities.screen_input === 'allow') {
+    return {
+      active: true,
+      mode: state.runtime.accessMode === 'full_access' ? 'full_access' : 'capability_allow',
+      expires_at: null,
+      scope: null,
+      reason: state.runtime.accessMode === 'full_access'
+        ? 'This host has Full Access.'
+        : 'Screen and input are allowed by this host policy.'
+    }
+  }
+  const grant = getActiveComputerGrant(authority)
   if (!grant) {
     return {
       active: false,
@@ -116,18 +167,25 @@ export function getComputerGrantSummary(): Record<string, unknown> {
   }
 }
 
-export function configureComputerUseRuntime(next: Partial<ComputerUseRuntime>): void {
-  runtime = {
-    ...runtime,
-    ...next
+export function configureComputerUseRuntime(next: Partial<ComputerUseRuntime>, authority?: ComputerControlAuthority): void {
+  const state = sessionState(authority)
+  const capabilities = next.capabilities ?? (next.accessMode ? presetCapabilityPolicies(next.accessMode) : state.runtime.capabilities)
+  state.runtime = {
+    ...state.runtime,
+    ...next,
+    capabilities
   }
 }
 
-export function getComputerUseRuntimeSummary(): Record<string, unknown> {
+export function getComputerUseRuntimeSummary(authority?: ComputerControlAuthority): Record<string, unknown> {
+  const runtime = sessionState(authority).runtime
   return {
     url: runtime.url,
     consented: runtime.computerUseConsented,
-    consent_source: runtime.consentSource
+    consent_source: runtime.consentSource,
+    access_mode: runtime.accessMode,
+    full_access: runtime.accessMode === 'full_access',
+    capabilities: { ...runtime.capabilities }
   }
 }
 
@@ -138,7 +196,17 @@ export interface RequestComputerGrantInput {
   reason?: unknown
 }
 
-export function requestComputerGrant(input: RequestComputerGrantInput): Record<string, unknown> {
+export function requestComputerGrant(input: RequestComputerGrantInput, authority?: ComputerControlAuthority): Record<string, unknown> {
+  const state = sessionState(authority)
+  const runtime = state.runtime
+  if (runtime.capabilities.screen_input === 'allow') {
+    return {
+      ok: true,
+      full_access: runtime.accessMode === 'full_access',
+      grant: getComputerGrantSummary(authority),
+      message: 'This host already has Full Access; no task grant is required.'
+    }
+  }
   const mode = input.mode
   const reason = normalizeComputerGrantReason(input.reason)
   const durationSeconds = normalizeComputerGrantDurationSeconds(input.duration_seconds)
@@ -149,7 +217,7 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
       code: 'computer_use_consent_required',
       message:
         'Assist/control grants require local desktop-tool consent for this relay URL before task-scoped input grants can be created.',
-      grant: getComputerGrantSummary()
+      grant: getComputerGrantSummary(authority)
     }
   }
 
@@ -162,12 +230,12 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
     created_at: createdAt.toISOString(),
     expires_at: new Date(createdAt.getTime() + durationSeconds * 1000).toISOString()
   }
-  activeGrant = grant
-  grantChangeListener?.(grant)
+  state.activeGrant = grant
+  grantChangeListener?.(grant, authorityKey(authority))
 
   return {
     ok: true,
-    grant: getComputerGrantSummary(),
+    grant: getComputerGrantSummary(authority),
     message:
       mode === 'observe'
         ? 'Observe grant active. Screenshot/status tools may run.'
@@ -175,24 +243,84 @@ export function requestComputerGrant(input: RequestComputerGrantInput): Record<s
   }
 }
 
-export function cancelComputerGrant(reason = 'cancelled'): Record<string, unknown> {
-  const previous = getActiveComputerGrant()
-  activeGrant = null
-  if (previous) grantChangeListener?.(null)
+export function cancelComputerGrant(reason = 'cancelled', authority?: ComputerControlAuthority): Record<string, unknown> {
+  const state = sessionState(authority)
+  const previous = getActiveComputerGrant(authority)
+  state.activeGrant = null
+  if (previous) grantChangeListener?.(null, authorityKey(authority))
   return {
     ok: true,
     cancelled: previous !== null,
     previous_grant: previous,
     reason,
-    grant: getComputerGrantSummary()
+    grant: getComputerGrantSummary(authority)
   }
 }
 
-export function hasComputerInputGrant(): boolean {
-  const grant = getActiveComputerGrant()
+export function hasComputerInputGrant(authority?: ComputerControlAuthority): boolean {
+  const runtime = sessionState(authority).runtime
+  if (runtime.capabilities.screen_input === 'allow') return true
+  const grant = getActiveComputerGrant(authority)
   return grant?.mode === 'assist' || grant?.mode === 'control'
 }
 
-export function hasComputerObserveGrant(): boolean {
-  return getActiveComputerGrant() !== null
+export function hasComputerObserveGrant(authority?: ComputerControlAuthority): boolean {
+  const runtime = sessionState(authority).runtime
+  return runtime.capabilities.screen_input === 'allow' || getActiveComputerGrant(authority) !== null
+}
+
+/** Seed a new router lifecycle from the legacy process-level configuration. */
+export function initializeComputerControlSession(authority: ComputerControlAuthority): void {
+  if (controlSessions.has(authorityKey(authority))) return
+  const legacy = sessionState().runtime
+  controlSessions.set(authorityKey(authority), {
+    activeGrant: null,
+    runtime: { ...legacy, capabilities: { ...legacy.capabilities } }
+  })
+}
+
+export function hasFullHostAccess(authority?: ComputerControlAuthority): boolean {
+  return sessionState(authority).runtime.accessMode === 'full_access'
+}
+
+export function revokeComputerControlSession(authority: ComputerControlAuthority, reason = 'control session ended'): void {
+  cancelComputerGrant(reason, authority)
+  controlSessions.delete(authorityKey(authority))
+}
+
+export function cancelAllComputerGrants(_reason = 'cancelled locally'): number {
+  let cancelled = 0
+  for (const [controlSessionId, state] of controlSessions) {
+    if (!state.activeGrant) continue
+    state.activeGrant = null
+    cancelled += 1
+    grantChangeListener?.(null, controlSessionId)
+  }
+  return cancelled
+}
+
+export function expireComputerControlSessions(): void {
+  for (const controlSessionId of controlSessions.keys()) {
+    expireIfNeeded({ controlSessionId })
+  }
+}
+
+/** Enforce the scope shown in the approval prompt before a broker acts. */
+export function computerGrantAllowsTarget(authority: ComputerControlAuthority, target: ComputerTarget): boolean {
+  const runtime = sessionState(authority).runtime
+  if (runtime.capabilities.screen_input === 'allow') return true
+  const grant = getActiveComputerGrant(authority)
+  if (!grant) return false
+  if (grant.scope.display && grant.scope.display !== target.display) return false
+  if (grant.scope.app) {
+    const actual = [target.app, target.executable].filter(Boolean).join(' ').toLowerCase()
+    if (!actual || !actual.includes(grant.scope.app.toLowerCase())) return false
+  }
+  if (grant.scope.folder) {
+    if (!target.folder) return false
+    const expected = grant.scope.folder.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
+    const actual = target.folder.replaceAll('\\', '/').toLowerCase()
+    if (actual !== expected && !actual.startsWith(`${expected}/`)) return false
+  }
+  return true
 }

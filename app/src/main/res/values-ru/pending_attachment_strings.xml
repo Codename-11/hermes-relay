@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pending_attachment_preview_named">Предпросмотр: %1$s</string>
+    <string name="pending_attachment_remove">Удалить %1$s</string>
+    <string name="pending_attachment_move_left">Переместить %1$s влево</string>
+    <string name="pending_attachment_move_right">Переместить %1$s вправо</string>
+    <string name="pending_attachment_status_loading">Подготовка предпросмотра</string>
+    <string name="pending_attachment_status_ready">Готово</string>
+    <string name="pending_attachment_status_failed">Предпросмотр недоступен</string>
+</resources>

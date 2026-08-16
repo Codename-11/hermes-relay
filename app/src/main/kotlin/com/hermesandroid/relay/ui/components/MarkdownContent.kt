@@ -41,8 +41,6 @@ import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
@@ -69,6 +67,11 @@ fun MarkdownContent(
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = LocalBrand.current.isDark
+    val chatBodyStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+        color = textColor,
+    )
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = isDarkTheme))
     }
@@ -89,7 +92,8 @@ fun MarkdownContent(
         // ~45sp, h3=displaySmall 36sp) — a single `#` becomes a billboard inside the
         // ~272dp bubble. Here every level derives from bodyLarge/bodyMedium (so the
         // live font-picker still applies) and is capped so the largest heading is
-        // ~1.4x the 14sp body, matching Discord / GitHub-mobile in-message headings.
+        // proportionate to the 15sp body, matching Discord / GitHub-mobile
+        // in-message headings.
         typography = markdownTypography(
             h1 = MaterialTheme.typography.bodyLarge.copy(
                 fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = textColor,
@@ -110,16 +114,17 @@ fun MarkdownContent(
                 fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
                 color = textColor.copy(alpha = 0.85f),
             ),
-            // Prose, list items, and quotes all sit at the 14sp body size so a
-            // paragraph and the bullet list under it share one rhythm — the library
-            // default 'text'/list role is bodyLarge (16sp), 2sp larger than paragraph.
-            paragraph = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-            text = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-            bullet = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-            ordered = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-            list = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-            quote = MaterialTheme.typography.bodyMedium.copy(
-                fontStyle = FontStyle.Italic, color = textColor.copy(alpha = 0.78f),
+            // Prose, list items, and quotes share a 15sp/21sp reading rhythm.
+            // The library default 'text'/list role is bodyLarge (16sp), while
+            // bodyMedium was previously 14sp and unnecessarily small for long chat.
+            paragraph = chatBodyStyle,
+            text = chatBodyStyle,
+            bullet = chatBodyStyle,
+            ordered = chatBodyStyle,
+            list = chatBodyStyle,
+            quote = chatBodyStyle.copy(
+                fontStyle = FontStyle.Italic,
+                color = textColor.copy(alpha = 0.9f),
             ),
             // Inline + fenced code at 13sp (one step under body, not two): monospace
             // + the tinted chip already signal "code" without also shrinking it, and
@@ -127,7 +132,7 @@ fun MarkdownContent(
             code = MaterialTheme.typography.bodySmall.copy(
                 fontSize = 13.sp, letterSpacing = 0.sp,
                 fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = textColor,
             ),
             inlineCode = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = 13.sp, letterSpacing = 0.sp,
@@ -152,7 +157,7 @@ fun MarkdownContent(
         ),
         components = markdownComponents(
             codeBlock = {
-                MarkdownHighlightedCodeBlock(
+                SafeMarkdownHighlightedCodeBlock(
                     content = it.content,
                     node = it.node,
                     highlightsBuilder = highlightsBuilder,
@@ -160,7 +165,7 @@ fun MarkdownContent(
                 )
             },
             codeFence = {
-                MarkdownHighlightedCodeFence(
+                SafeMarkdownHighlightedCodeFence(
                     content = it.content,
                     node = it.node,
                     highlightsBuilder = highlightsBuilder,
@@ -304,7 +309,10 @@ fun StreamingMarkdownContent(
             // code and deliberately spaced prose are not altered.
             text = content.withoutLeadingBlankLines(),
             modifier = modifier,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 15.sp,
+                lineHeight = 21.sp,
+            ),
             color = textColor,
         )
     } else {

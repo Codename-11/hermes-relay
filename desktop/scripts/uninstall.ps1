@@ -57,6 +57,16 @@ Say ''
 
 # -- Tier 1: binary + PATH --------------------------------------------------
 
+# Bundle installs own Start-menu, registry, PATH-helper, and uninstall entries.
+# Delegate to their registered per-user uninstaller before applying the same
+# conservative data-preservation policy below.
+$bundleUninstaller = Join-Path $dir 'uninstall-hermes-relay.exe'
+if (Test-Path -LiteralPath $bundleUninstaller) {
+  Say '-> removing the installed CLI + UI bundle...'
+  $bundle = Start-Process -FilePath $bundleUninstaller -ArgumentList '/S' -Wait -PassThru
+  if ($bundle.ExitCode -ne 0) { Die "bundle uninstaller exited with code $($bundle.ExitCode)" }
+}
+
 $trayTarget = Join-Path $dir 'hermes-relay-tray.exe'
 if (Test-Path -LiteralPath $trayTarget) {
   Get-Process -Name 'hermes-relay-tray' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

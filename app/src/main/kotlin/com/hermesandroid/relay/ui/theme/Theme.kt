@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.Density
  *   for [ThemeMode.BOTH] themes; fixed-mode themes ignore it.
  * @param appFontId id from [AppFont]; selects the body typeface for the whole
  *   app. Defaults to Inter. Code/metadata styles stay monospaced regardless.
+ * @param accentHex optional locally persisted RGB override for brand accents.
  */
 @Composable
 fun HermesRelayTheme(
@@ -31,12 +32,15 @@ fun HermesRelayTheme(
     themePreference: String = "auto",
     fontScale: Float = 1.0f,
     appFontId: String = AppFont.DEFAULT.id,
+    accentHex: String? = null,
+    shapeId: String = AppearanceShape.DEFAULT.id,
     content: @Composable () -> Unit
 ) {
     val appTheme = AppThemes.byId(appThemeId)
     val useDarkTheme = appTheme.resolveDark(themePreference, isSystemInDarkTheme())
-    val palette = appTheme.paletteFor(useDarkTheme)
+    val palette = appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
     val colorScheme = palette.toColorScheme()
+    val shapes = remember(shapeId) { appearanceShapes(shapeId) }
 
     // Build the Material typography from the selected font. Remembered per id so
     // a recomposition (e.g. theme/mode change) doesn't rebuild the FontFamily
@@ -60,6 +64,7 @@ fun HermesRelayTheme(
             MaterialTheme(
                 colorScheme = colorScheme,
                 typography = typography,
+                shapes = shapes,
                 content = content
             )
         } else {
@@ -72,6 +77,7 @@ fun HermesRelayTheme(
                 MaterialTheme(
                     colorScheme = colorScheme,
                     typography = typography,
+                    shapes = shapes,
                     content = content
                 )
             }

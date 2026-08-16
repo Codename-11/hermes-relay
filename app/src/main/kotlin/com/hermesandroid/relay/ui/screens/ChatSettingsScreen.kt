@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.components.ChatTransportStatus
@@ -443,7 +444,49 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
-                    // Turn-complete notification toggle. First enable on
+                    val physicalKeyboardEnterBehavior by
+                        connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = stringResource(R.string.chat_settings_physical_keyboard_enter),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = stringResource(R.string.chat_settings_physical_keyboard_enter_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val enterBehaviors = PhysicalKeyboardEnterBehavior.entries
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            enterBehaviors.forEachIndexed { index, behavior ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(
+                                        index = index,
+                                        count = enterBehaviors.size,
+                                    ),
+                                    onClick = {
+                                        connectionViewModel.setPhysicalKeyboardEnterBehavior(behavior)
+                                    },
+                                    selected = behavior == physicalKeyboardEnterBehavior,
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            if (behavior == PhysicalKeyboardEnterBehavior.SendMessage) {
+                                                R.string.chat_input_send_message
+                                            } else {
+                                                R.string.chat_settings_insert_newline
+                                            },
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Background chat-alert toggle. First enable on
                     // API 33+ runs the POST_NOTIFICATIONS request (the
                     // BridgeScreen master-toggle precedent); if the user
                     // denies, the notifier silently no-ops at post time.

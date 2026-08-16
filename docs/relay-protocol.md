@@ -38,7 +38,12 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
   "payload": {
     "pairing_code": "ABC123",
     "device_name": "Samsung Galaxy S25",
+    "device_hostname": "Bailey's phone",
     "device_id": "android-device-uuid",
+    "device_model": "SM-S938U1",
+    "device_platform": "Android 16",
+    "client_surface": "android",
+    "device_form_factor": "phone",
     "ttl_seconds": 2592000,
     "grants": {"chat": 2592000, "terminal": 604800, "bridge": 604800, "voice:stt": 2592000},
     "session_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
@@ -53,7 +58,13 @@ Source: `plugin/relay/server.py:2649-2889` (`handle_ws`, `_authenticate`).
 **Fields:**
 - `pairing_code` — 6 chars A-Z/0-9, one-time, 10 min TTL, case-insensitive, consumed on use.
 - `session_token` — UUID, used for reconnection after initial pairing. Exactly one of `pairing_code` or `session_token` must be present.
-- `device_name` — display name on "Paired Devices" screen. Max 255 chars.
+- `device_name` — primary display name on paired-session surfaces. New clients
+  default it to the device hostname or configured system device name.
+- `device_hostname` — optional fallback display name when `device_name` is absent.
+- `device_model` / `device_platform` — optional informational details shown
+  beneath the primary name. They do not participate in authentication or grants.
+- `client_surface` / `device_form_factor` — optional client-family and form-factor
+  classifiers such as `desktop`/`desktop`, `android`/`phone`, or `quest`/`xr`.
 - `device_id` — unique persistent identifier.
 - `ttl_seconds` — requested session lifetime; `0` means never expire. Ignored if pairing code carried pre-set metadata from host.
 - `grants` — per-channel seconds-from-now. Keys include `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`.
@@ -376,13 +387,57 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 
 | Type | Direction | Payload |
 |------|-----------|---------|
-| `desktop.command` | Server → Client | `{request_id, tool, args}` |
+| `desktop.command` | Server → Client | `{request_id, tool, args, control_session?}` |
+| `desktop.control_session_end` | Server → Client | `{version: 1, id, target_device_id, reason?}` |
 | `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
-| `desktop.status` | Client → Server | `{advertised_tools, host, platform, version, computer_use?}` |
+| `desktop.status` | Client → Server | `{advertised_tools, device_id, host, platform, version, computer_use?}` |
 | `desktop.workspace` | Client → Server | Workspace context snapshot |
 | `desktop.active_editor` | Client → Server | Active editor hint |
 
 Experimental computer-use tools use the same channel but are advertised by the desktop client only when the experimental computer-use feature flag is enabled (`--experimental-computer-use` or `HERMES_RELAY_EXPERIMENTAL_COMPUTER_USE=1`) after normal desktop-tool consent. The relay still treats `desktop_computer_*` names as strict-advertise tools so older or unflagged clients fail closed. Screenshots require an in-memory observe/assist/control grant. Host input currently uses a Windows-only CLI approval path: desktop-tool consent plus one visible local `yes` prompt for a task-scoped assist/control grant. Actions then run without per-action prompts until that grant expires or is canceled. Headless/non-interactive clients advertise blocked grant state and reject assist/control grant requests with structured failures.
+
+Every desktop heartbeat includes its stable installation `device_id` and
+display name. Tool HTTP bodies accept a relay-only `device` selector. With one
+connected desktop the selector is optional; with several it is required and may
+be an exact device ID or an unambiguous host/device name. The Relay binds each
+pending request to the selected WebSocket, ignores responses from other PCs,
+and includes resolved target metadata in the response. `/desktop/health` lists
+the connected targets.
+
+For `desktop_computer_*`, current relays can attach a server-owned
+`control_session` object with `version`, opaque `id`, `request_id`,
+`requester_device_id`, `target_device_id`, and `run_id`, plus optional
+`chat_session_id` and `profile`. The desktop client validates the version and
+all required fields, requires the embedded request and target to match the
+outer command and local installation, and never reads identity from tool
+arguments. A malformed supplied binding is rejected. Omission remains
+backward-compatible for legacy computer handlers, but identity-sensitive CUA
+operations fail closed until the relay supplies an authenticated binding.
+
+The plugin's standard tool route is loopback-only. Executor context is passed
+in internal headers and is trusted only inside the existing same-user host
+boundary; any local process running as that user can reach the same boundary.
+When a paired bearer is present, the relay derives `requester_device_id` from
+the authenticated plugin session instead. The model-facing tool wrapper drops
+reserved identity arguments, and the relay—not the caller—mints the opaque
+control-session ID and binds each selected target and request.
+
+The relay ends a control authority when the same authenticated requester/chat/
+profile starts a different run for that target, after 15 minutes of inactivity,
+on bounded capacity eviction, or when the target desktop disconnects. For the
+first three cases it emits `desktop.control_session_end`; the desktop accepts
+that event only from its attached relay channel, requires the target to match
+its stable local device ID and the opaque ID to match an active authority, then
+revokes that authority's grants and closes its exact CUA cursor/MCP session.
+Desktop disconnect and local cancellation independently revoke local state.
+
+Per-host Structured access withholds `desktop_terminal`,
+`desktop_powershell`, `desktop_spawn_detached`, and `desktop_job_start` from
+`advertised_tools`. Brokered USB tools use the same request/response envelope:
+`desktop_adb_devices`, `_shell`, `_push`, `_pull`, `_install`, and `_logcat`.
+Every device operation other than enumeration requires an explicit ADB serial;
+local USB policy independently disables, prompts for, or allows each call.
+Disabled or unavailable ADB backends omit all six names from advertisement.
 
 ### 3.8 TUI *(new, being added — see `docs/plans/2026-04-22-desktop-tui-mvp.md`)*
 

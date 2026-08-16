@@ -10,8 +10,12 @@ if "%1"=="release" goto release
 if "%1"=="bundle" goto bundle
 if "%1"=="install" goto install
 if "%1"=="run" goto run
+if "%1"=="compile" goto compile
+if "%1"=="test-one" goto testone
+if "%1"=="install-fast" goto installfast
 if "%1"=="test" goto test
 if "%1"=="lint" goto lint
+if "%1"=="prepush" goto prepush
 if "%1"=="clean" goto clean
 if "%1"=="devices" goto devices
 if "%1"=="version" goto version
@@ -22,9 +26,9 @@ if "%1"=="help" goto help
 goto help
 
 :build
-echo Building debug APK...
-call gradlew.bat assembleDebug
-echo APK: app\build\outputs\apk\debug\app-debug.apk
+echo Building sideload debug APK...
+call gradlew.bat :app:assembleSideloadDebug --console=plain
+echo APK: app\build\outputs\apk\sideload\debug\
 goto end
 
 :release
@@ -48,33 +52,62 @@ echo Location: app\build\outputs\bundle\release\
 goto end
 
 :install
-echo Building and installing to connected device...
-call gradlew.bat installDebug
+echo Building and installing sideload debug to connected device...
+call gradlew.bat :app:installSideloadDebug --console=plain
+if errorlevel 1 goto end
 echo Launching app...
-REM Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+REM Explicit FQCN: the sideload applicationId includes the flavor suffix but the
 REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
 REM so the `.MainActivity` shorthand no longer resolves correctly.
-adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
+adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
 goto end
 
 :run
-echo Building, installing, and launching...
-call gradlew.bat installDebug
-REM Explicit FQCN: applicationId is com.axiomlabs.hermesrelay but the
+echo Building, installing, and launching sideload debug...
+call gradlew.bat :app:installSideloadDebug --console=plain
+if errorlevel 1 goto end
+REM Explicit FQCN: the sideload applicationId includes the flavor suffix but the
 REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
 REM so the `.MainActivity` shorthand no longer resolves correctly.
-adb shell am start -n com.axiomlabs.hermesrelay/com.hermesandroid.relay.MainActivity
+adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
 adb logcat -s HermesRelay:* --format=brief
 goto end
 
+:compile
+echo Compiling sideload debug Kotlin...
+call gradlew.bat :app:compileSideloadDebugKotlin --console=plain
+goto end
+
+:testone
+if "%~2"=="" (
+    echo Usage: scripts\dev.bat test-one ^<fully-qualified-test-class-or-pattern^>
+    exit /b 2
+)
+echo Running focused sideload test: %~2
+call gradlew.bat :app:testSideloadDebugUnitTest --tests "%~2" --console=plain
+goto end
+
+:installfast
+echo Building arm64 sideload debug and installing to connected phone...
+call gradlew.bat :app:installSideloadDebug -Phermes.devAbi=arm64-v8a --console=plain
+if errorlevel 1 goto end
+echo Launching app...
+adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
+goto end
+
 :test
-echo Running unit tests...
-call gradlew.bat test
+echo Running sideload debug unit tests...
+call gradlew.bat :app:testSideloadDebugUnitTest --console=plain
 goto end
 
 :lint
-echo Running lint...
-call gradlew.bat lint
+echo Running sideload debug lint...
+call gradlew.bat :app:lintSideloadDebug --console=plain
+goto end
+
+:prepush
+echo Running Android pre-push checks...
+python scripts\android-prepush.py
 goto end
 
 :clean
@@ -119,13 +152,17 @@ goto end
 :help
 echo Hermes-Relay Dev Scripts
 echo.
-echo   build      Build debug APK
+echo   build      Build sideload debug APK
 echo   release    Build signed release APK
 echo   bundle     Build release AAB (for Google Play upload)
-echo   install    Build + install to connected device
+echo   install    Build universal sideload + install
 echo   run        Build + install + launch + logcat
-echo   test       Run unit tests
+echo   compile    Compile sideload debug Kotlin only
+echo   test-one   Run one test class or wildcard pattern
+echo   install-fast  Build arm64 only + install + launch
+echo   test       Run sideload debug unit tests
 echo   lint       Run lint checks
+echo   prepush    Run Android repository checks, lint, and focused CI tests
 echo   clean      Clean build outputs
 echo   devices    List connected devices
 echo   version    Show current version from libs.versions.toml

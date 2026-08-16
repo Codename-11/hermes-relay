@@ -7,6 +7,8 @@ import com.hermesandroid.relay.data.ProfileSkillsResponse
 import com.hermesandroid.relay.data.ProfileSoulResponse
 import com.hermesandroid.relay.data.ProfileSoulUpdateResponse
 import com.hermesandroid.relay.data.ProfileMemoryUpdateResponse
+import com.hermesandroid.relay.data.LegacyProfileInspectorClient
+import com.hermesandroid.relay.data.RelaySkillToggleResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -48,7 +50,7 @@ class RelayProfileInspectorClient(
     private val okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
-) {
+) : LegacyProfileInspectorClient {
 
     companion object {
         private const val TAG = "RelayProfileInspector"
@@ -79,19 +81,19 @@ class RelayProfileInspectorClient(
 
 
     /** Fetch `GET /api/profiles/{name}/config`. */
-    suspend fun fetchConfig(profileName: String): Result<ProfileConfigResponse> =
+    override suspend fun fetchConfig(profileName: String): Result<ProfileConfigResponse> =
         get(profileName, "config", ProfileConfigResponse.serializer())
 
     /** Fetch `GET /api/profiles/{name}/skills`. */
-    suspend fun fetchSkills(profileName: String): Result<ProfileSkillsResponse> =
+    override suspend fun fetchSkills(profileName: String): Result<ProfileSkillsResponse> =
         get(profileName, "skills", ProfileSkillsResponse.serializer())
 
     /** Fetch `GET /api/profiles/{name}/soul`. */
-    suspend fun fetchSoul(profileName: String): Result<ProfileSoulResponse> =
+    override suspend fun fetchSoul(profileName: String): Result<ProfileSoulResponse> =
         get(profileName, "soul", ProfileSoulResponse.serializer())
 
     /** Fetch `GET /api/profiles/{name}/memory`. */
-    suspend fun fetchMemory(profileName: String): Result<ProfileMemoryResponse> =
+    override suspend fun fetchMemory(profileName: String): Result<ProfileMemoryResponse> =
         get(profileName, "memory", ProfileMemoryResponse.serializer())
 
     /**
@@ -108,7 +110,7 @@ class RelayProfileInspectorClient(
      * would be a protocol violation; we send empty-string for an empty
      * SOUL.
      */
-    suspend fun updateSoul(
+    override suspend fun updateSoul(
         profileName: String,
         content: String,
     ): Result<ProfileSoulUpdateResponse> = withContext(Dispatchers.IO) {
@@ -137,7 +139,7 @@ class RelayProfileInspectorClient(
      * Used for both creating a new memory entry (the relay writes the
      * file if missing) and updating an existing entry.
      */
-    suspend fun updateMemoryEntry(
+    override suspend fun updateMemoryEntry(
         profileName: String,
         filename: String,
         content: String,
@@ -270,10 +272,10 @@ class RelayProfileInspectorClient(
      * server" snackbar and ghost out the toggle. When the real
      * implementation lands server-side, this method needs no change.
      */
-    suspend fun updateSkillToggle(
+    override suspend fun updateSkillToggle(
         skillName: String,
         enabled: Boolean,
-    ): Result<SkillToggleResult> = withContext(Dispatchers.IO) {
+    ): Result<RelaySkillToggleResult> = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) {
             return@withContext Result.failure(
@@ -319,8 +321,8 @@ class RelayProfileInspectorClient(
         try {
             okHttpClient.newCall(request).execute().use { response ->
                 when (response.code) {
-                    in 200..299 -> Result.success(SkillToggleResult.Ok)
-                    501 -> Result.success(SkillToggleResult.NotImplemented)
+                    in 200..299 -> Result.success(RelaySkillToggleResult.Ok)
+                    501 -> Result.success(RelaySkillToggleResult.NotImplemented)
                     401, 403 -> Result.failure(
                         IOException("Unauthorized — re-pair with the relay")
                     )
@@ -348,7 +350,7 @@ class RelayProfileInspectorClient(
      * "not implemented" and any 2xx as "supported". The relay serves
      * OPTIONS via aiohttp's CORS handling by default.
      */
-    suspend fun probeSkillToggleSupported(): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun probeSkillToggleSupported(): Boolean = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) return@withContext false
         val sessionToken = sessionTokenProvider() ?: return@withContext false
@@ -402,11 +404,6 @@ class RelayProfileInspectorClient(
      * answered 501 — not implemented yet" without inventing magic
      * error strings.
      */
-    sealed class SkillToggleResult {
-        data object Ok : SkillToggleResult()
-        data object NotImplemented : SkillToggleResult()
-    }
-
     /**
      * Best-effort pull of a `detail` or `error` string out of a relay
      * 400 body. Falls back to the first 120 chars of the payload when

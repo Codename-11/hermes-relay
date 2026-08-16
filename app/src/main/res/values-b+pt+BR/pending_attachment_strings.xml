@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pending_attachment_preview_named">Prévia de %1$s</string>
+    <string name="pending_attachment_remove">Remover %1$s</string>
+    <string name="pending_attachment_move_left">Mover %1$s para a esquerda</string>
+    <string name="pending_attachment_move_right">Mover %1$s para a direita</string>
+    <string name="pending_attachment_status_loading">Preparando prévia</string>
+    <string name="pending_attachment_status_ready">Pronto</string>
+    <string name="pending_attachment_status_failed">Prévia indisponível</string>
+</resources>

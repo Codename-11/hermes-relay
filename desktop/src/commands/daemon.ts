@@ -7,10 +7,8 @@
 // any time of day, not just when they have a shell attached.
 //
 // Design contract:
-//   - Fails closed if no stored session or desktop-tool consent isn't already true.
-//     A headless binary must never be the thing that grants tool access;
-//     the user must have previously consented via interactive `shell`/`chat`
-//     or `pair --grant-tools`.
+//   - Connects in locked mode when a paired host has not granted desktop tools.
+//     Starting the connectivity daemon is safe and must not itself grant access.
 //   - Inherits RelayTransport's reconnect state machine as-is. No custom
 //     retry loop here — the transport's exp-backoff-to-30s + auth-resolve
 //     semantics are already daemon-appropriate. Terminal auth failures
@@ -32,15 +30,19 @@
 //   - --log-file <path>: for now, redirect stderr if you need a file.
 
 import { spawn } from 'node:child_process'
-import { openSync, promises as fs } from 'node:fs'
+import { closeSync, openSync, promises as fs } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
+import { inferEndpointRole } from '../endpoint.js'
 import { GatewayClient } from '../gatewayClient.js'
 import type { GatewayEvent, SessionCreateResponse } from '../gatewayTypes.js'
 import {
   clearDaemonStatus,
+  isDaemonProcessAlive,
   isPidAlive,
   readDaemonStatus,
   writeDaemonStatus,
@@ -49,23 +51,29 @@ import {
   type DaemonStatus
 } from '../lib/daemonStatus.js'
 import { rpcErrorMessage, asRpcResult } from '../lib/rpc.js'
+import { appendAudit } from '../lib/auditLog.js'
+import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
 import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
+import { probeCandidatesByPriority, secureFirstCandidates } from '../pairingQr.js'
 import {
   advertisedDesktopTools,
   desktopHandlers,
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import {
-  cancelComputerGrant,
+  cancelAllComputerGrants,
   configureComputerUseRuntime,
-  getActiveComputerGrant,
+  expireComputerControlSessions,
   setComputerGrantChangeListener,
   type ComputerGrant
 } from '../tools/computerGrants.js'
+import { closeCuaControlSession, setComputerControlLifecycleListener } from '../tools/cuaDriver.js'
 import { DesktopToolRouter } from '../tools/router.js'
+import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
+import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { grantBridgeDir } from '../lib/grantBridge.js'
@@ -78,20 +86,180 @@ const VOICE_DISCOVERY_FILE = 'desktop-voice.json'
 /** Refresh the status-file `updated_at` on this cadence so `--status` can tell
  * a live daemon from a crashed one whose file lingers. */
 const STATUS_HEARTBEAT_MS = 30_000
+const DETACHED_START_TIMEOUT_MS = 20_000
+const DETACHED_START_POLL_MS = 100
+const LIFECYCLE_LOCK_TIMEOUT_MS = 25_000
+const INSTANCE_LOCK_TIMEOUT_MS = 2_000
+const LOCK_POLL_MS = 50
+const INCOMPLETE_LOCK_GRACE_MS = 1_000
+
+interface ProcessLockOwner {
+  pid: number
+  process_name: string
+  token: string
+  created_at: number
+  purpose: string
+}
+
+interface ProcessLock {
+  owner: ProcessLockOwner
+  release: () => Promise<void>
+}
+
+interface ProcessLockOptions {
+  timeoutMs: number
+  purpose: string
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  ownerAlive?: (owner: ProcessLockOwner) => boolean
+}
+
+function daemonLockPath(kind: 'lifecycle' | 'instance'): string {
+  return path.join(os.homedir(), '.hermes', `daemon-${kind}.lock`)
+}
+
+async function readProcessLockOwner(lockPath: string): Promise<ProcessLockOwner | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(path.join(lockPath, 'owner.json'), 'utf8')) as Partial<ProcessLockOwner>
+    if (
+      typeof parsed.pid !== 'number' ||
+      typeof parsed.process_name !== 'string' ||
+      typeof parsed.token !== 'string' ||
+      typeof parsed.created_at !== 'number' ||
+      typeof parsed.purpose !== 'string'
+    ) return null
+    return parsed as ProcessLockOwner
+  } catch {
+    return null
+  }
+}
+
+function processLockOwnerAlive(owner: ProcessLockOwner): boolean {
+  // PID liveness is deliberately authoritative here. Unlike status/stop, a
+  // conservative false positive only causes a bounded lock timeout; a false
+  // negative could let a second daemon start. It also avoids spawning tasklist
+  // or ps from the startup hot path (and executable-name truncation on Unix).
+  return isPidAlive(owner.pid)
+}
+
+async function releaseProcessLock(lockPath: string, token: string): Promise<void> {
+  const owner = await readProcessLockOwner(lockPath)
+  if (owner?.token !== token) return
+  try {
+    // Remove the ownership record before the directory. mkdir remains blocked
+    // until rmdir succeeds, so a newer owner cannot appear between the token
+    // check and release.
+    await fs.unlink(path.join(lockPath, 'owner.json'))
+    await fs.rmdir(lockPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+/** Atomic directory lock shared by compiled Bun binaries and Node-based dev
+ * invocations. Stale recovery quarantines an observed directory before it is
+ * removed, while token-checked release never recursively removes the path. */
+async function acquireProcessLock(lockPath: string, options: ProcessLockOptions): Promise<ProcessLock> {
+  const now = options.now ?? Date.now
+  const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
+  const ownerAlive = options.ownerAlive ?? processLockOwnerAlive
+  const deadline = now() + options.timeoutMs
+  const owner: ProcessLockOwner = {
+    pid: process.pid,
+    process_name: path.basename(process.execPath),
+    token: randomUUID(),
+    created_at: now(),
+    purpose: options.purpose
+  }
+  await fs.mkdir(path.dirname(lockPath), { recursive: true })
+
+  while (true) {
+    try {
+      await fs.mkdir(lockPath)
+      try {
+        await fs.writeFile(
+          path.join(lockPath, 'owner.json'),
+          JSON.stringify(owner) + '\n',
+          { encoding: 'utf8', flag: 'wx', mode: 0o600 }
+        )
+      } catch (error) {
+        await fs.rm(lockPath, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
+      return { owner, release: () => releaseProcessLock(lockPath, owner.token) }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+
+    const observed = await readProcessLockOwner(lockPath)
+    let stale = observed !== null && !ownerAlive(observed)
+    if (!observed) {
+      try {
+        const stat = await fs.stat(lockPath)
+        stale = now() - stat.mtimeMs >= INCOMPLETE_LOCK_GRACE_MS
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        throw error
+      }
+    }
+    if (stale) {
+      const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`
+      try {
+        await fs.rename(lockPath, quarantinePath)
+        await fs.rm(quarantinePath, { recursive: true, force: true })
+        continue
+      } catch (error) {
+        if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
+        throw error
+      }
+    }
+    if (now() >= deadline) {
+      const detail = observed
+        ? `owner pid ${observed.pid} (${observed.purpose})`
+        : 'owner metadata is still being created'
+      throw new Error(`timed out after ${options.timeoutMs}ms waiting for ${options.purpose} lock; ${detail}`)
+    }
+    await sleep(Math.min(LOCK_POLL_MS, Math.max(1, deadline - now())))
+  }
+}
+
+async function withDaemonLifecycleLock<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+  const lock = await acquireProcessLock(daemonLockPath('lifecycle'), {
+    timeoutMs: LIFECYCLE_LOCK_TIMEOUT_MS,
+    purpose: `daemon ${operation}`
+  })
+  try {
+    return await fn()
+  } finally {
+    try {
+      await lock.release()
+    } catch (error) {
+      process.stderr.write(`daemon: lifecycle_lock_release_failed: ${rpcErrorMessage(error)}\n`)
+    }
+  }
+}
 
 const DAEMON_USAGE: UsageSpec = {
   name: 'daemon',
   summary: 'run headless — expose desktop tools to the agent even when no shell is open',
-  usage: ['daemon [run]', 'daemon start', 'daemon stop', 'daemon restart', 'daemon status'],
+  usage: [
+    'daemon [run]',
+    'daemon start [--administrator]',
+    'daemon stop [--administrator]',
+    'daemon restart [--administrator|--user]',
+    'daemon status'
+  ],
   subcommands: [
     { verb: 'run', desc: 'Run in the foreground (current console; default)' },
     { verb: 'start', desc: 'Start in the background — no console window; survives terminal close' },
     { verb: 'stop', desc: 'Stop the background daemon' },
-    { verb: 'restart', desc: 'Restart the background daemon, preserving caller privileges' },
+    { verb: 'restart', desc: 'Restart the background daemon, preserving caller privileges by default' },
     { verb: 'status', desc: 'Print state + uptime of the running daemon (alias: --status)' }
   ],
   flags: [
     { flag: '--detach', desc: 'Alias for `daemon start` — run in the background' },
+    { flag: '--administrator', desc: 'Windows: explicitly request UAC and run the daemon as Administrator' },
+    { flag: '--user', desc: 'Windows: restart the daemon as the current unelevated user' },
     { flag: '--remote <url>', desc: 'Relay to connect to (default: stored/active session)' },
     { flag: '--token <token>', desc: 'Use an explicit session token (CI/provisioning)' },
     { flag: '--allow-tools', desc: 'Skip the stored-consent gate (only with --token; implies trust)' },
@@ -103,7 +271,8 @@ const DAEMON_USAGE: UsageSpec = {
   examples: [
     'hermes-relay daemon start',
     'hermes-relay daemon status',
-    'hermes-relay daemon restart',
+    'hermes-relay daemon restart --administrator',
+    'hermes-relay daemon restart --user',
     'hermes-relay daemon stop'
   ]
 }
@@ -167,7 +336,7 @@ async function printDaemonStatus(args: ParsedArgs): Promise<number> {
     )
     return 1
   }
-  const alive = isPidAlive(status.pid)
+  const alive = isDaemonProcessAlive(status)
   if (args.flags.json) {
     process.stdout.write(JSON.stringify({ ...status, alive }, null, 2) + '\n')
     return alive ? 0 : 1
@@ -225,6 +394,100 @@ function daemonLogPath(): string {
   return path.join(os.homedir(), '.hermes', 'daemon.log')
 }
 
+type DetachedStartupResult =
+  | { outcome: 'ready'; status: DaemonStatus }
+  | { outcome: 'failed'; detail: string | null }
+  | { outcome: 'timeout'; status: DaemonStatus | null }
+
+interface DetachedStartupProbe {
+  readStatus: () => Promise<DaemonStatus | null>
+  isAlive: (pid: number) => boolean
+  readFailure: () => Promise<string | null>
+  now: () => number
+  sleep: (ms: number) => Promise<void>
+}
+
+function daemonStatusIsReady(status: DaemonStatus | null, pid: number): boolean {
+  return status?.pid === pid && status.state === 'connected'
+}
+
+/** Wait until the child proves it crossed the configuration, consent, and
+ * authentication gates. A PID match is required so a stale status file from
+ * an earlier daemon can never make a new start look successful. */
+async function waitForDetachedStartup(
+  pid: number,
+  timeoutMs: number,
+  probe: DetachedStartupProbe
+): Promise<DetachedStartupResult> {
+  const deadline = probe.now() + timeoutMs
+  let lastStatus: DaemonStatus | null = null
+
+  while (probe.now() < deadline) {
+    lastStatus = await probe.readStatus()
+    if (lastStatus && daemonStatusIsReady(lastStatus, pid)) {
+      return { outcome: 'ready', status: lastStatus }
+    }
+
+    const failure = await probe.readFailure()
+    if (failure) return { outcome: 'failed', detail: failure }
+    if (!probe.isAlive(pid)) return { outcome: 'failed', detail: null }
+    await probe.sleep(DETACHED_START_POLL_MS)
+  }
+
+  lastStatus = await probe.readStatus()
+  if (lastStatus && daemonStatusIsReady(lastStatus, pid)) {
+    return { outcome: 'ready', status: lastStatus }
+  }
+  const failure = await probe.readFailure()
+  if (failure || !probe.isAlive(pid)) {
+    return { outcome: 'failed', detail: failure }
+  }
+  return {
+    outcome: 'timeout',
+    status: lastStatus?.pid === pid ? lastStatus : null
+  }
+}
+
+/** Read only log bytes written by this start attempt. Detached daemons use
+ * JSON logs by default, but keep a conservative human-log fallback for an
+ * explicit --log-human invocation. */
+async function readDetachedStartupFailure(logPath: string, offset: number): Promise<string | null> {
+  try {
+    const handle = await fs.open(logPath, 'r')
+    try {
+      const stat = await handle.stat()
+      if (stat.size <= offset) return null
+      const length = Math.min(stat.size - offset, 64 * 1024)
+      const start = stat.size - length
+      const buffer = Buffer.alloc(length)
+      await handle.read(buffer, 0, length, start)
+      const lines = buffer.toString('utf8').split(/\r?\n/).filter(Boolean)
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i] ?? ''
+        try {
+          const record = JSON.parse(line) as Record<string, unknown>
+          if (record.level !== 'error') continue
+          const event = typeof record.event === 'string' ? record.event : 'startup_error'
+          const detail =
+            typeof record.message === 'string'
+              ? record.message
+              : typeof record.reason === 'string'
+                ? record.reason
+                : null
+          return detail ? `${event}: ${detail}` : event
+        } catch {
+          if (/\bERROR\b/i.test(line)) return line.slice(0, 500)
+        }
+      }
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    /* best-effort diagnostic; process liveness remains authoritative */
+  }
+  return null
+}
+
 /** Rebuild the child argv for the foreground daemon from this invocation's
  * flags, so `daemon start --remote … --experimental-computer-use` forwards. */
 function buildDaemonChildArgs(args: ParsedArgs): string[] {
@@ -256,24 +519,144 @@ function buildDaemonChildArgs(args: ParsedArgs): string[] {
   return out
 }
 
+type DaemonLifecycleSubcommand = 'start' | 'stop' | 'restart'
+
+interface ElevationLaunchPlan {
+  program: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  targetProgram: string
+  targetArgs: string[]
+}
+
+/** Quote one argv item for CommandLineToArgvW. Start-Process accepts a single
+ * ArgumentList string, so preserve spaces, quotes, and trailing backslashes. */
+function quoteWindowsArgument(value: string): string {
+  if (value.length > 0 && !/[\s"]/u.test(value)) return value
+  let out = '"'
+  let slashes = 0
+  for (const char of value) {
+    if (char === '\\') {
+      slashes += 1
+      continue
+    }
+    if (char === '"') {
+      out += '\\'.repeat(slashes * 2 + 1) + '"'
+      slashes = 0
+      continue
+    }
+    out += '\\'.repeat(slashes) + char
+    slashes = 0
+  }
+  return out + '\\'.repeat(slashes * 2) + '"'
+}
+
+function executableInvocationPrefix(): { program: string; args: string[] } {
+  const execIsNode = /node(\.exe)?$/i.test(path.basename(process.execPath))
+  return {
+    program: process.execPath,
+    args: execIsNode ? [process.argv[1] ?? ''] : []
+  }
+}
+
+/** Build the UAC launcher separately from execution so the exact privilege
+ * boundary and forwarded argv are regression-testable. */
+function buildElevationLaunchPlan(
+  args: ParsedArgs,
+  subcommand: DaemonLifecycleSubcommand
+): ElevationLaunchPlan {
+  const invocation = executableInvocationPrefix()
+  const targetArgs = [
+    ...invocation.args,
+    'daemon',
+    subcommand,
+    ...buildDaemonChildArgs(args).slice(1),
+    '--elevation-child'
+  ]
+  const commandLine = targetArgs.map(quoteWindowsArgument).join(' ')
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '$argumentLine = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:HERMES_RELAY_ELEVATE_ARGS))',
+    'try {',
+    "  $child = Start-Process -FilePath $env:HERMES_RELAY_ELEVATE_PROGRAM -ArgumentList $argumentLine -Verb RunAs -WindowStyle Hidden -Wait -PassThru",
+    '  exit $child.ExitCode',
+    '} catch {',
+    "  [Console]::Error.WriteLine('Administrator request failed or was canceled: ' + $_.Exception.Message)",
+    '  exit 1',
+    '}'
+  ].join('\n')
+  return {
+    program: 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    env: {
+      ...process.env,
+      HERMES_RELAY_ELEVATE_PROGRAM: invocation.program,
+      HERMES_RELAY_ELEVATE_ARGS: Buffer.from(commandLine, 'utf8').toString('base64')
+    },
+    targetProgram: invocation.program,
+    targetArgs
+  }
+}
+
+async function runElevatedDaemonLifecycle(
+  args: ParsedArgs,
+  subcommand: DaemonLifecycleSubcommand
+): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  if (process.platform !== 'win32') {
+    process.stderr.write(t.err('--administrator is supported only on Windows') + '\n')
+    return 1
+  }
+  const plan = buildElevationLaunchPlan(args, subcommand)
+  return new Promise(resolve => {
+    let settled = false
+    const child = spawn(plan.program, plan.args, {
+      env: plan.env,
+      stdio: 'inherit',
+      windowsHide: true
+    })
+    child.once('error', error => {
+      if (settled) return
+      settled = true
+      process.stderr.write(t.err(`failed to request Administrator access: ${error.message}`) + '\n')
+      resolve(1)
+    })
+    child.once('exit', code => {
+      if (settled) return
+      settled = true
+      resolve(code === 0 ? 0 : 1)
+    })
+  })
+}
+
 /** `daemon start` / `--detach` — spawn the foreground daemon as a detached
  * background process (no console window on Windows), logging to a file. */
-async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
+async function startDetachedDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
 
   const existing = await readDaemonStatus()
-  if (existing && isPidAlive(existing.pid)) {
+  if (existing && isDaemonProcessAlive(existing)) {
     process.stderr.write(
       t.warnLine(`daemon already running (pid ${existing.pid}) — stop it first: hermes-relay daemon stop`) + '\n'
     )
     return 1
   }
+  // Remove stale state before spawning. Besides keeping status truthful while
+  // the new child starts, this prevents an unlikely recycled PID from matching
+  // a previous daemon's connected record.
+  await clearDaemonStatus()
 
   const logPath = daemonLogPath()
   try {
     await fs.mkdir(path.dirname(logPath), { recursive: true })
   } catch {
     /* best-effort */
+  }
+  let logOffset = 0
+  try {
+    logOffset = (await fs.stat(logPath)).size
+  } catch {
+    /* new log file */
   }
   const logFd = openSync(logPath, 'a')
 
@@ -284,12 +667,58 @@ async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
   const execIsNode = /node(\.exe)?$/i.test(path.basename(process.execPath))
   const spawnArgs = execIsNode ? [process.argv[1] ?? '', ...childArgs] : childArgs
 
-  const child = spawn(process.execPath, spawnArgs, {
-    detached: true,
-    stdio: ['ignore', logFd, logFd],
-    windowsHide: true
+  let child
+  try {
+    child = spawn(process.execPath, spawnArgs, {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      windowsHide: true
+    })
+  } catch (error) {
+    closeSync(logFd)
+    process.stderr.write(t.err(`failed to start daemon: ${(error as Error).message}`) + '\n')
+    process.stderr.write(t.muted(`  logs: ${logPath}`) + '\n')
+    return 1
+  }
+  closeSync(logFd)
+
+  let spawnError: Error | null = null
+  child.once('error', error => {
+    spawnError = error
   })
+  if (typeof child.pid !== 'number') {
+    process.stderr.write(t.err('failed to start daemon: the child process returned no pid') + '\n')
+    process.stderr.write(t.muted(`  logs: ${logPath}`) + '\n')
+    return 1
+  }
   child.unref()
+
+  const result = await waitForDetachedStartup(child.pid, DETACHED_START_TIMEOUT_MS, {
+    readStatus: readDaemonStatus,
+    isAlive: pid => !spawnError && isPidAlive(pid),
+    readFailure: async () =>
+      spawnError
+        ? `process error: ${spawnError.message}`
+        : readDetachedStartupFailure(logPath, logOffset),
+    now: Date.now,
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms))
+  })
+
+  if (result.outcome === 'failed') {
+    process.stderr.write(t.err('daemon failed before it became ready') + '\n')
+    if (result.detail) process.stderr.write(t.err(`  ${result.detail}`) + '\n')
+    process.stderr.write(t.muted(`  logs: ${logPath}`) + '\n')
+    return 1
+  }
+  if (result.outcome === 'timeout') {
+    const state = result.status?.state ?? 'no matching status'
+    process.stderr.write(
+      t.err(`daemon did not become ready within ${DETACHED_START_TIMEOUT_MS / 1000} seconds (${state})`) + '\n'
+    )
+    process.stderr.write(t.muted(`  logs:   ${logPath}`) + '\n')
+    process.stderr.write(t.muted('  status: hermes-relay daemon status') + '\n')
+    return 1
+  }
 
   process.stdout.write(t.okLine(`daemon started in the background (pid ${child.pid})`) + '\n')
   process.stdout.write(t.muted(`  logs:   ${logPath}`) + '\n')
@@ -298,15 +727,24 @@ async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
   return 0
 }
 
+async function startDetachedDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('start', () => startDetachedDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
+}
+
 /** `daemon stop` — terminate the running background daemon by its status pid. */
-async function stopDaemon(args: ParsedArgs): Promise<number> {
+async function stopDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const status = await readDaemonStatus()
   if (!status) {
     process.stdout.write(t.muted('No daemon status file — nothing to stop.') + '\n')
     return 1
   }
-  if (!isPidAlive(status.pid)) {
+  if (!isDaemonProcessAlive(status)) {
     await clearDaemonStatus()
     process.stdout.write(t.muted(`Daemon (pid ${status.pid}) is already gone — cleared stale status.`) + '\n')
     return 0
@@ -324,10 +762,19 @@ async function stopDaemon(args: ParsedArgs): Promise<number> {
   return 0
 }
 
-async function restartDaemon(args: ParsedArgs): Promise<number> {
+async function stopDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('stop', () => stopDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
+}
+
+async function restartDaemonLocked(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   const existing = await readDaemonStatus()
-  if (existing && isPidAlive(existing.pid)) {
+  if (existing && isDaemonProcessAlive(existing)) {
     try {
       process.kill(existing.pid)
     } catch (error) {
@@ -338,16 +785,53 @@ async function restartDaemon(args: ParsedArgs): Promise<number> {
     }
 
     const deadline = Date.now() + 5_000
-    while (isPidAlive(existing.pid) && Date.now() < deadline) {
+    while (isDaemonProcessAlive(existing) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 50))
     }
-    if (isPidAlive(existing.pid)) {
+    if (isDaemonProcessAlive(existing)) {
       process.stderr.write(t.err(`daemon pid ${existing.pid} did not stop within 5 seconds`) + '\n')
       return 1
     }
   }
   await clearDaemonStatus()
-  return startDetachedDaemon(args)
+  return startDetachedDaemonLocked(args)
+}
+
+async function restartDaemon(args: ParsedArgs): Promise<number> {
+  try {
+    return await withDaemonLifecycleLock('restart', () => restartDaemonLocked(args))
+  } catch (error) {
+    process.stderr.write(`daemon: lifecycle_lock_failed: ${rpcErrorMessage(error)}\n`)
+    return 1
+  }
+}
+
+async function restartDaemonAsUser(args: ParsedArgs): Promise<number> {
+  const t = makeTheme({ noColor: !!args.flags['no-color'] })
+  const identity = currentProcessIdentity()
+  if (identity.privilege === 'administrator') {
+    process.stderr.write(
+      t.err('cannot launch a user daemon from an Administrator process; run this command from the normal desktop UI or an unelevated terminal') + '\n'
+    )
+    return 1
+  }
+
+  const existing = await readDaemonStatus()
+  if (
+    process.platform === 'win32' &&
+    existing &&
+    isDaemonProcessAlive(existing) &&
+    existing.privilege === 'administrator'
+  ) {
+    // An unelevated caller cannot terminate an elevated daemon. Elevate only
+    // the stop operation, wait for it to finish, then start the replacement
+    // from this original unelevated process.
+    const stopped = await runElevatedDaemonLifecycle(args, 'stop')
+    if (stopped !== 0) return stopped
+    return startDetachedDaemon(args)
+  }
+
+  return restartDaemon(args)
 }
 
 export async function daemonCommand(args: ParsedArgs): Promise<number> {
@@ -356,6 +840,36 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     return 0
   }
   const sub = args.positional[0]
+  const administrator = args.flags.administrator === true
+  const user = args.flags.user === true
+  const elevationChild = args.flags['elevation-child'] === true
+  if ((administrator || user || elevationChild) && process.platform !== 'win32') {
+    process.stderr.write('daemon: --administrator and --user are supported only on Windows\n')
+    return 1
+  }
+  if (administrator && user) {
+    process.stderr.write('daemon: --administrator and --user are mutually exclusive\n')
+    return 1
+  }
+  if ((administrator || user || elevationChild) && (sub === 'status' || args.flags.status)) {
+    process.stderr.write('daemon: privilege flags apply only to start, stop, or restart\n')
+    return 1
+  }
+  if (user && sub !== 'start' && sub !== 'restart') {
+    process.stderr.write('daemon: --user applies only to start or restart\n')
+    return 1
+  }
+  if (elevationChild && currentProcessIdentity().privilege !== 'administrator') {
+    process.stderr.write('daemon: internal elevation helper did not receive an Administrator token\n')
+    return 1
+  }
+  if (administrator && !elevationChild && currentProcessIdentity().privilege !== 'administrator') {
+    if (sub !== 'start' && sub !== 'stop' && sub !== 'restart') {
+      process.stderr.write('daemon: --administrator requires start, stop, or restart\n')
+      return 1
+    }
+    return runElevatedDaemonLifecycle(args, sub)
+  }
   if (args.flags.status || sub === 'status') {
     return printDaemonStatus(args)
   }
@@ -363,9 +877,16 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     return stopDaemon(args)
   }
   if (sub === 'restart') {
+    if (user) return restartDaemonAsUser(args)
     return restartDaemon(args)
   }
   if (sub === 'start' || args.flags.detach) {
+    if (user && currentProcessIdentity().privilege === 'administrator') {
+      process.stderr.write(
+        'daemon: cannot launch a user daemon from an Administrator process; run this command from an unelevated terminal\n'
+      )
+      return 1
+    }
     return startDetachedDaemon(args)
   }
   // Bare `daemon` (or `daemon run`) → foreground, the existing behavior below.
@@ -375,6 +896,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const humanFlag = !!args.flags['log-human']
   const human = humanFlag || (!args.flags['log-json'] && !!process.stderr.isTTY)
   const log = makeLogger(human)
+
+  let instanceLock: ProcessLock
+  try {
+    instanceLock = await acquireProcessLock(daemonLockPath('instance'), {
+      timeoutMs: INSTANCE_LOCK_TIMEOUT_MS,
+      purpose: 'daemon runtime'
+    })
+    log.info({
+      event: 'instance_lock_acquired',
+      lock_path: daemonLockPath('instance'),
+      pid: process.pid
+    })
+  } catch (error) {
+    log.error({
+      event: 'instance_lock_failed',
+      message: rpcErrorMessage(error),
+      lock_path: daemonLockPath('instance')
+    })
+    return 1
+  }
 
   // URL resolution mirrors chat/shell — explicit --remote / HERMES_RELAY_URL
   // win, otherwise fall back to a stored session. resolveFirstRunUrl with
@@ -394,7 +935,41 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
           (e instanceof Error ? e.message : String(e)) +
           ' Pass --remote <url>, set HERMES_RELAY_URL, or pair first with `hermes-relay pair`.'
       })
+      await instanceLock.release()
       return 1
+    }
+  }
+
+  // Keep the selected host as the policy/storage identity, while resolving
+  // its current network route independently. A v3 pair can therefore prefer
+  // WSS/Tailscale and fall back to LAN without creating duplicate hosts.
+  const configuredUrl = url
+  const configuredSession = await getSession(configuredUrl)
+  let useSessionHeader = false
+  let brokerRoute: import('../transport/BrokerRelaySocket.js').BrokerRouteConfig | undefined
+  let activeRoute = configuredSession?.routeCandidates?.find(candidate => candidate.relay.url === configuredUrl)?.role
+    ?? (configuredSession?.routeCandidates?.length ? null : configuredSession?.endpointRole ?? inferEndpointRole(configuredUrl))
+  if (!resolveRemoteOrNull(args) && configuredSession?.routeCandidates?.length) {
+    const candidates = configuredSession.preferSecureRoutes
+      ? secureFirstCandidates(configuredSession.routeCandidates)
+      : configuredSession.routeCandidates
+    try {
+      const route = await probeCandidatesByPriority(candidates, { sessionToken: configuredSession.token })
+      url = route.relay.url
+      useSessionHeader = route.role.toLowerCase() === 'plugin_proxy' && !route.broker
+      if (route.broker && route.proxy) {
+        if (!route.proxy.certificateDerBase64) throw new Error('Hermes Reach route is missing its paired certificate')
+        brokerRoute = { url: route.broker.url, hostId: route.broker.hostId, credentialKind: route.broker.credentialKind, token: route.broker.token, innerUrl: route.relay.url, innerPinSha256: route.proxy.pinSha256, innerCertificateDerBase64: route.proxy.certificateDerBase64 }
+      }
+      activeRoute = route.broker ? 'outbound_broker' : route.role
+      log.info({ event: 'route_selected', configured_url: configuredUrl, url, role: route.role })
+    } catch (e) {
+      log.warn({
+        event: 'route_probe_failed',
+        configured_url: configuredUrl,
+        message: e instanceof Error ? e.message : String(e),
+        fallback_url: configuredUrl
+      })
     }
   }
 
@@ -404,7 +979,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // fallback (headless).
   const argToken = typeof args.flags.token === 'string' ? args.flags.token : undefined
   const envToken = process.env.HERMES_RELAY_TOKEN
-  const stored = await getSession(url)
+  const stored = configuredSession ?? await getSession(url)
   const token = argToken ?? envToken ?? stored?.token
 
   if (!token) {
@@ -413,40 +988,18 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       url,
       message: 'no session token. Run `hermes-relay pair --remote <url>` once, then start the daemon.'
     })
+    await instanceLock.release()
     return 1
   }
 
-  // Consent gate: the daemon must not grant tool access on its own. The
-  // interactive `shell` command is the canonical place consent is captured,
-  // and it writes `toolsConsented: true` onto the stored session. If the
-  // token came from --token but we have no stored record, assume the user
-  // knows what they're doing ONLY if they also pass --allow-tools; otherwise
-  // bail.
-  const tokenFromStored = !argToken && !envToken
+  // Access gates control which tools are attached, not whether the daemon may
+  // connect. This lets the tray manage a healthy locked daemon without making
+  // connectivity itself a privileged operation.
   const consented = stored?.toolsConsented === true
   const allowToolsFlag = !!args.flags['allow-tools']
-
-  if (tokenFromStored && !consented) {
-    log.error({
-      event: 'consent_missing',
-      url,
-      message:
-        'tools not consented for this URL. Re-pair with `hermes-relay pair --remote <url> --grant-tools` ' +
-        '(prompts on TTY) or `--auto-grant-tools` (no prompt). `hermes-relay shell` also works. ' +
-        '`--allow-tools` overrides this gate when invoking with --token directly.'
-    })
-    return 1
-  }
-  if (!tokenFromStored && !consented && !allowToolsFlag) {
-    log.error({
-      event: 'consent_missing',
-      url,
-      message:
-        'no stored consent for this URL. Pass --allow-tools to override, or pair first with ' +
-        '`hermes-relay pair --remote <url> --grant-tools`.'
-    })
-    return 1
-  }
+  const storedAccessMode = await getHostAccessMode(configuredUrl)
+  const accessMode = effectiveHostAccessMode(storedAccessMode, stored?.toolsConsented === true)
+  const toolsEnabled = consented || allowToolsFlag || accessMode !== 'ask'
 
   log.info({
     event: 'starting',
@@ -459,10 +1012,15 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // Observable status file — `hermes-relay daemon --status` reads this.
   const nowSec = () => Math.floor(Date.now() / 1000)
   const identity = currentProcessIdentity()
-  const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+  const computerUseEnabled = toolsEnabled && (
+    accessMode === 'full_access' || shouldAdvertiseComputerUse(args.flags)
+  )
   const status: DaemonStatus = {
     pid: process.pid,
+    process_name: path.basename(process.execPath),
     url,
+    configured_url: configuredUrl,
+    active_route: activeRoute ?? undefined,
     state: 'starting',
     started_at: nowSec(),
     updated_at: nowSec(),
@@ -470,6 +1028,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     username: identity.username,
     privilege: identity.privilege,
     computer_use_enabled: computerUseEnabled,
+    access_mode: accessMode,
+    tools_enabled: toolsEnabled,
     computer_grant: { active: false, mode: 'none', expires_at: null }
   }
   const updateStatus = (partial: Partial<DaemonStatus> & { state?: DaemonState }) => {
@@ -481,7 +1041,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport({
     url,
     sessionToken: token,
-    deviceName: `hermes-relay-cli daemon (${process.platform})`
+    sessionHeader: useSessionHeader,
+    broker: brokerRoute,
+    ...desktopRelayIdentity()
   })
 
   // Lifecycle wiring — every event the transport emits that a daemon
@@ -493,17 +1055,26 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
         ? (info as { attempt?: number; delayMs?: number })
         : {}
     log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null })
-    updateStatus({ state: 'reconnecting', last_event: 'reconnecting' })
+    const retryAt = nowSec() + Math.ceil((delayMs ?? 0) / 1000)
+    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: 'Relay connection interrupted' })
+    if ((attempt ?? 1) === 1) {
+      void appendAudit({
+        ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnecting', category: 'system', ok: false,
+        host_url: configuredUrl, summary: 'Automatic reconnect started', error: 'Relay connection interrupted'
+      })
+    }
   })
   relay.on('reconnected', () => {
     log.info({ event: 'reconnected' })
-    updateStatus({ state: 'connected', last_event: 'reconnected' })
+    updateStatus({ state: 'connected', last_event: 'reconnected', reconnect_attempt: null, retry_at: null, last_error: null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnected', category: 'system', ok: true, host_url: configuredUrl, summary: 'Relay tunnel restored' })
   })
   relay.on('exit', (code: unknown) => {
     // Transport gave up (auth.fail, reconnect gate returned false, or
     // reconnect attempts exhausted). Daemon exits non-zero so the
     // service manager decides whether to restart.
     log.error({ event: 'transport_exited', code: typeof code === 'number' ? code : null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.disconnected', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay transport stopped', error: 'Automatic reconnect stopped' })
     // Defer exit so the log line flushes before the process dies.
     setImmediate(() => process.exit(1))
   })
@@ -513,11 +1084,14 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
   if (!outcome.ok) {
     log.error({ event: 'auth_failed', reason: outcome.reason })
+    updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
+    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
     try {
       relay.kill()
     } catch {
       /* ignore */
     }
+    await instanceLock.release()
     return 1
   }
 
@@ -526,7 +1100,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     server_version: relay.serverVersion ?? null,
     transport: relay.authMeta?.transportHint ?? null
   })
-  updateStatus({ state: 'connected', server_version: relay.serverVersion ?? null, last_event: 'authed' })
+  updateStatus({ state: 'connected', server_version: relay.serverVersion ?? null, last_event: 'authed', reconnect_attempt: null, retry_at: null, last_error: null })
 
   // Signal downstream handlers that we're running headless. The router
   // also checks this env var in its detectInteractive() fallback, so any
@@ -541,20 +1115,38 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // or redirected daemon still fails host input closed because no visible
   // local grant approval prompt can run.
   const interactive = !!process.stdin.isTTY && !!process.stderr.isTTY
+  const capabilities = effectiveHostCapabilityPolicies(
+    storedAccessMode,
+    stored?.toolsConsented === true,
+    await getHostCapabilityPolicies(configuredUrl)
+  )
   configureComputerUseRuntime({
-    url,
+    url: configuredUrl,
     computerUseConsented: computerUseEnabled,
-    consentSource: consented ? 'stored' : 'override'
+    consentSource: consented ? 'stored' : toolsEnabled ? 'override' : 'none',
+    accessMode,
+    capabilities
   })
-  const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+  configureCapabilityPolicies(capabilities)
+  const usb = capabilities.usb !== 'disabled'
+  const adb = usb && adbBackendAvailable()
+  const advertisedTools = toolsEnabled
+    ? advertisedDesktopTools({ computerUse: computerUseEnabled, capabilities, usb, adb })
+    : []
   const toDaemonGrantStatus = (grant: ComputerGrant | null): DaemonComputerGrantStatus => ({
     active: grant !== null,
     mode: grant?.mode ?? 'none',
     expires_at: grant?.expires_at ?? null,
     reason: grant?.reason
   })
-  const restoreGrantListener = setComputerGrantChangeListener(grant => {
+  const restoreGrantListener = setComputerGrantChangeListener((grant, controlSessionId) => {
     updateStatus({ computer_grant: toDaemonGrantStatus(grant), last_event: 'grant_changed' })
+    if (!grant && controlSessionId) {
+      void closeCuaControlSession(controlSessionId, 'computer grant ended')
+    }
+  })
+  const restoreControlLifecycleListener = setComputerControlLifecycleListener(computerControl => {
+    updateStatus({ computer_control: computerControl })
   })
 
   let cancellationCheckRunning = false
@@ -564,10 +1156,10 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     try {
       const request = await consumeComputerGrantCancellation()
       if (request) {
-        const result = cancelComputerGrant(request.reason)
+        const result = { cancelled: cancelAllComputerGrants(request.reason) }
         log.info({ event: 'computer_grant_cancelled_locally', reason: request.reason, result })
       } else {
-        getActiveComputerGrant()
+        expireComputerControlSessions()
       }
     } catch (error) {
       log.warn({ event: 'computer_grant_control_failed', message: rpcErrorMessage(error) })
@@ -577,21 +1169,27 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   }, 500)
   grantControlInterval.unref?.()
 
-  const router = new DesktopToolRouter({
-    consentGranted: true,
-    interactive,
-    handlers: desktopHandlers({ computerUse: computerUseEnabled }),
-    advertisedTools: [...advertisedTools]
-  })
-  router.attach(relay)
+  const router = toolsEnabled
+    ? new DesktopToolRouter({
+        consentGranted: true,
+        interactive,
+        hostUrl: url,
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, capabilities, usb, adb }),
+        advertisedTools: [...advertisedTools]
+      })
+    : null
+  router?.attach(relay)
 
   log.info({
-    event: 'ready',
+    event: toolsEnabled ? 'ready' : 'ready_locked',
     advertised_tools: [...advertisedTools],
     experimental_computer_use: computerUseEnabled,
     interactive
   })
-  updateStatus({ advertised_tools: [...advertisedTools].length, last_event: 'ready' })
+  updateStatus({
+    advertised_tools: [...advertisedTools].length,
+    last_event: toolsEnabled ? 'ready' : 'ready_locked'
+  })
 
   // Keep the status file's updated_at fresh so `--status` can distinguish a
   // live daemon from a crashed one whose file lingers (belt-and-suspenders
@@ -649,8 +1247,9 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     clearInterval(statusHeartbeat)
     clearInterval(grantControlInterval)
     restoreGrantListener()
+    restoreControlLifecycleListener()
     try {
-      await clearDaemonStatus()
+      await clearDaemonStatus(process.pid)
     } catch {
       /* ignore */
     }
@@ -665,7 +1264,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       /* ignore */
     }
     try {
-      router.detach()
+      router?.detach()
     } catch {
       /* ignore */
     }
@@ -673,6 +1272,11 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       relay.kill()
     } catch {
       /* ignore */
+    }
+    try {
+      await instanceLock.release()
+    } catch (error) {
+      log.warn({ event: 'instance_lock_release_failed', message: rpcErrorMessage(error) })
     }
   }
   setupGracefulExit({ cleanups: [cleanup] })
@@ -691,7 +1295,17 @@ export default daemonCommand
 
 // Small utility function re-exported for tests that need to stub the logger.
 export type { LogFields }
-export { makeLogger as __makeLoggerForTests, rpcErrorMessage as __rpcErrorMessageForTests }
+export {
+  daemonStatusIsReady as __daemonStatusIsReadyForTests,
+  buildDaemonChildArgs as __buildDaemonChildArgsForTests,
+  buildElevationLaunchPlan as __buildElevationLaunchPlanForTests,
+  acquireProcessLock as __acquireProcessLockForTests,
+  quoteWindowsArgument as __quoteWindowsArgumentForTests,
+  makeLogger as __makeLoggerForTests,
+  readDetachedStartupFailure as __readDetachedStartupFailureForTests,
+  rpcErrorMessage as __rpcErrorMessageForTests,
+  waitForDetachedStartup as __waitForDetachedStartupForTests
+}
 
 // ── Voice-server helpers ───────────────────────────────────────────────
 
