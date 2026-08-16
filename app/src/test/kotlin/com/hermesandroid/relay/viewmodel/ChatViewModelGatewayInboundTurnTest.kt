@@ -361,6 +361,7 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.selectModel("risky-model", "risky-provider")
 
         val create = gatewayHarness.awaitRpc("session.create")
+        awaitCondition { gatewayHarness.rpcLog.count { it.first == "config.set" } >= 1 }
         val configSet = gatewayHarness.awaitRpcCount("config.set", 1).single()
         awaitCondition { viewModel.modelSelectionConfirmation.value != null }
 
@@ -384,7 +385,6 @@ class ChatViewModelGatewayInboundTurnTest {
             Profile(name = "mizu", model = "safe-default", description = "Mizu")
         }
         viewModel.setSessionProfileNameProvider { "mizu" }
-        gatewayHarness.includeCreatedSessionProfileInfo = true
         gatewayHarness.createdSessionProfileName = "victor"
 
         viewModel.selectModel("risky-model", "risky-provider")
@@ -404,7 +404,7 @@ class ChatViewModelGatewayInboundTurnTest {
             Profile(name = "mizu", model = "safe-default", description = "Mizu")
         }
         viewModel.setSessionProfileNameProvider { "mizu" }
-        gatewayHarness.includeCreatedSessionProfileInfo = false
+        gatewayHarness.omitSessionProfileMetadata = true
 
         viewModel.selectModel("risky-model", "risky-provider")
 
@@ -428,6 +428,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
         viewModel.selectModel(null)
 
+        awaitCondition { gatewayHarness.rpcLog.count { it.first == "config.set" } >= 2 }
         val configSet = gatewayHarness.awaitRpcCount("config.set", 2).last()
         awaitCondition { viewModel.modelSelectionConfirmation.value != null }
 

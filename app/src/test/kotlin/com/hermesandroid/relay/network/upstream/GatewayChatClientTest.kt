@@ -1718,7 +1718,8 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("grok-4.3", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(create.containsKey("model"))
+        assertFalse(create.containsKey("provider"))
         assertEquals("high", (create["reasoning_effort"] as? JsonPrimitive)?.contentOrNull)
         assertEquals(true, (create["fast"] as? JsonPrimitive)?.booleanOrNull)
     }
@@ -1766,7 +1767,8 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         val create = harness.awaitRpc("session.create")
-        assertEquals("gpt-5.5", (create["model"] as? JsonPrimitive)?.contentOrNull)
+        assertFalse(create.containsKey("model"))
+        assertFalse(create.containsKey("provider"))
         assertFalse(create.containsKey("reasoning_effort"))
         assertFalse(create.containsKey("fast"))
     }
@@ -3441,6 +3443,7 @@ class GatewayChatClientTest {
         val backgroundEvents = ConcurrentLinkedQueue<GatewayBackgroundInteractionEvent>()
         client.setBackgroundInteractionListener(backgroundEvents::add)
         client.sessionProfileProvider = { "work" }
+        harness.sessionProfileOverride = "work"
         client.sendTurn(null, "long task", null, original.callbacks) {
             original.preflightFailures += it
         }
