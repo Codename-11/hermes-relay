@@ -1822,6 +1822,14 @@
     <string name="dashboard_native_signin_requires_https">Безопасный вход в браузере требует HTTPS-адреса панели управления.</string>
     <string name="dashboard_native_signin_unavailable">Безопасный вход в браузере недоступен для этого подключения. Обновите подключение и попробуйте снова.</string>
     <string name="dashboard_native_signin_transport_retry">Защищённое соединение было прервано. Нажмите кнопку входа, чтобы повторить попытку.</string>
+    <string name="dashboard_native_signin_callback_rejected">Провайдер не подтвердил этот вход. Если вы отменили его, ничего делать не нужно; иначе начните новую попытку входа.</string>
+    <string name="dashboard_native_signin_code_rejected">Вход через Google завершён, но размещённый Hermes отклонил одноразовый код обратного вызова до создания сеанса. Начните новую попытку входа.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Размещённый Hermes отклонил обмен сеанса. Убедитесь, что размещённый агент обновлён, и начните вход заново.</string>
+    <string name="dashboard_native_signin_rate_limited">Размещённый Hermes получил слишком много попыток входа. Подождите немного и повторите попытку.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Вход через Google завершён, но служба входа размещённого Hermes недоступна. Подождите немного и повторите попытку.</string>
+    <string name="dashboard_native_signin_response_unsupported">Размещённый Hermes вернул ответ входа, который это приложение не может использовать. Проверьте обновления Hermes Relay и размещённого агента.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Эта попытка входа была отменена или заменена. Закройте старую вкладку и начните заново.</string>
+    <string name="dashboard_native_signin_storage_failed">Вход через Google завершён, но Android не смог безопасно сохранить сеанс Hermes. Повторите попытку; если ошибка повторится, откройте диагностику, чтобы увидеть этап сбоя.</string>
     <string name="dashboard_close_signin">Закрыть вход</string>
     <string name="dashboard_error_title">Панель управления недоступна</string>
     <string name="dashboard_error_target">Не удалось загрузить из %1$s</string>

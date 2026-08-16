@@ -1978,6 +1978,14 @@
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
     <string name="dashboard_native_signin_transport_retry">The secure connection was interrupted. Tap the sign-in button to try again.</string>
+    <string name="dashboard_native_signin_callback_rejected">The provider did not approve this sign-in. If you cancelled, no action is needed; otherwise start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_code_rejected">Google sign-in finished, but hosted Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hosted Hermes refused the session exchange. Check that the hosted agent is current, then start sign-in again.</string>
+    <string name="dashboard_native_signin_rate_limited">Hosted Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Google sign-in finished, but the hosted Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hosted Hermes returned a sign-in response this app could not use. Check for Hermes Relay and hosted agent updates.</string>
+    <string name="dashboard_native_signin_attempt_inactive">This sign-in attempt was cancelled or replaced. Close the old browser tab and start again.</string>
+    <string name="dashboard_native_signin_storage_failed">Google sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->

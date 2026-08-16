@@ -191,8 +191,12 @@ Phone control — mirrors upstream relay protocol.
 Dashboard/Gateway redirect authentication is provider-compatible. Nous Portal,
 which relies on a challenge that rejects embedded Android WebViews, uses the
 upstream brokered `native_pkce` flow in a system Custom Tab when the dashboard
-advertises it. The app owns an ephemeral loopback callback and stores the
-resulting bearer session only for that connection and exact dashboard origin.
+advertises it. As in Hermes Desktop, the gateway selects its single
+native-eligible provider rather than Android sending a UI provider identifier.
+The app owns an ephemeral five-minute loopback callback and stores the resulting
+bearer session only for that connection and exact dashboard origin. Callback,
+code-exchange, hosted-gateway, transport, response-shape, and secure-storage
+failures surface as distinct secret-free recovery guidance.
 Self-hosted OIDC remains on the dashboard cookie flow: Android opens
 `/auth/login` in a full-screen embedded browser destination, lets the provider
 return through the public `/auth/callback`, imports only same-origin cookies,

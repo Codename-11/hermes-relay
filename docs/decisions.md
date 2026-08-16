@@ -2302,7 +2302,12 @@ Android does not select `/auth/native/authorize` merely because it appears in
 `auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
 is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
 Android WebViews, so Android uses the gateway-brokered native PKCE route for
-that provider when advertised and opens it in a system Custom Tab. The
+that provider when advertised and opens it in a system Custom Tab. As in the
+official Desktop client, Android does not hardcode the UI provider identifier
+into the hosted native authorization request; the gateway selects its single
+native-eligible provider. The callback retains upstream's five-minute window,
+and failures are classified without recording codes, state, tokens, provider
+responses, or other authentication material. The
 ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
 store, and exact-origin attachment remain app-owned. Public cleartext
 dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP

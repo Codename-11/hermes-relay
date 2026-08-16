@@ -3490,6 +3490,14 @@
     <string name="dashboard_native_signin_requires_https">Die sichere Browser-Anmeldung erfordert eine HTTPS-Dashboard-Adresse.</string>
     <string name="dashboard_native_signin_unavailable">Die sichere Browser-Anmeldung ist für diese Verbindung nicht verfügbar. Aktualisiere die Verbindung und versuche es erneut.</string>
     <string name="dashboard_native_signin_transport_retry">Die sichere Verbindung wurde unterbrochen. Tippe auf die Anmeldeschaltfläche, um es erneut zu versuchen.</string>
+    <string name="dashboard_native_signin_callback_rejected">Der Anbieter hat diese Anmeldung nicht genehmigt. Wenn du abgebrochen hast, ist keine Aktion nötig; andernfalls starte einen neuen Anmeldeversuch.</string>
+    <string name="dashboard_native_signin_code_rejected">Die Google-Anmeldung wurde abgeschlossen, aber das gehostete Hermes hat den einmaligen Rückrufcode abgelehnt, bevor eine Sitzung erstellt werden konnte. Starte einen neuen Anmeldeversuch.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Das gehostete Hermes hat den Sitzungsaustausch abgelehnt. Prüfe, ob der gehostete Agent aktuell ist, und starte die Anmeldung erneut.</string>
+    <string name="dashboard_native_signin_rate_limited">Das gehostete Hermes hat zu viele Anmeldeversuche erhalten. Warte einen Moment und versuche es erneut.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Die Google-Anmeldung wurde abgeschlossen, aber der Anmeldedienst des gehosteten Hermes ist nicht verfügbar. Warte einen Moment und versuche es erneut.</string>
+    <string name="dashboard_native_signin_response_unsupported">Das gehostete Hermes hat eine Anmeldeantwort zurückgegeben, die diese App nicht verwenden kann. Suche nach Updates für Hermes Relay und den gehosteten Agent.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Dieser Anmeldeversuch wurde abgebrochen oder ersetzt. Schließe den alten Browser-Tab und starte erneut.</string>
+    <string name="dashboard_native_signin_storage_failed">Die Google-Anmeldung wurde abgeschlossen, aber Android konnte die Hermes-Sitzung nicht sicher speichern. Versuche es erneut. Falls der Fehler wiederholt auftritt, öffne die Diagnose für die Fehlerstufe.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Umgehe Bestätigungsabfragen nur für diesen Chat. Wird beim Sitzungswechsel zurückgesetzt.</string>
     <string name="conn_info_yolo_mode_profile_off">Profilbestätigungen sind deaktiviert, daher umgeht dieser Chat bereits Abfragen. Wähle Manuell oder Smart, bevor du die chatbezogene Ausnahme verwendest.</string>
     <string name="conn_info_approval_mode_title">Profil-Bestätigungsmodus</string>

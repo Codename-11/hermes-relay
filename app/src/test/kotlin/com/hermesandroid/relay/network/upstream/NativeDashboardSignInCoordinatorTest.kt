@@ -124,8 +124,8 @@ class NativeDashboardSignInCoordinatorTest {
             )
 
             assertTrue(response.startsWith("HTTP/1.1 400"))
-            assertTrue(response.contains("Sign-in needs another try"))
-            assertTrue(response.contains("No session details were saved"))
+            assertTrue(response.contains("Hermes rejected the sign-in code"))
+            assertTrue(response.contains("hosted Hermes could not exchange its one-time callback code"))
             assertTrue(response.contains("Referrer-Policy: no-referrer"))
             assertTrue(response.contains("X-Content-Type-Options: nosniff"))
             assertTrue(response.contains("Permissions-Policy:"))
@@ -215,7 +215,11 @@ class NativeDashboardSignInCoordinatorTest {
         }
         val authorize = URI(authorizationUrl.await())
         val authorizeQuery = query(authorize)
-        assertEquals(provider, authorizeQuery["provider"])
+        if (provider.equals("nous", ignoreCase = true)) {
+            assertEquals(null, authorizeQuery["provider"])
+        } else {
+            assertEquals(provider, authorizeQuery["provider"])
+        }
         assertEquals("S256", authorizeQuery["code_challenge_method"])
         val redirect = URI(authorizeQuery["redirect_uri"]!!)
         assertEquals("127.0.0.1", redirect.host)

@@ -3330,6 +3330,14 @@
     <string name="dashboard_native_signin_requires_https">O login seguro pelo navegador exige um endereço HTTPS do painel.</string>
     <string name="dashboard_native_signin_unavailable">O login seguro pelo navegador não está disponível para esta conexão. Atualize a conexão e tente novamente.</string>
     <string name="dashboard_native_signin_transport_retry">A conexão segura foi interrompida. Toque no botão de login para tentar novamente.</string>
+    <string name="dashboard_native_signin_callback_rejected">O provedor não aprovou este login. Se você cancelou, nenhuma ação é necessária; caso contrário, inicie uma nova tentativa.</string>
+    <string name="dashboard_native_signin_code_rejected">O login com o Google terminou, mas o Hermes hospedado rejeitou o código de retorno de uso único antes de criar uma sessão. Inicie uma nova tentativa.</string>
+    <string name="dashboard_native_signin_gateway_rejected">O Hermes hospedado recusou a troca da sessão. Verifique se o agente hospedado está atualizado e inicie o login novamente.</string>
+    <string name="dashboard_native_signin_rate_limited">O Hermes hospedado recebeu tentativas de login demais. Aguarde um momento e tente novamente.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">O login com o Google terminou, mas o serviço de login do Hermes hospedado está indisponível. Aguarde um momento e tente novamente.</string>
+    <string name="dashboard_native_signin_response_unsupported">O Hermes hospedado retornou uma resposta de login que este app não pode usar. Verifique se há atualizações do Hermes Relay e do agente hospedado.</string>
+    <string name="dashboard_native_signin_attempt_inactive">Esta tentativa de login foi cancelada ou substituída. Feche a aba antiga e comece novamente.</string>
+    <string name="dashboard_native_signin_storage_failed">O login com o Google terminou, mas o Android não conseguiu salvar a sessão do Hermes com segurança. Tente novamente; se o problema se repetir, abra Diagnósticos para ver a etapa da falha.</string>
     <string name="conn_info_yolo_mode_desc_ephemeral">Ignore as solicitações de aprovação somente neste chat. A opção é redefinida quando a sessão muda.</string>
     <string name="conn_info_yolo_mode_profile_off">As aprovações do perfil estão desativadas, então este chat já ignora as solicitações. Escolha Manual ou Inteligente antes de usar a exceção por chat.</string>
     <string name="conn_info_approval_mode_title">Modo de aprovação do perfil</string>
