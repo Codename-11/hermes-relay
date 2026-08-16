@@ -29,10 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 
 @Composable
@@ -144,8 +146,8 @@ private fun OnboardingPagePreview() {
     HermesRelayTheme {
         OnboardingPage(
             icon = Icons.AutoMirrored.Filled.Chat,
-            title = "Talk to Your Agent",
-            description = "Stream conversations with any Hermes profile. Ask questions, run tasks, and collaborate in real time."
+            title = stringResource(R.string.onboarding_talk_to_agent),
+            description = stringResource(R.string.onboarding_stream_desc)
         )
     }
 }
@@ -156,11 +158,11 @@ private fun OnboardingPageWithContentPreview() {
     HermesRelayTheme {
         OnboardingPage(
             icon = Icons.AutoMirrored.Filled.Chat,
-            title = "Let's Connect",
-            description = "Enter your relay server URL to get started."
+            title = stringResource(R.string.onboarding_lets_connect),
+            description = stringResource(R.string.onboarding_server_url)
         ) {
             Text(
-                text = "Custom content slot",
+                text = stringResource(R.string.onboarding_custom_slot),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary
             )

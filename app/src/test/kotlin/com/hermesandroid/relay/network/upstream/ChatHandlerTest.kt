@@ -16,6 +16,7 @@ import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.SessionPullRequest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -25,9 +26,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.random.Random
 
 /**
  * Unit tests for ChatHandler message state management.
@@ -66,6 +69,37 @@ class ChatHandlerTest {
         assertEquals(2, messages.size)
         assertEquals("First", messages[0].content)
         assertEquals("Second", messages[1].content)
+    }
+
+    @Test
+    fun addUserMessage_replayedUiIdentityDoesNotCreateDuplicateComposeKey() {
+        val uiKey = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        handler.addUserMessage(
+            createUserMessage("client-first", "Hello").copy(uiKey = uiKey),
+        )
+        handler.addUserMessage(
+            createUserMessage("client-replay", "Hello").copy(uiKey = uiKey),
+        )
+
+        assertEquals(listOf(uiKey), handler.messages.value.map(ChatMessage::uiKey))
+    }
+
+    @Test
+    fun addPlaceholderMessage_replayedUiIdentityDoesNotCreateDuplicateComposeKey() {
+        val uiKey = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        val placeholder = ChatMessage(
+            id = "assistant-live",
+            uiKey = uiKey,
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1L,
+            isStreaming = true,
+        )
+
+        handler.addPlaceholderMessage(placeholder)
+        handler.addPlaceholderMessage(placeholder.copy(id = "assistant-rebound"))
+
+        assertEquals(listOf(uiKey), handler.messages.value.map(ChatMessage::uiKey))
     }
 
     @Test
@@ -109,6 +143,43 @@ class ChatHandlerTest {
         val messages = handler.messages.value
         assertEquals(1, messages.size)
         assertEquals("ABC", messages[0].content)
+    }
+
+    @Test
+    fun mediaMarkers_acceptUpstreamWrappersPunctuationAdjacentAndWindowsPaths() {
+        val paths = mutableListOf<String>()
+        handler.onMediaBarePathRequested = { _, path -> paths += path }
+
+        handler.onTextDelta("assist-1", "`MEDIA:/tmp/report.csv.`\n")
+        handler.onTextDelta(
+            "assist-1",
+            "**MEDIA:C:\\exports\\shot.png**, MEDIA:/tmp/other report.pdf\n",
+        )
+
+        assertEquals(
+            listOf(
+                "/tmp/report.csv",
+                "C:\\exports\\shot.png",
+                "/tmp/other report.pdf",
+            ),
+            paths,
+        )
+        assertEquals("", handler.messages.value.single().content)
+    }
+
+    @Test
+    fun mediaMarkers_preserveFencedAndProseExamples() {
+        val paths = mutableListOf<String>()
+        handler.onMediaBarePathRequested = { _, path -> paths += path }
+
+        handler.onTextDelta(
+            "assist-1",
+            "```text\nMEDIA:/tmp/example.png\n```\nExample: `MEDIA:/tmp/example.pdf`\n",
+        )
+
+        assertTrue(paths.isEmpty())
+        assertTrue(handler.messages.value.single().content.contains("MEDIA:/tmp/example.png"))
+        assertTrue(handler.messages.value.single().content.contains("MEDIA:/tmp/example.pdf"))
     }
 
     @Test
@@ -234,7 +305,7 @@ class ChatHandlerTest {
     @Test
     fun onToolCallStart_createsToolCallEntry() {
         handler.onTextDelta("assist-1", "")
-        handler.onToolCallStart("assist-1", "call-1", "read_file")
+        handler.onToolCallStart("assist-1", "call-1", "read_file", "README.md")
 
         val msg = handler.messages.value.find { it.id == "assist-1" }
         assertNotNull(msg)
@@ -243,6 +314,7 @@ class ChatHandlerTest {
         val toolCall = msg.toolCalls[0]
         assertEquals("call-1", toolCall.id)
         assertEquals("read_file", toolCall.name)
+        assertEquals("README.md", toolCall.args)
         assertFalse(toolCall.isComplete)
         assertNull(toolCall.success)
     }
@@ -515,6 +587,62 @@ class ChatHandlerTest {
         handler.updateSessions(listOf(item))
 
         assertEquals(0, handler.sessions.value[0].messageCount)
+    }
+
+    @Test
+    fun updateSessions_restoresServerOwnedFlagsAfterFreshHandlerCreation() {
+        val persisted = listOf(
+            SessionItem(id = "pinned", pinned = true),
+            SessionItem(id = "archived", archived = true),
+        )
+
+        val restartedHandler = ChatHandler()
+        restartedHandler.updateSessions(persisted)
+
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "pinned" }.pinned)
+        assertTrue(restartedHandler.sessions.value.first { it.sessionId == "archived" }.archived)
+    }
+
+    @Test
+    fun updateSessions_mapsOptionalWorkspaceAndPullRequestState() {
+        handler.updateSessions(
+            listOf(
+                SessionItem(
+                    id = "coding",
+                    cwd = "/work/repo",
+                    gitBranch = "feature/mobile",
+                    gitRepoRoot = "/work/repo",
+                    pullRequest = SessionPullRequest(
+                        number = 134,
+                        url = "https://github.com/example/repo/pull/134",
+                        state = "open",
+                        draft = true,
+                    ),
+                ),
+            ),
+        )
+
+        val session = handler.sessions.value.single()
+        assertEquals("/work/repo", session.workingDirectory)
+        assertEquals("feature/mobile", session.gitBranch)
+        assertEquals("/work/repo", session.gitRepoRoot)
+        assertEquals(134, session.pullRequestNumber)
+        assertEquals("https://github.com/example/repo/pull/134", session.pullRequestUrl)
+        assertEquals("open", session.pullRequestState)
+        assertTrue(session.pullRequestDraft)
+    }
+
+    @Test
+    fun setSessionFlagsLocal_supportsOptimisticUpdateAndRollback() {
+        handler.updateSessions(listOf(SessionItem(id = "s1")))
+
+        handler.setSessionFlagsLocal("s1", pinned = true, archived = true)
+        assertTrue(handler.sessions.value.single().pinned)
+        assertTrue(handler.sessions.value.single().archived)
+
+        handler.setSessionFlagsLocal("s1", pinned = false, archived = false)
+        assertFalse(handler.sessions.value.single().pinned)
+        assertFalse(handler.sessions.value.single().archived)
     }
 
     @Test
@@ -823,6 +951,93 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_retainsDurableRowIdsWithoutUsingThemAsUiKeys() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "user-1",
+                    rowId = 41L,
+                    role = "user",
+                    content = JsonPrimitive("First"),
+                ),
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                ),
+            ),
+        )
+
+        val user = handler.messages.value.first()
+        assertEquals(41L, user.rowId)
+        assertEquals("user-1", user.uiKey)
+        assertEquals(42L, handler.messages.value.last().rowId)
+    }
+
+    @Test
+    fun loadMessageHistory_hydratesPersistedReactionsAndLetsServerWin() {
+        fun metadata(emoji: String) = buildJsonObject {
+            put("reactions", buildJsonArray {
+                add(buildJsonObject {
+                    put("emoji", emoji)
+                    put("author", "user")
+                    put("at", 1_700_000_000.0)
+                })
+            })
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                    displayMetadata = metadata("❤️"),
+                ),
+            ),
+        )
+
+        assertEquals("❤️", handler.messages.value.single().reactions.single().emoji)
+
+        handler.mutateMessage("assistant-1") { message ->
+            message.copy(reactions = listOf(com.hermesandroid.relay.data.MessageReaction("👍", "user", 2.0)))
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-1",
+                    rowId = 42L,
+                    role = "assistant",
+                    content = JsonPrimitive("Reply"),
+                    displayMetadata = metadata("😂"),
+                ),
+            ),
+        )
+
+        assertEquals("😂", handler.messages.value.single().reactions.single().emoji)
+    }
+
+    @Test
+    fun rebindSurvivorUserRowIds_replacesPrefixAndClearsUnboundTurns() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "user-1", rowId = 41L, role = "user", content = JsonPrimitive("First")),
+                MessageItem(id = "assistant-1", rowId = 42L, role = "assistant", content = JsonPrimitive("Reply")),
+                MessageItem(id = "user-2", rowId = 43L, role = "user", content = JsonPrimitive("Second")),
+            ),
+        )
+
+        handler.rebindSurvivorUserRowIds(listOf(101L))
+
+        val messages = handler.messages.value
+        assertEquals(101L, messages[0].rowId)
+        assertEquals(42L, messages[1].rowId)
+        assertNull(messages[2].rowId)
+        assertEquals(listOf("user-1", "assistant-1", "user-2"), messages.map { it.uiKey })
+    }
+
+    @Test
     fun reconcileInterimMessage_collapsesProvisionalFinalBubble() {
         handler.addPlaceholderMessage(
             ChatMessage(
@@ -867,6 +1082,88 @@ class ChatHandlerTest {
         assertEquals(2, handler.messages.value.size)
         assertEquals(MessageRole.USER, handler.messages.value[0].role)
         assertEquals(MessageRole.ASSISTANT, handler.messages.value[1].role)
+    }
+
+    @Test
+    fun loadMessageHistory_recoversStructuredToolCallsWithoutLiveEvents() {
+        val toolCalls = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("call_id", "call-history-1")
+                    put("name", "terminal")
+                    put("args", buildJsonObject { put("command", "git status") })
+                },
+            )
+        }
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-history-1",
+                    role = "assistant",
+                    content = JsonPrimitive("The workspace is clean."),
+                    toolCalls = toolCalls,
+                ),
+                MessageItem(
+                    id = "tool-history-1",
+                    role = "tool",
+                    content = JsonPrimitive("nothing to commit"),
+                    toolCallId = "call-history-1",
+                ),
+            ),
+        )
+
+        val message = handler.messages.value.single()
+        val call = message.toolCalls.single()
+        assertEquals("terminal", call.name)
+        assertEquals("call-history-1", call.id)
+        assertEquals("nothing to commit", call.result)
+        assertTrue(call.isComplete)
+        assertTrue(call.success == true)
+    }
+
+    @Test
+    fun persistedToolActivityPreflight_keepsHealthyLiveTranscriptUnchanged() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live-1",
+                role = MessageRole.ASSISTANT,
+                content = "The workspace is clean.",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.onToolCallStart("assistant-live-1", "call-history-1", "terminal", "git status")
+        handler.onToolCallComplete("assistant-live-1", "call-history-1", "nothing to commit")
+        handler.onStreamComplete("assistant-live-1")
+        val before = handler.messages.value
+        val history = listOf(
+            MessageItem(
+                id = "assistant-history-1",
+                role = "assistant",
+                content = JsonPrimitive("The workspace is clean."),
+                toolCalls = buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("call_id", "call-history-1")
+                            put("name", "terminal")
+                            put("args", JsonPrimitive("git status"))
+                        },
+                    )
+                },
+            ),
+            MessageItem(
+                id = "tool-history-1",
+                role = "tool",
+                content = JsonPrimitive("nothing to commit"),
+                toolCallId = "call-history-1",
+            ),
+        )
+
+        assertFalse(handler.hasMissingPersistedToolActivity(history))
+        assertSame(before, handler.messages.value)
+
+        handler = ChatHandler()
+        assertTrue(handler.hasMissingPersistedToolActivity(history))
     }
 
     @Test
@@ -1518,6 +1815,49 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_coalescesReplayedDomainIdWithoutLosingOrderOrContent() {
+        val replayedId = "2c93af28-0b0b-436b-a112-7f164cac931d"
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "user-1",
+                    role = "user",
+                    content = JsonPrimitive("question"),
+                    timestamp = 1.0,
+                ),
+                MessageItem(
+                    id = replayedId,
+                    role = "assistant",
+                    content = JsonPrimitive("partial answer"),
+                    timestamp = 2.0,
+                ),
+                MessageItem(
+                    id = "system-1",
+                    role = "system",
+                    content = JsonPrimitive("distinct visible content"),
+                    timestamp = 3.0,
+                ),
+                // Rejoin replay of the same persisted message. The latest
+                // snapshot is authoritative, but its first transcript position
+                // and Compose identity must remain stable.
+                MessageItem(
+                    id = replayedId,
+                    role = "assistant",
+                    content = JsonPrimitive("final answer"),
+                    timestamp = 4.0,
+                ),
+            )
+        )
+
+        val messages = handler.messages.value
+        assertEquals(listOf("user-1", replayedId, "system-1"), messages.map { it.id })
+        assertEquals("final answer", messages[1].content)
+        assertEquals("distinct visible content", messages[2].content)
+        assertEquals(messages.size, messages.map { it.uiKey }.distinct().size)
+    }
+
+    @Test
     fun loadMessageHistory_secondReloadMatchesByIdAfterReconciliation() {
         // Once the first reload adopts the server id, subsequent reloads match by
         // id and update in place while keeping client-only state.
@@ -1752,6 +2092,48 @@ class ChatHandlerTest {
 
 
     // --- Relay typed stream.event rendering ---
+
+    @Test
+    fun applyRelayStreamEvent_serverIdRebindKeepsOneStableUiRow() {
+        val clientId = "95f99e98-cd62-4a60-8001-c66f6de9eecc"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            clientId,
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 1,
+                event = "message.started",
+                payload = buildJsonObject {
+                    put("message", buildJsonObject { put("id", serverId) })
+                },
+            ),
+        )
+        handler.applyRelayStreamEvent(
+            clientId,
+            RelayStreamEventEnvelope(
+                sessionId = "sess-1",
+                runId = "run-1",
+                seq = 2,
+                event = "assistant.delta",
+                payload = buildJsonObject { put("delta", "Hello") },
+            ),
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals(serverId, message.id)
+        assertEquals(clientId, message.uiKey)
+        assertEquals("Hello", message.content)
+    }
 
     @Test
     fun applyRelayStreamEvent_rendersAssistantDeltaToolLifecycleAndDone() {
@@ -2039,9 +2421,26 @@ class ChatHandlerTest {
             updatedAt = 8L,
         )
 
-        handler.restoreInFlightTurn(checkpoint, upstreamAssistantText = "I am checking the tests")
+        val corrections = listOf("Check the release branch", "Focus on Android")
+        handler.restoreInFlightTurn(
+            checkpoint,
+            upstreamAssistantText = "I am checking the tests",
+            corrections = corrections,
+        )
+        // Recovery can be applied more than once while the socket and
+        // checkpoint settle; accepted corrections must remain exactly-once.
+        handler.restoreInFlightTurn(
+            checkpoint,
+            upstreamAssistantText = "I am checking the tests",
+            corrections = corrections,
+        )
 
-        assertEquals(2, handler.messages.value.count { it.role == MessageRole.USER })
+        assertEquals(
+            listOf("Earlier", "Run the checks", "Check the release branch", "Focus on Android"),
+            handler.messages.value
+                .filter { it.role == MessageRole.USER }
+                .map { it.content },
+        )
         val restored = handler.messages.value.single { it.id == "assistant-live" }
         assertEquals("I am checking the tests", restored.content)
         assertEquals("Inspect the project first", restored.thinkingContent)
@@ -2054,6 +2453,165 @@ class ChatHandlerTest {
         assertFalse(restored.moaReferences.last().available)
         assertTrue(handler.isStreaming.value)
         assertEquals("Running terminal", handler.turnStatus.value)
+    }
+
+    @Test
+    fun loadMessageHistory_thenRestoreCheckpoint_mergesReboundAssistantWithoutDuplicateUiIdentity() {
+        val clientId = "c32c93a8-b54b-4943-87b0-dfd36adb9c3f"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "partial answer",
+                timestamp = 2L,
+                isStreaming = true,
+            ),
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = serverId,
+                    role = "assistant",
+                    content = JsonPrimitive("partial answer"),
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+        assertEquals(serverId, handler.messages.value.single().id)
+        assertEquals(clientId, handler.messages.value.single().uiKey)
+
+        handler.restoreInFlightTurn(
+            ChatTurnCheckpoint(
+                contextKey = "connection/profile",
+                sessionId = "session-1",
+                liveSessionId = "session-1",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("user-client-id", "question", 1L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = clientId,
+                    content = "partial answer",
+                    timestamp = 2L,
+                    thinkingContent = "checkpoint reasoning",
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = 1L,
+                updatedAt = 3L,
+            ),
+        )
+
+        val assistants = handler.messages.value.filter { it.role == MessageRole.ASSISTANT }
+        assertEquals(1, assistants.size)
+        assertEquals(serverId, assistants.single().id)
+        assertEquals(clientId, assistants.single().uiKey)
+        assertEquals("checkpoint reasoning", assistants.single().thinkingContent)
+        assertEquals(
+            handler.messages.value.size,
+            handler.messages.value.map(ChatMessage::uiKey).distinct().size,
+        )
+    }
+
+    @Test
+    fun staleClientCallbacks_afterServerIdAdoption_mutateTheReboundRow() {
+        val clientId = "b229a0f6-4f15-4f86-bce3-a939d5acce82"
+        val serverId = "server-assistant-id"
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = clientId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        handler.replaceMessageId(clientId, serverId)
+
+        // Gateway recovery callbacks retain the checkpoint/client id even
+        // after history or message.started has adopted the server id.
+        handler.onTextDelta(clientId, "answer")
+        handler.onThinkingDelta(clientId, "reasoning")
+        handler.onToolGenerating(clientId, "terminal")
+
+        val assistant = handler.messages.value.single()
+        assertEquals(serverId, assistant.id)
+        assertEquals(clientId, assistant.uiKey)
+        assertEquals("answer", assistant.content)
+        assertEquals("reasoning", assistant.thinkingContent)
+        assertEquals(1, assistant.toolCalls.size)
+    }
+
+    @Test
+    fun recoveryTransitionModel_neverPublishesDuplicateRenderIdentity() {
+        repeat(64) { seed ->
+            val modelHandler = ChatHandler()
+            val clientId = "client-$seed"
+            val serverId = "server-$seed"
+            val checkpoint = ChatTurnCheckpoint(
+                contextKey = "connection/profile",
+                sessionId = "session-$seed",
+                liveSessionId = "session-$seed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("user-$seed", "question", 1L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = clientId,
+                    content = "partial",
+                    timestamp = 2L,
+                    thinkingContent = "checkpoint",
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = 1L,
+                updatedAt = 2L,
+            )
+            modelHandler.addPlaceholderMessage(
+                ChatMessage(
+                    id = clientId,
+                    role = MessageRole.ASSISTANT,
+                    content = "partial",
+                    timestamp = 2L,
+                    isStreaming = true,
+                ),
+            )
+
+            var serverIdAdopted = false
+            val random = Random(seed)
+            repeat(20) { step ->
+                when (random.nextInt(5)) {
+                    0 -> {
+                        val content = modelHandler.messages.value
+                            .last { it.role == MessageRole.ASSISTANT }
+                            .content
+                        modelHandler.loadMessageHistory(
+                            listOf(
+                                MessageItem(
+                                    id = serverId,
+                                    role = "assistant",
+                                    content = JsonPrimitive(content),
+                                    timestamp = 2.0,
+                                ),
+                            ),
+                        )
+                        serverIdAdopted = true
+                    }
+                    1 -> modelHandler.restoreInFlightTurn(checkpoint)
+                    2 -> modelHandler.onTextDelta(clientId, ".$step")
+                    3 -> modelHandler.onThinkingDelta(clientId, "t$step")
+                    else -> modelHandler.onUsageReceived(clientId, step, step + 1, null, null)
+                }
+
+                val snapshot = modelHandler.messages.value
+                assertEquals(
+                    "seed=$seed step=$step keys=${snapshot.map(ChatMessage::uiKey)}",
+                    snapshot.size,
+                    snapshot.map(ChatMessage::uiKey).distinct().size,
+                )
+                val assistants = snapshot.filter { it.role == MessageRole.ASSISTANT }
+                assertEquals("seed=$seed step=$step", 1, assistants.size)
+                assertEquals(clientId, assistants.single().uiKey)
+                if (serverIdAdopted) assertEquals(serverId, assistants.single().id)
+            }
+        }
     }
 
     @Test

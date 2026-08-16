@@ -34,6 +34,12 @@ class AppLanguageTest {
     }
 
     @Test
+    fun russianTagsResolveToRussian() {
+        assertEquals(AppLanguage.RUSSIAN, AppLanguage.fromLanguageTags("ru-RU"))
+        assertEquals(AppLanguage.RUSSIAN, AppLanguage.fromLanguageTags("ru"))
+        assertEquals(AppLanguage.RUSSIAN, AppLanguage.fromLanguageTags("ru-UA"))
+    }
+    @Test
     fun languageOptionsProduceExpectedLocaleLists() {
         assertTrue(AppLanguage.SYSTEM_DEFAULT.toLocaleList().isEmpty)
         assertEquals("en", AppLanguage.ENGLISH.toLocaleList().toLanguageTags())
@@ -42,6 +48,7 @@ class AppLanguageTest {
         assertEquals("ja", AppLanguage.JAPANESE.toLocaleList().toLanguageTags())
         assertEquals("zh-Hans", AppLanguage.SIMPLIFIED_CHINESE.languageTag)
         assertEquals("es", AppLanguage.SPANISH.toLocaleList().toLanguageTags())
+        assertEquals("ru", AppLanguage.RUSSIAN.toLocaleList().toLanguageTags())
         assertEquals(
             "zh",
             AppLanguage.SIMPLIFIED_CHINESE.toLocaleList()[0]?.language,

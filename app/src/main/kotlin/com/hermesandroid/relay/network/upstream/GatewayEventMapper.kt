@@ -40,6 +40,15 @@ class GatewayEventMapper(
         if (!duplicate) callbacks.onInteractionRequest(ask)
     }
 
+    /** Retire only the ask whose explicit respond RPC reached server truth. */
+    internal fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+        val pending = pendingInteraction ?: return
+        if (pending.matches(expiry)) {
+            pendingInteraction = null
+            drainDeferredTerminalEvent()
+        }
+    }
+
     private var sawMessageStart = false
     private var previousEventType: String? = null
     private var sawTextDelta = false
@@ -50,6 +59,7 @@ class GatewayEventMapper(
     private var compactionStatusActive = false
     private var moaStatusActive = false
     private var pendingInteraction: GatewayAsk? = null
+    private var deferredTerminalEvent: Pair<String, JsonObject?>? = null
 
     /**
      * `tool.complete` events match their `tool.start` by `tool_id`; when a
@@ -81,17 +91,17 @@ class GatewayEventMapper(
             }
             callbacks.onInteractionExpired(expiry)
             previousEventType = type
+            if (pendingInteraction == null) drainDeferredTerminalEvent()
             return
         }
-        if (type in INTERACTION_RESUME_EVENTS) {
-            pendingInteraction?.let { ask ->
-                pendingInteraction = null
-                callbacks.onInteractionResolved(
-                    GatewayAskExpiry(kind = ask.kind, requestId = ask.requestId),
-                )
-            }
+        if (pendingInteraction != null && type in TERMINAL_EVENTS) {
+            // A buffered/late terminal frame is not consent. Upstream blocks
+            // the turn on an interaction, so hold the first terminal until an
+            // explicit response acknowledgement or authoritative expiry.
+            if (deferredTerminalEvent == null) deferredTerminalEvent = type to payload
+            previousEventType = type
+            return
         }
-
         when (type) {
             "reasoning.delta" -> {
                 val text = payload.string("text")
@@ -197,7 +207,14 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                callbacks.onToolCallStart(toolId, name)
+                val argsPreview = payload?.get("args")
+                    ?.takeUnless { it is JsonPrimitive && it.contentOrNull.isNullOrBlank() }
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: payload.string("args_text")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: payload.string("context")?.takeIf { it.isNotBlank() }
+                callbacks.onToolCallStart(toolId, name, argsPreview)
             }
 
             "tool.complete" -> {
@@ -210,7 +227,10 @@ class GatewayEventMapper(
                 if (!error.isNullOrEmpty()) {
                     callbacks.onToolCallFailed(toolId, error)
                 } else {
-                    callbacks.onToolCallDone(toolId, payload.string("summary"))
+                    val resultPreview = payload.string("result_text")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: payload.string("summary")?.takeIf { it.isNotBlank() }
+                    callbacks.onToolCallDone(toolId, resultPreview)
                 }
             }
 
@@ -278,6 +298,7 @@ class GatewayEventMapper(
                         // text; thinking/progress carry text only.
                         preview = payload.string("tool_preview") ?: payload.string("text"),
                         durationSeconds = payload.double("duration_seconds"),
+                        subagentId = payload.string("subagent_id"),
                     ),
                 )
             }
@@ -371,6 +392,12 @@ class GatewayEventMapper(
         previousEventType = type
     }
 
+    private fun drainDeferredTerminalEvent() {
+        val deferred = deferredTerminalEvent ?: return
+        deferredTerminalEvent = null
+        onEvent(deferred.first, deferred.second)
+    }
+
     private fun syntheticToolId(name: String): String {
         val id = "gateway-tool-$name-${syntheticToolCounter++}"
         openSyntheticIdsByName.getOrPut(name) { ArrayDeque() }.addLast(id)
@@ -410,35 +437,33 @@ class GatewayEventMapper(
         private const val MAX_MOA_LABEL_CHARS = 120
         private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
-        private val INTERACTION_RESUME_EVENTS = setOf(
-            "reasoning.delta",
-            "thinking.delta",
-            "reasoning.available",
-            "message.delta",
-            "message.interim",
-            "message.start",
-            "tool.generating",
-            "tool.start",
-            "tool.complete",
-            "message.complete",
-            "error",
-        )
-
+        private val TERMINAL_EVENTS = setOf("message.complete", "error")
         internal fun isFailedMoaReference(text: String): Boolean {
             val normalized = text.trimStart().lowercase()
             return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
         }
 
         fun interactionRequest(type: String, payload: JsonObject?): GatewayAsk? = when (type) {
-            "clarify.request" -> GatewayAsk(
-                kind = GatewayAsk.Kind.CLARIFY,
-                requestId = payload.string("request_id"),
-                text = payload.string("question") ?: "The agent needs clarification",
-                choices = (payload?.get("choices") as? JsonArray)
-                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                    ?.takeIf { it.isNotEmpty() },
-                timeoutSeconds = CLARIFY_TIMEOUT_SECONDS,
-            )
+            "clarify.request" -> {
+                val choices = (payload?.get("choices") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?.distinct()
+                    ?.take(MAX_CLARIFY_CHOICES)
+                    ?.takeIf { it.isNotEmpty() }
+                GatewayAsk(
+                    kind = GatewayAsk.Kind.CLARIFY,
+                    requestId = payload.string("request_id"),
+                    text = payload.string("question") ?: "The agent needs clarification",
+                    choices = choices,
+                    multiSelect = payload.boolean("multi_select") == true && choices != null,
+                    // Current upstream owns expiry through clarify.expire and
+                    // does not advertise its configurable deadline. Never
+                    // invent a local deadline; consume future additive
+                    // metadata only when it is present and positive.
+                    timeoutSeconds = payload.int("timeout_seconds")?.coerceAtLeast(0) ?: 0,
+                )
+            }
 
             "approval.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.APPROVAL,
@@ -497,8 +522,6 @@ class GatewayEventMapper(
             else -> null
         }
 
-        fun isInteractionResumeEvent(type: String): Boolean = type in INTERACTION_RESUME_EVENTS
-
         /**
          * Hermes 2026-07-15 emits these operational wait lines through the
          * legacy `thinking.delta` display callback. Match the deliberately
@@ -549,9 +572,9 @@ class GatewayEventMapper(
     }
 }
 
-// Upstream `_block()` timeouts per ask kind (server.py) — the blocked thread
-// resolves to "" when these elapse. Approval has none (session-scoped).
-private const val CLARIFY_TIMEOUT_SECONDS = 300
+// Upstream clarify tool accepts at most four choices. Sudo/secret retain fixed
+// `_block()` timeouts; clarify is configurable and expires authoritatively.
+private const val MAX_CLARIFY_CHOICES = 4
 private const val SUDO_TIMEOUT_SECONDS = 120
 private const val SECRET_TIMEOUT_SECONDS = 300
 
@@ -571,6 +594,12 @@ private fun JsonObject?.approvalChoices(): List<String>? =
     (this?.get("choices") as? JsonArray)
         ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
         ?.filter { it in setOf("once", "session", "always", "deny") }
+        // Scope-denial flags are authoritative. Current upstream protected-
+        // instruction requests set both flags false, but gateway event builders
+        // can still include the broader session choice in `choices`.
+        // Never offer a scope the request explicitly forbids.
+        ?.filterNot { it == "session" && this.boolean("allow_session") == false }
+        ?.filterNot { it == "always" && this.boolean("allow_permanent") == false }
         ?.distinct()
         ?.takeIf { it.isNotEmpty() }
 

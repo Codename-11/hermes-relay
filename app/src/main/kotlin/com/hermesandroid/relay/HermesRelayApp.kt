@@ -1,6 +1,9 @@
 package com.hermesandroid.relay
 
+import android.app.ActivityManager
 import android.app.Application
+import android.content.Context
+import android.os.Build
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -9,10 +12,23 @@ import coil3.request.crossfade
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.power.WakeLockManager
+import com.hermesandroid.relay.runtime.HermesProcessRuntime
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.CrashReporter
 
 class HermesRelayApp : Application(), SingletonImageLoader.Factory {
+
+    /**
+     * Shared chat/voice runtime for the main application process. It is lazy so
+     * the always-available assistant session UI process stays lightweight and
+     * cannot accidentally become a second microphone/session owner.
+     */
+    val runtime: HermesProcessRuntime by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        check(isMainApplicationProcess()) {
+            "HermesProcessRuntime may only be created in the main application process"
+        }
+        HermesProcessRuntime(this)
+    }
 
     /**
      * Coil's singleton image loader for the whole app. Registering the OkHttp
@@ -49,6 +65,19 @@ class HermesRelayApp : Application(), SingletonImageLoader.Factory {
         // while the user is inside Hermes-Relay (the in-app
         // UnattendedGlobalBanner covers that case). Idempotent.
         AppForegroundTracker.initialize()
+    }
+
+    private fun isMainApplicationProcess(): Boolean {
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            val pid = android.os.Process.myPid()
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            activityManager.runningAppProcesses
+                ?.firstOrNull { process -> process.pid == pid }
+                ?.processName
+        }
+        return processName == packageName
     }
 
     companion object {

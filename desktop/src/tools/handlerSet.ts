@@ -21,6 +21,15 @@ import {
 } from './handlers/jobs.js'
 import { powershellHandler } from './handlers/powershell.js'
 import {
+  adbDevicesHandler,
+  adbInstallHandler,
+  adbLogcatHandler,
+  adbPullHandler,
+  adbPushHandler,
+  adbShellHandler
+} from './handlers/adb.js'
+import { usbDevicesHandler, usbRunHandler } from './handlers/usb.js'
+import {
   findPidByPortHandler,
   killProcessHandler,
   listProcessesHandler,
@@ -44,6 +53,13 @@ import {
 } from './handlers/computer.js'
 import type { ToolHandler } from './router.js'
 import { readDesktopUseSettingsSync } from '../lib/desktopUseSettings.js'
+import { approveComputerGrant } from './computerActionApproval.js'
+import {
+  DEFAULT_CAPABILITY_POLICIES,
+  type CapabilityAccessMode,
+  type CapabilityPolicies,
+  type HostCapability
+} from '../lib/hostAccessPolicy.js'
 
 /** Experimental computer-use tools are registered in the local handler map
  * but heartbeat-advertised only when persistently enabled or explicitly
@@ -91,8 +107,43 @@ const BASE_DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   desktop_clipboard_read: clipboardReadHandler,
   desktop_clipboard_write: clipboardWriteHandler,
   desktop_screenshot: screenshotHandler,
-  desktop_open_in_editor: openInEditorHandler
+  desktop_open_in_editor: openInEditorHandler,
+  desktop_usb_devices: usbDevicesHandler,
+  desktop_usb_run: usbRunHandler,
+  desktop_adb_devices: adbDevicesHandler,
+  desktop_adb_shell: adbShellHandler,
+  desktop_adb_push: adbPushHandler,
+  desktop_adb_pull: adbPullHandler,
+  desktop_adb_install: adbInstallHandler,
+  desktop_adb_logcat: adbLogcatHandler
 }
+
+export const RAW_EXECUTION_TOOLS = Object.freeze([
+  'desktop_terminal',
+  'desktop_powershell',
+  'desktop_spawn_detached',
+  'desktop_job_start'
+])
+export const FILE_TOOLS = Object.freeze([
+  'desktop_read_file', 'desktop_write_file', 'desktop_patch', 'desktop_search_files',
+  'desktop_copy_directory', 'desktop_zip', 'desktop_unzip', 'desktop_checksum', 'desktop_open_in_editor'
+])
+export const SCREEN_INPUT_TOOLS = Object.freeze([
+  'desktop_clipboard_read', 'desktop_clipboard_write', 'desktop_screenshot', ...DESKTOP_COMPUTER_USE_TOOLS
+])
+export const RAW_USB_TOOLS = Object.freeze([
+  'desktop_usb_devices',
+  'desktop_usb_run'
+])
+export const ADB_TOOLS = Object.freeze([
+  'desktop_adb_devices',
+  'desktop_adb_shell',
+  'desktop_adb_push',
+  'desktop_adb_pull',
+  'desktop_adb_install',
+  'desktop_adb_logcat'
+])
+export const USB_TOOLS = Object.freeze([...RAW_USB_TOOLS, ...ADB_TOOLS])
 
 const COMPUTER_USE_HANDLERS: Record<string, ToolHandler> = {
   desktop_computer_status: computerStatusHandler,
@@ -111,6 +162,10 @@ export const DESKTOP_HANDLERS: Record<string, ToolHandler> = {
 
 export interface DesktopAdvertiseOptions {
   computerUse?: boolean
+  structuredOnly?: boolean
+  usb?: boolean
+  adb?: boolean
+  capabilities?: CapabilityPolicies
 }
 
 function envEnabled(value: string | undefined): boolean {
@@ -139,10 +194,117 @@ export function shouldAdvertiseComputerUse(
 export function desktopHandlers(
   opts: DesktopAdvertiseOptions = {}
 ): Record<string, ToolHandler> {
-  if (opts.computerUse !== true) {
-    return BASE_DESKTOP_HANDLERS
+  const policies: CapabilityPolicies = opts.capabilities ?? {
+    ...DEFAULT_CAPABILITY_POLICIES,
+    commands: opts.structuredOnly === true ? 'disabled' : 'allow',
+    files: 'allow',
+    screen_input: opts.computerUse === true ? 'ask' : 'disabled',
+    usb: opts.usb === true ? 'allow' : 'disabled'
   }
-  return DESKTOP_HANDLERS
+  const handlers = opts.computerUse === true && policies.screen_input !== 'disabled'
+    ? DESKTOP_HANDLERS
+    : BASE_DESKTOP_HANDLERS
+  const raw = new Set(RAW_EXECUTION_TOOLS)
+  const files = new Set(FILE_TOOLS)
+  const screenInput = new Set(SCREEN_INPUT_TOOLS)
+  const rawUsb = new Set(RAW_USB_TOOLS)
+  const adb = new Set(ADB_TOOLS)
+  const capabilityFor = (name: string): HostCapability | null =>
+    raw.has(name) ? 'commands'
+      : files.has(name) ? 'files'
+        : screenInput.has(name) ? 'screen_input'
+          : rawUsb.has(name) || adb.has(name) ? 'usb'
+            : null
+  const guarded = Object.entries(handlers).flatMap(([name, handler]) => {
+    const capability = capabilityFor(name)
+    const mode = capability ? policies[capability] : 'allow'
+    if (mode === 'disabled') return []
+    if (adb.has(name) && opts.adb !== true) return []
+    if (mode !== 'ask' || name.startsWith('desktop_computer_') || name === 'desktop_patch') {
+      return [[name, handler] as const]
+    }
+    return [[name, guardCapabilityHandler(name, capability!, mode, handler)] as const]
+  })
+  return Object.fromEntries(guarded)
+}
+
+function guardCapabilityHandler(
+  tool: string,
+  capability: HostCapability,
+  mode: CapabilityAccessMode,
+  handler: ToolHandler
+): ToolHandler {
+  if (mode !== 'ask') return handler
+  return async (args, ctx) => {
+    const approval = await approveComputerGrant({
+      mode: `${capability}.${tool.replace(/^desktop_/, '')}`,
+      durationSeconds: 120,
+      reason: typeof args.reason === 'string' && args.reason.trim()
+        ? args.reason.trim()
+        : `Run ${tool.replaceAll('_', ' ')}`,
+      scope: buildCapabilityGrantScope(tool, capability, args),
+      interactive: ctx.interactive
+    })
+    if (!approval.approved) throw new Error(approval.reason || `${capability} request rejected locally`)
+    return handler(args, ctx)
+  }
+}
+
+const GRANT_PREVIEW_LIMIT = 2_000
+
+function previewText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const clean = value.replaceAll(/[^\S\r\n]+/g, ' ').replaceAll(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim()
+  if (!clean) return null
+  return clean.length > GRANT_PREVIEW_LIMIT ? `${clean.slice(0, GRANT_PREVIEW_LIMIT)}\n… preview truncated` : clean
+}
+
+/** Build the local approval context shown before an Ask-mode operation runs.
+ * Keep command text exact enough to review while summarizing large file bodies
+ * and environment maps rather than copying them into the bridge request. */
+export function buildCapabilityGrantScope(
+  tool: string,
+  capability: HostCapability,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  let action = tool.replace(/^desktop_/, '').replaceAll('_', ' ')
+  let preview: string | null = null
+
+  if (tool === 'desktop_powershell') {
+    action = 'PowerShell script'
+    preview = previewText(args.script)
+  } else if (['desktop_terminal', 'desktop_job_start', 'desktop_spawn_detached'].includes(tool)) {
+    action = tool === 'desktop_job_start' ? 'Background command' : 'Terminal command'
+    preview = previewText(args.command)
+  } else if (tool === 'desktop_read_file') {
+    action = 'Read file'
+    preview = previewText(args.path)
+  } else if (tool === 'desktop_write_file') {
+    action = 'Write file'
+    const path = previewText(args.path)
+    const contentLength = typeof args.content === 'string' ? args.content.length : null
+    preview = path ? `${path}${contentLength === null ? '' : ` (${contentLength.toLocaleString()} characters)`}` : null
+  } else if (tool === 'desktop_search_files') {
+    action = 'Search files'
+    const pattern = previewText(args.pattern)
+    const path = previewText(args.path)
+    preview = [pattern ? `Pattern: ${pattern}` : null, path ? `Path: ${path}` : null].filter(Boolean).join('\n') || null
+  } else if (capability === 'usb') {
+    action = tool.replace(/^desktop_/, '').replaceAll('_', ' ')
+    const executable = previewText(args.executable)
+    const command = previewText(args.command)
+    const argumentList = Array.isArray(args.arguments)
+      ? args.arguments.filter(value => typeof value === 'string').join(' ')
+      : null
+    preview = previewText([executable, argumentList, command].filter(Boolean).join(' '))
+  }
+
+  return {
+    capability,
+    tool,
+    action,
+    ...(preview ? { preview } : {})
+  }
 }
 
 /** Stable list of advertised tool names — what the heartbeat claims to
@@ -151,11 +313,7 @@ export function desktopHandlers(
 export function advertisedDesktopTools(
   opts: DesktopAdvertiseOptions = {}
 ): readonly string[] {
-  if (opts.computerUse !== true) {
-    const experimental = new Set(DESKTOP_COMPUTER_USE_TOOLS)
-    return Object.freeze(Object.keys(DESKTOP_HANDLERS).filter(name => !experimental.has(name)))
-  }
-  return Object.freeze(Object.keys(DESKTOP_HANDLERS))
+  return Object.freeze(Object.keys(desktopHandlers(opts)))
 }
 
 export const DESKTOP_ADVERTISED_TOOLS: readonly string[] = advertisedDesktopTools({

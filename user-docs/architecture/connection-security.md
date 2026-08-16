@@ -54,10 +54,13 @@ private network" — it is a green/secure state, not a warning.
 
 ## TLS + certificate pinning (TOFU)
 
-When Hermes-Relay connects over a TLS route (`wss://`/`https://`) for the **first** time,
-it records a fingerprint of the server's certificate — its SHA‑256 SPKI. This is
-**trust-on-first-use (TOFU) pinning**: every later connection to that same host must
-present the *same* certificate, or the app refuses to connect.
+Ordinary TLS routes (`wss://`/`https://`) use **trust-on-first-use (TOFU)
+pinning**: on the first connection Hermes-Relay records the certificate's
+SHA-256 SPKI, and every later connection to that host must present the same
+certificate. Hermes Secure Link is stricter: its SPKI pin comes from the
+operator-reviewed pairing QR and is required before the first request. The pin
+verifies continuity with that paired endpoint; it does not independently prove
+the identity of the physical host.
 
 What this buys you:
 
@@ -74,7 +77,8 @@ Two honest caveats:
   device identity.
 - **TOFU can't protect the very first connect.** By definition it trusts whatever
   certificate is present on the initial handshake, so do your first connection over a path
-  you trust (LAN, Tailscale, or VPN). It protects every connection after that.
+  you trust (LAN, Tailscale, or VPN). It protects every connection after that. This caveat
+  does not apply to QR-pinned Hermes Secure Link.
 
 ## Why one connection has several security states
 
@@ -107,7 +111,7 @@ card. There are four outcomes:
 | Indicator | Meaning | Tone |
 |---|---|---|
 | 🔒 `Encrypted · TLS` | Every in-use surface is `wss`/`https`, pinned on first connect. | **Secure (green)** |
-| 🛡️ `Encrypted · Tailscale` | Plain scheme, but the route is Tailscale / WireGuard / a secure proxy — encrypted by the overlay. | **Secure (green)** |
+| 🛡️ `Encrypted · Tailscale` | Plain scheme, but the route is Tailscale or WireGuard — encrypted by the overlay. | **Secure (green)** |
 | 🛡️ `Mixed routes` | Some surfaces are encrypted, some are plain (a secure fallback exists). | Amber — review the breakdown |
 | ⚠️ `Not encrypted` | Plain `ws`/`http` with no overlay. | Warning — only safe on a network you fully trust |
 
@@ -158,12 +162,43 @@ certificate; your phone pins it on first connect. This is the path to use when y
 exposing Hermes beyond a private network — never expose plain `ws://`/`http://` ports
 directly.
 
-### 3. The plugin secure proxy *(not yet available)*
+### 3. Optional Hermes Secure Link
 
-A future relay-built secure proxy will mint and front its own TLS for the relay surfaces,
-so you get a pinned `wss://` route without standing up Tailscale Serve or an external
-proxy. It is **not implemented yet** — when it ships, the app will slot it in
-automatically as a 🔒 TLS (pinned) route. Until then, use Tailscale or a reverse proxy.
+The Relay plugin can expose Hermes Secure Link, an opt-in pinned-TLS listener on port `9443`. It has fixed
+`/relay`, `/api`, and `/dashboard` namespaces and is not an arbitrary reverse proxy.
+Relay sessions, API keys, and Dashboard login remain independent; Dashboard forwarding
+requires its upstream authentication gate. Its SPKI pin comes from the pairing QR,
+so the client has trust material before its first request. That pin proves
+continuity with the endpoint reviewed during pairing, not the identity of the
+underlying physical host. Changing the certificate or advertised authority
+requires explicit re-pairing.
+
+Secure Link protects transport but does not create reachability: LAN routing,
+Tailscale or another VPN, or a public route must still reach the listener. One
+origin carries the fixed namespaces, while Relay pairing/session auth, API bearer
+auth, and Dashboard cookie/native bearer auth remain separate. Enable it with
+`--secure-link` or `RELAY_SECURE_LINK_ENABLED=1`, then re-pair to import its
+authority and pin. Tailscale Serve remains the primary recommendation today;
+direct and Tailscale routes remain available as independent fallbacks.
+
+### 4. Hermes Reach (experimental outbound rendezvous)
+
+Hermes Reach solves reachability, not transport trust. A host and client each
+open an outbound WSS connection to an optional hosted or self-hosted broker.
+The broker matches the two streams, but the Hermes session remains inside
+QR-pinned Secure Link TLS end-to-end.
+
+That distinction matters: outer WSS protects each hop to the broker, while the
+inner pinned TLS session keeps Hermes paths, headers, credentials, and plaintext
+opaque to the broker. The broker can still observe routing and source metadata,
+timing, and byte volume; it can deny, delay, drop, or misroute traffic. Reach is
+therefore not anonymous or “zero knowledge.”
+
+The initial QR carries a raw one-use bootstrap token whose SHA-256 hash is
+atomically consumed by the broker. Durable reconnect credentials are scoped to
+an opaque session identifier and returned only after inner Relay authentication.
+Reach remains disabled by default and ordered after Tailscale, public TLS, and
+Direct Secure Link. A broker failure never authorizes plaintext downgrade.
 
 ## See also
 

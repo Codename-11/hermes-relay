@@ -4,6 +4,7 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -52,6 +53,29 @@ class RelayErrorClassifierTest {
     }
 
     @Test
+    fun apiSessionLoadUnauthorizedPointsAtApiKeyInsteadOfRepairingRelay() {
+        val err = classifyError(
+            IOException("List sessions unauthorized - check your API key"),
+            context = "load_sessions",
+        )
+
+        assertEquals("API key rejected", err.title)
+        assertFalse(err.body.contains("re-pair", ignoreCase = true))
+    }
+
+    @Test
+    fun dashboardProfileSessionUnauthorizedDoesNotBlameRelayPairing() {
+        val err = classifyError(
+            IOException("Profile sessions unauthorized - HTTP 401"),
+            context = "load_profile_sessions",
+        )
+
+        assertEquals("Dashboard sign-in required", err.title)
+        assertFalse(err.body.contains("re-pair", ignoreCase = true))
+        assertEquals(null, err.action)
+    }
+
+    @Test
     fun relayUnauthorizedStillPointsAtPairing() {
         val err = classifyError(
             IOException("401 Unauthorized"),
@@ -60,6 +84,15 @@ class RelayErrorClassifierTest {
 
         assertEquals("Session expired", err.title)
         assertTrue(err.body.contains("re-pair", ignoreCase = true))
+        assertEquals(HumanErrorAction.Repair, err.action)
+    }
+
+    @Test
+    fun certificateMismatchExposesRepairAction() {
+        val err = classifyError(SSLException("certificate changed"))
+
+        assertEquals("Certificate mismatch", err.title)
+        assertEquals(HumanErrorAction.Repair, err.action)
     }
 
     @Test
@@ -95,5 +128,28 @@ class RelayErrorClassifierTest {
 
         assertEquals("Realtime provider auth unavailable", err.title)
         assertFalse(err.body.contains("server refused", ignoreCase = true))
+    }
+
+    @Test
+    fun audioRecordCannotCreateMapsToMicUnavailableHint() {
+        val err = classifyError(
+            UnsupportedOperationException("Cannot create AudioRecord"),
+            context = "record",
+        )
+
+        assertEquals("Microphone unavailable", err.title)
+        assertTrue(err.body.contains("microphone", ignoreCase = true))
+        assertTrue(err.retryable)
+    }
+
+    @Test
+    fun audioRecordFailedToInitializeMapsToMicUnavailableHint() {
+        val err = classifyError(
+            IllegalStateException("AudioRecord failed to initialize"),
+            context = "record",
+        )
+
+        assertEquals("Microphone unavailable", err.title)
+        assertTrue(err.retryable)
     }
 }

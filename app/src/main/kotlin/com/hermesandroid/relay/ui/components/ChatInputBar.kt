@@ -5,7 +5,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -27,6 +29,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -56,8 +60,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
@@ -80,8 +94,9 @@ import kotlinx.coroutines.delay
  */
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
-private val ChatComposerShape = RoundedCornerShape(18.dp)
+private val ChatComposerShape = RoundedCornerShape(26.dp)
 private val ChatInputChipShape = RoundedCornerShape(12.dp)
+internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
 data class ChatInputPickerOption(
     val label: String,
@@ -130,6 +145,12 @@ data class ChatInputPickerControl(
  *    (DataStore flag owned by the caller, consumed via [onVoiceHintShown]).
  *  - [purpleGlow] on the trailing button (dark theme only) when it is an
  *    enabled SEND — the bar's one flourish, exactly as before.
+ *  - [topContent] lets an active mode share the composer's outer surface.
+ *    Conversation voice uses it for the dock and sets [suppressVoiceTrailing]
+ *    so the dock remains the only idle/stop voice action; typed send/steer/
+ *    queue actions still render normally.
+ *  - [topContentVisible] expands or collapses that shared content from the
+ *    composer edge instead of abruptly replacing the input layout.
  *
  * [onSend] fires for SEND, STEER, and QUEUE — the caller already encoded
  * the meaning in the state it passed; [onVoice]/[onStop] for theirs.
@@ -159,10 +180,21 @@ fun ChatInputBar(
     onModelOptionSelected: (ChatInputPickerOption) -> Unit = {},
     onModelPickerClick: (() -> Unit)? = null,
     effortControl: ChatInputPickerControl? = null,
-    onEffortOptionSelected: (ChatInputPickerOption) -> Unit = {},
+    onEffortPickerClick: (() -> Unit)? = null,
+    topContent: (@Composable () -> Unit)? = null,
+    topContentVisible: Boolean = topContent != null,
+    suppressVoiceTrailing: Boolean = false,
     modifier: Modifier = Modifier,
+    surfaceModifier: Modifier = Modifier,
     enabled: Boolean = true,
+    physicalEnterSends: Boolean = true,
 ) {
+    val canSubmit = enabled && trailing in setOf(
+        ChatInputTrailing.SEND,
+        ChatInputTrailing.STEER,
+        ChatInputTrailing.QUEUE,
+    )
+
     // Keep the last caption around so the AnimatedVisibility exit doesn't
     // flash an empty line while collapsing.
     var lastCaption by remember { mutableStateOf<String?>(null) }
@@ -191,18 +223,57 @@ fun ChatInputBar(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Caption row — correct/queue hinting, single line, no buttons.
+        // Correction and queueing are materially different actions. Keep the
+        // explanation, but lead with a visible state pill so the distinction
+        // does not depend on the trailing icon or accent color alone.
         AnimatedVisibility(visible = caption != null) {
-            Text(
-                text = caption ?: lastCaption.orEmpty(),
-                style = relayMetadataStyle(),
-                color = if (trailing == ChatInputTrailing.STEER) {
-                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-            )
+            val detail = caption ?: lastCaption.orEmpty()
+            val actionLabel = when (trailing) {
+                ChatInputTrailing.STEER -> stringResource(R.string.chat_input_steer_response)
+                ChatInputTrailing.QUEUE -> stringResource(R.string.chat_input_queue_message)
+                else -> null
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp)
+                    .semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = listOfNotNull(actionLabel, detail)
+                            .joinToString(separator = ". ")
+                    },
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (actionLabel != null) {
+                    Text(
+                        text = actionLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (trailing == ChatInputTrailing.STEER) {
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                if (trailing == ChatInputTrailing.STEER) {
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                },
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+                Text(
+                    text = detail,
+                    style = relayMetadataStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // Voice hint pill — floats above the trailing button.
@@ -244,42 +315,100 @@ fun ChatInputBar(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .then(surfaceModifier),
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = { if (it.length <= charLimit) onValueChange(it) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 34.dp)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    maxLines = 5,
-                    enabled = enabled,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    decorationBox = { inner ->
-                        Box(Modifier.fillMaxWidth()) {
-                            if (value.isEmpty()) {
-                                Text(
-                                    text = placeholder,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = RelayRefresh.Dim,
-                                )
-                            }
-                            inner()
+            Column {
+                if (topContent != null) {
+                    AnimatedVisibility(
+                        visible = topContentVisible,
+                        enter = expandVertically(
+                            animationSpec = tween(240),
+                            expandFrom = Alignment.Bottom,
+                        ) + fadeIn(tween(180)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(180),
+                            shrinkTowards = Alignment.Bottom,
+                        ) + fadeOut(tween(120)),
+                    ) {
+                        Column {
+                            topContent()
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                            )
                         }
-                    },
-                )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                ) {
+                    BasicTextField(
+                        value = value,
+                        onValueChange = { if (it.length <= charLimit) onValueChange(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 30.dp)
+                            .padding(horizontal = 10.dp, vertical = 2.dp)
+                            // Keep directional keys inside the editor. Compose's
+                            // BasicTextField owns normal caret/selection movement;
+                            // cancelling focus traversal prevents a boundary arrow
+                            // from jumping to a neighboring composer control.
+                            .focusProperties {
+                                left = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                            }
+                            .onPreviewKeyEvent { event ->
+                                val native = event.nativeKeyEvent
+                                val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
+                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
+                                    false
+                                } else if (isSubmitShortcut || (physicalEnterSends && !native.isShiftPressed)) {
+                                    if (canSubmit) onSend()
+                                    true
+                                } else {
+                                    // Shift+Enter always inserts a newline. When
+                                    // Enter is configured for newlines, the plain
+                                    // key also stays owned by BasicTextField.
+                                    false
+                                }
+                            }
+                            .testTag(CHAT_INPUT_FIELD_TEST_TAG),
+                        maxLines = 5,
+                        enabled = enabled,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = { if (canSubmit) onSend() },
+                        ),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth()) {
+                                if (value.isEmpty()) {
+                                    Text(
+                                        text = placeholder,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = RelayRefresh.Dim,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 40.dp),
+                        .heightIn(min = 44.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -289,7 +418,7 @@ fun ChatInputBar(
                     Box {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .combinedClickable(
                                     onClick = { attachMenuExpanded = true },
@@ -364,8 +493,9 @@ fun ChatInputBar(
                     if (effortControl != null) {
                         ChatInputPickerChip(
                             control = effortControl,
-                            onSelect = onEffortOptionSelected,
+                            onSelect = {},
                             modifier = Modifier.widthIn(max = 104.dp),
+                            onClickOverride = onEffortPickerClick,
                         )
                     }
 
@@ -401,42 +531,50 @@ fun ChatInputBar(
                                     )
                                 }
 
-                                ChatInputTrailing.VOICE -> Box {
-                                    IconButton(onClick = onVoice) {
-                                        Icon(
-                                            imageVector = Icons.Filled.GraphicEq,
-                                            contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                else stringResource(R.string.chat_input_voice_setup_needed),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                    // "Needs setup" badge — full-alpha button + Amber
-                                    // dot instead of a half-dimmed broken-looking mic.
-                                    if (!voiceReady) {
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(top = 8.dp, end = 8.dp)
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(RelayRefresh.Amber),
-                                        )
+                                ChatInputTrailing.VOICE -> {
+                                    if (!suppressVoiceTrailing) {
+                                        Box {
+                                            IconButton(onClick = onVoice) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.GraphicEq,
+                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                                        else stringResource(R.string.chat_input_voice_setup_needed),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                            // "Needs setup" badge — full-alpha button + Amber
+                                            // dot instead of a half-dimmed broken-looking mic.
+                                            if (!voiceReady) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(top = 8.dp, end = 8.dp)
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(RelayRefresh.Amber),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
-                                ChatInputTrailing.STOP -> IconButton(onClick = onStop) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Stop,
-                                            contentDescription = stringResource(R.string.chat_input_stop_streaming),
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(18.dp),
-                                        )
+                                ChatInputTrailing.STOP -> {
+                                    if (!suppressVoiceTrailing) {
+                                        IconButton(onClick = onStop) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Stop,
+                                                    contentDescription = stringResource(R.string.chat_input_stop_streaming),
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
@@ -479,6 +617,7 @@ fun ChatInputBar(
             }
         }
     }
+}
 }
 
 @Composable

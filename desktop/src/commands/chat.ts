@@ -13,6 +13,7 @@ import {
   type AttachPayload
 } from '../chatAttach.js'
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { resolveCredentials } from '../credentials.js'
 import { GatewayClient } from '../gatewayClient.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
@@ -47,6 +48,9 @@ import {
   shouldAdvertiseComputerUse
 } from '../tools/handlerSet.js'
 import { DesktopToolRouter } from '../tools/router.js'
+import { effectiveHostAccessMode, effectiveHostCapabilityPolicies, getHostAccessMode, getHostCapabilityPolicies } from '../lib/hostAccessPolicy.js'
+import { configureCapabilityPolicies } from '../tools/capabilityRuntime.js'
+import { adbBackendAvailable } from '../tools/handlers/adb.js'
 import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, RelayTransport } from '../transport/RelayTransport.js'
 
 // (getSession is imported above with the other remoteSessions exports so we
@@ -115,7 +119,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     const cfg: ConstructorParameters<typeof RelayTransport>[0] = {
       url,
-      deviceName: `hermes-relay-cli (${process.platform})`
+      ...desktopRelayIdentity()
     }
     if (creds.pairingCode) {
       cfg.pairingCode = creds.pairingCode
@@ -128,6 +132,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
 
     relay.onAuthSuccess((token, ver, meta) => {
       void saveSession(url, token, ver, {
+        initializeAccessPolicy: true,
         grants: meta.grants,
         ttlExpiresAt: meta.ttlExpiresAt,
         endpointRole
@@ -583,15 +588,24 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
     const consent = await ensureToolsConsent(url)
     if (consent.consented) {
       const computerUseEnabled = shouldAdvertiseComputerUse(args.flags)
+      const storedAccessMode = await getHostAccessMode(url)
+      const accessMode = effectiveHostAccessMode(storedAccessMode, consent.consented)
+      const capabilities = effectiveHostCapabilityPolicies(storedAccessMode, consent.consented, await getHostCapabilityPolicies(url))
+      configureCapabilityPolicies(capabilities)
+      const usb = capabilities.usb !== 'disabled'
+      const adb = usb && adbBackendAvailable()
       configureComputerUseRuntime({
         url,
         computerUseConsented: computerUseEnabled,
-        consentSource: consent.source ?? 'stored'
+        consentSource: consent.source ?? 'stored',
+        accessMode,
+        capabilities
       })
-      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled })
+      const advertisedTools = advertisedDesktopTools({ computerUse: computerUseEnabled, capabilities, usb, adb })
       toolRouter = new DesktopToolRouter({
         consentGranted: true,
-        handlers: desktopHandlers({ computerUse: computerUseEnabled }),
+        hostUrl: url,
+        handlers: desktopHandlers({ computerUse: computerUseEnabled, capabilities, usb, adb }),
         advertisedTools: [...advertisedTools]
       })
       toolRouter.attach(relay)

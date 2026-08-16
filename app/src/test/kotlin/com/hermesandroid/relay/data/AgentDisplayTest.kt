@@ -238,17 +238,18 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun profileRequestName_normalizesDefaultAliasAndDropsBlankOrNull() {
+    fun profileRequestName_keepsLiteralDefaultDistinctFromServerDefault() {
         assertNull(AgentDisplay.profileRequestName(null))
         assertNull(AgentDisplay.profileRequestName("  "))
-        assertNull(AgentDisplay.profileRequestName(" default "))
+        assertEquals("default", AgentDisplay.profileRequestName(" default "))
+        assertNull(AgentDisplay.profileRequestName(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY))
         assertEquals("mizu", AgentDisplay.profileRequestName("mizu"))
     }
 
     @Test
     fun effectiveSessionProfileName_resolvesServerDefaultWithoutOverridingExplicitPick() {
         assertEquals("victor", AgentDisplay.effectiveSessionProfileName(null, " victor "))
-        assertEquals("victor", AgentDisplay.effectiveSessionProfileName("default", "victor"))
+        assertEquals("default", AgentDisplay.effectiveSessionProfileName("default", "victor"))
         assertEquals("default", AgentDisplay.effectiveSessionProfileName(null, "default"))
         assertEquals("mizu", AgentDisplay.effectiveSessionProfileName("mizu", "victor"))
         assertNull(AgentDisplay.effectiveSessionProfileName(null, null))
@@ -262,17 +263,18 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun normalizeSelection_collapsesSyntheticDefaultProfile() {
-        assertNull(AgentDisplay.normalizeSelection(defaultProfile))
+    fun normalizeSelection_keepsLiteralDefaultProfile() {
+        assertEquals(defaultProfile, AgentDisplay.normalizeSelection(defaultProfile))
         assertEquals(mizu, AgentDisplay.normalizeSelection(mizu))
     }
 
     @Test
-    fun profileContextKey_treatsDefaultAliasAsServerDefault() {
+    fun profileContextKey_distinguishesLiteralDefaultFromServerDefault() {
         assertEquals(
-            "conn::__server_default__",
+            "conn::default",
             AgentDisplay.profileContextKey("conn", "default"),
         )
+        assertEquals("conn::__server_default__", AgentDisplay.profileContextKey("conn", null))
         assertEquals("conn::mizu", AgentDisplay.profileContextKey("conn", "mizu"))
     }
 }

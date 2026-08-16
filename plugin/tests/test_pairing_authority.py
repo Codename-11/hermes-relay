@@ -73,6 +73,46 @@ class PairingAuthorityTests(AioHTTPTestCase):
         self.assertEqual(server.sessions.active_count(), 0)
         self.assertEqual(server.sessions._trusted_devices, {})
 
+    async def test_auth_uses_hostname_fallback_and_records_device_metadata(
+        self,
+    ) -> None:
+        response = await self.client.post(
+            "/pairing/register",
+            json={"code": "HOST01"},
+        )
+        self.assertEqual(response.status, 200, await response.text())
+
+        ws = await self.client.ws_connect("/ws")
+        await ws.send_json(
+            {
+                "channel": "system",
+                "type": "auth",
+                "payload": {
+                    "pairing_code": "HOST01",
+                    "device_hostname": "bailey-desktop",
+                    "device_id": "desktop-host-id",
+                    "device_model": "Precision 5680",
+                    "device_platform": "Windows 11",
+                    "client_surface": "desktop",
+                    "device_form_factor": "desktop",
+                },
+            }
+        )
+        message = await ws.receive_json()
+        await ws.close()
+
+        self.assertEqual(message["type"], "auth.ok")
+        session = self.app["server"].sessions.get_session(
+            message["payload"]["session_token"]
+        )
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.device_name, "bailey-desktop")
+        self.assertEqual(session.device_model, "Precision 5680")
+        self.assertEqual(session.device_platform, "Windows 11")
+        self.assertEqual(session.client_surface, "desktop")
+        self.assertEqual(session.device_form_factor, "desktop")
+
     async def test_client_policy_is_ignored_when_host_metadata_is_absent(
         self,
     ) -> None:

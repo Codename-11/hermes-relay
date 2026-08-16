@@ -9,6 +9,13 @@ import org.junit.Test
 
 class AssistantSpeechCursorTest {
     @Test
+    fun `relay output falls back when a successful response contains no audio`() {
+        assertTrue(shouldFallbackRelayVoiceOutput(requestSucceeded = true, audioStarted = false))
+        assertTrue(shouldFallbackRelayVoiceOutput(requestSucceeded = false, audioStarted = false))
+        assertFalse(shouldFallbackRelayVoiceOutput(requestSucceeded = true, audioStarted = true))
+    }
+
+    @Test
     fun `speaks every assistant bubble created during one tool run`() {
         val history = listOf(message("old", MessageRole.ASSISTANT, "Previous answer."))
         val cursor = AssistantSpeechCursor(history)
@@ -33,6 +40,19 @@ class AssistantSpeechCursorTest {
         assertEquals(listOf("The check is complete."), second.deltas.map { it.text })
         assertTrue(second.deltas.single().startsNewBubble)
         assertEquals("I'll check that.\n\nThe check is complete.", second.aggregateText)
+        assertEquals("The check is complete.", second.finalAnswerText)
+    }
+
+    @Test
+    fun `final answer skips blank tool bubbles and intermediate commentary`() {
+        val cursor = AssistantSpeechCursor(emptyList())
+        val interim = message("interim", MessageRole.ASSISTANT, "I'll check that.")
+        val toolOnly = message("tool", MessageRole.ASSISTANT, "   ")
+        val final = message("final", MessageRole.ASSISTANT, "  The settled answer.  ")
+
+        val batch = cursor.poll(listOf(interim, toolOnly, final))
+
+        assertEquals("The settled answer.", batch.finalAnswerText)
     }
 
     @Test

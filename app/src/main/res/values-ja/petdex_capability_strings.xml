@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pet_preview_idle">待機</string>
+    <string name="pet_preview_walk_left">左に歩く</string>
+    <string name="pet_preview_walk_right">右に歩く</string>
+    <string name="pet_preview_jump">ジャンプ</string>
+    <string name="pet_preview_fall">落下</string>
+    <string name="pet_preview_held">保持</string>
+    <string name="pet_preview_wave">手を振る</string>
+    <string name="pet_preview_working">作業中</string>
+    <string name="pet_preview_review">確認中</string>
+    <string name="pet_preview_waiting">待機中</string>
+    <string name="pet_preview_error">エラー</string>
+    <string name="pet_preview_uses_clip">%1$s を使用</string>
+    <string name="pet_preview_mirrors_clip">%1$s を反転</string>
+    <string name="pet_preview_falls_back">%1$s にフォールバック</string>
+    <string name="pet_preview_mirrors_fallback">フォールバックの %1$s を反転</string>
+</resources>

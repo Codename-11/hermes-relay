@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -45,7 +48,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -56,6 +58,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -69,10 +73,13 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.ui.components.CrashReportGate
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.MessageBannerHost
+import com.hermesandroid.relay.ui.components.newestPetAssistantIsSettled
+import com.hermesandroid.relay.ui.components.newestPetVisitTargetUiKey
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
@@ -83,10 +90,23 @@ import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailableAvatars
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
+import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.LocalPetPlaybackSpeed
 import com.hermesandroid.relay.ui.components.avatar.LocalPetStabilize
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.avatar.resolveBackgroundAvatar
+import com.hermesandroid.relay.ui.components.FloatingPetCompanion
+import com.hermesandroid.relay.ui.components.shouldCompactFloatingPet
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.LocalPetSafeAreaRegistry
+import com.hermesandroid.relay.ui.components.pet.PetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
+import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
+import com.hermesandroid.relay.ui.components.pet.platformModalOwnsPetLayer
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
@@ -104,16 +124,13 @@ import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.Connection
-import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.EndpointCandidate
-import com.hermesandroid.relay.data.VoiceAudioRoute
-import com.hermesandroid.relay.data.VoicePreferencesRepository
-import com.hermesandroid.relay.data.VoiceSettings
+import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.util.HumanError
@@ -122,6 +139,8 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
+import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
 import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
@@ -140,6 +159,8 @@ import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
+import com.hermesandroid.relay.ui.screens.PluginsScreen
+import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
@@ -153,26 +174,20 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.relay.RelayProfileInspectorClient
-import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
-import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.PluginsViewModel
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
-import com.hermesandroid.relay.audio.VoicePlayer
-import com.hermesandroid.relay.audio.VoiceRecorder
-import com.hermesandroid.relay.audio.VoiceSfxPlayer
-import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
-import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.auth.AuthState
-import androidx.lifecycle.viewModelScope
+import com.hermesandroid.relay.runtime.HermesRuntimeInitializationState
 
 // Global snackbar host so any screen can surface a HumanError without
 // plumbing a host through every ViewModel. Provided by RelayApp below.
@@ -182,8 +197,8 @@ val LocalSnackbarHost = staticCompositionLocalOf<SnackbarHostState> {
 
 // Short-lived snackbar by default; retryable errors get Long so users have
 // time to tap the action before it auto-dismisses.
-suspend fun SnackbarHostState.showHumanError(err: HumanError) {
-    showSnackbar(
+suspend fun SnackbarHostState.showHumanError(err: HumanError): SnackbarResult {
+    return showSnackbar(
         message = err.body,
         actionLabel = err.actionLabel,
         duration = if (err.retryable) SnackbarDuration.Long else SnackbarDuration.Short,
@@ -252,6 +267,54 @@ internal fun resolveFooterRouteCandidate(
     }
 }
 
+/**
+ * Conversation voice remains part of chat, so its persistent connection
+ * footer stays visible. Focus voice is the only presentation that suppresses
+ * the surrounding chat chrome.
+ */
+internal fun shouldShowConnectionFooter(
+    voiceMode: Boolean,
+    presentationMode: VoicePresentationMode,
+): Boolean = !voiceMode || presentationMode == VoicePresentationMode.Conversation
+
+/**
+ * Full-screen setup owns the whole window. Keeping connection-dependent app
+ * chrome composed behind it makes that chrome rebuild while Add connection
+ * swaps to its placeholder, visibly resizing the entering setup surface.
+ */
+internal fun shouldSuppressGlobalChrome(
+    onboardingCompleted: Boolean,
+    isDemoMode: Boolean,
+    currentRoute: String?,
+): Boolean =
+    (!onboardingCompleted && !isDemoMode) ||
+        currentRoute == Screen.Onboarding.route ||
+        currentRoute == Screen.Pair.route
+
+internal const val APP_STATUS_PET_WALK_REGION = "app-status-footer"
+
+/**
+ * Routes where the persistent status chrome is deliberately exposed as a
+ * pet ledge. Keep this list small: every entry must publish its active-scroll
+ * and modal state so autonomous motion never fights the screen beneath it.
+ */
+internal val APP_STATUS_PET_ROUTES: Set<String> = setOf(
+    Screen.Settings.route,
+    Screen.AppearanceSettings.route,
+    Screen.About.route,
+)
+
+internal fun petSurfaceOwnerForRoute(route: String?): String? = when (route) {
+    Screen.Chat.route -> "chat"
+    Screen.Terminal.route -> "terminal"
+    in APP_STATUS_PET_ROUTES -> route
+    else -> null
+}
+
+/** Petdex already supplies interactive pet previews; keep its install cards unobstructed. */
+internal fun floatingPetAllowedOnRoute(route: String?): Boolean =
+    route != Screen.PetdexBrowse.route
+
 sealed class Screen(
     val route: String,
     val label: String,
@@ -273,17 +336,20 @@ sealed class Screen(
     // NavHost, and the NavigationBarItem click must navigate via [route]()
     // so no unresolved `{openAgentSheet}` leaks into the destination.
     data object Chat : Screen(
-        "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}",
+        "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}" +
+            "&proactiveChatId={proactiveChatId}",
         "Chat",
         Icons.AutoMirrored.Filled.Chat,
     ) {
         const val ARG_OPEN_AGENT_SHEET: String = "openAgentSheet"
         const val ARG_SESSION_ID: String = "sessionId"
         const val ARG_PROFILE: String = "profile"
+        const val ARG_PROACTIVE_CHAT_ID: String = "proactiveChatId"
         fun route(
             openAgentSheet: Boolean = false,
             sessionId: String? = null,
             profile: String? = null,
+            proactiveChatId: String? = null,
         ): String {
             val params = buildList {
                 if (openAgentSheet) add("$ARG_OPEN_AGENT_SHEET=true")
@@ -292,6 +358,9 @@ sealed class Screen(
                 }
                 profile?.takeIf { it.isNotBlank() }?.let {
                     add("$ARG_PROFILE=${android.net.Uri.encode(it)}")
+                }
+                proactiveChatId?.takeIf { it.isNotBlank() }?.let {
+                    add("$ARG_PROACTIVE_CHAT_ID=${android.net.Uri.encode(it)}")
                 }
             }
             return if (params.isEmpty()) "chat" else "chat?${params.joinToString("&")}"
@@ -312,6 +381,20 @@ sealed class Screen(
         fun route(source: String = SOURCE_GENERAL): String = "dashboard_sign_in?source=$source"
     }
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
+    data object Plugins : Screen("plugins", "Plugins", Icons.Filled.Extension)
+    data object PluginPage : Screen(
+        "plugins/{pluginId}/pages/{pageId}",
+        "Plugin",
+        Icons.Filled.Extension,
+    ) {
+        const val ARG_PLUGIN_ID: String = "pluginId"
+        const val ARG_PAGE_ID: String = "pageId"
+        fun route(pluginId: String, pageId: String): String =
+            "plugins/${encode(pluginId)}/pages/${encode(pageId)}"
+
+        private fun encode(value: String): String =
+            java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    }
 
     // Non-bottom-nav destinations — reached by explicit navigation, not the
     // NavigationBar. "Relay sessions" is the user-facing label; the Kotlin
@@ -392,6 +475,8 @@ sealed class Screen(
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
+    data object CustomPetGuide : Screen("settings/appearance/custom-pet", "Create a pet", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
     data object Diagnostics : Screen("settings/diagnostics", "Diagnostics", Icons.Filled.Settings)
     data object DeveloperSettings : Screen("settings/developer", "Developer", Icons.Filled.Settings)
@@ -446,10 +531,24 @@ sealed class Screen(
 
 @Composable
 fun RelayApp() {
-    val connectionViewModel: ConnectionViewModel = viewModel()
-    val chatViewModel: ChatViewModel = viewModel()
+    val applicationContext = LocalContext.current.applicationContext
+    val processRuntime = (applicationContext as HermesRelayApp).runtime
+    val connectionViewModel: ConnectionViewModel = processRuntime.connectionViewModel
+    val chatViewModel: ChatViewModel = processRuntime.chatViewModel
     val terminalViewModel: TerminalViewModel = viewModel()
-    val voiceViewModel: VoiceViewModel = viewModel()
+    val pluginsViewModel: PluginsViewModel = viewModel()
+    val voiceViewModel: VoiceViewModel = processRuntime.voiceViewModel
+    val runtimeInitializationState by processRuntime.initializationState.collectAsState()
+
+    LaunchedEffect(processRuntime) {
+        processRuntime.ensureInitialized()
+    }
+    if (runtimeInitializationState != HermesRuntimeInitializationState.Ready) return
+
+    val voiceClient: RelayVoiceClient = processRuntime.relayVoiceClient
+    val voicePreferences = processRuntime.voicePreferences
+    val voiceSettings by processRuntime.voiceSettings.collectAsState()
+    val voicePresentationMode = VoicePresentationMode.fromStorage(voiceSettings.presentationMode)
 
     // Composition-scoped coroutine scope for firing connection-store suspend
     // writes off of UI click handlers (rename/revoke/remove) —
@@ -475,31 +574,6 @@ fun RelayApp() {
             authManager = connectionViewModel.authManager,
             tabNameStore = com.hermesandroid.relay.data.TerminalTabNameStore(terminalAppContext),
         )
-    }
-
-    // Cold-start relay kick.
-    //
-    // The ON_RESUME observer installed below in DisposableEffect misses the
-    // Activity's very first ON_RESUME because DisposableEffect attaches the
-    // observer AFTER the Activity has already resumed — LifecycleEventObserver
-    // does not fire state transitions retroactively, it only sees *future*
-    // events. That meant cold-start users had a disconnected relay UI until
-    // they navigated to Settings (whose own `LaunchedEffect(Unit)` fires
-    // `reconnectIfStale()` on entry) or backgrounded + foregrounded the app
-    // to trigger a fresh ON_RESUME.
-    //
-    // Watching authState here handles both branches: on cold start the
-    // persisted session rehydrates asynchronously from AuthManager and flips
-    // authState → Paired after DataStore + crypto init. That transition fires
-    // this LaunchedEffect, which kicks the WSS handshake regardless of which
-    // tab the user is looking at. reconnectIfStale() is cheap and
-    // self-guarding (paired && disconnected && hasUrl) so the second firing
-    // on any later Paired-refresh is a no-op.
-    val coldStartAuthState by connectionViewModel.authState.collectAsState()
-    LaunchedEffect(coldStartAuthState) {
-        if (coldStartAuthState is AuthState.Paired) {
-            connectionViewModel.reconnectIfStale()
-        }
     }
 
     // Lifecycle-aware revalidation. ON_RESUME (every time the app comes
@@ -537,362 +611,25 @@ fun RelayApp() {
         }
     }
 
-    // Bind chat state independently of the optional API fallback client.
-    val chatApiClient by connectionViewModel.chatApiClient.collectAsState()
-    val chatTransportReady by connectionViewModel.chatReady.collectAsState()
-    val lastSessionId by connectionViewModel.lastSessionId.collectAsState()
+    val coldStartAuthState by connectionViewModel.authState.collectAsState()
+    val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveSessionProfileName by connectionViewModel.effectiveSessionProfileName.collectAsState()
+    val currentChatSessionId by chatViewModel.currentSessionId.collectAsState()
     val effectiveDisplayProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
-    val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
 
-    val mediaContext = androidx.compose.ui.platform.LocalContext.current
-    val voicePreferences = remember(mediaContext) { VoicePreferencesRepository(mediaContext) }
-    val voiceSettings by voicePreferences.settings.collectAsState(initial = VoiceSettings())
-    val selectedAudioRoute = VoiceAudioRoute.fromStorage(voiceSettings.audioRoute)
-    val selectedAudioRouteState = rememberUpdatedState(selectedAudioRoute)
-    val standardVoiceReady by connectionViewModel.standardVoiceReady.collectAsState()
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
-    val standardVoiceReadyState = rememberUpdatedState(standardVoiceReady)
-    val relayVoiceReadyState = rememberUpdatedState(relayVoiceReady)
-    // Latest enhanced-voice overrides (null when nothing is set). Read lazily by
-    // the relay TTS adapter so changes apply without rebuilding it.
-    val enhancedOverridesState = rememberUpdatedState(EnhancedVoiceOverrides.fromSettings(voiceSettings))
 
-    // Voice pipeline wiring — mirrors ChatViewModel.initializeMedia (above).
-    // We build a dedicated OkHttpClient so voice requests don't contend with
-    // media fetches on the same dispatcher queue, then hand VoiceViewModel
-    // the client + recorder + player it needs for the turn state machine.
-    val voiceClient = remember {
-        RelayVoiceClient(
-            context = mediaContext,
-            okHttpClient = okhttp3.OkHttpClient.Builder()
-                .readTimeout(2, java.util.concurrent.TimeUnit.MINUTES)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build(),
-            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
-            relayRouteChangesProvider = {
-                connectionViewModel.activeEndpoint.mapNotNull { it?.relay?.url }
-            },
-            routeProbeRequester = { connectionViewModel.probeNow() },
-            profileNameProvider = {
-                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
-            },
-            sessionTokenProvider = {
-                (connectionViewModel.authState.value as? AuthState.Paired)?.token
-            },
-            apiBearerTokenProvider = {
-                connectionViewModel.getApiKey()
-            },
-        )
+    val profileInspectorHttpClient = remember {
+        okhttp3.OkHttpClient.Builder()
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
     }
-    // Standard voice talks to the dashboard web server (hermes-desktop's
-    // /api/audio/* contract) and authenticates with the same per-connection
-    // cookie session Manage signs in with. Dashboard URLs are connection-level
-    // (no per-profile dashboard exists), so unlike chat this client does not
-    // route through ProfileApiUrlResolver.
-    val standardVoiceClient = remember {
-        StandardHermesVoiceClient(
-            context = mediaContext,
-            dashboardHttpClientProvider = { dashboardUrl ->
-                connectionViewModel.dashboardHttpClientForActive(dashboardUrl)
-            },
-            dashboardUrlProvider = { connectionViewModel.activeDashboardUrl() },
-            // Live read (null for the default profile) — sent defensively on
-            // /api/audio/speak; upstream ignores it, so standard voice stays the
-            // host's global TTS. Same live source the relay voice client uses.
-            profileProvider = {
-                AgentDisplay.profileRequestName(connectionViewModel.selectedProfile.value?.name)
-            },
-        )
-    }
-    val voiceAudioClient = remember {
-        AutoVoiceAudioClient(
-            standardClient = standardVoiceClient,
-            relayClient = RelayVoiceAudioClientAdapter(
-                voiceClient,
-                enhancedOverridesProvider = { enhancedOverridesState.value },
-            ),
-            routeProvider = { selectedAudioRouteState.value },
-            standardReadyProvider = { standardVoiceReadyState.value },
-            relayReadyProvider = { relayVoiceReadyState.value },
-        )
-    }
-
-    // Profile Inspector client. Shares the same lazy relay URL + bearer
-    // token providers as the voice client so any rotation/re-pair is
-    // automatically picked up on the next fetch. Process-stable via
-    // remember {} so the OkHttpClient isn't rebuilt on recomposition.
-    val profileInspectorClient = remember {
-        RelayProfileInspectorClient(
-            okHttpClient = okhttp3.OkHttpClient.Builder()
-                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build(),
-            relayUrlProvider = { connectionViewModel.effectiveRelayUrl.value },
-            sessionTokenProvider = {
-                (connectionViewModel.authState.value as? AuthState.Paired)?.token
-            },
-        )
-    }
-    // Remembered so the AudioTrack buffers are synthesized once per process.
-    // VoiceSfxPlayer is internally crash-proof — failed AudioTrack builds
-    // become null-tracks that no-op — so we don't need an outer try/catch.
-    val voiceSfxPlayer = remember { VoiceSfxPlayer(mediaContext) }
-    val realtimePcmPlayer = remember { RealtimePcmPlayer(mediaContext) }
-    LaunchedEffect(Unit) {
-        val recorder = VoiceRecorder(mediaContext, voiceViewModel.viewModelScope)
-        val player = VoicePlayer(mediaContext)
-        voiceViewModel.initialize(
-            voiceClient = voiceClient,
-            voiceAudioClient = voiceAudioClient,
-            chatViewModel = chatViewModel,
-            recorder = recorder,
-            player = player,
-            realtimePcmPlayer = realtimePcmPlayer,
-            sfxPlayer = voiceSfxPlayer,
-            // === PHASE3-voice-intents-localdispatch ===
-            // Wire the local in-process dispatcher so voice intents go
-            // through `BridgeCommandHandler.handleLocalCommand` (same
-            // dispatch + Tier 5 safety pipeline as WSS-incoming commands)
-            // instead of round-tripping through the relay. The relay
-            // correctly rejects phone-originated bridge.command envelopes
-            // as "unexpected from phone" — the wire protocol is server→
-            // phone for commands, and voice intents are phone-local.
-            //
-            // The multiplexer is still passed for non-bridge envelope use
-            // cases and as a debug fallback (with a WARN log) if the
-            // local dispatcher is somehow null at runtime.
-            //
-            // Discovered + fixed 2026-04-14 — see ROADMAP.md v0.4.1
-            // "voice intent local dispatch loop" entry and the multiplexer
-            // wiring fix in commit a568366 that unblocked the dispatch
-            // path enough to surface this protocol mismatch.
-            bridgeMultiplexer = connectionViewModel.multiplexer,
-            localBridgeDispatcher = if (BuildFlavor.isSideload) {
-                connectionViewModel.bridgeCommandHandler::handleLocalCommand
-            } else {
-                null
-            },
-            // === END PHASE3-voice-intents-localdispatch ===
-            // 2026-04-17: persist the interaction-mode preference across
-            // app restarts. VoicePreferencesRepository is the same repo
-            // VoiceSettingsScreen reads/writes.
-            voicePreferences = voicePreferences,
-            voiceRelayPreflight = { connectionViewModel.verifyRelayForVoice() },
-            voiceHandoffReporter = { connectionViewModel.recordVoiceHandoff(it) },
-            bargeInPreferences = com.hermesandroid.relay.data.BargeInPreferencesRepository(mediaContext),
-            vadEngineFactory = { com.hermesandroid.relay.audio.VadEngine(mediaContext) },
-            bargeInListenerFactory = { vad, audioSessionIdProvider ->
-                com.hermesandroid.relay.audio.BargeInListener.create(
-                    mediaContext,
-                    vad,
-                    audioSessionIdProvider,
-                )
-            },
-        )
-    }
-
-    // Multi-connection: wire ChatViewModel / VoiceViewModel into the
-    // connection switch coordinator. Registered once per composition — the
-    // coordinator stores these as callbacks and fires them in order when
-    // switchConnection() is invoked so in-flight streams don't keep
-    // scribbling into the outgoing connection's state after the swap.
-    //
-    // Voice callback is gated on sideload: googlePlay still builds the
-    // VoiceViewModel (it's wired unconditionally above) but voice mode is a
-    // sideload-only feature, so there's no live turn to stop on stock
-    // googlePlay builds. The stop-callback is harmless either way; the gate
-    // mirrors the flavor check on the global unattended banner below.
-    LaunchedEffect(Unit) {
-        connectionViewModel.registerStreamCancelCallback {
-            chatViewModel.cancelStream()
-        }
-        if (BuildFlavor.isSideload) {
-            // VoiceViewModel.stop() isn't defined — use exitVoiceMode() which
-            // is the closest semantic match (tears down the active turn and
-            // returns the UI to text mode). Worker B2 confirmed no stop()
-            // method exists as of the connection-switch pass, so this rename
-            // is intentional and kept as-is. If a proper stop() is added
-            // later, swap this for vvm.stop().
-            connectionViewModel.registerVoiceStopCallback {
-                voiceViewModel.exitVoiceMode()
-            }
-        }
-        chatViewModel.observeConnectionSwitches(connectionViewModel.connectionSwitchEvents)
-        // Mirror chat streaming state so a mid-turn route change defers its
-        // client rebuild instead of cancelling the live turn (the gateway
-        // socket rides the blip via its own reconnect).
-        launch {
-            chatViewModel.isStreaming.collect { connectionViewModel.setChatStreaming(it) }
-        }
-    }
-
-    var boundCatalogConnectionId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(chatApiClient, activeConnectionId) {
-        val handler = connectionViewModel.chatHandler
-        val connectionChanged = boundCatalogConnectionId != activeConnectionId
-        // A route handoff / reconnect rebuilds the API client (new instance)
-        // while the chat is unchanged — the bound handler is the same. Take the
-        // cheap path: swap the client reference only, no re-init. This is what
-        // keeps the chat surface from repainting/reloading on a LAN↔Tailscale
-        // switch or a reconnect. A genuine re-bind (different handler) falls
-        // through to the full one-time wiring below.
-        if (chatViewModel.boundHandler === handler) {
-            if (connectionChanged) {
-                chatViewModel.resetConnectionCatalogs()
-                // The active pointer changes before an API target is rebuilt.
-                // Never let the outgoing API client refill the new connection's
-                // catalogs during that window. Dashboard-only (null -> null)
-                // refreshes immediately through the already-installed loader.
-                chatViewModel.updateApiClient(null)
-            } else {
-                chatViewModel.updateApiClient(chatApiClient)
-            }
-            boundCatalogConnectionId = activeConnectionId
-            return@LaunchedEffect
-        }
-
-        // The Dashboard/Gateway transport is independently sufficient for
-        // chat, so handler and dashboard callbacks must bind even when no API
-        // fallback client is configured.
-        chatViewModel.initialize(chatApiClient, handler)
-
-        // Wire inbound-media dependencies. Idempotent rewire of the
-        // ChatHandler callbacks.
-        chatViewModel.initializeMedia(
-            context = mediaContext,
-            relayHttpClient = connectionViewModel.relayHttpClient,
-            mediaSettingsRepo = connectionViewModel.mediaSettingsRepo,
-            mediaCacheWriter = connectionViewModel.mediaCacheWriter
-        )
-
-        // Agent-profile pick provider (Pass 2). Lambda reads the latest
-        // StateFlow value on every send, so ChatViewModel never needs a
-        // direct reference to ConnectionViewModel. The lambda captures the
-        // long-lived VM, not the (per-connection) apiClient.
-        chatViewModel.setSelectedProfileProvider {
-            connectionViewModel.selectedProfile.value
-        }
-        chatViewModel.setIsolatedProfileApiProvider {
-            connectionViewModel.selectedProfileUsesIsolatedApiRoute()
-        }
-        chatViewModel.setSessionProfileNameProvider {
-            connectionViewModel.effectiveSessionProfileName.value
-        }
-        chatViewModel.setEffectiveProfileProvider {
-            AgentDisplay.effectiveProfile(
-                selectedProfile = connectionViewModel.selectedProfile.value,
-                profiles = connectionViewModel.agentProfiles.value,
-            )
-        }
-        chatViewModel.setDisplayProfileProvider {
-            connectionViewModel.effectiveDisplayProfile.value
-        }
-        chatViewModel.setDisplayAliasProvider {
-            connectionViewModel.profileDisplayAlias.value
-        }
-
-        // Drawer session list, scoped to the active profile on gateway
-        // connections (dashboard `/api/sessions?profile=`). Returns null off the
-        // dashboard surface so refreshSessions() falls back to the shared list.
-        chatViewModel.setProfileSessionLister {
-            connectionViewModel.listProfileScopedSessions()
-        }
-        // …and load a tapped session's transcript from that same profile's DB.
-        chatViewModel.setProfileMessageLoader { sessionId ->
-            connectionViewModel.loadProfileScopedMessages(sessionId)
-        }
-        // Personality choices live in Dashboard `/api/config` on a
-        // dashboard-only connection. The setter immediately refreshes after
-        // this callback is installed, covering the null-API initialization.
-        chatViewModel.setDashboardConfigLoader {
-            connectionViewModel.loadActiveDashboardConfig()
-        }
-        // …and delete from that same profile's DB so a non-default profile's
-        // session can't be resurrected by the next profile-scoped list.
-        chatViewModel.profileSessionDeleter = { sessionId ->
-            connectionViewModel.deleteProfileScopedSession(sessionId)
-        }
-        // …and rename in that same profile's DB so a non-default profile's
-        // title actually persists (the unscoped api_server PATCH hits the
-        // shared DB). Write twin of the scoped list/delete.
-        chatViewModel.profileSessionRenamer = { sessionId, title ->
-            connectionViewModel.renameProfileScopedSession(sessionId, title)
-        }
-
-        // Wire session persistence callback
-        chatViewModel.onSessionChanged = { sessionId ->
-            connectionViewModel.saveLastSessionId(sessionId)
-        }
-        boundCatalogConnectionId = activeConnectionId
-    }
-
-    // Reload sessions / switch profile context only on a SEMANTIC change
-    // (connection, profile, or restored session) — NOT on every API-client
-    // instance swap. Keying on a readiness flag instead of the client instance
-    // means a route handoff (which churns the client) no longer triggers a
-    // refreshSessions() that would flash/reload the chat. `switchProfileContext`
-    // already no-ops when the context key + session are unchanged.
-    LaunchedEffect(
-        chatTransportReady,
-        activeConnectionId,
-        selectedProfile?.name,
-        effectiveSessionProfileName,
-        lastSessionId,
-        profileSelectionSettled,
-    ) {
-        if (!chatTransportReady) return@LaunchedEffect
-        // Cold-start profile-isolation guard: hold the first profile-scoped load
-        // until the persisted profile selection has SETTLED, so the session
-        // drawer (and the restored session context) don't briefly load the
-        // SERVER-DEFAULT profile and then visibly snap to the real one. While a
-        // non-default profile is still resolving we wait on a backstop instead of
-        // fetching now; this effect re-fires the instant the profile resolves
-        // (selectedProfile / profileSelectionSettled change), cancelling the wait
-        // so only the correct, profile-scoped load lands. The backstop guarantees
-        // the drawer is never permanently empty if the profile list never lands.
-        if (!profileSelectionSettled) {
-            delay(2_500L)
-        } else {
-            // Coalesce the rapid lastSessionId null→value churn a profile switch
-            // produces: selectProfile() nulls lastSessionId, then the persisted
-            // per-profile session resolves a tick later. This effect re-fires on
-            // that change, cancelling the delay below before it commits — so we
-            // skip painting the intermediate empty draft and land straight on the
-            // resolved session (or a genuine fresh draft when the profile has no
-            // history).
-            delay(160)
-        }
-        chatViewModel.switchProfileContext(
-            contextKey = AgentDisplay.profileContextKey(
-                connectionId = activeConnectionId,
-                profileName = effectiveSessionProfileName,
-            ),
-            sessionId = lastSessionId,
-        )
-        chatViewModel.refreshSessions()
-    }
-
-    LaunchedEffect(activeConnectionId, selectedProfile?.name) {
-        // WP-V2: namespace per-profile voice prefs by BOTH the active connection
-        // and the profile so two connections exposing a same-named profile don't
-        // collide. Set the connection id first so onProfileChanged re-seeds from
-        // the correctly-scoped keys.
-        voiceViewModel.setVoicePrefsConnection(activeConnectionId)
-        voiceViewModel.onProfileChanged(
-            AgentDisplay.profileRequestName(selectedProfile?.name)
-        )
-    }
-
-    LaunchedEffect(selectedProfile?.name, effectiveDisplayProfile?.name, agentProfiles, profileDisplayAlias) {
-        chatViewModel.refreshAgentDisplayName(relabelGenericMessages = true)
-    }
-
     // === PHASE3-status: sync granular phone-status settings to chat ===
     val appContextEnabled by connectionViewModel.appContextEnabled.collectAsState()
     val appContextBridgeState by connectionViewModel.appContextBridgeState.collectAsState()
@@ -924,80 +661,23 @@ fun RelayApp() {
         chatViewModel.notifyOnTurnComplete = notifyTurnComplete
     }
 
-    // Demo-mode composer wiring: unconditional — a demo session has no API
-    // client, so the client-gated chat init effect above never runs and
-    // ChatViewModel's own handler stays null. Lambdas read live state on
-    // every send.
-    LaunchedEffect(Unit) {
-        chatViewModel.setDemoModeWiring(
-            isDemo = { connectionViewModel.isDemoMode.value },
-            handler = { connectionViewModel.chatHandler },
-        )
-        // Voice → chat breadcrumbs (e.g. "background task still running" when
-        // voice mode exits with a detached run) land as system notices in the
-        // shared chat transcript.
-        voiceViewModel.chatNoticeSink = { notice ->
-            connectionViewModel.chatHandler.addSystemNotice(notice)
-        }
-    }
-
-    // Sync tool annotation parsing toggle to ChatHandler
-    val parseAnnotations by connectionViewModel.parseToolAnnotations.collectAsState()
-    LaunchedEffect(parseAnnotations) {
-        connectionViewModel.chatHandler.parseToolAnnotations = parseAnnotations
-    }
-
-    // Sync "show system messages" debug toggle to ChatHandler
-    val showSystemMessages by connectionViewModel.showSystemMessages.collectAsState()
-    LaunchedEffect(showSystemMessages) {
-        connectionViewModel.chatHandler.showSystemMarkers = showSystemMessages
-    }
-
-    // Sync streaming endpoint preference to chat. Resolves "auto" against the
-    // current server capabilities so vanilla upstream + bootstrap-injected
-    // sessions API picks /v1/chat/completions for portable SSE chat while
-    // still using /api/sessions/* for browse/rename/delete. Gateway
-    // availability is a key so a Manage sign-in mid-session re-resolves
-    // "auto" to the gateway transport (live thinking) without an app restart.
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
-    // The resolved API route is a key so a mid-turn route switch (LAN→Tailscale)
-    // re-runs activeGatewayChatClient(), which RETARGETS the in-flight gateway
-    // client to follow the new dashboard route instead of stranding the turn on
-    // the dead one.
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
-    // Debounce a route FLIP before re-acquiring the gateway chat client. The
-    // network-layer hysteresis (ConnectionManager) already keeps _activeEndpoint
-    // stable on a transient endpoint-resolution miss, so the Dashboard URL should
-    // not flap — this is belt-and-suspenders against any residual sub-second
-    // LAN⇄Tailscale flip, which would otherwise shutdown the warm gateway socket
-    // (when idle) or retarget mid-turn (burning MAX_TURN_REJOINS). The FIRST
-    // acquisition (lastAcquiredApiUrl == null) and non-url key changes
-    // (url unchanged) are NOT delayed, so cold-start connect latency is
-    // unaffected; only a genuine url change waits for a settle window, and if
-    // the url flips back within it the LaunchedEffect cancels + restarts so no
-    // rebuild happens.
-    var lastAcquiredDashboardUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(
-        streamingEndpoint,
-        serverCapabilities,
-        gatewayAvailability,
+        activeConnectionId,
         effectiveDashboardUrl,
+        effectiveSessionProfileName,
+        currentChatSessionId,
     ) {
-        if (
-            lastAcquiredDashboardUrl != null &&
-            lastAcquiredDashboardUrl != effectiveDashboardUrl
-        ) {
-            delay(750L)
-        }
-        val resolved = connectionViewModel.resolveStreamingEndpoint(streamingEndpoint)
-        chatViewModel.streamingEndpoint = resolved
-        chatViewModel.sseFallbackEndpoint = connectionViewModel.resolveSseStreamingEndpoint()
-        chatViewModel.updateGatewayClient(
-            if (resolved == "gateway") connectionViewModel.activeGatewayChatClient() else null,
+        pluginsViewModel.configure(
+            connectionId = activeConnectionId,
+            dashboardUrl = effectiveDashboardUrl.takeIf { it.isNotBlank() },
+            profileName = effectiveSessionProfileName,
+            dashboardFactory = connectionViewModel::dashboardClientForActive,
+            sessionId = currentChatSessionId,
         )
-        lastAcquiredDashboardUrl = effectiveDashboardUrl
     }
 
     // What's New auto-show
@@ -1020,16 +700,20 @@ fun RelayApp() {
     val appThemeId by connectionViewModel.appTheme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
     val appFontId by connectionViewModel.appFont.collectAsState()
+    val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
+    val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
     // via LocalSphereSkin without per-call-site threading. Adaptive skins read
     // the brand lazily inside MorphingSphere, so this can sit outside the theme.
     val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+    val appearanceAssetsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
     val sphereContext = androidx.compose.ui.platform.LocalContext.current
     val availableSphereSkins by produceState(
         initialValue = SphereRegistry.builtIns,
         key1 = sphereContext,
+        key2 = appearanceAssetsRefreshTick,
     ) {
         value = SphereRegistry.builtIns +
             withContext(Dispatchers.IO) { SphereSkinLoader.loadUserSkins(sphereContext) }
@@ -1042,45 +726,138 @@ fun RelayApp() {
         )
     }
 
-    // Agent avatar seam (P2/P3): the built-in sphere plus any user-loaded "pets"
-    // (P3). The sphere nests the skin system one level below (avatar → skin).
-    // Published beside the skin locals so every avatar call site resolves it via
-    // LocalAgentAvatar without per-call-site threading. An unknown selected id
-    // (e.g. a pet pack was removed) falls back to the sphere.
-    val agentAvatarId by connectionViewModel.agentAvatar.collectAsState()
+    // Central/background visualization and pet companionship are independent.
+    // LocalAgentAvatar owns the central surfaces; LocalFloatingPet owns roaming.
+    val floatingPetId by connectionViewModel.floatingPet.collectAsState()
+    val backgroundAvatarId by connectionViewModel.backgroundAvatar.collectAsState()
     // Re-scans the pets/ dir whenever the tick bumps (in-app import/delete, or the
     // Appearance screen opening), so newly added/removed pets appear everywhere
     // without an app restart.
-    val avatarsRefreshTick by connectionViewModel.avatarsRefreshTick.collectAsState()
-    val availableAgentAvatars by produceState(
-        initialValue = listOf<AgentAvatar>(SphereAvatar),
+    val avatarsRefreshTick = appearanceAssetsRefreshTick
+    val availablePets by produceState(
+        initialValue = emptyList<AgentAvatar>(),
         key1 = sphereContext,
         key2 = avatarsRefreshTick,
     ) {
-        value = listOf<AgentAvatar>(SphereAvatar) +
-            withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
+        value = withContext(Dispatchers.IO) { PetLoader.loadPets(sphereContext) }
     }
-    val activeAgentAvatar = remember(agentAvatarId, availableAgentAvatars) {
-        availableAgentAvatars.firstOrNull { it.id == agentAvatarId } ?: SphereAvatar
+    val activeFloatingPet = remember(floatingPetId, availablePets) {
+        availablePets.firstOrNull { it.id == floatingPetId }
+    }
+    var floatingPetMenuExpanded by remember(activeFloatingPet?.id) { mutableStateOf(false) }
+    val activeBackgroundAvatar = remember(backgroundAvatarId, availablePets) {
+        resolveBackgroundAvatar(backgroundAvatarId, availablePets)
     }
     val petSpeed by connectionViewModel.petSpeed.collectAsState()
     val petStabilize by connectionViewModel.petStabilize.collectAsState()
+    val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+    val petBehaviorPreferences by connectionViewModel.petBehaviorPreferences.collectAsState()
+    val petTerrainOverlayEnabled by FeatureFlags.petTerrainOverlayEnabled(sphereContext)
+        .collectAsState(false)
+    val petTerrainOverlayScope = rememberCoroutineScope()
+    val petPlacement by connectionViewModel.petPlacement.collectAsState()
+    val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
+    val petCompanionCoordinator = remember { PetCompanionCoordinator() }
+    val petSafeAreaRegistry = remember { PetSafeAreaRegistry() }
+    // Turn activity belongs to the app, not the Chat destination. Keeping the
+    // authoritative flows here lets the companion remain thinking/working when
+    // the user opens Settings or Manage during an in-flight response.
+    val petMessages by chatViewModel.messages.collectAsState()
+    val petIsStreaming by chatViewModel.isStreaming.collectAsState()
+    val petError by chatViewModel.error.collectAsState()
+    val rawPetState = when {
+        petError != null -> SphereState.Error
+        petIsStreaming && petMessages.lastOrNull()?.isThinkingStreaming == true -> SphereState.Thinking
+        petIsStreaming -> SphereState.Streaming
+        else -> SphereState.Idle
+    }
+    var appPetState by remember(chatViewModel) { mutableStateOf(SphereState.Idle) }
+    LaunchedEffect(rawPetState) {
+        if (appPetState == SphereState.Thinking && rawPetState == SphereState.Streaming) {
+            delay(1_500L)
+        }
+        appPetState = rawPetState
+    }
+    val appPetIntensity by animateFloatAsState(
+        targetValue = if (petIsStreaming) 0.7f else 0f,
+        animationSpec = tween(if (petIsStreaming) 1_000 else 2_000),
+        label = "app-pet-intensity",
+    )
+    val appPetHasActiveTools = petMessages.lastOrNull()?.toolCalls?.any { !it.isComplete } == true
+    val appPetToolBurst by animateFloatAsState(
+        targetValue = if (appPetHasActiveTools) 1f else 0f,
+        animationSpec = tween(if (appPetHasActiveTools) 200 else 1_200),
+        label = "app-pet-tool-burst",
+    )
+    LaunchedEffect(appPetState, appPetIntensity, appPetToolBurst) {
+        petCompanionCoordinator.publishRenderState(
+            AvatarRenderState(
+                state = appPetState,
+                intensity = appPetIntensity,
+                toolCallBurst = appPetToolBurst,
+            ),
+        )
+    }
+    val completedPetVisitUiKey = remember(petMessages) {
+        newestPetVisitTargetUiKey(petMessages)
+    }
+    val petVisitCompletionSettled = remember(petMessages) {
+        newestPetAssistantIsSettled(petMessages)
+    }
+    // Arm on stream start and emit exactly once on its falling edge. Message
+    // deltas never create requests; the stable uiKey survives ID reconciliation.
+    LaunchedEffect(
+        petIsStreaming,
+        completedPetVisitUiKey,
+        petVisitCompletionSettled,
+        petBehaviorPreferences,
+        petCompanionCoordinator,
+    ) {
+        petCompanionCoordinator.observeChatStream(
+            isStreaming = petIsStreaming,
+            assistantUiKey = completedPetVisitUiKey,
+            completionSettled = petVisitCompletionSettled,
+            nowElapsedMs = SystemClock.elapsedRealtime(),
+            responseVisitDelayMs = petBehaviorPreferences.temperament.pacing.responseVisitDelayMs,
+        )
+    }
+    val backgroundVisualizationEnabled by
+        connectionViewModel.backgroundVisualizationEnabled.collectAsState()
     val agentIconPath by connectionViewModel.profileIcon.collectAsState()
 
     CompositionLocalProvider(
         LocalSphereSkin provides activeSphereSkin,
         LocalAvailableSphereSkins provides availableSphereSkins,
-        LocalAgentAvatar provides activeAgentAvatar,
-        LocalAvailableAvatars provides availableAgentAvatars,
+        LocalAgentAvatar provides activeBackgroundAvatar,
+        // Compatibility list for the existing Appearance picker during the
+        // transition; new companion UI consumes LocalAvailablePets.
+        LocalAvailableAvatars provides listOf(SphereAvatar) + availablePets,
+        LocalAvailablePets provides availablePets,
+        LocalFloatingPet provides activeFloatingPet,
+        LocalBackgroundVisualizationEnabled provides backgroundVisualizationEnabled,
         LocalPetPlaybackSpeed provides petSpeed,
         LocalPetStabilize provides petStabilize,
+        LocalPetCompanionCoordinator provides petCompanionCoordinator,
+        LocalPetSafeAreaRegistry provides petSafeAreaRegistry,
         LocalAgentIconPath provides agentIconPath,
     ) {
+        // Dialogs and modal sheets use their own focused window. Treat that
+        // focus handoff as an app-wide interaction layer so a dock-only pet on
+        // any route cannot remain visible beneath modal chrome.
+        PetInteractionLayer(
+            owner = "platform-modal-window",
+            active = platformModalOwnsPetLayer(
+                windowFocused = LocalWindowInfo.current.isWindowFocused,
+                petMenuExpanded = floatingPetMenuExpanded,
+            ),
+        )
     HermesRelayTheme(
         appThemeId = appThemeId,
         themePreference = themePreference,
         fontScale = fontScale,
         appFontId = appFontId,
+        accentHex = appearanceAccent,
+        shapeId = appearanceShape,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -1166,8 +943,11 @@ fun RelayApp() {
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
-        val isOnboarding = currentRoute == Screen.Onboarding.route
-        val suppressGlobalChrome = (!onboardingCompleted && !isDemoMode) || isOnboarding
+        val suppressGlobalChrome = shouldSuppressGlobalChrome(
+            onboardingCompleted = onboardingCompleted,
+            isDemoMode = isDemoMode,
+            currentRoute = currentRoute,
+        )
 
         // Safety net: landing on a real connect surface (onboarding or the
         // Connect/Pair wizard) while demo is still active — via the banner's
@@ -1242,6 +1022,48 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
+        val wakeActivation by
+            com.hermesandroid.relay.wake.WakeWordActivationCoordinator.pending.collectAsState()
+        val appIsForeground by
+            com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+
+        // The process runtime owns Android-assistant activation. RelayApp only
+        // brings the already-running turn into its full Voice presentation.
+        // Foreground-service wake detections retain their existing visible-app
+        // gate and UI-owned activation flow.
+        LaunchedEffect(wakeActivation?.id, appIsForeground) {
+            val activation = wakeActivation ?: return@LaunchedEffect
+            if (activation.source ==
+                com.hermesandroid.relay.wake.WakeWordActivationSource.SystemAssistant
+            ) {
+                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                    launchSingleTop = true
+                }
+                com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
+                return@LaunchedEffect
+            }
+            if (!appIsForeground) return@LaunchedEffect
+
+            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
+            if (activation.startNewSession) {
+                chatViewModel.createNewChat()
+            }
+            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                launchSingleTop = true
+            }
+            voiceViewModel.enterVoiceMode()
+            // Let the existing RelayApp initialization and Chat destination
+            // settle before opening VoiceRecorder on a cold task recreation.
+            delay(120L)
+            voiceViewModel.startListening()
+            com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
+        }
+
+        LaunchedEffect(voiceUiState.voiceMode) {
+            com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
+                voiceUiState.voiceMode
+            )
+        }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val activeConnection by connectionViewModel.activeConnection.collectAsState()
@@ -1251,6 +1073,22 @@ fun RelayApp() {
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        // Android sharesheet handoff: wait until the configured chat context is
+        // settled, then ask ChatViewModel to own the new draft and composer
+        // prefill. Navigation is presentation-only; no composable writes chat
+        // stores or sends the shared text.
+        LaunchedEffect(navController, onboardingCompleted, initialChatSettled) {
+            if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
+            com.hermesandroid.relay.util.SharedTextRequest.pending.collect { request ->
+                request ?: return@collect
+                if (chatViewModel.openSharedTextDraft(request.text)) {
+                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                        launchSingleTop = true
+                    }
+                    com.hermesandroid.relay.util.SharedTextRequest.consume(request.id)
+                }
+            }
+        }
         // The SAME readiness signal ChatScreen renders its "Connect Standard
         // Hermes" CTA from (chat client exists + reachable verdict). The gate
         // must release on this — releasing on the resolver's earlier
@@ -1712,7 +1550,12 @@ fun RelayApp() {
             contentWindowInsets = WindowInsets(0),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (!suppressGlobalChrome && !isKeyboardVisible && !showStartupSphere && !voiceUiState.voiceMode) {
+                if (
+                    !suppressGlobalChrome &&
+                    !isKeyboardVisible &&
+                    !showStartupSphere &&
+                    shouldShowConnectionFooter(voiceUiState.voiceMode, voicePresentationMode)
+                ) {
                     val footerRoute = resolveFooterRouteCandidate(
                         runtimeStatus = appChatRuntimeStatus,
                         activeEndpoint = activeEndpoint,
@@ -1771,6 +1614,10 @@ fun RelayApp() {
                         // Routine in-progress reconnect surfaces here (amber cue)
                         // instead of a take-space banner or a floating toast.
                         reconnecting = connectionReconnecting,
+                        modifier = Modifier.petPerchSurface(
+                            key = APP_STATUS_PET_WALK_REGION,
+                            routes = APP_STATUS_PET_ROUTES,
+                        ),
                     )
                 }
             }
@@ -1844,13 +1691,18 @@ fun RelayApp() {
                             nullable = true
                             defaultValue = null
                         },
+                        navArgument(Screen.Chat.ARG_PROACTIVE_CHAT_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
                     ),
                 ) { backStackEntry ->
                     // Responsive bubble width based on screen width. The "Blend"
                     // chat look favors wider bubbles: on compact phones the cap is
-                    // raised so long turns fill most of the row (binding on the
-                    // available width minus the assistant avatar gutter) instead
-                    // of wrapping early in a narrow column.
+                    // raised so long turns fill most of the row instead of
+                    // wrapping early in a narrow column. Assistant identity
+                    // stays in the group header and does not reduce this cap.
                     val configuration = LocalConfiguration.current
                     val screenWidthDp = configuration.screenWidthDp.dp
                     val maxBubbleWidth = when {
@@ -1874,6 +1726,35 @@ fun RelayApp() {
                     val requestedProfileRoute = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_PROFILE)
                         ?.takeIf { it.isNotBlank() }
+                    val requestedProactiveChatId = backStackEntry.arguments
+                        ?.getString(Screen.Chat.ARG_PROACTIVE_CHAT_ID)
+                        ?.takeIf { it.isNotBlank() }
+                    val proactiveInboxEntries by connectionViewModel.inboxMessages.collectAsState()
+                    val phoneThreadChatIds by connectionViewModel.phoneThreadChatIds.collectAsState()
+                    LaunchedEffect(
+                        requestedProactiveChatId,
+                        proactiveInboxEntries,
+                        phoneThreadChatIds,
+                    ) {
+                        val chatId = requestedProactiveChatId ?: return@LaunchedEffect
+                        val realSessionId = phoneThreadChatIds.entries
+                            .firstOrNull { it.value == chatId }
+                            ?.key
+                        if (realSessionId != null) {
+                            chatViewModel.switchSession(realSessionId)
+                        } else {
+                            val entries = proactiveInboxEntries.filter {
+                                (it.connectionId == null || it.connectionId == activeConnectionId) &&
+                                    (it.chatId ?: "phone") == chatId
+                            }
+                            if (entries.isEmpty()) return@LaunchedEffect
+                            chatViewModel.openProactiveThread(chatId, entries)
+                        }
+                        backStackEntry.arguments?.putString(
+                            Screen.Chat.ARG_PROACTIVE_CHAT_ID,
+                            null,
+                        )
+                    }
                     LaunchedEffect(
                         requestedSessionId,
                         requestedProfileRoute,
@@ -1919,6 +1800,12 @@ fun RelayApp() {
                         voiceViewModel = voiceViewModel,
                         voiceClient = voiceClient,
                         maxBubbleWidth = maxBubbleWidth,
+                        voicePresentationMode = voicePresentationMode,
+                        onVoicePresentationModeChange = { mode ->
+                            connectionSwitchScope.launch {
+                                voicePreferences.setPresentationMode(mode)
+                            }
+                        },
                         openAgentSheetOnEntry = openAgentSheetArg,
                         onAgentSheetArgConsumed = {
                             backStackEntry.arguments?.putBoolean(
@@ -1933,6 +1820,16 @@ fun RelayApp() {
                         },
                         onNavigateToConnect = {
                             navController.navigate(Screen.Pair.route()) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onRepairConnection = {
+                            navController.navigate(
+                                Screen.Pair.route(
+                                    connectionId = activeConnectionId,
+                                    autoStart = "relay",
+                                ),
+                            ) {
                                 launchSingleTop = true
                             }
                         },
@@ -1970,6 +1867,11 @@ fun RelayApp() {
                         },
                         onNavigateToSettings = {
                             navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        },
+                        onNavigateToAppearanceSettings = {
+                            navController.navigate(Screen.AppearanceSettings.route) {
                                 launchSingleTop = true
                             }
                         },
@@ -2216,6 +2118,9 @@ fun RelayApp() {
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route)
                         },
+                        onNavigateToPlugins = {
+                            navController.navigate(Screen.Plugins.route)
+                        },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)
                         },
@@ -2269,6 +2174,29 @@ fun RelayApp() {
                                 Screen.ProfileInspector.route(profileName),
                             )
                         },
+                    )
+                }
+                composable(Screen.Plugins.route) {
+                    PluginsScreen(
+                        viewModel = pluginsViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenPage = { pluginId, pageId ->
+                            navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                        },
+                    )
+                }
+                composable(
+                    route = Screen.PluginPage.route,
+                    arguments = listOf(
+                        navArgument(Screen.PluginPage.ARG_PLUGIN_ID) { type = NavType.StringType },
+                        navArgument(Screen.PluginPage.ARG_PAGE_ID) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    PluginPageScreen(
+                        viewModel = pluginsViewModel,
+                        pluginId = entry.arguments?.getString(Screen.PluginPage.ARG_PLUGIN_ID).orEmpty(),
+                        pageId = entry.arguments?.getString(Screen.PluginPage.ARG_PAGE_ID).orEmpty(),
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.VoiceSettings.route) {
@@ -2390,10 +2318,18 @@ fun RelayApp() {
                 }
                 // === END PHASE3-safety-rails ===
                 composable(Screen.PairedDevices.route) {
-                    if (coldStartAuthState is AuthState.Paired) {
+                    if (
+                        coldStartAuthState is AuthState.Paired ||
+                        currentPairedSession != null
+                    ) {
                         PairedDevicesScreen(
                             connectionViewModel = connectionViewModel,
                             onBack = { navController.popBackStack() },
+                            onManageSessions = {
+                                navController.navigate(Screen.Manage.route) {
+                                    launchSingleTop = true
+                                }
+                            },
                             onRequestRepair = {
                                 navController.navigate(Screen.Pair.route())
                             }
@@ -2477,7 +2413,7 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
                         onReconnect = {
-                            connectionViewModel.connectRelay()
+                            connectionViewModel.reconnectIfStale()
                             UiMessageBus.status(reconnectingRelayLabel)
                         },
                         onRename = { id, newLabel ->
@@ -2609,7 +2545,29 @@ fun RelayApp() {
                 composable(Screen.AppearanceSettings.route) {
                     AppearanceSettingsScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
+                        onCreatePet = { navController.navigate(Screen.CustomPetGuide.route) },
+                    )
+                }
+                composable(Screen.PetdexBrowse.route) {
+                    PetdexBrowseScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Screen.CustomPetGuide.route) {
+                    CustomPetGuideScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onStartNewChat = { prompt ->
+                            chatViewModel.createNewChat()
+                            chatViewModel.stageComposerDraft(prompt)
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(Screen.Chat.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
                 composable(Screen.Analytics.route) {
@@ -2691,7 +2649,8 @@ fun RelayApp() {
                     val sectionArg = backStackEntry.arguments
                         ?.getString(Screen.ProfileInspector.ARG_SECTION)
                         ?: Screen.ProfileInspector.SECTION_CONFIG
-                    if (coldStartAuthState !is AuthState.Paired) {
+                    val inspectorGatewayClient = connectionViewModel.activeGatewayChatClient()
+                    if (coldStartAuthState !is AuthState.Paired && inspectorGatewayClient == null) {
                         PowerFeatureGateScreen(
                             title = stringResource(R.string.screen_profile_inspector_label),
                             summary = stringResource(R.string.power_gate_profile_inspector_summary),
@@ -2719,8 +2678,18 @@ fun RelayApp() {
                                 // SavedStateHandle contains our
                                 // `profileName` arg automatically.
                                 val ssh = extras.createSavedStateHandle()
+                                // Freeze both transports to the connection that
+                                // owned this nav entry. A later connection/profile
+                                // switch cannot redirect an open editor's writes.
+                                val relayUrl = connectionViewModel.effectiveRelayUrl.value
+                                val relayToken = (connectionViewModel.authState.value as? AuthState.Paired)?.token
                                 return ProfileInspectorViewModel(
-                                    client = profileInspectorClient,
+                                    legacyClient = RelayProfileInspectorClient(
+                                        okHttpClient = profileInspectorHttpClient,
+                                        relayUrlProvider = { relayUrl },
+                                        sessionTokenProvider = { relayToken },
+                                    ),
+                                    gatewayClient = inspectorGatewayClient,
                                     savedStateHandle = ssh,
                                 ) as T
                             }
@@ -2751,6 +2720,62 @@ fun RelayApp() {
             } // end CompositionLocalProvider
         }
         } // end Column (wraps banner + Scaffold)
+
+        // One companion host survives navigation. Screens register real-layout
+        // walk strips; without one the pet remains docked at its persisted edge.
+        // The host's empty full-screen area has no pointer input, so only the
+        // The scaled pet target intercepts touches.
+        val petSurfaceOwner = petSurfaceOwnerForRoute(currentRoute)
+        val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
+        val showFloatingPet = activeFloatingPet != null &&
+            floatingPetAllowedOnRoute(currentRoute) &&
+            !petActivity.hidden &&
+            !suppressGlobalChrome &&
+            !showStartupSphere &&
+            !voiceUiState.voiceMode
+        if (showFloatingPet) {
+            val roamingRoute = petSurfaceOwner
+            FloatingPetCompanion(
+                pet = requireNotNull(activeFloatingPet),
+                state = petActivity.renderState,
+                placement = petPlacement,
+                roamingEnabled = petRoamingEnabled,
+                behaviorPreferences = petBehaviorPreferences,
+                debugTerrainOverlay = petTerrainOverlayEnabled,
+                sizeScale = petBehaviorPreferences.sizeScale,
+                // Surface scrolling suspends autonomous movement without
+                // visually muting the companion. The keyboard only selects
+                // the compact footprint; typing keeps the pet animated and
+                // interactive on the remaining safe terrain.
+                // A scroll is a temporary movement pause, not a route change.
+                // Keeping route support stable prevents the overlay from
+                // re-docking to its persisted edge position mid-scroll.
+                roamingAllowed = roamingRoute != null,
+                surfaceScrolling = petActivity.scrolling,
+                compact = shouldCompactFloatingPet(
+                    imeVisible = isKeyboardVisible,
+                    screenHeightDp = LocalConfiguration.current.screenHeightDp,
+                ),
+                animationEnabled = animationEnabled,
+                appForeground = appIsForeground,
+                route = roamingRoute,
+                visitRequest = petCompanionCoordinator.pendingVisitRequest,
+                onVisitRequestConsumed = petCompanionCoordinator::clearVisitRequest,
+                onPlacementChanged = connectionViewModel::setPetPlacement,
+                onRoamingEnabledChanged = connectionViewModel::setPetRoamingEnabled,
+                onResetPlacement = connectionViewModel::resetPetPlacement,
+                onHide = { connectionViewModel.setFloatingPet(null) },
+                onOpenAppearance = {
+                    navController.navigate(Screen.AppearanceSettings.route) { launchSingleTop = true }
+                },
+                onMenuExpandedChanged = { floatingPetMenuExpanded = it },
+                onExitTerrainDebug = {
+                    petTerrainOverlayScope.launch {
+                        FeatureFlags.setPetTerrainOverlayEnabled(sphereContext, false)
+                    }
+                },
+            )
+        }
 
         // Floating overlay toasts (update + connection status). Rendered in the
         // Box, stacked top-down in one status-bar-padded Column so they slide

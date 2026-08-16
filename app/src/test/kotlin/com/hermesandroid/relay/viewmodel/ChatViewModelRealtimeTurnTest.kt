@@ -241,6 +241,74 @@ class ChatViewModelRealtimeTurnTest {
     }
 
     @Test
+    fun silentBackgroundPromotionReleasesForegroundStreamButKeepsTaskOwnership() {
+        val assistantId = viewModel.startRealtimeAgentTurn(
+            userText = "Check release readiness",
+            chatSessionId = "session-1",
+        )
+
+        viewModel.applyRealtimeAgentEvent(
+            assistantMessageId = assistantId,
+            event = RealtimeVoiceEvent(
+                type = "hermes.run.promoted",
+                runId = "run-silent",
+                tier = "durable",
+                spokenHandoff = false,
+                raw = "{}",
+            ),
+        )
+
+        val promoted = handler.messages.value.single { it.id == assistantId }
+        assertFalse(handler.isStreaming.value)
+        assertFalse(promoted.isStreaming)
+        assertEquals(BackgroundTaskPhase.RUNNING, promoted.backgroundTask?.phase)
+
+        viewModel.applyRealtimeAgentEvent(
+            assistantMessageId = "newer-turn",
+            event = RealtimeVoiceEvent(
+                type = "hermes.run.progress",
+                runId = "run-silent",
+                message = "Checking Android",
+                raw = "{}",
+            ),
+        )
+
+        val updated = handler.messages.value.single { it.id == assistantId }
+        assertEquals("Checking Android", updated.backgroundTask?.statusLine)
+        assertEquals(BackgroundTaskPhase.RUNNING, updated.backgroundTask?.phase)
+    }
+
+    @Test
+    fun spokenBackgroundPromotionWaitsForProviderResponseBoundary() {
+        val assistantId = viewModel.startRealtimeAgentTurn(
+            userText = "Check release readiness",
+            chatSessionId = "session-1",
+        )
+
+        viewModel.applyRealtimeAgentEvent(
+            assistantMessageId = assistantId,
+            event = RealtimeVoiceEvent(
+                type = "hermes.run.promoted",
+                runId = "run-spoken",
+                spokenHandoff = true,
+                raw = "{}",
+            ),
+        )
+        assertTrue(handler.isStreaming.value)
+
+        viewModel.applyRealtimeAgentEvent(
+            assistantMessageId = assistantId,
+            event = RealtimeVoiceEvent(type = "voice.response.done", raw = "{}"),
+        )
+
+        assertFalse(handler.isStreaming.value)
+        assertEquals(
+            BackgroundTaskPhase.RUNNING,
+            handler.messages.value.single { it.id == assistantId }.backgroundTask?.phase,
+        )
+    }
+
+    @Test
     fun backgroundRunKeepsItsOwnerAfterANewerLocalVoiceCommand() {
         val backgroundAssistantId = viewModel.startRealtimeAgentTurn(
             userText = "Check every release target",

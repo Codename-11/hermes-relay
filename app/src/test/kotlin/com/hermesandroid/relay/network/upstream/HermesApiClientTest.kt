@@ -2,6 +2,9 @@ package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.SkillListResponse
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -17,6 +20,48 @@ import org.junit.Test
  * construction patterns that don't require the Android framework.
  */
 class HermesApiClientTest {
+
+    @Test
+    fun getMessages_pagesApiFallbackOldestFirst() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(apiMessagePageResponse(start = 0, count = 500, returned = 500))
+            server.enqueue(apiMessagePageResponse(start = 500, count = 1, returned = 1))
+
+            val messages = HermesApiClient(server.url("/").toString(), "test-key")
+                .getMessages("sess-a")
+
+            val first = server.takeRequest().requestUrl!!
+            val second = server.takeRequest().requestUrl!!
+            assertEquals(listOf("0", "500"), listOf(first, second).map { it.queryParameter("offset") })
+            assertEquals(listOf("oldest", "oldest"), listOf(first, second).map { it.queryParameter("order") })
+            assertEquals((0..500).map(Int::toString), messages.map { it.id })
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun getMessages_acceptsLegacyUnpaginatedApiEnvelope() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(
+                MockResponse().setHeader("Content-Type", "application/json").setBody(
+                    """{"object":"list","data":[{"id":"1","role":"user","content":"hi"}]}""",
+                ),
+            )
+
+            val messages = HermesApiClient(server.url("/").toString(), "test-key")
+                .getMessages("sess-a")
+
+            assertEquals(listOf("1"), messages.map { it.id })
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
 
     @Test
     fun toolsetInventory_parserPreservesEnabledAndResolvedTools() {
@@ -273,6 +318,13 @@ class HermesApiClientTest {
                   "authenticated": true,
                   "is_current": true,
                   "models": ["grok-4.3", "grok-4.2"],
+                  "capabilities": {
+                    "grok-4.3": {
+                      "reasoning": true,
+                      "reasoning_efforts": ["low", "high", "max"],
+                      "reasoning_efforts_exact": true
+                    }
+                  },
                   "unavailable_models": ["grok-4.2"],
                   "free_tier": true,
                   "total_models": 2
@@ -294,6 +346,14 @@ class HermesApiClientTest {
         assertEquals(listOf("grok-4.2"), parsed?.providers?.first()?.unavailableModels)
         assertTrue(parsed?.providers?.first()?.authenticated == true)
         assertFalse(parsed?.providers?.last()?.authenticated == true)
+        assertEquals(
+            listOf("low", "high", "max"),
+            parsed?.providers?.first()?.capabilities?.get("grok-4.3")?.reasoningEfforts,
+        )
+        assertEquals(
+            true,
+            parsed?.providers?.first()?.capabilities?.get("grok-4.3")?.reasoningEffortsExact,
+        )
     }
 
     @Test
@@ -406,8 +466,22 @@ class HermesApiClientTest {
     @Test
     fun urlConstruction_sessionsEndpoint() {
         val baseUrl = "http://localhost:8642"
-        val url = "$baseUrl/api/sessions?limit=200"
-        assertEquals("http://localhost:8642/api/sessions?limit=200", url)
+        val page = sessionListPages(200).first()
+        val url = "$baseUrl/api/sessions?limit=${page.limit}&offset=${page.offset}"
+        assertEquals("http://localhost:8642/api/sessions?limit=100&offset=0", url)
+    }
+
+    @Test
+    fun sessionListPages_preservesWindowWithoutExceedingUpstreamMaximum() {
+        assertEquals(
+            listOf(SessionListPage(limit = 100, offset = 0), SessionListPage(limit = 100, offset = 100)),
+            sessionListPages(200),
+        )
+        assertEquals(
+            listOf(SessionListPage(limit = 100, offset = 0), SessionListPage(limit = 100, offset = 100)),
+            sessionListPages(999),
+        )
+        assertEquals(listOf(SessionListPage(limit = 25, offset = 0)), sessionListPages(25))
     }
 
     @Test
@@ -452,6 +526,16 @@ class HermesApiClientTest {
         assertEquals("gpt-5-mini", parsed?.single()?.root)
         assertEquals("hermes-agent", parsed?.single()?.parent)
         assertEquals("Routes to gpt-5-mini", parsed?.single()?.routeDetail)
+    }
+
+    @Test
+    fun modelOptionsDeduplicateRepeatedAliasRowsByRequestIdentity() {
+        val parsed = parseModelOptionsBody(
+            Json { ignoreUnknownKeys = true },
+            """{"data":[{"id":"fast","root":"gpt-5-mini"},{"id":"fast","root":"gpt-5-mini"}]}""",
+        )
+
+        assertEquals(listOf("fast"), parsed?.map { it.id })
     }
 
     @Test
@@ -556,4 +640,15 @@ class HermesApiClientTest {
         val url = "$baseUrl/api/sessions/$sessionId"
         assertEquals("http://localhost:8642/api/sessions/sess-789", url)
     }
+}
+
+private fun apiMessagePageResponse(start: Int, count: Int, returned: Int): MockResponse {
+    val messages = (start until start + count).joinToString(",") { index ->
+        """{"id":"$index","role":"user","content":"m$index"}"""
+    }
+    return MockResponse()
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+            """{"object":"list","session_id":"sess-a","data":[$messages],"pagination":{"limit":500,"offset":$start,"order":"oldest","returned":$returned}}""",
+        )
 }

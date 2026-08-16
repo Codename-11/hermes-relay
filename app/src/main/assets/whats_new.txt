@@ -1,5 +1,7 @@
-v1.5.0 - Voice that keeps pace
+v1.9.0 - Better sessions, reactions, and voice
 
-* Browse Standard and Realtime providers, models, and voices in a cleaner layout with inline previews.
-* Hear Standard Hermes replies as completed speech segments arrive; starting new audio stops the prior playback.
-* Use richer Gateway-aware Manage, diagnostics, model selection, recovery, and generation status.
+* Browse all profiles without switching away from the selected scope.
+* Start new chats with the default profile and hydrate history with the session owner.
+* Pin reactions to both user and assistant messages.
+* Keep Vanilla Hermes voice on the authenticated Gateway.
+* Use an ungrouped session list by default, with project grouping available in Customize Sessions.

@@ -227,6 +227,8 @@ class Session:
     device_form_factor: str = "unknown"
     first_seen: float = 0.0
     refresh_token: str | None = field(default=None, repr=False, compare=False)
+    device_model: str = "unknown"
+    device_platform: str = "unknown"
 
     def __post_init__(self) -> None:
         if self.expires_at == 0.0:
@@ -286,6 +288,8 @@ class TrustedDevice:
     transport_hint: str = "unknown"
     client_surface: str = "unknown"
     device_form_factor: str = "unknown"
+    device_model: str = "unknown"
+    device_platform: str = "unknown"
 
     def __post_init__(self) -> None:
         if self.expires_at == 0.0:
@@ -465,6 +469,8 @@ def _session_to_json(session: Session) -> dict[str, Any]:
         "transport_hint": session.transport_hint,
         "client_surface": session.client_surface,
         "device_form_factor": session.device_form_factor,
+        "device_model": session.device_model,
+        "device_platform": session.device_platform,
         "first_seen": session.first_seen,
     }
 
@@ -499,6 +505,8 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
         transport_hint = str(payload.get("transport_hint", "unknown"))
         client_surface = str(payload.get("client_surface", "unknown"))
         device_form_factor = str(payload.get("device_form_factor", "unknown"))
+        device_model = str(payload.get("device_model", "unknown"))
+        device_platform = str(payload.get("device_platform", "unknown"))
         first_seen = float(payload.get("first_seen", created_at))
     except (KeyError, TypeError, ValueError):
         return None
@@ -514,6 +522,8 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
         transport_hint=transport_hint,
         client_surface=client_surface,
         device_form_factor=device_form_factor,
+        device_model=device_model,
+        device_platform=device_platform,
         first_seen=first_seen,
     )
 
@@ -535,6 +545,8 @@ def _trusted_device_to_json(device: TrustedDevice) -> dict[str, Any]:
         "transport_hint": device.transport_hint,
         "client_surface": device.client_surface,
         "device_form_factor": device.device_form_factor,
+        "device_model": device.device_model,
+        "device_platform": device.device_platform,
     }
     if device.grants is not None:
         payload["grants"] = dict(device.grants)
@@ -572,6 +584,8 @@ def _trusted_device_from_json(payload: dict[str, Any]) -> TrustedDevice | None:
         transport_hint = str(payload.get("transport_hint", "unknown"))
         client_surface = str(payload.get("client_surface", "unknown"))
         device_form_factor = str(payload.get("device_form_factor", "unknown"))
+        device_model = str(payload.get("device_model", "unknown"))
+        device_platform = str(payload.get("device_platform", "unknown"))
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -590,6 +604,8 @@ def _trusted_device_from_json(payload: dict[str, Any]) -> TrustedDevice | None:
         transport_hint=transport_hint,
         client_surface=client_surface,
         device_form_factor=device_form_factor,
+        device_model=device_model,
+        device_platform=device_platform,
     )
 
 
@@ -865,6 +881,8 @@ class SessionManager:
         transport_hint: str = "unknown",
         client_surface: str = "unknown",
         device_form_factor: str = "unknown",
+        device_model: str = "unknown",
+        device_platform: str = "unknown",
         issue_refresh_token: bool = False,
     ) -> Session:
         """Create a new session for an authenticated device.
@@ -890,10 +908,17 @@ class SessionManager:
         device_form_factor:
             Optional device class metadata (``"phone"``, ``"desktop"``,
             ``"xr"``, or ``"unknown"``).
+        device_model:
+            Optional manufacturer/model metadata retained for device details.
+        device_platform:
+            Optional operating-system/platform metadata retained for device
+            details. Neither field participates in authorization.
         issue_refresh_token:
             When True, also create a persisted trusted-device credential and
             attach the raw one-time refresh token to the returned
-            :class:`Session` for inclusion in ``auth.ok``.
+            :class:`Session` for inclusion in ``auth.ok``. This is an explicit
+            pairing operation, so any older sessions and trusted-device
+            credentials for the same non-empty ``device_id`` are replaced.
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
@@ -907,6 +932,39 @@ class SessionManager:
         resolved_grants = _materialize_grants(grants, float(ttl_seconds), now)
         refresh_token: str | None = None
         if issue_refresh_token:
+            # A fresh operator-approved pair repairs this device; it does not
+            # authorize another indefinite row for the same app installation.
+            # Keep different devices independent and leave legacy clients with
+            # no device_id alone because an empty id cannot identify ownership.
+            normalized_device_id = device_id.strip()
+            # Legacy desktop clients omitted device_id, which the wire layer
+            # represented as the shared sentinel "unknown". Treat sentinels as
+            # absent ownership, otherwise pairing any second PC revokes every
+            # other legacy desktop session as if they were one installation.
+            if normalized_device_id.casefold() in {"unknown", "none", "null"}:
+                normalized_device_id = ""
+            if normalized_device_id:
+                replaced_sessions = [
+                    token
+                    for token, existing in self._sessions.items()
+                    if existing.device_id == normalized_device_id
+                ]
+                for token in replaced_sessions:
+                    del self._sessions[token]
+                replaced_devices = [
+                    refresh_hash
+                    for refresh_hash, existing in self._trusted_devices.items()
+                    if existing.device_id == normalized_device_id
+                ]
+                for refresh_hash in replaced_devices:
+                    del self._trusted_devices[refresh_hash]
+                if replaced_sessions or replaced_devices:
+                    logger.info(
+                        "Re-pair replaced %d session(s) and %d trusted credential(s) for device %s",
+                        len(replaced_sessions),
+                        len(replaced_devices),
+                        normalized_device_id,
+                    )
             refresh_token = _generate_refresh_token()
             refresh_hash = _refresh_token_hash(refresh_token)
             self._trusted_devices[refresh_hash] = TrustedDevice(
@@ -921,6 +979,8 @@ class SessionManager:
                 transport_hint=transport_hint,
                 client_surface=client_surface,
                 device_form_factor=device_form_factor,
+                device_model=device_model,
+                device_platform=device_platform,
             )
 
         token = str(uuid.uuid4())
@@ -935,6 +995,8 @@ class SessionManager:
             transport_hint=transport_hint,
             client_surface=client_surface,
             device_form_factor=device_form_factor,
+            device_model=device_model,
+            device_platform=device_platform,
             first_seen=now,
             refresh_token=refresh_token,
         )
@@ -987,6 +1049,8 @@ class SessionManager:
             transport_hint=session.transport_hint,
             client_surface=session.client_surface,
             device_form_factor=session.device_form_factor,
+            device_model=session.device_model,
+            device_platform=session.device_platform,
         )
         session.refresh_token = refresh_token
         self._save_to_disk()
@@ -1001,6 +1065,8 @@ class SessionManager:
         transport_hint: str = "unknown",
         client_surface: str = "unknown",
         device_form_factor: str = "unknown",
+        device_model: str = "unknown",
+        device_platform: str = "unknown",
     ) -> Session | None:
         """Mint a replacement session from a trusted-device refresh token.
 
@@ -1017,14 +1083,30 @@ class SessionManager:
         if trusted.is_expired:
             self._save_to_disk()
             return None
-        if device_id and trusted.device_id != device_id:
+        normalized_device_id = device_id.strip()
+        legacy_desktop_identity = (
+            trusted.client_surface in {"desktop", "unknown"}
+            and trusted.device_id.strip().casefold() in {"unknown", "none", "null"}
+            and normalized_device_id.casefold() not in {"", "unknown", "none", "null"}
+        )
+        if (
+            normalized_device_id
+            and trusted.device_id != normalized_device_id
+            and not legacy_desktop_identity
+        ):
             logger.info(
                 "Refresh rejected for device_id mismatch: stored=%s attempted=%s",
                 trusted.device_id,
-                device_id,
+                normalized_device_id,
             )
             self._trusted_devices[refresh_hash] = trusted
             return None
+        if legacy_desktop_identity:
+            # The refresh secret proves continuity for desktop clients created
+            # before they persisted an installation UUID. Upgrade that one
+            # trusted record in place without weakening normal ID mismatch
+            # rejection or conflating separate legacy PCs during pairing.
+            trusted.device_id = normalized_device_id
 
         now = time.time()
         new_refresh_token = _generate_refresh_token()
@@ -1035,6 +1117,10 @@ class SessionManager:
         trusted.transport_hint = transport_hint or trusted.transport_hint
         trusted.client_surface = client_surface or trusted.client_surface
         trusted.device_form_factor = device_form_factor or trusted.device_form_factor
+        if device_model and device_model != "unknown":
+            trusted.device_model = device_model
+        if device_platform and device_platform != "unknown":
+            trusted.device_platform = device_platform
         self._trusted_devices[new_refresh_hash] = trusted
 
         session = self.create_session(
@@ -1045,6 +1131,8 @@ class SessionManager:
             transport_hint=trusted.transport_hint,
             client_surface=trusted.client_surface,
             device_form_factor=trusted.device_form_factor,
+            device_model=trusted.device_model,
+            device_platform=trusted.device_platform,
             issue_refresh_token=False,
         )
         session.refresh_token = new_refresh_token
@@ -1055,6 +1143,58 @@ class SessionManager:
             session.token[:8],
         )
         return session
+
+    def update_session_device_metadata(
+        self,
+        session: Session,
+        *,
+        device_name: str | None = None,
+        device_model: str | None = None,
+        device_platform: str | None = None,
+        client_surface: str | None = None,
+        device_form_factor: str | None = None,
+    ) -> None:
+        """Adopt identity metadata from a valid reconnecting client.
+
+        This lets clients released after the metadata fields were introduced
+        enrich an existing pair without requiring another QR scan. The stable
+        ``device_id`` remains the ownership key; descriptive fields do not
+        participate in authentication or authorization.
+        """
+
+        updates = {
+            "device_name": device_name,
+            "device_model": device_model,
+            "device_platform": device_platform,
+            "client_surface": client_surface,
+            "device_form_factor": device_form_factor,
+        }
+        changed = False
+        for field_name, candidate in updates.items():
+            if candidate is None:
+                continue
+            value = candidate.strip()
+            if not value or value == "unknown":
+                continue
+            if getattr(session, field_name) != value:
+                setattr(session, field_name, value)
+                changed = True
+
+        for trusted in self._trusted_devices.values():
+            if trusted.device_id != session.device_id:
+                continue
+            for field_name, candidate in updates.items():
+                if candidate is None:
+                    continue
+                value = candidate.strip()
+                if not value or value == "unknown":
+                    continue
+                if getattr(trusted, field_name) != value:
+                    setattr(trusted, field_name, value)
+                    changed = True
+
+        if changed:
+            self._save_to_disk()
 
     def get_session(self, token: str) -> Session | None:
         """Look up a session by token. Returns None if not found or expired."""

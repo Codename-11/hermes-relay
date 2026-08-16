@@ -4,6 +4,7 @@ import android.content.Context
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -22,11 +23,16 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * showHumanError in RelayApp.kt.
  */
 
+enum class HumanErrorAction {
+    Repair,
+}
+
 data class HumanError(
     val title: String,
     val body: String,
     val retryable: Boolean = false,
     val actionLabel: String? = null,
+    val action: HumanErrorAction? = null,
 )
 
 private fun titlePrefix(context: String?, ctx: Context?): String = ctx?.let { c ->
@@ -96,14 +102,23 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             "realtime oauth refresh failed" in msg ||
             "realtime provider credentials" in msg -> HumanError(
             title = ctx?.getString(R.string.error_classify_realtime_auth) ?: "Realtime provider auth unavailable",
-            body = "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
+            body = ctx?.getString(R.string.error_classify_realtime_auth_body) ?: "The realtime voice provider is missing or rejected server-side auth. Refresh provider auth on the relay or choose another provider.",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_voice_settings) ?: "Voice settings",
+        )
+        context == "load_profile_sessions" &&
+            ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg) -> HumanError(
+            title = ctx?.getString(R.string.power_feature_dashboard_signin_label) ?: "Dashboard sign-in required",
+            body = ctx?.getString(R.string.power_feature_dashboard_signin_explain)
+                ?: "Sign in to the Hermes Dashboard to load profile sessions.",
+            retryable = false,
         )
         (
             "api key" in msg ||
                 "sessions auth failed" in msg ||
                 "api auth" in msg ||
+                (context in setOf("load_sessions", "create_session") &&
+                    ("401" in msg || "403" in msg || "unauthorized" in msg || "forbidden" in msg)) ||
                 (context == "send_message" && ("401" in msg || "unauthorized" in msg))
             ) -> HumanError(
             title = ctx?.getString(R.string.error_classify_api_key) ?: "API key rejected",
@@ -116,6 +131,7 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
             body = "Your session is no longer valid — re-pair this device",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
+            action = HumanErrorAction.Repair,
         )
         "403" in msg || "forbidden" in msg -> HumanError(
             title = ctx?.getString(R.string.error_classify_not_allowed) ?: "Not allowed",
@@ -211,21 +227,45 @@ fun classifyError(t: Throwable?, context: String? = null, ctx: Context? = null):
         // Record after classification so the clean title and the raw trace both
         // reach the log. Defensive: never let logging turn a handled error fatal.
         runCatching {
+            val category = categoryForContext(context)
             DiagnosticsLog.recordError(
-                category = categoryForContext(context),
+                category = category,
                 title = human.title,
                 detail = human.body,
                 throwable = t,
+                operation = context?.diagnosticOperation(),
+                suggestion = NetworkDiagnosticGuidance.forThrowable(t, category.label),
+                reliabilityContext = context,
             )
         }
     }
     return human
 }
 
+private fun String.diagnosticOperation(): String =
+    trim()
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { word ->
+            word.replaceFirstChar { character ->
+                if (character.isLowerCase()) character.titlecase() else character.toString()
+            }
+        }
+
 private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?): HumanError {
     if (t == null) return nullFallback(context, ctx)
 
     val msg = t.message.orEmpty().lowercase()
+
+    if ("cannot create audiorecord" in msg || "audiorecord failed to initialize" in msg) {
+        return HumanError(
+            title = ctx?.getString(R.string.error_classify_mic_unavailable) ?: "Microphone unavailable",
+            body = ctx?.getString(R.string.error_classify_mic_unavailable_body)
+                ?: "The microphone is busy or blocked. Close other apps using the mic and check Microphone permission in Settings.",
+            retryable = true,
+            actionLabel = ctx?.getString(R.string.error_classify_retry) ?: "Retry",
+        )
+    }
 
     // Upstream rejects new API work with this stable code while an intentional
     // shutdown/external drain is in progress. Keep it distinct from provider
@@ -271,6 +311,7 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
             body = "The server certificate changed since you paired — re-pair to trust it",
             retryable = false,
             actionLabel = ctx?.getString(R.string.error_classify_repair) ?: "Re-pair",
+            action = HumanErrorAction.Repair,
         )
         is SecurityException -> HumanError(
             title = ctx?.getString(R.string.error_classify_perm_needed) ?: "Permission needed",

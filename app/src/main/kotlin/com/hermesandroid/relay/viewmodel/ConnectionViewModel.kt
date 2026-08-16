@@ -14,10 +14,16 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.normalizeAccentHex
+import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.components.SphereSkinImportResult
+import com.hermesandroid.relay.ui.components.SphereSkinImporter
+import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
+import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
@@ -27,9 +33,17 @@ import com.hermesandroid.relay.data.DemoMode
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.DEFAULT_PET_TEMPERAMENT
+import com.hermesandroid.relay.data.DEFAULT_PET_SIZE_SCALE
+import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.PetBehaviorPreferencesRepository
+import com.hermesandroid.relay.data.PetTemperament
+import com.hermesandroid.relay.data.ChatInputPreferencesRepository
+import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -63,14 +77,20 @@ import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardChatDisplaySettings
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.multiplexServedProfiles
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shared.buildPluginProxyClient
+import com.hermesandroid.relay.network.shared.buildHermesReachClient
+import com.hermesandroid.relay.network.shared.hermesReachRouteOrNull
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
@@ -129,12 +149,27 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.put
 
-private data class RelayUiInputs(
+internal data class RelayUiInputs(
     val auth: AuthState,
     val conn: ConnectionState,
     val url: String,
     val configured: Boolean,
 )
+
+internal fun RelayUiInputs.requiresReconnectGrace(): Boolean =
+    configured &&
+        url.isNotBlank() &&
+        auth is AuthState.Paired &&
+        (conn == ConnectionState.Disconnected || conn == ConnectionState.Reconnecting)
+
+internal fun RelayUiInputs.resolveRelayUiState(graceElapsed: Boolean = false): RelayUiState = when {
+    !configured || url.isBlank() -> RelayUiState.NotConfigured
+    auth is AuthState.Failed -> RelayUiState.Expired
+    auth is AuthState.Paired && conn == ConnectionState.Connected -> RelayUiState.Connected
+    conn == ConnectionState.Connecting || auth is AuthState.Pairing -> RelayUiState.Connecting
+    requiresReconnectGrace() -> if (graceElapsed) RelayUiState.Stale else RelayUiState.Connecting
+    else -> RelayUiState.Disconnected
+}
 
 private data class ConnectionHealthInputs(
     val connection: Connection?,
@@ -209,12 +244,16 @@ internal fun resolveEffectiveDashboardUrl(
     endpoint: EndpointCandidate?,
 ): String {
     if (connection == null) return ""
+    endpoint?.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { return it }
     endpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
         ?.let { return it }
-    endpoint?.api?.url
-        ?.let(Connection::deriveDefaultDashboardUrl)
-        ?.let { return it }
+    endpoint?.api?.url?.let { apiUrl ->
+        connection.dashboardUrl
+            ?.takeIf { it.isNotBlank() && Connection.urlsShareHost(it, apiUrl) }
+            ?.let { return it }
+        Connection.deriveDefaultDashboardUrl(apiUrl)?.let { return it }
+    }
     return connection.resolvedDashboardUrl
 }
 
@@ -228,6 +267,7 @@ internal fun resolveEffectiveApiServerUrl(
     endpoint: EndpointCandidate?,
 ): String {
     if (savedUrl.isBlank()) return ""
+    endpoint?.pluginProxyRoutesOrNull()?.apiBaseUrl?.let { return it }
     return endpoint?.api?.url?.takeIf { it.isNotBlank() } ?: savedUrl
 }
 
@@ -312,6 +352,17 @@ internal fun preserveStandardConnectionWhileApplyingRelay(
     ),
 )
 
+internal fun profileApiCredential(
+    usesMultiplexProfileKey: Boolean,
+    profileKey: String?,
+    connectionKey: String,
+): String = if (usesMultiplexProfileKey) profileKey.orEmpty() else connectionKey
+
+internal fun migratedBackgroundAvatar(
+    storedBackgroundAvatar: String?,
+    legacyAgentAvatar: String?,
+): String = storedBackgroundAvatar ?: legacyAgentAvatar ?: SphereAvatar.id
+
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val ctx: Context get() = getApplication()
@@ -365,6 +416,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
         private val KEY_APP_THEME = stringPreferencesKey("app_theme")
+        // Optional RGB accent override applied on top of the selected preset.
+        // Null means the preset's authored accent remains authoritative.
+        private val KEY_APPEARANCE_ACCENT = stringPreferencesKey("appearance_accent")
+        private val KEY_APPEARANCE_SHAPE = stringPreferencesKey("appearance_shape")
         // Selected app font id (body typeface). Resolved against AppFont at the
         // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
         // (which scales sizes); this picks the family.
@@ -372,9 +427,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
-        // Selected agent avatar id. "sphere" (SphereAvatar.id) is the default
-        // built-in; any other id selects a loaded user "pet" by id.
+        // Legacy combined sphere/pet choice. Read during migration so existing
+        // users retain both their prior central visual and companion choice.
         private val KEY_AGENT_AVATAR = stringPreferencesKey("agent_avatar")
+        // Optional floating companion id. The explicit sentinel distinguishes
+        // "no pet" from a preference that has not yet been migrated.
+        private val KEY_FLOATING_PET = stringPreferencesKey("floating_pet")
+        // Central visualization selection, independent from the floating pet.
+        private val KEY_BACKGROUND_AVATAR = stringPreferencesKey("background_avatar")
+        // Reserved storage sentinel. Pet ids may legitimately be ordinary words
+        // such as "none", so keep the no-selection marker outside that space.
+        private const val NO_FLOATING_PET = "__none__"
+        private val KEY_PET_ROAMING_ENABLED = booleanPreferencesKey("pet_roaming_enabled")
+        private val KEY_PET_PLACEMENT_EDGE = stringPreferencesKey("pet_placement_edge")
+        private val KEY_PET_PLACEMENT_FRACTION = floatPreferencesKey("pet_placement_fraction")
+        private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.End, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
         private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
@@ -405,6 +472,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Animation
         private val KEY_ANIMATION_ENABLED = booleanPreferencesKey("animation_enabled")
         private val KEY_ANIMATION_BEHIND_CHAT = booleanPreferencesKey("animation_behind_chat")
+        private val KEY_BACKGROUND_VISUALIZATION_ENABLED =
+            booleanPreferencesKey("background_visualization_enabled")
         private val KEY_IMAGE_GENERATION_STYLE = stringPreferencesKey("image_generation_style")
         private val KEY_CHAT_RECENT_PROMPTS = booleanPreferencesKey("chat_recent_prompts")
 
@@ -420,6 +489,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // One-shot "Live voice conversation" hint on the input bar's voice slot
         private val KEY_VOICE_HINT_SEEN = booleanPreferencesKey("voice_mode_hint_seen")
     }
+
+    private val petBehaviorPreferencesRepository =
+        PetBehaviorPreferencesRepository(application)
+    private val chatInputPreferencesRepository =
+        ChatInputPreferencesRepository(application)
 
     // --- Core networking components ---
 
@@ -542,6 +616,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val endpointResolver = EndpointResolver(
         httpClient = endpointProbeClient,
+        clientForCandidate = { candidate ->
+            candidate.pluginProxyRoutesOrNull()?.let { proxy ->
+                val tokenProvider = { (authManager.authState.value as? AuthState.Paired)?.token }
+                if (candidate.hermesReachRouteOrNull() != null) {
+                    buildHermesReachClient(
+                        baseBuilder = endpointProbeClient.newBuilder(),
+                        outerClient = endpointProbeClient,
+                        candidate = candidate,
+                        sessionTokenProvider = tokenProvider,
+                    )
+                } else {
+                    buildPluginProxyClient(
+                        baseBuilder = endpointProbeClient.newBuilder(),
+                        routes = proxy,
+                        sessionTokenProvider = tokenProvider,
+                    )
+                }
+            }
+        },
         context = application,
     )
 
@@ -552,6 +645,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         context = application,
         endpointResolver = endpointResolver,
         endpointCandidatesProvider = { activeRouteCandidatesSnapshot() },
+        proxyClientProvider = { url -> pluginProxyClientForUrl(url) },
         // Pull the active device id through AuthManager — it's the same id
         // PairingPreferences keys the endpoint list on. Nullable wrapper
         // because AuthManager.getOrCreateDeviceId() is suspending.
@@ -647,6 +741,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         tokenStoreKeyProvider = { cid ->
             connectionStore.connections.value.firstOrNull { it.id == cid }?.tokenStoreKey
         },
+        pinnedClientProvider = { url, base ->
+            pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
+        },
     )
 
     // Agent-profiles collaborator — owns the merged profile list, the
@@ -718,7 +815,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     val relayRowState: StateFlow<RelayRowState> = combine(
         _relayUiState,
-        connectionManager.activeEndpoint,
+        connectionManager.activeRelayEndpoint,
     ) { phase, endpoint ->
         RelayRowState(phase = phase, activeEndpointRole = endpoint?.role)
     }.stateIn(
@@ -788,6 +885,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
             extraApiUrls = extraApiUrls,
+            dashboardUrl = activeConnection.value?.resolvedDashboardUrl,
         ),
         existing = activeConnection.value?.routeCandidates.orEmpty(),
     )
@@ -795,11 +893,55 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private fun effectiveApiServerUrlSnapshot(): String =
         resolveEffectiveApiServerUrl(
             savedUrl = _apiServerUrl.value,
-            endpoint = connectionManager.activeEndpoint.value,
+            endpoint = connectionManager.activeApiEndpoint.value,
         )
 
     private fun effectiveRelayUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.relay?.url ?: autoRelayUrlSnapshot()
+        connectionManager.activeEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun effectiveRelayWebSocketUrlSnapshot(): String =
+        connectionManager.activeRelayEndpoint.value?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
+            ?: connectionManager.activeRelayEndpoint.value?.relay?.url
+            ?: autoRelayUrlSnapshot()
+
+    private fun pluginProxyClientForUrl(
+        url: String,
+        baseClient: OkHttpClient? = null,
+        includeRelaySessionHeader: Boolean = true,
+    ): OkHttpClient? {
+        val requestAuthority = runCatching {
+            val parsed = java.net.URI(url)
+            val port = if (parsed.port > 0) parsed.port else 443
+            "${parsed.host?.lowercase()}:$port"
+        }.getOrNull() ?: return null
+        val candidate = activeConnection.value?.routeCandidates.orEmpty()
+            .firstOrNull { it.pluginProxyRoutesOrNull()?.authority == requestAuthority }
+            ?: return null
+        val routes = candidate.pluginProxyRoutesOrNull() ?: return null
+        val configuredBuilder = (baseClient?.newBuilder() ?: OkHttpClient.Builder())
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(30, TimeUnit.SECONDS)
+        val sessionTokenProvider = {
+            (authManager.authState.value as? AuthState.Paired)?.token
+        }
+        if (candidate.hermesReachRouteOrNull() != null) {
+            return buildHermesReachClient(
+                baseBuilder = configuredBuilder,
+                outerClient = endpointProbeClient,
+                candidate = candidate,
+                sessionTokenProvider = sessionTokenProvider,
+                includeRelaySessionHeader = includeRelaySessionHeader,
+            )
+        }
+        return buildPluginProxyClient(
+            baseBuilder = configuredBuilder,
+            routes = routes,
+            sessionTokenProvider = sessionTokenProvider,
+            includeRelaySessionHeader = includeRelaySessionHeader,
+        )
+    }
 
     private fun autoRelayUrlSnapshot(): String {
         val savedRelay = _relayUrl.value
@@ -1060,7 +1202,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     val effectiveApiServerUrl: StateFlow<String> = combine(
         _apiServerUrl,
-        connectionManager.activeEndpoint,
+        connectionManager.activeApiEndpoint,
     ) { savedUrl, endpoint ->
         resolveEffectiveApiServerUrl(savedUrl, endpoint)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
@@ -1255,6 +1397,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
 
+    val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
+        .map { preferences -> normalizeAccentHex(preferences[KEY_APPEARANCE_ACCENT]) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val appearanceShape: StateFlow<String> = application.relayDataStore.data
+        .map { preferences -> AppearanceShape.fromId(preferences[KEY_APPEARANCE_SHAPE]).id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppearanceShape.DEFAULT.id)
+
     // Selected app font id (body typeface). Defaults to Inter. Resolved against
     // AppFont.byId at the Compose theme root, which rebuilds Typography so the
     // whole app re-themes live when this changes.
@@ -1272,14 +1422,69 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
-    // Selected agent avatar id ("sphere" = the built-in orb; any other id is a
-    // loaded user pet). Resolved against [SphereAvatar] + PetLoader.loadPets() at
-    // the Compose root; an unknown id (pet removed) falls back to the sphere.
-    val agentAvatar: StateFlow<String> = application.relayDataStore.data
+    // Optional floating companion. An absent split key reads the legacy combined
+    // selection: sphere -> no companion; a pet id -> companion.
+    val floatingPet: StateFlow<String?> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_AGENT_AVATAR] ?: "sphere"
+            val selected = preferences[KEY_FLOATING_PET]
+                ?: preferences[KEY_AGENT_AVATAR]
+                ?: NO_FLOATING_PET
+            selected.takeUnless { it == NO_FLOATING_PET || it == SphereAvatar.id }
         }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "sphere")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Sphere or a validated pet-format asset rendered on central/ambient surfaces. */
+    val backgroundAvatar: StateFlow<String> = application.relayDataStore.data
+        .map { preferences ->
+            migratedBackgroundAvatar(
+                storedBackgroundAvatar = preferences[KEY_BACKGROUND_AVATAR],
+                legacyAgentAvatar = preferences[KEY_AGENT_AVATAR],
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SphereAvatar.id)
+
+    /** Whether the selected companion may autonomously move between safe perches. */
+    val petRoamingEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { preferences -> preferences[KEY_PET_ROAMING_ENABLED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Stable preference seam for the floating-pet behavior director. */
+    val petBehaviorPreferences: StateFlow<PetBehaviorPreferences> =
+        petBehaviorPreferencesRepository.flow.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            PetBehaviorPreferences(),
+        )
+
+    val petTemperament: StateFlow<PetTemperament> = petBehaviorPreferences
+        .map { preferences -> preferences.temperament }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_TEMPERAMENT)
+
+    val petSizeScale: StateFlow<Float> = petBehaviorPreferences
+        .map { preferences -> preferences.sizeScale }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_SIZE_SCALE)
+
+    /** Durable logical placement; pixels are resolved from the current safe viewport. */
+    val petPlacement: StateFlow<PetPlacement> = application.relayDataStore.data
+        .map { preferences ->
+            PetPlacement(
+                edge = preferences[KEY_PET_PLACEMENT_EDGE]
+                    ?.let { stored -> PetLogicalEdge.entries.firstOrNull { it.name == stored } }
+                    ?: DEFAULT_PET_PLACEMENT.edge,
+                verticalFraction = preferences[KEY_PET_PLACEMENT_FRACTION]
+                    ?: DEFAULT_PET_PLACEMENT.verticalFraction,
+            ).sanitized()
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_PET_PLACEMENT)
+
+    /**
+     * One-release source compatibility for callers still using the old combined
+     * selector. New code should use [floatingPet].
+     */
+    @Deprecated("Use floatingPet")
+    val agentAvatar: StateFlow<String> = floatingPet
+        .map { it ?: SphereAvatar.id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SphereAvatar.id)
 
     // Bumped to force the Compose root to re-scan the pets/ directory — after an
     // in-app import or delete, or when the Appearance screen opens (so a pack
@@ -1363,8 +1568,32 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
 
-    suspend fun loadProfileScopedMessages(sessionId: String): Result<List<MessageItem>>? =
-        profileController.loadProfileScopedMessages(sessionId)
+    suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
+        profileController.listAllProfileSessions(limit)
+
+    suspend fun deleteSession(profileName: String, sessionId: String): Boolean =
+        profileController.deleteSession(profileName, sessionId)
+
+    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean =
+        profileController.renameSession(profileName, sessionId, title)
+
+    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean =
+        profileController.setSessionPinned(profileName, sessionId, pinned)
+
+    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean =
+        profileController.setSessionArchived(profileName, sessionId, archived)
+
+    suspend fun loadProfileScopedMessages(
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? = profileController.loadProfileScopedMessages(sessionId, mode)
+
+    suspend fun loadProfileScopedMessages(
+        profileName: String?,
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): Result<List<MessageItem>>? =
+        profileController.loadProfileScopedMessages(profileName, sessionId, mode)
 
     /**
      * Delete a session scoped to the ACTIVE PROFILE via the dashboard
@@ -1393,6 +1622,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         return profileController.renameProfileScopedSession(sessionId, title)
     }
 
+    suspend fun setProfileScopedSessionPinned(
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String?,
+    ): Boolean = profileController.setProfileScopedSessionPinned(sessionId, pinned, expectedContextKey)
+
+    suspend fun setProfileScopedSessionArchived(
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String?,
+    ): Boolean = profileController.setProfileScopedSessionArchived(sessionId, archived, expectedContextKey)
+
     val selectedProfile: StateFlow<Profile?> get() = profileController.selectedProfile
 
     val profilePresentation: StateFlow<ProfilePresentation> get() = profileController.profilePresentation
@@ -1401,6 +1642,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setProfileHidden(profileName: String?, hidden: Boolean) =
         profileController.setProfileHidden(profileName, hidden)
+
+    fun setProfileColor(profileName: String, colorHex: String?) =
+        profileController.setProfileColor(profileName, colorHex)
 
     fun resetProfilePresentation() = profileController.resetProfilePresentation()
 
@@ -1418,6 +1662,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** The active profile's local agent-icon path (client-side, never sent to Hermes). */
     val profileIcon: StateFlow<String?> get() = profileController.profileIcon
+
+    /** A local icon path for a specific profile identity on the active connection. */
+    fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
 
     val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
         get() = profileController.hostIconImportState
@@ -1444,7 +1691,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Lock the active connection to [profile] (null = Server default). */
     fun lockProfile(profile: Profile?) {
-        viewModelScope.launch { profileController.lockProfile(profile) }
+        profileController.lockProfile(profile)
     }
 
     /** Remove the active connection's profile lock. */
@@ -1707,6 +1954,32 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
+        authManager.setActiveEndpointProvider { connectionManager.activeRelayEndpoint.value }
+        // Materialize the independent central and floating preferences. Legacy
+        // users retain the prior visual in both roles until they choose otherwise.
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                if (preferences[KEY_FLOATING_PET] == null) {
+                    preferences[KEY_FLOATING_PET] = preferences[KEY_AGENT_AVATAR]
+                        ?.takeUnless { it == SphereAvatar.id }
+                        ?: NO_FLOATING_PET
+                }
+                if (preferences[KEY_BACKGROUND_AVATAR] == null) {
+                    preferences[KEY_BACKGROUND_AVATAR] = migratedBackgroundAvatar(
+                        storedBackgroundAvatar = null,
+                        legacyAgentAvatar = preferences[KEY_AGENT_AVATAR],
+                    )
+                }
+                // Before presence and motion were split, animation_enabled also
+                // controlled whether the Sphere was shown. Preserve that choice
+                // on upgrade; users can then re-enable a static Sphere separately.
+                if (preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] == null) {
+                    preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] =
+                        preferences[KEY_ANIMATION_ENABLED] ?: true
+                }
+            }
+        }
+
         // Drive the keep-alive from either the user's always-on preference or
         // work the user already started. Active-turn leases are session scoped,
         // so sibling turns release independently. Both flavors — the
@@ -1778,6 +2051,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .map { it[KEY_ANIMATION_BEHIND_CHAT] ?: true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    /** Controls Sphere/background visibility independently of motion. */
+    val backgroundVisualizationEnabled: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_BACKGROUND_VISUALIZATION_ENABLED] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val imageGenerationStyle: StateFlow<String> = application.relayDataStore.data
         .map { it[KEY_IMAGE_GENERATION_STYLE] ?: "rotate" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "rotate")
@@ -1810,6 +2088,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_ANIMATION_BEHIND_CHAT] = enabled
+            }
+        }
+    }
+
+    fun setBackgroundVisualizationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_BACKGROUND_VISUALIZATION_ENABLED] = enabled
+            }
+        }
+    }
+
+    fun setBackgroundAvatar(avatarId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_BACKGROUND_AVATAR] = avatarId.ifBlank { SphereAvatar.id }
+                preferences[KEY_BACKGROUND_VISUALIZATION_ENABLED] = true
             }
         }
     }
@@ -1914,6 +2209,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] = enabled
             }
+        }
+    }
+
+    val physicalKeyboardEnterBehavior: StateFlow<PhysicalKeyboardEnterBehavior> =
+        chatInputPreferencesRepository.physicalKeyboardEnterBehavior
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                PhysicalKeyboardEnterBehavior.SendMessage,
+            )
+
+    fun setPhysicalKeyboardEnterBehavior(behavior: PhysicalKeyboardEnterBehavior) {
+        viewModelScope.launch {
+            chatInputPreferencesRepository.setPhysicalKeyboardEnterBehavior(behavior)
         }
     }
 
@@ -2075,6 +2384,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         text = msg.text,
                         receivedAt = msg.sentAt ?: System.currentTimeMillis(),
                         chatId = msg.chatId,
+                        connectionId = connectionStore.activeConnectionId.value,
                     ),
                 )
             }
@@ -2250,6 +2560,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun installAuthManager(am: AuthManager) {
+        am.setActiveEndpointProvider { connectionManager.activeRelayEndpoint.value }
         authManager = am
         // Push into the flow so the flatMapLatest chains on authState /
         // pairingCode / currentPairedSession repoint to the new manager.
@@ -3320,14 +3631,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .collect { inputs ->
                     pendingStaleJob?.cancel()
                     pendingStaleJob = null
-                    _relayUiState.value = when {
-                        !inputs.configured || inputs.url.isBlank() -> RelayUiState.NotConfigured
-                        inputs.conn == ConnectionState.Connected -> RelayUiState.Connected
-                        inputs.conn == ConnectionState.Connecting ||
-                            inputs.conn == ConnectionState.Reconnecting ->
-                            RelayUiState.Connecting
-                        inputs.auth is AuthState.Paired &&
-                            inputs.conn == ConnectionState.Disconnected -> {
+                    _relayUiState.value = if (inputs.requiresReconnectGrace()) {
                             // Start the grace-window timer. If the WSS
                             // doesn't come up within RELAY_RECONNECT_GRACE_MS,
                             // we promote to Stale so the UI stops lying
@@ -3335,7 +3639,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             // tap-to-retry affordance.
                             pendingStaleJob = launch {
                                 delay(RELAY_RECONNECT_GRACE_MS)
-                                _relayUiState.value = RelayUiState.Stale
+                                _relayUiState.value = inputs.resolveRelayUiState(graceElapsed = true)
                                 DiagnosticsLog.record(
                                     category = DiagnosticCategory.Relay,
                                     severity = DiagnosticSeverity.Warning,
@@ -3345,14 +3649,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                                 )
                             }
                             RelayUiState.Connecting
+                        } else {
+                            inputs.resolveRelayUiState()
                         }
-                        // The relay rejected our token (revoked, or wiped by a
-                        // relay restart). Reconnecting won't help — surface a
-                        // distinct "pair again" state instead of a generic
-                        // Disconnected the user can't act on.
-                        inputs.auth is AuthState.Failed -> RelayUiState.Expired
-                        else -> RelayUiState.Disconnected
-                    }
                 }
         }
 
@@ -4164,6 +4463,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
      */
     fun revalidateOnResume(awayMs: Long) {
+        // Relay recovery is independent of standard API health. Even a brief
+        // resume should replace ordinary WSS backoff with an immediate attempt.
+        reconnectIfStale()
         val healthy = _apiServerHealth.value == HealthStatus.Reachable
         if (awayMs in 0 until BRIEF_RESUME_REVALIDATE_MS && healthy) {
             return
@@ -4357,14 +4659,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
         val mode = if (liveTopology) topologyGatewayMode else persisted?.gatewayMode
-        val profiles = if (liveTopology) topologyProfiles else persisted?.profiles.orEmpty()
+        val profiles = if (liveTopology) topologyProfiles else persisted?.servedProfiles.orEmpty()
         return mode.equals("multiplex", ignoreCase = true) && profile.name in profiles
     }
 
     /** Keep chat routing synchronized with the latest public dashboard topology. */
     private suspend fun updateDashboardTopology(connectionId: String, status: DashboardStatus?) {
         val nextMode = status?.gatewayMode
-        val nextProfiles = status?.profiles.orEmpty()
+        val nextProfiles = status?.multiplexServedProfiles().orEmpty()
         val changed = topologyConnectionId != connectionId ||
             topologyGatewayMode != nextMode ||
             topologyProfiles != nextProfiles
@@ -4409,6 +4711,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             previous.authRequired == status?.authRequired &&
             previous.authenticated == session?.authenticated &&
             previous.gatewayMode == status?.gatewayMode &&
+            previous.servedProfiles == status?.multiplexServedProfiles().orEmpty() &&
             previous.profiles == status?.profiles.orEmpty()
         if (!materiallySame) {
             recordDashboardStatus(status = status, session = session, reachable = reachable)
@@ -4686,17 +4989,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                             } else {
                                 current.dashboardUrl
                             }
+                        val newRouteCandidates = Connection.reconcileDashboardRoutes(
+                            dashboardUrl = newDashboardUrl,
+                            candidates = payload.endpoints.orEmpty(),
+                        )
                         val needsUpdate = current.apiServerUrl != payload.serverUrl ||
                             current.relayUrl != newRelayUrl ||
                             current.dashboardUrl != newDashboardUrl ||
-                            current.routeCandidates != payload.endpoints.orEmpty()
+                            current.routeCandidates != newRouteCandidates
                         if (needsUpdate) {
                             connectionStore.updateConnection(
                                 current.copy(
                                     apiServerUrl = payload.serverUrl,
                                     relayUrl = newRelayUrl,
                                     dashboardUrl = newDashboardUrl,
-                                    routeCandidates = payload.endpoints.orEmpty(),
+                                    routeCandidates = newRouteCandidates,
                                     preferredRouteRole = current.preferredRouteRole
                                         ?.takeIf { preferred ->
                                             payload.endpoints.orEmpty().any {
@@ -4927,6 +5234,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     current.copy(
                         label = nextLabel,
                         dashboardUrl = normalized,
+                        routeCandidates = Connection.reconcileDashboardRoutes(
+                            dashboardUrl = normalized,
+                            candidates = current.routeCandidates.ifEmpty {
+                                listOfNotNull(
+                                    Connection.endpointCandidateFromDashboardUrl(
+                                        role = Connection.inferRouteRole(normalized),
+                                        priority = 0,
+                                        dashboardUrl = normalized,
+                                        apiServerUrl = current.apiServerUrl
+                                            .takeIf { it.isNotBlank() },
+                                        relayUrl = current.relayUrl
+                                            .takeIf { it.isNotBlank() },
+                                    ),
+                                )
+                            },
+                        ),
                     ),
                 )
                 probeStandardVoice()
@@ -4955,6 +5278,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = gatewayTicketAvailable,
                     message = message,
                     gatewayMode = status?.gatewayMode,
+                    servedProfiles = status?.multiplexServedProfiles().orEmpty(),
                     profiles = status?.profiles.orEmpty(),
                 ),
             )
@@ -4989,6 +5313,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     gatewayTicketAvailable = false,
                     message = "Dashboard session cleared",
                     gatewayMode = active?.dashboardLastStatus?.gatewayMode,
+                    servedProfiles = active?.dashboardLastStatus?.servedProfiles.orEmpty(),
                     profiles = active?.dashboardLastStatus?.profiles.orEmpty(),
                 ),
             )
@@ -5132,12 +5457,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
+            val diagnosticApiUrl = effectiveApiServerUrlSnapshot()
             _apiServerHealth.value = HealthStatus.Probing
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Api,
                 severity = DiagnosticSeverity.Info,
                 title = ctx.getString(R.string.conn_status_testing_standard),
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API health check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
             )
 
             val health = client.checkHealthDetailed()
@@ -5149,7 +5477,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     severity = DiagnosticSeverity.Error,
                     title = ctx.getString(R.string.conn_status_setup_health_failed),
                     detail = health.message,
-                    url = effectiveApiServerUrlSnapshot(),
+                    operation = "Hermes API health check",
+                    configuredUrl = diagnosticApiUrl,
+                    requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
                 )
                 onResult(
                     StandardApiSetupResult(
@@ -5230,7 +5560,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
                 title = if (reachable) ctx.getString(R.string.conn_status_hermes_ok) else ctx.getString(R.string.conn_status_auth_failed),
                 detail = message,
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API sessions authentication check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/api/sessions",
             )
             onResult(
                 StandardApiSetupResult(
@@ -5374,6 +5706,47 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     suspend fun getApiKey(): String? = authManager.getApiKey()
 
+    suspend fun getProfileApiKey(profileName: String): String? =
+        authManager.getProfileApiKey(profileName)
+
+    fun selectedProfileUsesMultiplexApiKey(): Boolean {
+        val selectedProfile = profileController.selectedProfile.value
+        val activeConnectionId = connectionStore.activeConnectionId.value
+        val topology = connectionStore.connections.value
+            .firstOrNull { it.id == activeConnectionId }
+            ?.dashboardLastStatus
+        val liveTopology = topologyConnectionId == activeConnectionId
+        return ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
+            servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty(),
+        )
+    }
+
+    fun updateProfileApiKey(
+        profileName: String,
+        key: String,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                authManager.setProfileApiKey(profileName, key)
+                rebuildChatApiClient()
+            }.onSuccess {
+                onComplete(true)
+            }.onFailure {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Error,
+                    title = ctx.getString(R.string.conn_info_profile_api_key_save_failed),
+                    detail = it.message,
+                )
+                onComplete(false)
+            }
+        }
+    }
+
     /**
      * The bearer key for client construction, WITHOUT paying the Keystore
      * decrypt when this connection is known key-less (the common local
@@ -5411,12 +5784,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
+            val diagnosticApiUrl = effectiveApiServerUrlSnapshot()
             _apiServerHealth.value = HealthStatus.Probing
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Api,
                 severity = DiagnosticSeverity.Info,
                 title = ctx.getString(R.string.conn_status_testing_api),
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API health check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
             )
             val health = client.checkHealthDetailed()
             if (health is com.hermesandroid.relay.network.upstream.HealthCheckResult.Unhealthy) {
@@ -5427,7 +5803,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     severity = DiagnosticSeverity.Error,
                     title = ctx.getString(R.string.conn_status_api_health_failed),
                     detail = health.message,
-                    url = effectiveApiServerUrlSnapshot(),
+                    operation = "Hermes API health check",
+                    configuredUrl = diagnosticApiUrl,
+                    requestUrl = "${diagnosticApiUrl.trimEnd('/')}/health",
                 )
                 onResult(false, health.message)
                 return@launch
@@ -5448,7 +5826,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Error,
                 title = if (reachable) ctx.getString(R.string.conn_status_api_test_ok) else ctx.getString(R.string.conn_status_api_test_failed),
                 detail = message,
-                url = effectiveApiServerUrlSnapshot(),
+                operation = "Hermes API sessions authentication check",
+                configuredUrl = diagnosticApiUrl,
+                requestUrl = "${diagnosticApiUrl.trimEnd('/')}/api/sessions",
             )
             onResult(reachable, message)
         }
@@ -5465,7 +5845,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // a coherent in-flight pose instead of flashing the previous
             // result through.
             _apiServerHealth.value = HealthStatus.Probing
-            val client = HermesApiClient(baseUrl = url, apiKey = key)
+            val client = HermesApiClient(
+                baseUrl = url,
+                apiKey = key,
+                httpClient = pluginProxyClientForUrl(
+                    url, includeRelaySessionHeader = false
+                ),
+            )
             _apiClient.value = client
             shutdownClientOffMain(oldClient)
             val ok = client.checkHealth()
@@ -5496,15 +5882,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             .firstOrNull { it.id == activeConnectionId }
             ?.dashboardLastStatus
         val liveTopology = topologyConnectionId == activeConnectionId
+        val gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode
+        val servedProfiles = if (liveTopology) topologyProfiles else topology?.servedProfiles.orEmpty()
+        val usesMultiplexProfileKey = ProfileApiUrlResolver.usesMultiplexProfileKey(
+            profileApiUrl = selectedProfile?.apiServerUrl,
+            selectedProfileName = selectedProfile?.name,
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
+        )
         val profileApiUrl = ProfileApiUrlResolver.resolveChatBase(
             profileApiUrl = selectedProfile?.apiServerUrl,
             baseApiUrl = baseApiUrl,
             selectedProfileName = selectedProfile?.name,
-            gatewayMode = if (liveTopology) topologyGatewayMode else topology?.gatewayMode,
-            servedProfiles = if (liveTopology) topologyProfiles else topology?.profiles.orEmpty(),
+            gatewayMode = gatewayMode,
+            servedProfiles = servedProfiles,
         )
         val baseClient = _apiClient.value
-        val key = apiKeyForClientBuild()
+        val profileKey = if (usesMultiplexProfileKey) {
+            selectedProfile?.name?.let { authManager.getProfileApiKey(it) }.orEmpty()
+        } else {
+            null
+        }
+        val connectionKey = if (usesMultiplexProfileKey) "" else apiKeyForClientBuild()
+        val key = profileApiCredential(
+            usesMultiplexProfileKey = usesMultiplexProfileKey,
+            profileKey = profileKey,
+            connectionKey = connectionKey,
+        )
 
         if (profileApiUrl == null || profileApiUrl == baseApiUrl) {
             val oldProfileClient = profileChatApiClient
@@ -5526,7 +5930,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        val nextProfileClient = HermesApiClient(baseUrl = profileApiUrl, apiKey = key)
+        val nextProfileClient = HermesApiClient(
+            baseUrl = profileApiUrl,
+            apiKey = key,
+            httpClient = pluginProxyClientForUrl(
+                profileApiUrl, includeRelaySessionHeader = false
+            ),
+        )
         profileChatApiClient = nextProfileClient
         profileChatApiClientUrl = profileApiUrl
         profileChatApiClientKey = key
@@ -5575,7 +5985,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun connectRelay() {
-        connectRelayInternal(effectiveRelayUrlSnapshot())
+        connectRelayInternal(effectiveRelayWebSocketUrlSnapshot())
     }
 
     /**
@@ -5978,6 +6388,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * is unavailable.
      */
     suspend fun lookupEndpointPin(candidate: com.hermesandroid.relay.data.EndpointCandidate): String? {
+        candidate.proxy?.pinSha256?.takeIf { candidate.hasSecureProxy() }?.let { return it }
         val hostPort = candidate.routeAuthority() ?: return null
         val pins = PairingPreferences.getTofuPins(getApplication())
         return pins[hostPort]
@@ -5989,17 +6400,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * and from the "Reconnect" button / tap-to-reconnect action on the
      * Relay status row.
      *
-     * No-op when not paired, already connected, connecting, or reconnecting —
-     * avoids duplicate connect calls that would interrupt an in-flight auth.
+     * No-op when not paired, already connected, or actively handshaking. A
+     * scheduled ordinary reconnect is replaced with an immediate attempt; the
+     * connection manager preserves server-issued rate-limit backoff.
      */
     fun reconnectIfStale() {
         if (isDemoMode.value) return // Demo mode is offline — never open a socket.
         val paired = authState.value is AuthState.Paired
-        val disconnected = relayConnectionState.value == ConnectionState.Disconnected
+        val retryableState = relayConnectionState.value == ConnectionState.Disconnected ||
+            relayConnectionState.value == ConnectionState.Reconnecting
         val relayUrl = effectiveRelayUrlSnapshot()
         val hasUrl = relayUrl.isNotBlank()
-        if (paired && disconnected && hasUrl) {
-            connectionManager.connect(relayUrl)
+        if (paired && retryableState && hasUrl) {
+            connectionManager.reconnectNowIfAllowed(relayUrl)
         }
     }
 
@@ -6116,16 +6529,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) {
         val activeId = connectionStore.activeConnectionId.value ?: return
         val current = connectionStore.connections.value.firstOrNull { it.id == activeId } ?: return
-        val nextRouteCandidates = routeCandidates ?: current.routeCandidates
-        val nextPreferredRouteRole = when {
-            preferredRouteRole != null -> preferredRouteRole.takeIf { it.isNotBlank() }
-            routeCandidates != null &&
-                current.preferredRouteRole != null &&
-                nextRouteCandidates.none {
-                    it.role.equals(current.preferredRouteRole, ignoreCase = true)
-                } -> null
-            else -> current.preferredRouteRole
-        }
         val nextDashboardUrl = when {
             dashboardUrlOverride != null -> {
                 dashboardUrlOverride
@@ -6138,6 +6541,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 Connection.deriveDefaultDashboardUrl(apiServerUrl)
             }
             else -> current.dashboardUrl
+        }
+        val nextRouteCandidates = Connection.reconcileDashboardRoutes(
+            dashboardUrl = nextDashboardUrl,
+            candidates = routeCandidates ?: current.routeCandidates,
+        )
+        val nextPreferredRouteRole = when {
+            preferredRouteRole != null -> preferredRouteRole.takeIf { it.isNotBlank() }
+            routeCandidates != null &&
+                current.preferredRouteRole != null &&
+                nextRouteCandidates.none {
+                    it.role.equals(current.preferredRouteRole, ignoreCase = true)
+                } -> null
+            else -> current.preferredRouteRole
         }
         if (
             current.apiServerUrl == apiServerUrl &&
@@ -6210,7 +6626,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLastSessionId(sessionId: String?) {
         _lastSessionId.value = sessionId
         val connectionId = activeConnectionId.value
-        val profileName = profileController.resolveSessionProfileName()
+        // Last-session persistence follows the selected UI profile identity.
+        // The null Server-default sentinel stays separate from whichever named
+        // profile the server's sticky default currently resolves to.
+        val profileName = profileController.selectedProfile.value?.name
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -6242,7 +6661,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
-            if (profileName == null || AgentDisplay.isServerDefaultAlias(profileName)) {
+            if (profileName == null) {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
@@ -6289,13 +6708,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun setAgentAvatar(avatarId: String) {
+    fun setFloatingPet(avatarId: String?) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_AGENT_AVATAR] = avatarId
+                preferences[KEY_FLOATING_PET] = avatarId
+                    ?.takeUnless { it == SphereAvatar.id }
+                    ?: NO_FLOATING_PET
             }
         }
     }
+
+    fun setPetRoamingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_ROAMING_ENABLED] = enabled
+            }
+        }
+    }
+
+    fun setPetTemperament(temperament: PetTemperament) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setTemperament(temperament)
+        }
+    }
+
+    fun setPetSizeScale(sizeScale: Float) {
+        viewModelScope.launch {
+            petBehaviorPreferencesRepository.setSizeScale(sizeScale)
+        }
+    }
+
+    fun setPetPlacement(placement: PetPlacement) {
+        val safe = placement.sanitized()
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_PET_PLACEMENT_EDGE] = safe.edge.name
+                preferences[KEY_PET_PLACEMENT_FRACTION] = safe.verticalFraction
+            }
+        }
+    }
+
+    fun resetPetPlacement() = setPetPlacement(DEFAULT_PET_PLACEMENT)
+
+    /** One-release compatibility shim for the former combined picker. */
+    @Deprecated("Use setFloatingPet")
+    fun setAgentAvatar(avatarId: String) = setFloatingPet(avatarId)
 
     /** Set the global pet playback-speed multiplier (clamped 0.5×–1.5×). */
     fun setPetSpeed(speed: Float) {
@@ -6331,14 +6788,68 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Delete a user pet by id; if it was the selected avatar, fall back to the sphere. */
+    /** Apply or reset the local accent override. Invalid values safely reset. */
+    fun setAppearanceAccent(accentHex: String?) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val normalized = normalizeAccentHex(accentHex)
+                if (normalized == null) preferences.remove(KEY_APPEARANCE_ACCENT)
+                else preferences[KEY_APPEARANCE_ACCENT] = normalized
+            }
+        }
+    }
+
+    fun setAppearanceShape(shapeId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[KEY_APPEARANCE_SHAPE] = AppearanceShape.fromId(shapeId).id
+            }
+        }
+    }
+
+    /** Import one declarative sphere-skin JSON file, select it, then hot-refresh Appearance. */
+    fun importSphereSkin(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                SphereSkinImporter.importUri(getApplication<Application>(), uri)
+            }
+            when (result) {
+                is SphereSkinImportResult.Success -> {
+                    setSphereSkin(result.id)
+                    refreshAgentAvatars()
+                    _avatarEvents.tryEmit("Imported “${result.label}”")
+                }
+                is SphereSkinImportResult.Failure -> _avatarEvents.tryEmit(result.reason)
+            }
+        }
+    }
+
+    /** Import a validated pet-format asset for the central/background renderer. */
+    fun importBackgroundAnimation(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                PetImporter.importUri(getApplication<Application>(), uri)
+            }
+            when (result) {
+                is PetImportResult.Success -> {
+                    setBackgroundAvatar(result.id)
+                    refreshAgentAvatars()
+                    _avatarEvents.tryEmit("Imported background “${result.label}”")
+                }
+                is PetImportResult.Failure -> _avatarEvents.tryEmit(result.reason)
+            }
+        }
+    }
+
+    /** Delete a user pet by id; clear it if it was the selected companion. */
     fun deleteUserAvatar(avatarId: String, label: String) {
         viewModelScope.launch {
             val deleted = withContext(Dispatchers.IO) {
                 PetLoader.deletePet(getApplication<Application>(), avatarId)
             }
             if (deleted) {
-                if (agentAvatar.value == avatarId) setAgentAvatar(SphereAvatar.id)
+                if (floatingPet.value == avatarId) setFloatingPet(null)
+                if (backgroundAvatar.value == avatarId) setBackgroundAvatar(SphereAvatar.id)
                 refreshAgentAvatars()
                 _avatarEvents.tryEmit("Removed “$label”")
             } else {
@@ -6371,50 +6882,62 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun resetOnboarding() {
+    fun resetOnboarding(onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            dataManager.resetOnboarding()
-            _onboardingCompleted.value = false
+            val success = dataManager.resetOnboarding()
+            if (success) {
+                _onboardingCompleted.value = false
+            }
+            onResult(success)
         }
     }
 
-    fun resetAppData() {
+    fun resetAppData(onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            disconnectRelay()
-            authManager.clearSession()
-            authManager.clearApiKey()
-            dataManager.resetAppData()
-            profileController.profileSelectionStore.clearAll()
-            profileController.profileLockStore.clearAll()
-            profileController.profilePresentationStore.clearAll()
-            profileController.profileSessionStore.clearAll()
-            _apiServerUrl.value = ""
-            _relayUrl.value = ""
-            rebuildApiClient()
-            shutdownClientOffMain(profileChatApiClient)
-            profileChatApiClient = null
-            profileChatApiClientUrl = null
-            profileChatApiClientKey = null
-            profileController.clearSelectionState()
-            _lastSessionId.value = null
+            val success = runCatching {
+                disconnectRelay()
+                authManager.clearSession()
+                authManager.clearApiKey()
+                check(dataManager.resetAppData()) { "App data store reset failed" }
+                profileController.profileSelectionStore.clearAll()
+                profileController.profileLockStore.clearAll()
+                profileController.profilePresentationStore.clearAll()
+                profileController.profileSessionStore.clearAll()
+                _apiServerUrl.value = ""
+                _relayUrl.value = ""
+                rebuildApiClient()
+                shutdownClientOffMain(profileChatApiClient)
+                profileChatApiClient = null
+                profileChatApiClientUrl = null
+                profileChatApiClientKey = null
+                profileController.clearSelectionState()
+                _lastSessionId.value = null
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to reset app data", it)
+            }.isSuccess
+            onResult(success)
         }
     }
 
-    fun exportSettings(onResult: (String) -> Unit) {
+    fun exportSettings(onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val json = dataManager.exportSettings(
-                serverUrl = _relayUrl.value,
-                theme = theme.value,
-                onboardingCompleted = _onboardingCompleted.value,
-                // Pass 2: AuthManager.sessionLabels is gone — replaced by
-                // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
-                // param is marked @Suppress("UNUSED_PARAMETER") and isn't
-                // written to the backup anyway, so an empty list keeps the
-                // signature stable until the param is removed in a later pass.
-                sessionLabels = emptyList(),
-                apiServerUrl = _apiServerUrl.value,
-                relayUrl = _relayUrl.value
-            )
+            val json = runCatching {
+                dataManager.exportSettings(
+                    serverUrl = _relayUrl.value,
+                    theme = theme.value,
+                    onboardingCompleted = _onboardingCompleted.value,
+                    // Pass 2: AuthManager.sessionLabels is gone — replaced by
+                    // `agentProfiles: StateFlow<List<Profile>>`. The DataManager
+                    // param is marked @Suppress("UNUSED_PARAMETER") and isn't
+                    // written to the backup anyway, so an empty list keeps the
+                    // signature stable until the param is removed in a later pass.
+                    sessionLabels = emptyList(),
+                    apiServerUrl = _apiServerUrl.value,
+                    relayUrl = _relayUrl.value
+                )
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to prepare settings backup", it)
+            }.getOrNull()
             onResult(json)
         }
     }
@@ -6436,24 +6959,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 onResult(false)
                 return@launch
             }
-            // Apply imported settings
-            if (backup.connections.isNotEmpty()) {
+            val success = runCatching {
+                val importedRelayUrl = if (backup.connections.isEmpty()) {
+                    backup.relayUrl ?: backup.serverUrl
+                } else {
+                    null
+                }
+                // A backup is a replacement snapshot, including when it
+                // intentionally contains zero connections.
                 dataManager.restoreConnectionBackup(backup)
+                getApplication<Application>().relayDataStore.edit { preferences ->
+                    preferences[KEY_THEME] = backup.theme
+                    importedRelayUrl?.let { preferences[KEY_RELAY_URL] = it }
+                    backup.apiServerUrl
+                        ?.takeIf { backup.connections.isEmpty() }
+                        ?.let { preferences[KEY_API_SERVER_URL] = it }
+                }
                 connectionStore.activeConnection.value?.let { restored ->
                     restorePersistedActiveConnectionContext(restored)
                 }
-            } else {
-                // Prefer v2 fields, fall back to v1 serverUrl for relay
-                val importedRelayUrl = backup.relayUrl ?: backup.serverUrl
-                importedRelayUrl?.let { updateRelayUrl(it) }
-                backup.apiServerUrl?.let { updateApiServerUrl(it) }
-            }
-            setTheme(backup.theme)
-            if (backup.onboardingCompleted) {
-                dataManager.setOnboardingCompleted(true)
-                _onboardingCompleted.value = true
-            }
-            onResult(true)
+                if (backup.connections.isEmpty()) {
+                    // Preserve v1/v2 compatibility after clearing the current
+                    // multi-connection snapshot.
+                    importedRelayUrl?.let { updateRelayUrl(it) }
+                    backup.apiServerUrl?.let { updateApiServerUrl(it) }
+                }
+                check(dataManager.setOnboardingCompleted(backup.onboardingCompleted)) {
+                    "Failed to restore onboarding state"
+                }
+                _onboardingCompleted.value = backup.onboardingCompleted
+            }.onFailure {
+                android.util.Log.e("ConnectionVM", "Failed to import settings backup", it)
+            }.isSuccess
+            onResult(success)
         }
     }
 

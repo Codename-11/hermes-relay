@@ -112,12 +112,11 @@ data class ChatMessage(
      */
     val clientOnly: Boolean = false,
     /**
-     * Delivery state for a message the user sends into an agent **Thread** over
-     * the relay proactive channel ([com.hermesandroid.relay.viewmodel.ChatViewModel]
-     * routes `source=phone` sessions here instead of the normal chat send).
-     * `SENDING` until the relay acks (`proactive.reply.ack`) → `DELIVERED`;
-     * `FAILED` on a send error. Null for ordinary chat messages — those render
-     * no status affix.
+     * Delivery state for a user-authored message. Agent **Thread** replies use
+     * `SENDING` until the relay acks (`proactive.reply.ack`) → `DELIVERED`,
+     * with `FAILED` on a send error. Ordinary chat may additionally use
+     * `QUEUED` and `STEERED` to make active-turn routing visible. Null keeps the
+     * legacy behavior of rendering no status affix.
      */
     val deliveryStatus: MessageDeliveryStatus? = null,
     /**
@@ -143,6 +142,18 @@ data class ChatMessage(
      */
     val uiKey: String = id,
     /**
+     * Durable Gateway transcript row identity for rewind/edit-regenerate.
+     * This is server-owned and can change after a truncating rewrite; it is
+     * never used as a Compose key or synthesized client-side.
+     */
+    val rowId: Long? = null,
+    /**
+     * Durable iOS-style tapbacks attached to this server message. Hermes keeps
+     * one reaction per author in the message's display metadata; the UI also
+     * updates this list optimistically while a reaction write is in flight.
+     */
+    val reactions: List<MessageReaction> = emptyList(),
+    /**
      * Mixture-of-Agents advisor responses surfaced during the live turn.
      * Unavailable advisors retain only neutral state, never their raw failure
      * body. A sanitized bounded copy may enter the local in-flight checkpoint,
@@ -150,6 +161,29 @@ data class ChatMessage(
      */
     val moaReferences: List<MoaReference> = emptyList(),
 )
+
+data class MessageReaction(
+    val emoji: String,
+    val author: String,
+    /** Epoch seconds, matching the Gateway/Desktop contract. */
+    val at: Double,
+)
+
+/** Apply Hermes' one-reaction-per-author, re-tap-to-retract semantics. */
+internal fun applyMessageReaction(
+    reactions: List<MessageReaction>,
+    emoji: String?,
+    author: String = "user",
+    at: Double = System.currentTimeMillis() / 1000.0,
+): List<MessageReaction> {
+    val previous = reactions.firstOrNull { it.author == author }
+    val withoutAuthor = reactions.filterNot { it.author == author }
+    return if (emoji.isNullOrBlank() || previous?.emoji == emoji) {
+        withoutAuthor
+    } else {
+        withoutAuthor + MessageReaction(emoji = emoji, author = author, at = at)
+    }
+}
 
 data class MoaReference(
     val index: Int,
@@ -367,12 +401,20 @@ data class ToolCall(
      * header can render without a separate lane registry.
      */
     val taskLabel: String? = null,
+    /** Live upstream child id used by subagent.steer while this lane runs. */
+    val subagentId: String? = null,
     /** Deterministic non-low output risk reported by upstream for this call. */
     val outputRisk: String? = null,
     /** Human-readable deterministic findings; rendered as untrusted metadata. */
     val outputRiskFindings: List<String> = emptyList(),
     /** Upstream removed sensitive spans before emitting the findings. */
     val outputRiskRedacted: Boolean = false,
+    /**
+     * Stable UI identity retained when a generating placeholder adopts its
+     * gateway tool ID. This keeps per-card interaction state attached to the
+     * logical call across streaming reconciliation and list updates.
+     */
+    val uiKey: String = id ?: "$name:$startedAt",
 )
 
 enum class MessageRole {
@@ -382,21 +424,28 @@ enum class MessageRole {
 }
 
 /**
- * Delivery state of a user reply sent into an agent Thread over the relay
- * proactive channel. Only set on Thread replies; ordinary chat messages leave
- * it null and show no status affix.
+ * Delivery state of a user-authored message. Thread replies use the relay ack
+ * lifecycle; ordinary chat can additionally expose queue and steer outcomes.
+ * Null preserves the legacy behavior of rendering no status affix.
  *
  * - [SENDING]   handed to the relay; awaiting the per-reply ack.
+ * - [QUEUED]    held client-side until the active turn completes.
+ * - [STEERED]   accepted as a correction to the active turn.
  * - [DELIVERED] the relay acked (`proactive.reply.ack`) — buffered for the agent.
  * - [FAILED]    the send errored (e.g. relay disconnected).
  */
-enum class MessageDeliveryStatus { SENDING, DELIVERED, FAILED }
+enum class MessageDeliveryStatus { SENDING, QUEUED, STEERED, DELIVERED, FAILED }
 
 data class ChatSession(
     val sessionId: String,
     val title: String?,
     val model: String?,
     val messageCount: Int = 0,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0,
+    val actualCostUsd: Double? = null,
+    val estimatedCostUsd: Double? = null,
+    val isActive: Boolean = false,
     val updatedAt: Long = 0L,
     val startedAt: Long = 0L,
     val lastActivityAt: Long = 0L,
@@ -409,7 +458,24 @@ data class ChatSession(
     val source: String? = null,
     /** Server reports a persisted session runtime/model binding. */
     val hasModelConfig: Boolean = false,
+    /** Durable upstream session metadata, scoped by the owning connection/profile DB. */
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
+    /** Optional newer-upstream workspace context; absent on legacy/API-only hosts. */
+    val workingDirectory: String? = null,
+    val gitBranch: String? = null,
+    val gitRepoRoot: String? = null,
+    val pullRequestNumber: Int? = null,
+    val pullRequestUrl: String? = null,
+    val pullRequestState: String? = null,
+    val pullRequestDraft: Boolean = false,
 ) {
+    val totalTokens: Int
+        get() = inputTokens + outputTokens
+
+    val costUsd: Double
+        get() = actualCostUsd ?: estimatedCostUsd ?: 0.0
+
     val activityTimestamp: Long
         get() = firstPositive(lastActivityAt, updatedAt, startedAt)
 

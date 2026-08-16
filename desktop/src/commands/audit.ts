@@ -5,7 +5,8 @@
 // the audit flagged as the biggest desktop-tools transparency gap.
 
 import type { ParsedArgs } from '../cli.js'
-import { auditLogPath, readRecentAudit } from '../lib/auditLog.js'
+import { auditLogPath, auditScreenshotEvidenceStatus, clearAuditScreenshotEvidence, pruneAuditScreenshotEvidence, readRecentAudit } from '../lib/auditLog.js'
+import { readDesktopUseSettings, setActivityScreenshotRetention } from '../lib/desktopUseSettings.js'
 import { renderTable } from '../lib/table.js'
 import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
@@ -13,10 +14,12 @@ import { printUsage, type UsageSpec } from '../lib/usage.js'
 const AUDIT_USAGE: UsageSpec = {
   name: 'audit',
   summary: 'show recent desktop-tool activity the agent ran on this machine',
-  usage: ['audit [--limit <n>] [--json]'],
+  usage: ['audit [--limit <n>] [--json]', 'audit screenshots [on|off] [--days <1|7|30>] [--yes] [--json]'],
   flags: [
     { flag: '--limit <n>', desc: 'How many recent entries to show (default 50)' },
-    { flag: '--json', desc: 'Emit raw audit entries as JSON' }
+    { flag: '--json', desc: 'Emit raw audit entries as JSON' },
+    { flag: '--days <1|7|30>', desc: 'Local screenshot retention period' },
+    { flag: '--yes', desc: 'Confirm a retention change' }
   ],
   examples: ['hermes-relay audit', 'hermes-relay audit --limit 20']
 }
@@ -33,6 +36,34 @@ export async function auditCommand(args: ParsedArgs): Promise<number> {
   const t = makeTheme({ noColor: !!args.flags['no-color'] })
   if (args.flags.help) {
     printUsage(AUDIT_USAGE, t)
+    return 0
+  }
+
+  if (args.positional[0] === 'screenshots') {
+    const settings = await readDesktopUseSettings()
+    const mode = args.positional[1]
+    if (mode === 'on' || mode === 'off') {
+      if (args.flags.yes !== true) {
+        process.stderr.write('audit screenshots: retention changes require --yes\n')
+        return 1
+      }
+      const rawDays = typeof args.flags.days === 'string' ? Number(args.flags.days) : settings.activity_screenshot_retention_days
+      if (rawDays !== 1 && rawDays !== 7 && rawDays !== 30) {
+        process.stderr.write('audit screenshots: --days must be 1, 7, or 30\n')
+        return 1
+      }
+      await setActivityScreenshotRetention(mode === 'on', rawDays)
+      if (mode === 'off') await clearAuditScreenshotEvidence()
+      else await pruneAuditScreenshotEvidence(rawDays)
+    } else if (mode) {
+      process.stderr.write('audit screenshots: expected on or off\n')
+      return 1
+    }
+    const current = await readDesktopUseSettings()
+    const evidence = await auditScreenshotEvidenceStatus()
+    const result = { enabled: current.activity_screenshot_retention_enabled, days: current.activity_screenshot_retention_days, ...evidence }
+    if (args.flags.json) process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+    else process.stdout.write(`Screenshot evidence: ${result.enabled ? `${result.days} days` : 'off'} · ${result.count} file${result.count === 1 ? '' : 's'}\n`)
     return 0
   }
 

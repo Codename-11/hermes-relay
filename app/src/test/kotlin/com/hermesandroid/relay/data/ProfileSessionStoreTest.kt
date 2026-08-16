@@ -1,50 +1,23 @@
 package com.hermesandroid.relay.data
 
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import com.hermesandroid.relay.data.SessionTransport.GATEWAY
 import com.hermesandroid.relay.data.SessionTransport.SSE
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
-import java.io.File
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class ProfileSessionStoreTest {
 
-    @get:Rule
-    val tempFolder = TemporaryFolder()
-
-    private lateinit var scope: CoroutineScope
-    private lateinit var dataStore: DataStore<Preferences>
-    private lateinit var store: ProfileSessionStore
-
-    @Before
-    fun setUp() {
-        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val file: File = tempFolder.newFile("profile_sessions_test.preferences_pb")
-        if (file.exists()) file.delete()
-        dataStore = PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { file },
-        )
-        store = ProfileSessionStore(dataStore)
-    }
-
-    @After
-    fun tearDown() {
-        scope.cancel()
-    }
+    private val store = ProfileSessionStore(InMemoryPreferencesDataStore())
 
     @Test
     fun setAndGet_defaultProfileSession() = runBlocking {
@@ -67,6 +40,21 @@ class ProfileSessionStoreTest {
         assertEquals("session-mizu", store.sessionIdFlow("conn-1", "mizu", GATEWAY).first())
         assertEquals("session-coder", store.sessionIdFlow("conn-1", "coder", GATEWAY).first())
         assertEquals("session-other", store.sessionIdFlow("conn-2", "mizu", GATEWAY).first())
+    }
+
+    @Test
+    fun literalDefaultProfileDoesNotShareServerDefaultSessionSlot() = runBlocking {
+        store.setSessionId("conn-1", null, GATEWAY, "sticky-default-session")
+        store.setSessionId("conn-1", "default", GATEWAY, "root-profile-session")
+
+        assertEquals(
+            "sticky-default-session",
+            store.sessionIdFlow("conn-1", null, GATEWAY).first(),
+        )
+        assertEquals(
+            "root-profile-session",
+            store.sessionIdFlow("conn-1", "default", GATEWAY).first(),
+        )
     }
 
     @Test
@@ -125,5 +113,18 @@ class ProfileSessionStoreTest {
         assertEquals(SSE, SessionTransport.forEndpoint("sessions"))
         assertEquals(SSE, SessionTransport.forEndpoint("completions"))
         assertEquals(SSE, SessionTransport.forEndpoint("runs"))
+    }
+
+    /** Avoids AndroidX's Windows-only atomic-rename failure in filesystem DataStore tests. */
+    private class InMemoryPreferencesDataStore : DataStore<Preferences> {
+        private val state = MutableStateFlow<Preferences>(emptyPreferences())
+        private val updateMutex = Mutex()
+
+        override val data: Flow<Preferences> = state
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            updateMutex.withLock {
+                transform(state.value).also { state.value = it }
+            }
     }
 }

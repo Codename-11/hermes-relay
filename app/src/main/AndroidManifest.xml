@@ -20,6 +20,7 @@
          for the device-control bridge service; the merger dedups.) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -46,6 +47,32 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- User-mediated text handoff. The app opens a fresh Chat draft
+                 and fills the composer; it never sends from an external intent. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+            <!-- The loopback native-PKCE result page uses this fixed, tokenless
+                 link only to bring the installed flavor back to the foreground.
+                 MainActivity intentionally does not interpret the URI as an auth
+                 callback or navigation command. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="${applicationId}"
+                    android:host="return" />
+            </intent-filter>
+            <!-- Some Android OEM assistant pickers enumerate ACTION_ASSIST
+                 activities in addition to VoiceInteractionService providers. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.VOICE" />
             </intent-filter>
         </activity>
 
@@ -93,8 +120,8 @@
         <!-- Protects user-started active turns automatically; the optional
              "Persistent connection" setting extends the same foreground
              protection to idle/background connectivity (and relay-paired
-             device features). In main so BOTH flavors ship it. specialUse
-             needs a Play Console foreground-service declaration at submission. -->
+             device features). In main so BOTH flavors ship it. Every Play
+             foreground-service type needs its matching App content declaration. -->
         <service
             android:name=".network.upstream.GatewayKeepAliveService"
             android:exported="false"
@@ -103,6 +130,70 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps user-started Hermes turns connected until they finish or need input, and optionally keeps idle connections responsive when the user enables Persistent connection." />
         </service>
+
+        <!-- Experimental, explicitly user-started on-device wake-word listener.
+             Audio remains local and the service is never boot/restart started.
+             The Play build's microphone type needs an App content declaration. -->
+        <service
+            android:name=".wake.WakeWordForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
+
+        <!-- User-started protection for voice capture from the system overlay.
+             The service does not own AudioRecord; it keeps foreground-only
+             microphone app-ops available while Hermes is behind another app.
+             Include this use case in the Play microphone declaration. -->
+        <service
+            android:name=".voice.VoiceOverlayForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
+
+        <!-- Explicitly opt-in Android Digital Assistant integration. Android
+             binds this only after the user selects Hermes for ROLE_ASSISTANT. -->
+        <service
+            android:name=".assistant.HermesVoiceInteractionService"
+            android:exported="true"
+            android:label="@string/assistant_service_label"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+
+        <!-- Heavy assistant UI is isolated from the always-running interaction
+             service, matching the platform lifecycle guidance. -->
+        <service
+            android:name=".assistant.HermesVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:process=":assistant_session" />
+
+        <!-- Required companion component for VoiceInteractionService metadata.
+             Hermes session transcription remains owned by the existing voice
+             pipeline; this service does not open a second microphone stream. -->
+        <service
+            android:name=".assistant.HermesRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".assistant.AssistantSessionStateReceiver"
+            android:exported="false"
+            android:process=":assistant_session" />
+
+        <receiver
+            android:name=".assistant.AssistantSessionLifecycleReceiver"
+            android:exported="false" />
 
     </application>
 

@@ -34,10 +34,10 @@
 
 Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-agent) on the devices you actually carry. The brain stays on your own machine — Hermes-Relay is how you reach it.
 
-- **📱 Android app** — streaming chat, hands-free voice, and the full Hermes dashboard (models, keys, skills, profiles), rebuilt native. On sideload builds, the agent can read your screen and act on it.
+- **📱 Android app** — streaming chat, hands-free voice, native plugin pages, and the full Hermes dashboard (models, keys, skills, profiles), rebuilt native. Add a floating Petdex companion or optionally make Hermes your Android assistant; sideload builds can also let the agent read and act on your screen.
 - **⌨️ Hermes-Relay CLI** *(alpha)* — a single binary that gives the agent **hands on any machine you pair**: files, terminal, search, screenshots — consent-gated.
 
-A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, and voice need **no plugin**. Add the optional relay only when you want terminal, phone control, or the CLI's tools. **Pair once from either surface; both work.**
+A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough — chat, management, voice, Petdex, and ordinary installed-plugin pages need **no Relay plugin**. Add the optional Relay only when you want terminal, phone control, agent-created page drafts, or the CLI's tools. **Pair once from either surface; both work.**
 
 <p align="center">
   <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — Vanilla Hermes (Chat, Manage, Voice) runs with no plugin; the optional Relay plugin adds Terminal, Bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build." width="900">
@@ -70,6 +70,21 @@ an HTTPS reverse proxy. The [full walkthrough](https://hermes-relay.dev/docs/gui
 covers Windows, remote access, and dashboard authentication. You do not need to
 enable the separate API server or invent an API key for the standard path.
 
+For plugin-enabled setups, optional **Hermes Secure Link** presents Relay, API,
+and Dashboard routes through one pairing-pinned TLS origin. It protects traffic
+to the paired endpoint while each service keeps its own authentication; it does
+not provide reachability or independently identify the physical host. You still
+use LAN routing, Tailscale or another VPN, or an operator-managed public route
+to reach the listener. Secure Link is off by default and requires a fresh QR
+pairing after it is enabled. See the
+[remote-access guide](https://hermes-relay.dev/docs/guide/remote-access/).
+
+**Hermes Reach** is an experimental, advanced outbound-broker route. It remains
+available for development and self-hosted evaluation, but it is disabled by
+default, ordered after supported routes, and not recommended for normal remote
+access. Use Tailscale for the easiest supported remote setup, or a public TLS
+domain / Direct Secure Link when you want to own the complete network path.
+
 ### 3 · Connect and talk
 
 Open the app, choose **Connect to Hermes**, and enter or discover the dashboard
@@ -99,7 +114,7 @@ the whole Vanilla Hermes setup.
 
 ### 4 · Optional: install Relay for power tools
 
-Install the Relay plugin on the server only when you want Terminal, Bridge phone control, relay sessions, media routes, or the realtime voice engine:
+Install the Relay plugin on the server only when you want Terminal, Bridge phone control, relay sessions, media routes, the realtime voice engine, or approval-gated agent-created plugin-page drafts:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -115,8 +130,11 @@ shell shims, and the full clone/update workflow:
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/install.sh | bash
 ```
 
-The plugin-manager install owns the plugin code, dashboard tab, CLI commands,
-and agent tools. `hermes relay compat status/install/remove` manages only the
+Installed Hermes plugins can expose bounded, host-rendered pages to Android
+through the authenticated Dashboard without running plugin code on the phone.
+Relay 1.5.0 additionally supports approval-gated agent-created page drafts. The
+plugin-manager install owns the plugin code, dashboard tab, CLI commands, and
+agent tools. `hermes relay compat status/install/remove` manages only the
 optional legacy API compatibility hook when an older Hermes build needs it. Scan
 the QR from the phone's Connections screen — or use
 `hermes pair --register-code ABCD12` with the manual code from Android
@@ -135,7 +153,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 
 <table>
   <tr>
-    <td align="center" width="25%"><img src="assets/screenshots/01_startup.png" alt="Cold start" width="100%"><br><sub><b>Cold start</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/01_voice_conversation.png" alt="Voice controls in chat" width="100%"><br><sub><b>Voice in chat</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/02_chat.png" alt="Streaming chat" width="100%"><br><sub><b>Streaming chat</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/03_voice.png" alt="Hands-free voice" width="100%"><br><sub><b>Hands-free voice</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/04_sessions.png" alt="Session history" width="100%"><br><sub><b>Session history</b></sub></td>
@@ -159,7 +177,7 @@ Full server setup, TLS, and systemd details: [docs/relay-server.md](docs/relay-s
 </table>
 
 The Android app ships complete AI-assisted catalogs for **Deutsch**, **Español**,
-**日本語**, **Português (Brasil)**, and **简体中文**. Choose a language from
+**日本語**, **Português (Brasil)**, **Русский**, and **简体中文**. Choose a language from
 **Settings → Appearance → Language**; translation status and fluent review are
 tracked independently so community corrections remain easy to contribute.
 
@@ -183,7 +201,7 @@ tracked independently so community corrections remain easy to contribute.
 
 ## Hands on any machine — the Hermes-Relay CLI&nbsp;<sub>(alpha)</sub>
 
-> **Alpha.** Self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — no Node required. Windows also has an optional native, menu-only systray. Assets are unsigned during the experimental phase, so SmartScreen / Gatekeeper warnings are expected.
+> **Alpha.** Self-contained CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64 — no Node required. Windows also has an optional compact management tray. Assets are unsigned during the experimental phase, so SmartScreen / Gatekeeper warnings are expected.
 
 The agent's brain stays on the host; the CLI lets it call tools **on your machine** over the same WSS relay — `read_file`, `write_file`, `terminal`, `search_files`, `screenshot`, `clipboard`, `open_in_editor`, and more — behind a one-time consent gate, interactive diff approval for patches, and a `--no-tools` kill-switch.
 
@@ -199,7 +217,15 @@ hermes-relay update                            # self-update via GitHub Releases
 
 It pairs against the **same relay and credential store** as the Android app — pair once from either, both work. Tagged on the `desktop-v*` [release track](https://github.com/Codename-11/hermes-relay/releases?q=desktop), with historical releases still visible under `cli-v*`.
 
-On Windows, the default installer adds the optional right-click-only systray: no dashboard or app window, just TUI launch, User/Administrator-aware daemon controls, pairing, local grant review, audit, diagnostics, logs, desktop-use status/cancellation, sign-in startup, and emergency stop.
+On Windows, the default installer adds the optional compact **Hermes-Relay CLI UI** tray popup for host selection and pairing, connection and daemon state, per-host Ask/Trusted/Full Access, local grant dialogs, authorized-client revocation, activity, settings, and emergency stop. It is a management surface only—chat, TUI, plugins, voice, and agent sessions remain CLI/upstream concerns.
+
+Structured Windows computer control prefers a compatible local CUA Driver
+runtime for window-targeted background actions and virtual per-session agent
+cursors. It remains behind Hermes host policy, grants, targeting, audit, and
+emergency stop; Windows input is an explicit compatibility backend. CUA is not
+bundled or updated automatically, but the local CLI/UI can explicitly install,
+check, or update its verified canonical package. It is never exposed as a raw
+remote tool surface. See the [desktop tools guide](https://hermes-relay.dev/docs/desktop/tools.html#computer-use-engines).
 
 - **Docs:** [CLI guide](https://hermes-relay.dev/docs/desktop/) · [`desktop/README.md`](desktop/README.md)
 - **AI-agent setup recipe:** `/hermes-relay-desktop-setup`
@@ -264,11 +290,14 @@ Already installed? The same recipe is auto-loaded as a Hermes skill — invoke `
 
 ```bash
 # Android: open the repo root in Android Studio, wait for Gradle sync, Run (Shift+F10).
-scripts/dev.bat build      # Build debug APK
+scripts/dev.bat build      # Build sideload debug APK
+scripts/dev.bat compile    # Compile sideload Kotlin only
+scripts/dev.bat test-one "com.hermesandroid.relay.SomeTest"  # Focused unit test
+scripts/dev.bat install-fast  # arm64 phone build + install + launch
 scripts/dev.bat release    # Build signed release APK
 scripts/dev.bat bundle     # Build release AAB for Google Play
-scripts/dev.bat run        # Build + install + launch + logcat
-scripts/dev.bat test       # Run unit tests
+scripts/dev.bat run        # Build sideload + install + launch + logcat
+scripts/dev.bat test       # Run sideload debug unit tests
 scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start the relay server (dev, no TLS)
 ```
@@ -277,13 +306,13 @@ scripts/dev.bat relay      # Start the relay server (dev, no TLS)
 
 | Component | Stack |
 |-----------|-------|
-| **Android app** | Kotlin 2.0, Jetpack Compose, Material 3, OkHttp |
+| **Android app** | Kotlin 2.4, Jetpack Compose, Material 3, OkHttp |
 | **Hermes-Relay CLI** | TypeScript, Bun-compiled native binary, Node ≥21 (source/dev), zero runtime deps |
 | **Server / plugin** | Python 3.11+, aiohttp |
 | **Serialization** | kotlinx.serialization (Android) |
-| **Build** | AGP 9, Gradle 8.13, JVM toolchain 17 (Android); `tsc` + `bun build --compile` (CLI) |
+| **Build** | AGP 9.3.1, Gradle 9.6.1, JVM toolchain 17 (Android); `tsc` + `bun build --compile` (CLI) |
 | **CI/CD** | GitHub Actions — lint, build, test, APK artifact, CLI binaries per platform |
-| **Min SDK** | 26 (Android 8.0) · Target SDK 35 |
+| **Min SDK** | 26 (Android 8.0) · Target SDK 36 |
 
 <details>
 <summary><b>Repository structure</b></summary>

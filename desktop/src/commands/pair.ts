@@ -11,6 +11,7 @@
 //       render "Paired via LAN / Tailscale / Public" correctly).
 
 import type { ParsedArgs } from '../cli.js'
+import { desktopRelayIdentity } from '../deviceIdentity.js'
 import { formatError } from '../lib/hints.js'
 import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
@@ -23,12 +24,15 @@ import {
 import {
   payloadToRelayCandidates,
   probeCandidatesByPriority,
-  relayPairingCodeFromPayload
+  relayPairingCodeFromPayload,
+  secureFirstCandidates
 } from '../pairingQr.js'
 import { DEFAULT_RELAY_PORT, normalizeRelayUrl, resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
 import { ensureToolsConsent } from '../tools/consent.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
+import { candidateDisplayLabel, displayLabel, inferEndpointRole } from '../endpoint.js'
+import type { BrokerRouteConfig } from '../transport/BrokerRelaySocket.js'
 
 const PAIR_USAGE: UsageSpec = {
   name: 'pair',
@@ -40,6 +44,7 @@ const PAIR_USAGE: UsageSpec = {
       desc: 'Paste a full QR payload or hermes-relay://pair invite (recommended — probes endpoints)'
     },
     { flag: '--remote <url>', desc: 'Relay URL (with [CODE] or an interactive prompt)' },
+    { flag: '--prefer-direct', desc: 'Respect invite order instead of preferring secure routes' },
     { flag: '--code <code>', desc: '6-char pairing code (or pass it as the positional arg)' },
     {
       flag: '--grant-tools',
@@ -72,6 +77,27 @@ interface PairTarget {
   code: string
   /** Active-endpoint role if this came from a multi-endpoint QR probe. */
   endpointRole: string | null
+  routeCandidates?: ReturnType<typeof payloadToRelayCandidates>
+  preferSecureRoutes?: boolean
+  certPin?: string
+  broker?: BrokerRouteConfig
+}
+
+export function rankPairingCandidates(candidates: ReturnType<typeof payloadToRelayCandidates>, preferSecure: boolean) {
+  return preferSecure ? secureFirstCandidates(candidates) : candidates
+}
+
+export function brokerRouteForCandidate(candidate: ReturnType<typeof payloadToRelayCandidates>[number]): BrokerRouteConfig | undefined {
+  if (!candidate.broker || !candidate.proxy?.certificateDerBase64) return undefined
+  return {
+    url: candidate.broker.url,
+    hostId: candidate.broker.hostId,
+    credentialKind: candidate.broker.credentialKind,
+    token: candidate.broker.token,
+    innerUrl: candidate.relay.url,
+    innerPinSha256: candidate.proxy.pinSha256,
+    innerCertificateDerBase64: candidate.proxy.certificateDerBase64,
+  }
 }
 
 async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error: string }> {
@@ -96,12 +122,17 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
       return { error: e instanceof Error ? e.message : String(e) }
     }
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
+    const preferSecure = args.flags['prefer-direct'] !== true
     process.stderr.write(t.bold(`Probing ${candidates.length} endpoint(s)…`) + '\n')
     let winner
     try {
-      winner = await probeCandidatesByPriority(candidates, {
+      // Hermes Secure Link tunnels the normal first pairing-code frame. The
+      // QR pin is the operator trust ceremony, so secure-only invites can
+      // bootstrap without falling back to a plain/direct route.
+      const rankedCandidates = rankPairingCandidates(candidates, preferSecure)
+      winner = await probeCandidatesByPriority(rankedCandidates, {
         onProbe: (ev) => {
-          const label = `[${ev.index}/${ev.total}] ${ev.candidate.role} ${ev.candidate.relay.url}`
+          const label = `[${ev.index}/${ev.total}] ${candidateDisplayLabel(ev.candidate)} ${ev.candidate.relay.url}`
           if (ev.phase === 'result' && ev.reachable) {
             process.stderr.write(`  ${t.okLine(label)} ${t.muted(`${ev.elapsedMs}ms`)}\n`)
           } else if (ev.phase === 'result') {
@@ -115,12 +146,17 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
       return { error: `no endpoints reachable: ${e instanceof Error ? e.message : String(e)}` }
     }
     process.stderr.write(
-      `  ${t.cyan(SYMBOLS.arrow)} picked ${t.bold(winner.role)} endpoint ${winner.relay.url}\n`
+      `  ${t.cyan(SYMBOLS.arrow)} picked ${t.bold(candidateDisplayLabel(winner))} endpoint ${winner.relay.url}\n`
     )
+    const broker = brokerRouteForCandidate(winner)
     return {
       url: winner.relay.url,
       code: pairingCode,
-      endpointRole: winner.role
+      endpointRole: winner.role,
+      routeCandidates: candidates,
+      preferSecureRoutes: preferSecure,
+      certPin: winner.proxy?.pinSha256,
+      ...(broker ? { broker } : {})
     }
   }
 
@@ -162,7 +198,7 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
       return { error: e instanceof Error ? e.message : String(e) }
     }
   }
-  return { url, code, endpointRole: null }
+  return { url, code, endpointRole: inferEndpointRole(url) }
 }
 
 export async function pairCommand(args: ParsedArgs): Promise<number> {
@@ -191,13 +227,21 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
   const relay = new RelayTransport({
     url: target.url,
     pairingCode: target.code,
-    deviceName: `hermes-relay-cli (${process.platform})`
+    expectedCertPin: target.certPin,
+    broker: target.broker,
+    ...desktopRelayIdentity()
   })
 
   relay.start()
   const outcome = await relay.whenAuthResolved()
 
   if (outcome.ok) {
+    const persistedRoutes = target.routeCandidates?.flatMap(candidate => {
+      if (!candidate.broker) return candidate
+      const durable = outcome.meta.routeCredential
+      if (!durable) return []
+      return { ...candidate, broker: { ...candidate.broker, url: durable.brokerUrl, hostId: durable.hostId, credentialKind: 'route' as const, token: durable.token, expiresAt: durable.expiresAt } }
+    })
     // Fold --auto-grant-tools into the initial save so the consent flag and
     // the token land atomically. The interactive --grant-tools path runs
     // ensureToolsConsent() below, which writes its own follow-up save.
@@ -205,13 +249,20 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
       grants: outcome.meta.grants,
       ttlExpiresAt: outcome.meta.ttlExpiresAt,
       endpointRole: target.endpointRole,
+      routeCandidates: persistedRoutes,
+      preferSecureRoutes: target.preferSecureRoutes,
+      certPin: target.certPin,
+      initializeAccessPolicy: true,
       ...(autoGrant ? { toolsConsented: true } : {})
     })
     process.stdout.write(t.okLine('Paired. Token stored in ~/.hermes/remote-sessions.json') + '\n')
     process.stdout.write(t.muted(`  server: ${outcome.serverVersion ?? '?'}`) + '\n')
     process.stdout.write(t.muted(`  relay:  ${target.url}`) + '\n')
     if (target.endpointRole) {
-      process.stdout.write(t.muted(`  route:  ${target.endpointRole}`) + '\n')
+      process.stdout.write(t.muted(`  route:  ${target.broker ? 'Hermes Reach (experimental)' : displayLabel(target.endpointRole)}`) + '\n')
+      if (target.broker) {
+        process.stdout.write(t.warnLine('Experimental route selected; Tailscale or a direct TLS route is recommended for normal use.') + '\n')
+      }
     }
 
     if (autoGrant) {
@@ -227,11 +278,8 @@ export async function pairCommand(args: ParsedArgs): Promise<number> {
         )
       }
     } else {
-      // Nudge the daemon-first workflow: most users who pair from a terminal
-      // want desktop tools, and discovering --grant-tools after the fact means
-      // an extra `shell` round-trip. Surface it once, here.
       process.stdout.write(
-        t.muted('  tip: add --grant-tools to also enable desktop tools (needed for `daemon`).') + '\n'
+        t.muted('  desktop access: Ask Every Time (start `daemon`; each operation requires local approval).') + '\n'
       )
     }
 

@@ -19,6 +19,7 @@ import com.hermesandroid.relay.network.upstream.models.SkillListResponse
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import com.hermesandroid.relay.util.TurnLatencyTracer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.Serializable
@@ -27,6 +28,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
@@ -213,25 +215,12 @@ internal fun parseApiProviderModelOptionsBody(
     val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
         ?: return null
     val rows = root["providers"] as? JsonArray ?: return null
-    val providers = rows.mapNotNull { element ->
-        val obj = element as? JsonObject ?: return@mapNotNull null
-        val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
-            ?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-        GatewayModelProvider(
-            name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
-            slug = slug,
-            models = (obj["models"] as? JsonArray).orEmpty()
-                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-            isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
-            warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
-            authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
-            unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
-                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-            freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
-            totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull
-                ?.toIntOrNull() ?: 0,
-        )
-    }
+    val providers = normalizeGatewayModelProviders(
+        rows.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            parseGatewayModelProvider(obj)
+        },
+    )
     return ApiProviderModelOptions(
         providers = providers,
         currentModel = (root["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
@@ -254,7 +243,8 @@ enum class ApiModelRoutingErrorCode {
 class ApiModelRoutingException(
     val code: ApiModelRoutingErrorCode,
     message: String,
-) : IOException(message)
+    cause: Throwable? = null,
+) : IOException(message, cause)
 
 sealed interface ApiModelSelectionAck {
     data object ServerDefault : ApiModelSelectionAck
@@ -337,7 +327,7 @@ internal fun parseModelOptionsBody(json: Json, body: String): List<ApiModelOptio
             root = (obj["root"] as? JsonPrimitive)?.contentOrNull,
             parent = (obj["parent"] as? JsonPrimitive)?.contentOrNull,
         )
-    }
+    }.distinctBy { it.id }
 }
 
 private const val STREAM_ERROR_BODY_LIMIT = 16L * 1024L
@@ -442,10 +432,12 @@ private class RetryingEventSource(
 class HermesApiClient(
     baseUrl: String,
     private val apiKey: String,
+    httpClient: OkHttpClient? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
-    }
+    },
+    okHttpClient: OkHttpClient? = null,
 ) {
     @Volatile
     private var lastCapabilities: ServerCapabilities? = null
@@ -489,7 +481,7 @@ class HermesApiClient(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    private val client: OkHttpClient = httpClient ?: okHttpClient ?: OkHttpClient.Builder()
         .readTimeout(5, TimeUnit.MINUTES)
         .connectTimeout(10, TimeUnit.SECONDS)
         .build()
@@ -596,27 +588,35 @@ class HermesApiClient(
 
     // --- Session CRUD ---
 
-    suspend fun listSessionsResult(limit: Int = 200): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
+    suspend fun listSessionsResult(limit: Int = SESSION_LIST_WINDOW_LIMIT): Result<List<SessionItem>> = withContext(Dispatchers.IO) {
         try {
-            val request = authRequest("$baseUrl/api/sessions?limit=$limit").get().build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(apiFailure(response, "List sessions"))
+            val sessions = linkedMapOf<String, SessionItem>()
+            for (page in sessionListPages(limit)) {
+                val request = authRequest(
+                    "$baseUrl/api/sessions?limit=${page.limit}&offset=${page.offset}",
+                ).get().build()
+                val pageSessions = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(apiFailure(response, "List sessions"))
+                    }
+                    val body = response.body.string()
+                    if (body.isBlank()) {
+                        return@withContext Result.failure(IOException("List sessions returned an empty response"))
+                    }
+                    val parsed = json.decodeFromString<SessionListResponse>(body)
+                    parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList()
                 }
-                val body = response.body.string()
-                if (body.isBlank()) {
-                    return@withContext Result.failure(IOException("List sessions returned an empty response"))
-                }
-                val parsed = json.decodeFromString<SessionListResponse>(body)
-                Result.success(parsed.data ?: parsed.items ?: parsed.sessions ?: emptyList())
+                pageSessions.forEach { sessions.putIfAbsent(it.id, it) }
+                if (pageSessions.size < page.limit) break
             }
+            Result.success(sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)))
         } catch (e: Exception) {
             Log.w(TAG, "Failed to list sessions: ${e.message}")
             Result.failure(e)
         }
     }
 
-    suspend fun listSessions(limit: Int = 200): List<SessionItem> =
+    suspend fun listSessions(limit: Int = SESSION_LIST_WINDOW_LIMIT): List<SessionItem> =
         listSessionsResult(limit).getOrElse { emptyList() }
 
     suspend fun createSessionResult(
@@ -688,19 +688,62 @@ class HermesApiClient(
         }
     }
 
-    suspend fun getMessages(sessionId: String): List<MessageItem> = withContext(Dispatchers.IO) {
+    suspend fun setSessionPinned(sessionId: String, pinned: Boolean): Boolean =
+        patchSessionFlag(sessionId, "pinned", pinned)
+
+    suspend fun setSessionArchived(sessionId: String, archived: Boolean): Boolean =
+        patchSessionFlag(sessionId, "archived", archived)
+
+    private suspend fun patchSessionFlag(
+        sessionId: String,
+        field: String,
+        value: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val request = authRequest("$baseUrl/api/sessions/$sessionId/messages")
-                .get()
+            val reqBody = buildJsonObject { put(field, value) }.toString()
+            val request = authRequest("$baseUrl/api/sessions/$sessionId")
+                .patch(reqBody.toRequestBody(JSON_MEDIA))
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
-                val body = response.body?.string() ?: return@withContext emptyList()
-                val parsed = json.decodeFromString<MessageListResponse>(body)
-                parsed.data ?: parsed.items ?: parsed.messages ?: emptyList()
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Set session $field failed: HTTP ${response.code}")
+                }
+                response.isSuccessful
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to get messages: ${e.message}")
+            Log.w(TAG, "Failed to set session $field: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun getMessages(
+        sessionId: String,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+    ): List<MessageItem> = withContext(Dispatchers.IO) {
+        loadSessionMessages(mode) { page ->
+            runCatching {
+                val url = "$baseUrl/api/sessions/$sessionId/messages".toHttpUrlOrNull()
+                    ?.newBuilder()
+                    ?.addQueryParameter("limit", page.limit.toString())
+                    ?.addQueryParameter("offset", page.offset.toString())
+                    ?.addQueryParameter("order", page.order)
+                    ?.build()
+                    ?: error("invalid session messages URL")
+                val request = authRequest(url.toString()).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) error("HTTP ${response.code}")
+                    val body = response.body?.string() ?: error("empty response body")
+                    val parsed = json.decodeFromString<MessageListResponse>(body)
+                    SessionMessagePage(
+                        messages = parsed.data ?: parsed.items ?: parsed.messages ?: emptyList(),
+                        pagination = parsed.pagination,
+                        payloadChars = body.length,
+                    )
+                }
+            }
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            Log.w(TAG, "Failed to get messages: ${error.message}")
             emptyList()
         }
     }
@@ -807,6 +850,7 @@ class HermesApiClient(
                     ApiModelRoutingException(
                         ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
                         "Model inventory could not be loaded.",
+                        e,
                     )
                 },
             )
@@ -1000,9 +1044,7 @@ class HermesApiClient(
                 // Personalities: config.agent.personalities { name: "system prompt", ... }
                 val agent = config["agent"] as? JsonObject
                 val personalitiesObj = agent?.get("personalities") as? JsonObject
-                val prompts = personalitiesObj?.entries?.associate { (key, value) ->
-                    key to ((value as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "")
-                } ?: emptyMap()
+                val prompts = parsePersonalityPrompts(personalitiesObj)
 
                 // Default display identity. Upstream Hermes currently uses
                 // config.display.personality for the active persona and often

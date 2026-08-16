@@ -119,19 +119,24 @@ You can totally use MCP alongside Hermes-Relay — the agent sees MCP tools (und
 
 Yes — it shipped. `hermes-relay daemon` runs the tool router headless (no PTY, no TUI), advertising your `desktop_*` tools so the agent can reach you with no shell open. `hermes-relay daemon start` runs it in the **background**: no console window, logs to `~/.hermes/daemon.log`, and it survives closing the terminal. `daemon status` shows state/uptime, `daemon stop` stops it.
 
-On Windows, the optional systray can register itself to start when you sign in and starts the daemon when it launches. This is a per-user login entry, not a Windows service. On Linux/macOS, or for a machine-level service, wrap foreground `hermes-relay daemon` with your service manager.
+On Windows, **Start UI at sign-in** registers only the optional management UI as a per-user login entry. The separate **Start daemon with UI** preference connects remote access when the UI launches and defaults off for existing installs. Neither setting is a Windows service or requests elevation. On Linux/macOS, or for a machine-level service, wrap foreground `hermes-relay daemon` with your service manager.
 
-## Does the Windows tray have an app window?
+## What is the Windows UI?
 
-No. It is a native, right-click-only notification-area menu. There is no dashboard, WebView, embedded terminal, chat window, or settings window. Interactive actions—TUI, pairing, grant review, audit, and diagnostics—open the installed CLI in a normal terminal.
+It is a compact management popup anchored above the notification-area icon. Click the icon to manage hosts, access modes, approvals, activity, updates, authorized clients, and daemon settings. Host details keep Relay-specific state and client deauthorization together; Settings contains controls for this PC, including daemon lifecycle, CLI launchers, logs, diagnostics, updates, and Help & About. It is intentionally not a full desktop app and does not embed chat, the Hermes TUI, a terminal emulator, plugins, or voice.
 
-The tray and daemon run as your normal Windows user by default. Choosing **Start/Restart daemon as Administrator…** is the only tray action that requests UAC; the tray itself remains unprivileged and labels the elevated daemon clearly.
+The UI and daemon run as your normal Windows user by default. **Restart as Administrator...** requests UAC; the UI itself remains unprivileged and labels the elevated daemon clearly. **Return to user mode** stops the elevated daemon once and starts a normal user daemon. Windows installs the CLI + UI bundle by default. CLI-only users can add it later with `hermes-relay ui install` and open it with `hermes-relay ui`.
 
 ## Can multiple people use the same Hermes host from different CLI clients?
 
-Right now the server tracks a single "active" desktop client per relay — if you pair from two machines, the most recently connected wins routing. v1.0 adds per-session-token routing (each hermes session binds to a specific desktop client) so multi-client is clean.
+Yes. Each desktop installation has its own stable device identity and paired
+session, so pairing or repairing one PC does not revoke another PC. The Relay
+can retain and manage all of those authorized sessions independently.
 
-For now: one desktop attached at a time. Or two if you pair them with different tokens and only one is connected.
+Remote desktop commands accept a stable device ID or unambiguous computer name.
+With one connected desktop the target is optional. With several connected
+desktops the Relay requires an explicit target and fails closed rather than
+silently choosing whichever daemon connected most recently.
 
 ## Is there voice mode?
 

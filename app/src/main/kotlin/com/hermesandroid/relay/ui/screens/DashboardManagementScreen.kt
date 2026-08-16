@@ -3,11 +3,16 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.content.Intent
+import android.content.ContentResolver
+import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -35,6 +40,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -90,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -125,16 +132,24 @@ import com.hermesandroid.relay.viewmodel.PendingMcpOAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.text.DateFormat
 import java.util.Date
+import java.io.IOException
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 
 /**
  * Section of the Hermes dashboard Manage tab. The enum identity is used for
@@ -148,6 +163,10 @@ private enum class DashboardManagementSection(val path: String) {
     Catalog("/api/mcp/catalog"),
     CustomEndpoints("/api/providers/custom-endpoints"),
     Profiles("/api/profiles"),
+    Memory("/api/memory"),
+    Learning("/api/learning/graph"),
+    Channels("/api/messaging/platforms"),
+    Operations("/api/status"),
     Models("/api/model/info"),
     Keys("/api/env"),
     Config("/api/config/schema");
@@ -160,6 +179,10 @@ private enum class DashboardManagementSection(val path: String) {
         Catalog -> stringResource(R.string.dashboard_tab_catalog)
         CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints)
         Profiles -> stringResource(R.string.dashboard_tab_profiles)
+        Memory -> stringResource(R.string.dashboard_tab_memory)
+        Learning -> stringResource(R.string.dashboard_tab_learning)
+        Channels -> stringResource(R.string.dashboard_tab_channels)
+        Operations -> stringResource(R.string.dashboard_tab_operations)
         Models -> stringResource(R.string.dashboard_tab_models)
         Keys -> stringResource(R.string.dashboard_tab_keys)
         Config -> stringResource(R.string.dashboard_tab_config)
@@ -174,6 +197,10 @@ private enum class DashboardManagementSection(val path: String) {
         Catalog -> stringResource(R.string.dashboard_tab_catalog_lower)
         CustomEndpoints -> stringResource(R.string.dashboard_tab_custom_endpoints_lower)
         Profiles -> stringResource(R.string.dashboard_tab_profiles_lower)
+        Memory -> stringResource(R.string.dashboard_tab_memory_lower)
+        Learning -> stringResource(R.string.dashboard_tab_learning_lower)
+        Channels -> stringResource(R.string.dashboard_tab_channels_lower)
+        Operations -> stringResource(R.string.dashboard_tab_operations_lower)
         Models -> stringResource(R.string.dashboard_tab_models_lower)
         Keys -> stringResource(R.string.dashboard_tab_keys_lower)
         Config -> stringResource(R.string.dashboard_tab_config_lower)
@@ -183,7 +210,15 @@ private enum class DashboardManagementSection(val path: String) {
 private val managementSections: List<DashboardManagementSection> = DashboardManagementSection.entries
 
 internal fun dashboardSectionRequestPath(path: String, profile: String?): String {
-    if (profile.isNullOrBlank() || path !in setOf("/api/mcp/servers", "/api/mcp/catalog")) return path
+    if (
+        profile.isNullOrBlank() ||
+        path !in setOf(
+            "/api/mcp/servers",
+            "/api/mcp/catalog",
+            "/api/providers/custom-endpoints",
+            "/api/learning/graph",
+        )
+    ) return path
     val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
     return "$path?profile=$encoded"
 }
@@ -225,7 +260,14 @@ internal fun scopeDashboardManageItems(
     profile: String?,
     items: List<DashboardSummaryItem>,
 ): List<DashboardSummaryItem> =
-    if (sectionPath == "/api/mcp/servers" || sectionPath == "/api/mcp/catalog") {
+    if (
+        sectionPath == "/api/mcp/servers" ||
+        sectionPath == "/api/mcp/catalog" ||
+        sectionPath == "/api/providers/custom-endpoints" ||
+        sectionPath == "/api/learning/graph" ||
+        sectionPath == "/api/memory" ||
+        sectionPath == "/api/messaging/platforms"
+    ) {
         items.map { it.copy(profile = profile) }
     } else {
         items
@@ -350,6 +392,10 @@ private enum class DashboardSectionAction {
     BrowseSkillsHub,
     UpdateSkillsHub,
     AddCustomEndpoint,
+    CreateServerBackup,
+    DownloadServerBackup,
+    ImportServerBackup,
+    SetupWhatsApp,
 }
 
 /** Editor session for a profile's SOUL.md — content is the FULL file from GET. */
@@ -357,6 +403,28 @@ private data class SoulEditorState(
     val profileName: String,
     val initialContent: String,
     val exists: Boolean,
+)
+
+private data class LearningEditorState(
+    val id: String,
+    val title: String,
+    val initialContent: String,
+    val profile: String?,
+)
+
+private data class MemoryProviderEditorState(
+    val name: String,
+    val schema: JsonObject,
+    val profile: String?,
+)
+
+private data class WhatsAppOnboardingState(
+    val pairingId: String,
+    val status: String,
+    val qrPayload: String?,
+    val mode: String,
+    val allowedUsers: String,
+    val error: String? = null,
 )
 
 /** Which config slot a model-picker selection writes to. */
@@ -399,6 +467,9 @@ fun DashboardManagementScreen(
     val pendingMcpOAuth by oauthViewModel.pending.collectAsState()
     val unsupportedOAuthRoutes by oauthViewModel.unsupportedRoutes.collectAsState()
     val supportedOAuthRoutes by oauthViewModel.supportedRoutes.collectAsState()
+    val clientFactory = remember(dashboardUrl, connectionViewModel) {
+        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
+    }
     var selectedTab by remember { mutableStateOf(0) }
     var showingDetail by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableStateOf(0) }
@@ -421,6 +492,66 @@ fun DashboardManagementScreen(
     var oauthDialogHidden by remember(pendingMcpOAuth?.flowId) { mutableStateOf(false) }
     var customEndpointEditor by remember { mutableStateOf<DashboardSummaryItem?>(null) }
     var showCustomEndpointEditor by remember { mutableStateOf(false) }
+    var learningEditor by remember { mutableStateOf<LearningEditorState?>(null) }
+    var memoryProviderEditor by remember { mutableStateOf<MemoryProviderEditorState?>(null) }
+    var showWhatsAppSetup by remember { mutableStateOf(false) }
+    var whatsappOnboarding by remember { mutableStateOf<WhatsAppOnboardingState?>(null) }
+    var backupArchive by remember { mutableStateOf<String?>(null) }
+    var importArchiveInput by remember { mutableStateOf(false) }
+    var pendingBackupDownload by remember { mutableStateOf<String?>(null) }
+    val backupSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val archive = pendingBackupDownload
+        pendingBackupDownload = null
+        if (uri != null && archive != null) scope.launch {
+            actionInFlight = true
+            withDashboardClient(clientFactory) {
+                it.downloadServerBackup(archive) {
+                    context.contentResolver.openOutputStream(uri)
+                        ?: throw IOException("The selected destination could not be opened.")
+                }
+            }.fold(
+                onSuccess = { actionMessage = context.getString(R.string.dashboard_backup_saved, it) },
+                onFailure = {
+                    withContext(Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+                    actionMessage = it.message ?: context.getString(R.string.dashboard_backup_download_failed)
+                },
+            )
+            actionInFlight = false
+        }
+    }
+    val backupImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) scope.launch {
+            actionInFlight = true
+            val metadata = runCatching {
+                withContext(Dispatchers.IO) {
+                    dashboardImportMetadata(context.contentResolver, uri)
+                }
+            }
+            metadata.fold(
+                onSuccess = { file ->
+                    withDashboardClient(clientFactory) {
+                        it.uploadServerBackup(
+                            filename = file.name,
+                            contentLength = file.length,
+                            openStream = {
+                            context.contentResolver.openInputStream(uri)
+                                ?: throw IOException("The selected archive could not be opened.")
+                            },
+                        )
+                    }.fold(
+                        onSuccess = { actionMessage = context.getString(R.string.dashboard_import_started) },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_import_failed) },
+                    )
+                },
+                onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_import_failed) },
+            )
+            actionInFlight = false
+        }
+    }
 
     val section = managementSections[selectedTab]
     val connectionId = activeConnection?.id ?: "default"
@@ -465,10 +596,6 @@ fun DashboardManagementScreen(
                 )
         }
     }
-    val clientFactory = remember(dashboardUrl, connectionViewModel) {
-        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
-    }
-
     suspend fun loadDashboardSection(
         targetSection: DashboardManagementSection,
         targetKey: String,
@@ -754,7 +881,12 @@ fun DashboardManagementScreen(
         }
     }
 
-    fun submitCreateProfile(name: String, description: String, cloneFromDefault: Boolean) {
+    fun submitCreateProfile(
+        name: String,
+        description: String,
+        cloneFromDefault: Boolean,
+        mcpServers: List<String>,
+    ) {
         if (dashboardUrl.isBlank() || actionInFlight) return
         val actionPayloadKey = payloadKey
         actionInFlight = true
@@ -766,6 +898,7 @@ fun DashboardManagementScreen(
                         name = name,
                         cloneFromDefault = cloneFromDefault,
                         description = description.takeIf { it.isNotBlank() },
+                        mcpServers = mcpServers,
                     )
                 }
             } catch (e: Exception) {
@@ -780,6 +913,64 @@ fun DashboardManagementScreen(
                     context.getString(R.string.dashboard_profile_created, name)
                 },
                 onFailure = { err -> err.message ?: context.getString(R.string.dashboard_profile_create_failed) },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun runServerBackup() {
+        if (dashboardUrl.isBlank() || actionInFlight) return
+        actionInFlight = true
+        actionMessage = null
+        scope.launch {
+            val result = try {
+                withDashboardClient(clientFactory) { client -> client.createServerBackup() }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            actionMessage = result.fold(
+                onSuccess = { root ->
+                    backupArchive = root.stringField("archive")
+                    root.stringField("message")
+                        ?: root.stringField("archive")?.let { "Server backup started: $it" }
+                        ?: "Server backup started."
+                },
+                onFailure = { error -> error.message ?: "Server backup failed." },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun openLearningEditor(item: DashboardSummaryItem) {
+        if (actionInFlight) return
+        actionInFlight = true
+        scope.launch {
+            val result = withDashboardClient(clientFactory) { it.getLearningNode(item.id, effectiveProfileName) }
+            result.fold(
+                onSuccess = { root ->
+                    learningEditor = LearningEditorState(
+                        id = item.id,
+                        title = item.title,
+                        initialContent = root.stringField("content").orEmpty(),
+                        profile = effectiveProfileName,
+                    )
+                },
+                onFailure = { actionMessage = it.message ?: "Learning node could not be loaded." },
+            )
+            actionInFlight = false
+        }
+    }
+
+    fun openMemoryProvider(item: DashboardSummaryItem) {
+        if (actionInFlight) return
+        actionInFlight = true
+        scope.launch {
+            val result = withDashboardClient(clientFactory) {
+                it.getMemoryProviderConfig(item.id, effectiveProfileName)
+            }
+            result.fold(
+                onSuccess = { memoryProviderEditor = MemoryProviderEditorState(item.id, it, effectiveProfileName) },
+                onFailure = { actionMessage = it.message ?: "Memory provider configuration could not be loaded." },
             )
             actionInFlight = false
         }
@@ -856,6 +1047,7 @@ fun DashboardManagementScreen(
 
     pendingAction?.let { pending ->
         val isActivateProfile = pending.action.kind == DashboardActionKind.ActivateProfile
+        val isDeleteLearning = pending.action.kind == DashboardActionKind.DeleteLearningNode
         val actionLabel = dashboardActionLabel(pending.action)
         AlertDialog(
             onDismissRequest = { pendingAction = null },
@@ -869,6 +1061,8 @@ fun DashboardManagementScreen(
                 Text(
                     text = if (isActivateProfile) {
                         stringResource(R.string.dashboard_activate_profile_body, pending.item.title)
+                    } else if (isDeleteLearning) {
+                        stringResource(R.string.dashboard_learning_delete_warning)
                     } else {
                         stringResource(R.string.dashboard_generic_action_body, pending.item.title)
                     },
@@ -950,6 +1144,7 @@ fun DashboardManagementScreen(
     if (showCreateProfile) {
         var newProfileName by remember { mutableStateOf("") }
         var newProfileDescription by remember { mutableStateOf("") }
+        var newProfileMcpServers by remember { mutableStateOf("") }
         var cloneFromDefault by remember { mutableStateOf(true) }
         AlertDialog(
             onDismissRequest = { showCreateProfile = false },
@@ -968,6 +1163,13 @@ fun DashboardManagementScreen(
                         onValueChange = { newProfileDescription = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.dashboard_description_optional)) },
+                    )
+                    OutlinedTextField(
+                        value = newProfileMcpServers,
+                        onValueChange = { newProfileMcpServers = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.dashboard_profile_mcp_servers_optional)) },
+                        supportingText = { Text(stringResource(R.string.dashboard_profile_mcp_servers_help)) },
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -991,6 +1193,12 @@ fun DashboardManagementScreen(
                             name = newProfileName.trim(),
                             description = newProfileDescription.trim(),
                             cloneFromDefault = cloneFromDefault,
+                            mcpServers = newProfileMcpServers
+                                .split(',', '\n')
+                                .map(String::trim)
+                                .filter(String::isNotBlank)
+                                .distinct()
+                                .take(64),
                         )
                     },
                     enabled = newProfileName.isNotBlank() && !actionInFlight,
@@ -1091,6 +1299,7 @@ fun DashboardManagementScreen(
     if (showCustomEndpointEditor) {
         CustomEndpointDialog(
             existing = customEndpointEditor,
+            profile = effectiveProfileName,
             clientFactory = clientFactory,
             onSaved = {
                 showCustomEndpointEditor = false
@@ -1286,6 +1495,9 @@ fun DashboardManagementScreen(
                                                 )
                                             DashboardActionKind.EditProfileSoul ->
                                                 openSoulEditor(item)
+                                            DashboardActionKind.EditLearningNode -> openLearningEditor(item)
+                                            DashboardActionKind.ConfigureMemoryProvider -> openMemoryProvider(item)
+                                            DashboardActionKind.SetupWhatsApp -> showWhatsAppSetup = true
                                             DashboardActionKind.AuthenticateMcp ->
                                                 if (mcpOAuthStartAllowed) {
                                                     oauthDialogHidden = false
@@ -1302,7 +1514,9 @@ fun DashboardManagementScreen(
                                             // per-conversation switch in chat.
                                             DashboardActionKind.ActivateProfile,
                                             DashboardActionKind.ActivateCustomEndpoint,
-                                            DashboardActionKind.DeleteCustomEndpoint ->
+                                            DashboardActionKind.DeleteCustomEndpoint,
+                                            DashboardActionKind.ActivateMemoryProvider,
+                                            DashboardActionKind.DeleteLearningNode ->
                                                 pendingAction = PendingDashboardAction(item, action)
                                             else -> if (action.destructive) {
                                                 pendingAction = PendingDashboardAction(item, action)
@@ -1325,6 +1539,22 @@ fun DashboardManagementScreen(
                                                 customEndpointEditor = null
                                                 showCustomEndpointEditor = true
                                             }
+                                            DashboardSectionAction.CreateServerBackup ->
+                                                runServerBackup()
+                                            DashboardSectionAction.DownloadServerBackup -> {
+                                                val archive = backupArchive
+                                                if (archive == null) {
+                                                    actionMessage = context.getString(R.string.dashboard_backup_create_first)
+                                                } else {
+                                                    pendingBackupDownload = archive
+                                                    backupSaveLauncher.launch(
+                                                        archive.substringAfterLast('/').substringAfterLast('\\')
+                                                            .ifBlank { "hermes-backup.zip" },
+                                                    )
+                                                }
+                                            }
+                                            DashboardSectionAction.ImportServerBackup -> importArchiveInput = true
+                                            DashboardSectionAction.SetupWhatsApp -> showWhatsAppSetup = true
                                         }
                                     },
                                     mcpOAuthSupported = mcpOAuthStartAllowed,
@@ -1362,6 +1592,141 @@ fun DashboardManagementScreen(
             }
         }
     }
+
+    learningEditor?.let { editor ->
+        TextDocumentEditorDialog(
+            title = context.getString(R.string.dashboard_learning_edit_title, editor.title),
+            initialContent = editor.initialContent,
+            warning = context.getString(R.string.dashboard_learning_edit_warning),
+            saving = actionInFlight,
+            onSave = { content ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.updateLearningNode(editor.id, content, editor.profile)
+                    }.fold(
+                        onSuccess = {
+                            learningEditor = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = context.getString(R.string.dashboard_learning_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_learning_save_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = { learningEditor = null },
+        )
+    }
+
+    memoryProviderEditor?.let { editor ->
+        MemoryProviderDialog(
+            editor = editor,
+            saving = actionInFlight,
+            onSubmit = { rawValues, setup ->
+                val values = if (setup) JsonObject(emptyMap())
+                else runCatching { Json.parseToJsonElement(rawValues).jsonObject }.getOrNull()
+                if (!setup && values == null) {
+                    actionMessage = context.getString(R.string.dashboard_memory_invalid_json)
+                } else scope.launch {
+                    actionInFlight = true
+                    val result = withDashboardClient(clientFactory) { client ->
+                        if (setup) client.setupMemoryProvider(editor.name)
+                        else client.updateMemoryProviderConfig(editor.name, checkNotNull(values), editor.profile)
+                    }
+                    result.fold(
+                        onSuccess = {
+                            memoryProviderEditor = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = if (setup) context.getString(R.string.dashboard_memory_setup_started)
+                                else context.getString(R.string.dashboard_memory_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_memory_save_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = { memoryProviderEditor = null },
+        )
+    }
+
+    if (importArchiveInput) {
+        AlertDialog(
+            onDismissRequest = { importArchiveInput = false },
+            title = { Text(stringResource(R.string.dashboard_import_title)) },
+            text = { Text(stringResource(R.string.dashboard_import_warning)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        importArchiveInput = false
+                        backupImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.dashboard_import_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { importArchiveInput = false }) { Text(stringResource(R.string.dashboard_cancel)) }
+            },
+        )
+    }
+
+    if (showWhatsAppSetup) {
+        WhatsAppSetupDialog(
+            onboarding = whatsappOnboarding,
+            busy = actionInFlight,
+            onStart = { mode, allowed ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.startWhatsAppOnboarding(mode, allowed, effectiveProfileName)
+                    }.fold(
+                        onSuccess = { root -> whatsappOnboarding = root.toWhatsAppOnboarding(mode, allowed) },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_start_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onApply = { state ->
+                scope.launch {
+                    actionInFlight = true
+                    withDashboardClient(clientFactory) {
+                        it.applyWhatsAppOnboarding(state.pairingId, state.mode, state.allowedUsers, effectiveProfileName)
+                    }.fold(
+                        onSuccess = {
+                            showWhatsAppSetup = false
+                            whatsappOnboarding = null
+                            forceReloadKey = payloadKey
+                            reloadNonce += 1
+                            actionMessage = context.getString(R.string.dashboard_whatsapp_saved)
+                        },
+                        onFailure = { actionMessage = it.message ?: context.getString(R.string.dashboard_whatsapp_apply_failed) },
+                    )
+                    actionInFlight = false
+                }
+            },
+            onDismiss = {
+                whatsappOnboarding?.pairingId?.let { pairingId ->
+                    scope.launch { withDashboardClient(clientFactory) { it.cancelWhatsAppOnboarding(pairingId) } }
+                }
+                whatsappOnboarding = null
+                showWhatsAppSetup = false
+            },
+        )
+    }
+
+    LaunchedEffect(whatsappOnboarding?.pairingId, whatsappOnboarding?.status) {
+        val pairingId = whatsappOnboarding?.pairingId ?: return@LaunchedEffect
+        while (true) {
+            val current = whatsappOnboarding ?: break
+            if (current.pairingId != pairingId || current.status in setOf("connected", "error", "expired", "cancelled")) break
+            delay(1_500)
+            withDashboardClient(clientFactory) { it.getWhatsAppOnboarding(pairingId) }
+                .onSuccess { whatsappOnboarding = it.toWhatsAppOnboarding(current.mode, current.allowedUsers) }
+                .onFailure { whatsappOnboarding = current.copy(status = "error", error = it.message) }
+        }
+    }
 }
 
 private data class ManageTileSpec(
@@ -1376,6 +1741,26 @@ private fun manageTileSpec(section: DashboardManagementSection): ManageTileSpec 
         icon = Icons.Filled.Person,
         title = stringResource(R.string.dashboard_tile_profiles_title),
         subtitle = stringResource(R.string.dashboard_tile_profiles_sub),
+    )
+    DashboardManagementSection.Memory -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = stringResource(R.string.dashboard_tile_memory_title),
+        subtitle = stringResource(R.string.dashboard_tile_memory_sub),
+    )
+    DashboardManagementSection.Learning -> ManageTileSpec(
+        icon = Icons.Filled.AutoAwesome,
+        title = stringResource(R.string.dashboard_tile_learning_title),
+        subtitle = stringResource(R.string.dashboard_tile_learning_sub),
+    )
+    DashboardManagementSection.Channels -> ManageTileSpec(
+        icon = Icons.Filled.Link,
+        title = stringResource(R.string.dashboard_tile_channels_title),
+        subtitle = stringResource(R.string.dashboard_tile_channels_sub),
+    )
+    DashboardManagementSection.Operations -> ManageTileSpec(
+        icon = Icons.Filled.Tune,
+        title = stringResource(R.string.dashboard_tile_operations_title),
+        subtitle = stringResource(R.string.dashboard_tile_operations_sub),
     )
     DashboardManagementSection.Skills -> ManageTileSpec(
         icon = Icons.Filled.AutoAwesome,
@@ -2205,6 +2590,10 @@ private fun LoadedBody(
     val actionLabelBrowseHub = stringResource(R.string.dashboard_section_action_browse_hub)
     val actionLabelUpdateInstalled = stringResource(R.string.dashboard_section_action_update_installed)
     val actionLabelAddEndpoint = stringResource(R.string.dashboard_custom_endpoint_add)
+    val actionLabelServerBackup = stringResource(R.string.dashboard_section_action_server_backup)
+    val actionLabelDownloadBackup = stringResource(R.string.dashboard_section_action_download_backup)
+    val actionLabelImportBackup = stringResource(R.string.dashboard_section_action_import_backup)
+    val actionLabelSetupWhatsApp = stringResource(R.string.dashboard_action_setup_whatsapp)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -2231,6 +2620,14 @@ private fun LoadedBody(
             )
             DashboardManagementSection.CustomEndpoints -> listOf(
                 DashboardSectionAction.AddCustomEndpoint to actionLabelAddEndpoint,
+            )
+            DashboardManagementSection.Operations -> listOf(
+                DashboardSectionAction.CreateServerBackup to actionLabelServerBackup,
+                DashboardSectionAction.DownloadServerBackup to actionLabelDownloadBackup,
+                DashboardSectionAction.ImportServerBackup to actionLabelImportBackup,
+            )
+            DashboardManagementSection.Channels -> listOf(
+                DashboardSectionAction.SetupWhatsApp to actionLabelSetupWhatsApp,
             )
             else -> emptyList()
         }
@@ -2326,6 +2723,14 @@ private fun dashboardActionLabel(kind: DashboardActionKind): String = when (kind
     DashboardActionKind.ValidateCustomEndpoint -> stringResource(R.string.dashboard_action_validate)
     DashboardActionKind.ActivateCustomEndpoint -> stringResource(R.string.dashboard_action_use)
     DashboardActionKind.DeleteCustomEndpoint -> stringResource(R.string.dashboard_action_delete)
+    DashboardActionKind.EditLearningNode -> stringResource(R.string.dashboard_action_edit)
+    DashboardActionKind.DeleteLearningNode -> stringResource(R.string.dashboard_action_delete)
+    DashboardActionKind.ConfigureMemoryProvider -> stringResource(R.string.dashboard_action_configure)
+    DashboardActionKind.ActivateMemoryProvider -> stringResource(R.string.dashboard_action_use)
+    DashboardActionKind.SetupWhatsApp -> stringResource(R.string.dashboard_action_setup)
+    DashboardActionKind.EnableChannel -> stringResource(R.string.dashboard_action_enable)
+    DashboardActionKind.DisableChannel -> stringResource(R.string.dashboard_action_disable)
+    DashboardActionKind.TestChannel -> stringResource(R.string.dashboard_action_test)
 }
 
 /**
@@ -2360,6 +2765,14 @@ private fun dashboardActionLabel(context: android.content.Context, kind: Dashboa
         DashboardActionKind.ValidateCustomEndpoint -> context.getString(R.string.dashboard_action_validate)
         DashboardActionKind.ActivateCustomEndpoint -> context.getString(R.string.dashboard_action_use)
         DashboardActionKind.DeleteCustomEndpoint -> context.getString(R.string.dashboard_action_delete)
+        DashboardActionKind.EditLearningNode -> context.getString(R.string.dashboard_action_edit)
+        DashboardActionKind.DeleteLearningNode -> context.getString(R.string.dashboard_action_delete)
+        DashboardActionKind.ConfigureMemoryProvider -> context.getString(R.string.dashboard_action_configure)
+        DashboardActionKind.ActivateMemoryProvider -> context.getString(R.string.dashboard_action_use)
+        DashboardActionKind.SetupWhatsApp -> context.getString(R.string.dashboard_action_setup)
+        DashboardActionKind.EnableChannel -> context.getString(R.string.dashboard_action_enable)
+        DashboardActionKind.DisableChannel -> context.getString(R.string.dashboard_action_disable)
+        DashboardActionKind.TestChannel -> context.getString(R.string.dashboard_action_test)
     }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -2833,7 +3246,7 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
         .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank) }
         .map { it.lowercase() }
         .toSet()
-    return providers.mapNotNull { element ->
+    val parsed = providers.mapNotNull { element ->
         val obj = element as? JsonObject ?: return@mapNotNull null
         val id = obj.stringField("slug")
             ?: obj.stringField("id")
@@ -2860,10 +3273,25 @@ internal fun parseModelOptions(root: JsonObject): List<ModelProviderOption> {
             // Absent hint field: a row with models is assumed usable; an empty
             // row can only be an unconfigured skeleton, so grey it.
             authenticated = obj.booleanField("authenticated") ?: models.isNotEmpty(),
-            models = models,
+            models = models.distinct(),
             setupHint = obj.stringField("warning"),
         )
-    }.sortedByDescending { it.authenticated }
+    }
+    val merged = linkedMapOf<String, ModelProviderOption>()
+    parsed.forEach { row ->
+        val identity = row.id.trim().lowercase()
+        val existing = merged[identity]
+        merged[identity] = if (existing == null) {
+            row.copy(id = row.id.trim())
+        } else {
+            existing.copy(
+                authenticated = existing.authenticated || row.authenticated,
+                models = (existing.models + row.models).distinct(),
+                setupHint = existing.setupHint ?: row.setupHint,
+            )
+        }
+    }
+    return merged.values.sortedByDescending { it.authenticated }
 }
 
 @Composable
@@ -3464,6 +3892,7 @@ private fun McpOAuthDialog(
 @Composable
 private fun CustomEndpointDialog(
     existing: DashboardSummaryItem?,
+    profile: String?,
     clientFactory: () -> DashboardApiClient,
     onSaved: () -> Unit,
     onDismiss: () -> Unit,
@@ -3571,7 +4000,9 @@ private fun CustomEndpointDialog(
                     onClick = {
                         busy = true
                         scope.launch {
-                            val result = withDashboardClient(clientFactory) { it.saveCustomEndpoint(draft()) }
+                            val result = withDashboardClient(clientFactory) {
+                                it.saveCustomEndpoint(draft(), profile = profile)
+                            }
                             result.fold(onSuccess = { onSaved() }, onFailure = {
                                 busy = false
                                 message = it.message ?: context.getString(R.string.dashboard_custom_endpoint_save_failed)
@@ -3681,10 +4112,64 @@ private fun summarize(
                     ?.map { (name, value) -> summarizeObjectItem(value, name) }
                 ?: listOf(summarizeObjectItem(root, "Profile"))
         }
+        DashboardManagementSection.Memory -> summarizeMemoryProviders(root)
+        DashboardManagementSection.Learning ->
+            root.arrayItems("nodes", "items")
+                ?.mapIndexed { index, item ->
+                    val summary = summarizeObjectItem(item, "Node ${index + 1}")
+                    summary.copy(
+                        actions = listOf(
+                            DashboardItemAction("Edit", DashboardActionKind.EditLearningNode),
+                            DashboardItemAction("Delete", DashboardActionKind.DeleteLearningNode, destructive = true),
+                        ),
+                    )
+                }
+                ?: summarizeKeyValueOrList(root, "Learning")
+        DashboardManagementSection.Channels ->
+            root.arrayItems("platforms", "channels", "items")
+                ?.mapIndexed { index, item ->
+                    val summary = summarizeObjectItem(item, "Channel ${index + 1}")
+                    val enabled = (item as? JsonObject)?.booleanField("enabled") == true
+                    summary.copy(actions = buildList {
+                        add(DashboardItemAction(if (enabled) "Disable" else "Enable", if (enabled) DashboardActionKind.DisableChannel else DashboardActionKind.EnableChannel))
+                        add(DashboardItemAction("Test", DashboardActionKind.TestChannel))
+                        if (summary.id.equals("whatsapp", ignoreCase = true)) {
+                            add(DashboardItemAction("Setup", DashboardActionKind.SetupWhatsApp))
+                        }
+                    })
+                }
+                ?: summarizeKeyValueOrList(root, "Channel")
+        DashboardManagementSection.Operations -> summarizeKeyValueOrList(root, "Status")
         DashboardManagementSection.Models -> summarizeKeyValueOrList(root, "Model")
         DashboardManagementSection.Keys -> summarizeEnvVars(root)
         DashboardManagementSection.Config -> summarizeKeyValueOrList(root, "Config")
     }
+}
+
+private fun summarizeMemoryProviders(root: JsonElement): List<DashboardSummaryItem> {
+    val obj = root as? JsonObject ?: return emptyList()
+    val active = obj.stringField("active").orEmpty()
+    return obj.arrayItems("providers").orEmpty().mapIndexed { index, provider ->
+        val summary = summarizeObjectItem(provider, "Provider ${index + 1}")
+        val providerObj = provider as? JsonObject
+        val available = providerObj?.booleanField("available") != false
+        val configured = providerObj?.booleanField("configured") == true ||
+            providerObj?.booleanField("ready") == true
+        summary.copy(
+            meta = listOfNotNull(
+                if (summary.id == active) "active" else null,
+                if (available) "available" else "setup required",
+                summary.meta,
+            ).joinToString(" · "),
+            actions = buildList {
+                add(DashboardItemAction("Configure", DashboardActionKind.ConfigureMemoryProvider))
+                if (summary.id != active && configured) {
+                    add(DashboardItemAction("Use", DashboardActionKind.ActivateMemoryProvider))
+                }
+            },
+        )
+    }
+
 }
 
 /**
@@ -3721,7 +4206,7 @@ private fun summarizeEnvVars(root: JsonElement): List<DashboardSummaryItem> {
     }.sortedWith(compareByDescending<DashboardSummaryItem> { it.meta?.startsWith("set") == true }.thenBy { it.title })
 }
 
-private fun summarizeObjectItem(
+internal fun summarizeObjectItem(
     element: JsonElement,
     fallbackTitle: String,
 ): DashboardSummaryItem {
@@ -3753,6 +4238,9 @@ private fun summarizeObjectItem(
         obj.booleanField("installed")?.let { if (it) "installed" else "not installed" },
         obj.booleanField("needs_install")?.let { if (it) "bootstrap install" else null },
         status,
+        obj.stringField("last_status")?.let { "last: $it" },
+        obj.stringField("last_error")?.let { "error: $it" },
+        obj.stringField("last_delivery_error")?.let { "delivery: $it" },
         obj.stringField("provider"),
         obj.stringField("transport"),
         obj.stringField("auth_type"),
@@ -3786,6 +4274,7 @@ internal fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
     val hasSkillUsage = obj["usage"] != null || obj.stringField("category") != null
     val enabled = obj.booleanField("enabled")
     val paused = obj.booleanField("paused")
+    val completedCron = obj.stringField("state").equals("completed", ignoreCase = true)
 
     return when {
         isCatalogEntry -> buildList {
@@ -3795,12 +4284,14 @@ internal fun dashboardActionsFor(obj: JsonObject): List<DashboardItemAction> {
         }
         hasSchedule -> buildList {
             add(DashboardItemAction("Runs", DashboardActionKind.ViewCronRuns))
-            if (paused == true) {
-                add(DashboardItemAction("Resume", DashboardActionKind.ResumeCron))
-            } else {
-                add(DashboardItemAction("Pause", DashboardActionKind.PauseCron))
+            if (!completedCron) {
+                if (paused == true) {
+                    add(DashboardItemAction("Resume", DashboardActionKind.ResumeCron))
+                } else {
+                    add(DashboardItemAction("Pause", DashboardActionKind.PauseCron))
+                }
+                add(DashboardItemAction("Run now", DashboardActionKind.TriggerCron))
             }
-            add(DashboardItemAction("Run now", DashboardActionKind.TriggerCron))
             add(DashboardItemAction("Delete", DashboardActionKind.DeleteCron, destructive = true))
         }
         hasTransport -> buildList {
@@ -3936,6 +4427,14 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
             from = DashboardActionKind.DisableMcp,
             to = DashboardItemAction("Enable", DashboardActionKind.EnableMcp),
         )
+        DashboardActionKind.EnableChannel -> withEnabledMeta(true).withActionSwap(
+            from = DashboardActionKind.EnableChannel,
+            to = DashboardItemAction("Disable", DashboardActionKind.DisableChannel),
+        )
+        DashboardActionKind.DisableChannel -> withEnabledMeta(false).withActionSwap(
+            from = DashboardActionKind.DisableChannel,
+            to = DashboardItemAction("Enable", DashboardActionKind.EnableChannel),
+        )
         DashboardActionKind.PauseCron -> withActionSwap(
             from = DashboardActionKind.PauseCron,
             to = DashboardItemAction("Resume", DashboardActionKind.ResumeCron),
@@ -3947,7 +4446,8 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.DeleteCron,
         DashboardActionKind.RemoveMcp,
         DashboardActionKind.DeleteProfile,
-        DashboardActionKind.DeleteCustomEndpoint -> null
+        DashboardActionKind.DeleteCustomEndpoint,
+        DashboardActionKind.DeleteLearningNode -> null
         DashboardActionKind.InstallMcpCatalog -> copy(
             meta = appendMeta(meta, "installed"),
             actions = emptyList(),
@@ -3966,7 +4466,12 @@ private fun DashboardSummaryItem.optimisticAfter(action: DashboardItemAction): D
         DashboardActionKind.RevealEnvKey,
         DashboardActionKind.EditProfileDescription,
         DashboardActionKind.SetProfileModel,
-        DashboardActionKind.EditProfileSoul -> this
+        DashboardActionKind.EditProfileSoul,
+        DashboardActionKind.EditLearningNode,
+        DashboardActionKind.ConfigureMemoryProvider,
+        DashboardActionKind.ActivateMemoryProvider,
+        DashboardActionKind.SetupWhatsApp,
+        DashboardActionKind.TestChannel -> this
         DashboardActionKind.EditCustomEndpoint,
         DashboardActionKind.ValidateCustomEndpoint,
         DashboardActionKind.ActivateCustomEndpoint -> this
@@ -4092,17 +4597,27 @@ private suspend fun DashboardApiClient.runDashboardAction(
         DashboardActionKind.ViewProfileSoul -> getProfileSoul(id)
         DashboardActionKind.ActivateProfile -> setActiveProfile(id)
         DashboardActionKind.DeleteProfile -> deleteProfile(id)
-        DashboardActionKind.ActivateCustomEndpoint -> activateCustomEndpoint(id)
+        DashboardActionKind.ActivateCustomEndpoint ->
+            activateCustomEndpoint(id, profile = item.profile)
         DashboardActionKind.DeleteCustomEndpoint ->
-            deleteCustomEndpoint(id).map { JsonObject(emptyMap()) }
+            deleteCustomEndpoint(id, profile = item.profile).map { JsonObject(emptyMap()) }
         DashboardActionKind.RevealEnvKey -> revealEnvVar(id)
         DashboardActionKind.ClearEnvKey -> deleteEnvVar(id)
+        DashboardActionKind.DeleteLearningNode -> deleteLearningNode(id, item.profile)
+        DashboardActionKind.ActivateMemoryProvider -> activateMemoryProvider(id, item.profile)
+        DashboardActionKind.EnableChannel -> setMessagingPlatformEnabled(id, true, item.profile)
+        DashboardActionKind.DisableChannel -> setMessagingPlatformEnabled(id, false, item.profile)
+        DashboardActionKind.TestChannel -> testMessagingPlatform(id, item.profile)
         // Input-backed kinds are intercepted at the onAction layer and routed
         // to dialogs; reaching here means a wiring bug, not a server problem.
         DashboardActionKind.SetEnvKey,
         DashboardActionKind.EditProfileDescription,
         DashboardActionKind.SetProfileModel,
         DashboardActionKind.EditProfileSoul ->
+            Result.failure(IllegalStateException("${action.label} requires input"))
+        DashboardActionKind.EditLearningNode,
+        DashboardActionKind.ConfigureMemoryProvider,
+        DashboardActionKind.SetupWhatsApp ->
             Result.failure(IllegalStateException("${action.label} requires input"))
         DashboardActionKind.EditCustomEndpoint,
         DashboardActionKind.ValidateCustomEndpoint ->
@@ -4165,3 +4680,192 @@ private fun compactJsonLines(root: JsonObject): String =
     root.entries.joinToString("\n") { (key, value) ->
         "$key: ${value.shortDisplay()}"
     }.ifBlank { "{ }" }
+
+private fun JsonObject.toWhatsAppOnboarding(mode: String, allowedUsers: String): WhatsAppOnboardingState =
+    WhatsAppOnboardingState(
+        pairingId = stringField("pairing_id").orEmpty(),
+        status = stringField("status").orEmpty(),
+        qrPayload = stringField("qr_payload"),
+        mode = stringField("mode") ?: mode,
+        allowedUsers = stringField("allowed_users") ?: allowedUsers,
+        error = stringField("error"),
+    )
+
+private fun memoryInitialValues(schema: JsonObject): String {
+    val direct = schema["values"] as? JsonObject
+    if (direct != null) return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), direct)
+    val fields = schema["fields"] as? JsonArray ?: return "{}"
+    val values = buildJsonObject {
+        fields.forEach { element ->
+            val field = element as? JsonObject ?: return@forEach
+            val key = field.stringField("key") ?: return@forEach
+            field["value"]?.let { put(key, it) }
+        }
+    }
+    return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), values)
+}
+
+@Composable
+private fun TextDocumentEditorDialog(
+    title: String,
+    initialContent: String,
+    warning: String,
+    saving: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var content by remember(initialContent) { mutableStateOf(initialContent) }
+    Dialog(onDismissRequest = { if (!saving) onDismiss() }) {
+        Card(modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp, max = 680.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    enabled = !saving,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.dashboard_cancel)) }
+                    Button(onClick = { onSave(content) }, enabled = !saving && content.isNotBlank()) {
+                        Text(stringResource(R.string.dashboard_save))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryProviderDialog(
+    editor: MemoryProviderEditorState,
+    saving: Boolean,
+    onSubmit: (String, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var values by remember(editor) { mutableStateOf(memoryInitialValues(editor.schema)) }
+    val fields = editor.schema["fields"] as? JsonArray
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(stringResource(R.string.dashboard_memory_config_title, editor.name)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.dashboard_memory_config_help), style = MaterialTheme.typography.bodySmall)
+                if (!fields.isNullOrEmpty()) {
+                    Text(fields.joinToString("\n") { field ->
+                        val obj = field as? JsonObject
+                        val key = obj?.stringField("key").orEmpty()
+                        val label = obj?.stringField("label") ?: key
+                        val required = if (obj?.booleanField("required") == true) " *" else ""
+                        "$label$required"
+                    }, style = MaterialTheme.typography.labelSmall)
+                }
+                OutlinedTextField(
+                    value = values,
+                    onValueChange = { values = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    enabled = !saving,
+                    label = { Text(stringResource(R.string.dashboard_memory_values_json)) },
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSubmit(values, false) }, enabled = !saving) { Text(stringResource(R.string.dashboard_save)) }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onSubmit(values, true) }, enabled = !saving) { Text(stringResource(R.string.dashboard_memory_run_setup)) }
+                TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.dashboard_cancel)) }
+            }
+        },
+    )
+}
+
+private fun qrBitmap(payload: String): Bitmap {
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, 640, 640)
+    val pixels = IntArray(matrix.width * matrix.height)
+    for (y in 0 until matrix.height) for (x in 0 until matrix.width) {
+        pixels[y * matrix.width + x] = if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+    }
+    return Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+}
+
+private data class DashboardImportMetadata(val name: String, val length: Long?)
+
+private fun dashboardImportMetadata(resolver: ContentResolver, uri: Uri): DashboardImportMetadata {
+    var name: String? = null
+    var length: Long? = null
+    resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
+        ?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (nameIndex >= 0 && !cursor.isNull(nameIndex)) name = cursor.getString(nameIndex)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) length = cursor.getLong(sizeIndex).takeIf { it >= 0 }
+            }
+        }
+    return DashboardImportMetadata(
+        name = name?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "hermes-backup.zip",
+        length = length,
+    )
+}
+
+@Composable
+private fun WhatsAppSetupDialog(
+    onboarding: WhatsAppOnboardingState?,
+    busy: Boolean,
+    onStart: (String, String) -> Unit,
+    onApply: (WhatsAppOnboardingState) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var mode by remember { mutableStateOf("bot") }
+    var allowedUsers by remember { mutableStateOf("") }
+    val qr = remember(onboarding?.qrPayload) {
+        onboarding?.qrPayload?.let { runCatching { qrBitmap(it) }.getOrNull() }
+    }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(stringResource(R.string.dashboard_whatsapp_title)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (onboarding == null) {
+                    Text(stringResource(R.string.dashboard_whatsapp_help), style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { mode = "bot" }) { Text(stringResource(R.string.dashboard_whatsapp_bot)) }
+                        OutlinedButton(onClick = { mode = "self-chat" }) { Text(stringResource(R.string.dashboard_whatsapp_self_chat)) }
+                    }
+                    OutlinedTextField(
+                        value = allowedUsers,
+                        onValueChange = { allowedUsers = it },
+                        label = { Text(stringResource(R.string.dashboard_whatsapp_allowed_users)) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Text(onboarding.status.replace('_', ' ').uppercase(), style = MaterialTheme.typography.labelMedium)
+                    qr?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.dashboard_whatsapp_qr), modifier = Modifier.size(280.dp)) }
+                    onboarding.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (onboarding.status !in setOf("connected", "error", "expired")) {
+                        Text(stringResource(R.string.dashboard_whatsapp_scan), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (onboarding == null) {
+                Button(onClick = { onStart(mode, allowedUsers) }, enabled = !busy) { Text(stringResource(R.string.dashboard_whatsapp_start)) }
+            } else if (onboarding.status == "connected") {
+                Button(onClick = { onApply(onboarding) }, enabled = !busy) { Text(stringResource(R.string.dashboard_whatsapp_apply)) }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.dashboard_cancel)) } },
+    )
+}

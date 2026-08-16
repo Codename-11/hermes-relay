@@ -11,6 +11,11 @@ from typing import Any, Protocol
 
 from ..auth import load_voice_lab_env_file
 from ..metrics import MetricsRecorder
+from ..transport import (
+    header_lines,
+    merge_transport_headers,
+    resolve_voice_transport_options,
+)
 from .base import (
     ProviderInfo,
     ProviderRunError,
@@ -86,7 +91,7 @@ class OpenAIRealtimeProvider(VoiceProvider):
     )
 
     def __init__(self, socket_factory: SocketFactory | None = None) -> None:
-        self._socket_factory = socket_factory or _create_websocket
+        self._socket_factory = socket_factory
 
     def run_text(
         self,
@@ -115,11 +120,12 @@ class OpenAIRealtimeProvider(VoiceProvider):
         safety_identifier = _option(options, "safety_identifier")
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
-        headers = [
-            f"Authorization: Bearer {api_key}",
-        ]
+        transport = resolve_voice_transport_options(options, base_url=url_base)
+        headers = {"Authorization": f"Bearer {api_key}"}
         if safety_identifier:
-            headers.append(f"OpenAI-Safety-Identifier: {safety_identifier}")
+            headers["OpenAI-Safety-Identifier"] = safety_identifier
+        headers = merge_transport_headers(headers, transport)
+        header_values = header_lines(headers)
 
         recorder.event(
             "request_started",
@@ -135,7 +141,15 @@ class OpenAIRealtimeProvider(VoiceProvider):
         audio_bytes = 0
         events_seen: list[str] = []
         try:
-            ws = self._socket_factory(url, headers, timeout)
+            if self._socket_factory is None:
+                ws = _create_websocket(
+                    url,
+                    header_values,
+                    timeout,
+                    sslopt=transport.websocket_sslopt,
+                )
+            else:
+                ws = self._socket_factory(url, header_values, timeout)
             recorder.event("websocket_connected", provider=self.info.id, model=model)
             _send_json(
                 ws,
@@ -236,7 +250,13 @@ class OpenAIRealtimeProvider(VoiceProvider):
         )
 
 
-def _create_websocket(url: str, headers: list[str], timeout: float) -> WebSocketLike:
+def _create_websocket(
+    url: str,
+    headers: list[str],
+    timeout: float,
+    *,
+    sslopt: dict[str, Any] | None = None,
+) -> WebSocketLike:
     try:
         import websocket  # type: ignore
     except ImportError as exc:
@@ -245,7 +265,10 @@ def _create_websocket(url: str, headers: list[str], timeout: float) -> WebSocket
             "`pip install websocket-client`"
         ) from exc
 
-    return websocket.create_connection(url, header=headers, timeout=timeout)
+    kwargs: dict[str, Any] = {"header": headers, "timeout": timeout}
+    if sslopt is not None:
+        kwargs["sslopt"] = sslopt
+    return websocket.create_connection(url, **kwargs)
 
 
 def _session_update(

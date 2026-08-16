@@ -17,7 +17,8 @@ import com.hermesandroid.relay.ui.components.BadgeState
  * underlying moment.
  *
  * Grace-window behavior: when the session is paired but the WSS is
- * currently [com.hermesandroid.relay.network.relay.ConnectionState.Disconnected],
+ * currently [com.hermesandroid.relay.network.relay.ConnectionState.Disconnected]
+ * or waiting in scheduled [com.hermesandroid.relay.network.relay.ConnectionState.Reconnecting] backoff,
  * the VM emits [Connecting] for a short grace window (see
  * `RELAY_RECONNECT_GRACE_MS` in [ConnectionViewModel]) and only promotes
  * to [Stale] if the WSS doesn't come up in time. This avoids the "flash
@@ -45,9 +46,9 @@ sealed interface RelayUiState {
     data object Connected : RelayUiState
 
     /**
-     * Either an in-flight [Connecting]/[com.hermesandroid.relay.network.relay.ConnectionState.Reconnecting]
-     * WSS attempt OR the grace window right after a Paired-but-Disconnected
-     * transition. UI renders this in amber — "we're trying, hold on."
+     * An in-flight [Connecting] WSS attempt, or the grace window right after a
+     * paired socket enters Disconnected/scheduled-Reconnecting state. UI renders
+     * this in amber only while a prompt recovery can still reasonably settle.
      */
     data object Connecting : RelayUiState
 
@@ -60,19 +61,18 @@ sealed interface RelayUiState {
     data object Stale : RelayUiState
 
     /**
-     * The relay rejected our session token (revoked, or wiped by a relay
-     * restart) — i.e. [com.hermesandroid.relay.auth.AuthState.Failed]. Unlike
-     * [Stale], reconnecting won't help: the fix is to pair again. Rendered red
-     * with a "tap to pair again" hint, and the row's tap opens the relay info /
-     * re-pair surface rather than firing another doomed reconnect. This is the
-     * highest-frequency real failure because the relay's session store is
-     * in-memory and wiped on every restart.
+     * The relay rejected our session token (for example, because it expired
+     * or was revoked) — i.e. [com.hermesandroid.relay.auth.AuthState.Failed]. Unlike
+     * [Stale], reconnecting won't help: the fix is to pair again. Rendered as
+     * "Needs re-pair" only on Relay status and Relay-only feature gates. Retained
+     * pairing metadata remains available so recovery can identify the prior
+     * session without presenting it as active.
      */
     data object Expired : RelayUiState
 
     /**
-     * No paired session (or auth failed). User action required — usually
-     * re-pair via the Connections sub-screen.
+     * Relay is configured but no usable connection is available. This is a
+     * neutral "Unavailable" state; only [Expired] directs the user to re-pair.
      */
     data object Disconnected : RelayUiState
 }
@@ -181,12 +181,12 @@ fun RelayRowState.asBadgeState(): BadgeState = phase.asBadgeState()
  * "Connected" word (Connection sub-screen).
  */
 fun RelayUiState.statusText(connectedLabel: String): String = when (this) {
-    RelayUiState.NotConfigured -> "Not configured"
+    RelayUiState.NotConfigured -> "Optional"
     RelayUiState.Connected -> connectedLabel
-    RelayUiState.Connecting -> "Reconnecting…"
-    RelayUiState.Stale -> "Relay unreachable - tap to reconnect"
-    RelayUiState.Expired -> "Pairing expired — tap to pair again"
-    RelayUiState.Disconnected -> "Disconnected"
+    RelayUiState.Connecting -> "Reconnecting"
+    RelayUiState.Stale -> "Unavailable"
+    RelayUiState.Expired -> "Needs re-pair"
+    RelayUiState.Disconnected -> "Unavailable"
 }
 
 /**
@@ -211,9 +211,9 @@ fun RelayRowState.statusText(connectedLabel: String): String {
     return when (phase) {
         RelayUiState.Connected -> "$base \u00B7 $display"
         RelayUiState.Connecting -> "$base \u00B7 $display"
-        RelayUiState.Stale -> "Unreachable \u00B7 $display - tap to reconnect"
+        RelayUiState.Stale -> "$base \u00B7 $display"
         RelayUiState.Expired -> base
-        RelayUiState.Disconnected -> "$base (last via $display)"
+        RelayUiState.Disconnected -> "$base \u00B7 $display"
         RelayUiState.NotConfigured -> base
     }
 }

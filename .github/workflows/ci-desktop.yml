@@ -100,13 +100,15 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            desktop/tray/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install deps
-        run: npm ci
+        run: npm ci && npm --prefix tray ci
 
       - name: Check tray formatting
         run: npm run tray:fmt

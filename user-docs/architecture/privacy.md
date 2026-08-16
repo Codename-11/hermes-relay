@@ -34,7 +34,12 @@ HTTPS is enforced for non-localhost remote connections. No background pings or D
 
 ## Optional local permissions
 
-The Google Play build can request camera for QR pairing, microphone for Voice mode, and Android Notification Access for the notification companion. Notification Access forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay only after you enable the system permission.
+The Google Play build can request camera for QR pairing, microphone for Voice
+mode or opt-in local “Hey Hermes” detection, and Android Notification Access for
+the notification companion. Pre-activation wake audio stays on the phone.
+Notification Access forwards posted-notification package, title, text, subtext,
+timestamp, and notification key to your paired relay only after you enable the
+system permission.
 
 ## Data export and reset
 

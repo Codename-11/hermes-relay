@@ -304,10 +304,8 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
             BitmapFactory.decodeByteArray(decoded.bytes, 0, decoded.bytes.size, bounds)
             val sample = inlineImageSampleSize(bounds.outWidth, bounds.outHeight)
                 ?: return@withInlineImageDecodeLock DataUrlImagePhase.Rejected
-            val bitmap = BitmapFactory.decodeByteArray(
+            val bitmap = decodeOrientedBitmap(
                 decoded.bytes,
-                0,
-                decoded.bytes.size,
                 BitmapFactory.Options().apply {
                     inSampleSize = sample
                     inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
@@ -482,7 +480,7 @@ private fun RelayServerImage(
                 is ServerImageResult.Success -> {
                     val bytes = result.bytes
                     val bmp = runCatching {
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        decodeOrientedBitmap(bytes)
                     }.getOrNull()?.asImageBitmap()
                     if (bmp != null) {
                         putInlineImage(image.src, bmp, result.sensitive)

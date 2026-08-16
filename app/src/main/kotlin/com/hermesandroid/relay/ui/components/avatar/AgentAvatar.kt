@@ -16,6 +16,23 @@ import com.hermesandroid.relay.ui.components.SphereState
 enum class AvatarSource { BUILT_IN, USER }
 
 /**
+ * Pet-only horizontal travel. This is deliberately separate from
+ * [SphereState]: `run`/`running` describes agent work, while these values
+ * describe the floating companion moving across the screen.
+ */
+enum class PetLocomotion {
+    None,
+    WalkLeft,
+    WalkRight,
+    RunLeft,
+    RunRight,
+    Jump,
+    Fall,
+    Held,
+    Wave,
+}
+
+/**
  * Per-frame reactive input bundle handed to [AgentAvatar.Render].
  *
  * Deliberately REUSES the sphere's existing vocabulary — the [SphereState] enum
@@ -28,6 +45,10 @@ enum class AvatarSource { BUILT_IN, USER }
  * @property toolCallBurst tool-call pulse spike, slow decay.
  * @property voiceAmplitude live mic/output amplitude (0..1) in voice mode.
  * @property voiceMode whether a voice session is active (expands/animates the avatar).
+ * @property petLocomotion optional pet-only manipulation/travel pose. The
+ *   floating host emits it under the explicit priority: user manipulation,
+ *   agent activity, response visit, roam, then idle. Direct manipulation stays
+ *   visible, while ambient travel never masks agent work.
  * @property paused render a single still frame instead of animating — the
  *   avatar-agnostic reduced-motion signal. The sphere honors it by pinning its
  *   time/color phase; a sprite "pet" (C3) honors it by freezing its clip. This
@@ -41,21 +62,14 @@ data class AvatarRenderState(
     val toolCallBurst: Float = 0f,
     val voiceAmplitude: Float = 0f,
     val voiceMode: Boolean = false,
+    val petLocomotion: PetLocomotion = PetLocomotion.None,
     val paused: Boolean = false,
 )
 
 /**
- * Swappable agent avatar — the visual embodiment of the agent across chat, the
- * clean text-flow mode, and the voice overlay.
- *
- * This is the seam that lets the rendering implementation change without
- * touching any surface: every surface composes `LocalAgentAvatar.current.Render(
- * AvatarRenderState(...), modifier)` and is blind to whether the avatar is the
- * ASCII [SphereAvatar] or a future sprite/Lottie "pet".
- *
- * Two-level model: **which avatar** (this interface) → for the sphere avatar,
- * **which skin** (the unchanged [com.hermesandroid.relay.ui.components.SphereSkin]
- * system, consumed internally by [SphereAvatar]).
+ * Shared reactive-rendering contract for the ambient Sphere and floating pets.
+ * Profile identity images use a separate UI path; implementing this interface
+ * does not make a visual the message sender's identity.
  *
  * Implementations are expected to be cheap, stable singletons (or `@Immutable`
  * data) so they sit safely in a [staticCompositionLocalOf].
@@ -90,18 +104,35 @@ interface AgentAvatar {
 }
 
 /**
- * The active agent avatar. Defaults to [SphereAvatar] so previews and any
- * composable outside the app root render the classic orb; `RelayApp` provides
- * the user's resolved choice beside the sphere-skin locals.
+ * Central/ambient visualization seam. The app provides the independently saved
+ * Sphere or pet-format background here; floating companions use [LocalFloatingPet].
  */
 val LocalAgentAvatar = staticCompositionLocalOf<AgentAvatar> { SphereAvatar }
 
 /**
- * Every selectable avatar (built-ins + any loaded user "pets"). Provided at the
- * app root for the Appearance picker. C2 ships only [SphereAvatar]; C3 appends
- * user pets.
+ * Compatibility list retained during the Sphere/pet split. New companion
+ * pickers should consume [LocalAvailablePets].
  */
 val LocalAvailableAvatars = staticCompositionLocalOf<List<AgentAvatar>> { listOf(SphereAvatar) }
+
+/**
+ * The optional floating pet companion. Unlike [LocalAgentAvatar], this does not
+ * replace the independently selected central/background visualization or the
+ * active profile's identity image. `null` means no companion is selected.
+ */
+val LocalFloatingPet = staticCompositionLocalOf<AgentAvatar?> { null }
+
+/** User-installed pets available to the companion picker (sphere excluded). */
+val LocalAvailablePets = staticCompositionLocalOf<List<AgentAvatar>> { emptyList() }
+
+/** Resolve a central visualization without ever coupling it to floating state. */
+internal fun resolveBackgroundAvatar(
+    selectedId: String,
+    availablePets: List<AgentAvatar>,
+): AgentAvatar = availablePets.firstOrNull { it.id == selectedId } ?: SphereAvatar
+
+/** Ambient sphere/background visibility, independent of the motion setting. */
+val LocalBackgroundVisualizationEnabled = staticCompositionLocalOf { true }
 
 /**
  * Global pet playback-speed multiplier (1.0 = the clip's authored fps), set in
@@ -118,3 +149,11 @@ val LocalPetPlaybackSpeed = staticCompositionLocalOf { 1f }
  * on; the sphere ignores it.
  */
 val LocalPetStabilize = staticCompositionLocalOf { true }
+
+/**
+ * Grounds decoded pet art on the bottom of its render canvas. The floating
+ * companion enables this at its host boundary so transparent atlas padding
+ * cannot make a supported pet appear to hover. Pickers, previews, and message
+ * avatars retain their centered rendering.
+ */
+val LocalPetGroundOpaqueBottom = staticCompositionLocalOf { false }

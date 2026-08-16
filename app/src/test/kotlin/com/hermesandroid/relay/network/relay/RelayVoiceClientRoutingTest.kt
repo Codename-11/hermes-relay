@@ -148,6 +148,28 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun realtimeAgentSessionSendsFinalAnswerOnlyPolicy() = runTest {
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+        )
+
+        val result = client.runRealtimeAgent(
+            prompt = "Check Hermes quietly",
+            inputPcm = ByteArray(0),
+            finalAnswerOnly = true,
+        ) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        val request = lanServer.takeRequest(2, TimeUnit.SECONDS)
+            ?: error("missing realtime session request")
+        val payload = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("true", payload["final_answer_only"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun voiceOutputSessionResponseParsesResumeMetadata() {
         val response = Json.decodeFromString(
             VoiceOutputSessionResponse.serializer(),
@@ -170,6 +192,40 @@ class RelayVoiceClientRoutingTest {
         assertEquals("voice-resume-token-1", response.resumeToken)
         assertTrue(response.resumeSupported)
         assertEquals(30000L, response.resumeTtlMs)
+    }
+
+    @Test
+    fun voiceOutputFailsFastWhenOpenedSocketProducesNoAudio() = runTest {
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/output/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "voice-output-stalled-test",
+                  "websocket_path": "/voice/output/session-test",
+                  "provider": "stub",
+                  "model": "local-tone",
+                  "voice": "sine",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            voiceOutputFirstAudioTimeoutMs = 25L,
+            webSocketFactory = { request, listener ->
+                ScriptedWebSocket(request, listener) { }
+                    .also { listener.onOpen(it, mockk(relaxed = true)) }
+            },
+        )
+
+        val result = client.runVoiceOutput("This renderer will stall") {}
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("produced no audio"))
     }
 
     @Test
@@ -2100,6 +2156,81 @@ class RelayVoiceClientRoutingTest {
                 it.contains("playback.drained") && it.contains(""""played_audio_event_id":4""")
             },
         )
+    }
+
+    @Test
+    fun persistentRealtimePromotionUsesSpokenHandoffAsForegroundBoundary() = runBlocking {
+        val opened = CountDownLatch(1)
+        val turns = Channel<RealtimeTurnInput>(Channel.UNLIMITED)
+        val turnCompletions = Channel<Unit>(Channel.UNLIMITED)
+        val followUpDelivered = CompletableDeferred<Result<Unit>>()
+        lateinit var socket: ScriptedWebSocket
+        lateinit var listener: WebSocketListener
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-agent-promotion-boundary-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            webSocketFactory = { request, callback ->
+                listener = callback
+                socket = ScriptedWebSocket(request, callback) { true }
+                callback.onOpen(socket, mockk(relaxed = true))
+                opened.countDown()
+                socket
+            },
+        )
+        val sessionJob = async(Dispatchers.IO) {
+            client.runRealtimeAgent(
+                prompt = "Start a long task",
+                inputPcm = ByteArray(0),
+                turnInputs = turns,
+                onTurnComplete = { turnCompletions.trySend(Unit) },
+            ) { _, _ -> }
+        }
+
+        try {
+            assertTrue(opened.await(2, TimeUnit.SECONDS))
+            listener.onMessage(
+                socket,
+                """{"type":"hermes.run.promoted","run_id":"run-silent","spoken_handoff":false}""",
+            )
+            withTimeout(2_000) { turnCompletions.receive() }
+
+            turns.send(
+                RealtimeTurnInput(
+                    inputPcm = ByteArray(6_400) { 4 },
+                    deliveryResult = followUpDelivered,
+                )
+            )
+            assertTrue(withTimeout(2_000) { followUpDelivered.await() }.isSuccess)
+
+            listener.onMessage(
+                socket,
+                """{"type":"hermes.run.promoted","run_id":"run-spoken","spoken_handoff":true}""",
+            )
+            delay(100)
+            assertTrue(turnCompletions.tryReceive().isFailure)
+
+            listener.onMessage(socket, """{"type":"voice.response.done"}""")
+            withTimeout(2_000) { turnCompletions.receive() }
+        } finally {
+            turns.close()
+            withTimeout(2_000) { sessionJob.await() }
+        }
     }
 
     private fun relayUrl(server: MockWebServer): String =

@@ -121,12 +121,15 @@ class OnboardingFlowTest {
     }
 
     @Test
-    fun connectPage_showsNearbyFirst() {
+    fun connectPage_recommendsGeneralSetupQr() {
         setOnboardingContent()
         navigateToPage(4)
 
         composeTestRule
-            .onNodeWithText("Enter address instead")
+            .onNodeWithText("Scan Hermes setup QR")
+            .assertIsDisplayed()
+        composeTestRule
+            .onNodeWithText("Recommended")
             .assertIsDisplayed()
     }
 
@@ -135,7 +138,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Enter address instead").performClick()
+        composeTestRule.onNodeWithText("Server or VPS").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -148,7 +151,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Enter address instead").performClick()
+        composeTestRule.onNodeWithText("Server or VPS").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -157,11 +160,27 @@ class OnboardingFlowTest {
     }
 
     @Test
+    fun cloudSetup_requestsTheHostedDashboardAddress() {
+        setOnboardingContent()
+        navigateToPage(4)
+
+        composeTestRule.onNodeWithText("Nous-hosted Hermes").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule
+            .onNodeWithText("Connect to Nous-hosted Hermes")
+            .assertIsDisplayed()
+        composeTestRule
+            .onNodeWithText("Use the complete HTTPS address shown for your hosted agent.")
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun connectPage_keepsPairingOptional() {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Other connection methods").performClick()
+        composeTestRule.onNodeWithText("Advanced").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule

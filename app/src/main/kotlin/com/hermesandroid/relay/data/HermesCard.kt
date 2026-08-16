@@ -2,6 +2,8 @@ package com.hermesandroid.relay.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /**
  * A rich content card emitted inline in an assistant message via the
@@ -117,6 +119,8 @@ data class HermesCardInput(
     val kind: String,
     /** Quick-answer chips (clarify). Empty = no chip row. */
     val choices: List<String> = emptyList(),
+    /** Choices toggle independently and require an explicit submit. */
+    val multiSelect: Boolean = false,
     /** Render the inline free-text mini field under the chips. */
     val allowFreeText: Boolean = false,
     /** Password-style field: masked glyphs + reveal toggle (secret/sudo). */
@@ -124,7 +128,7 @@ data class HermesCardInput(
     /** Submit is a 650ms hold-to-confirm press-fill instead of a tap (sudo). */
     val holdToConfirm: Boolean = false,
     /**
-     * Wall-clock expiry for timed asks (sudo 120s, clarify/secret 300s).
+     * Wall-clock expiry for asks with an advertised deadline.
      * The renderer shows a countdown footer (Amber under 30s) and
      * self-collapses to "Expired — not granted" past it. Null = no timeout
      * (approval is session-scoped).
@@ -154,6 +158,10 @@ data class HermesCardInput(
         const val CONFIRM_VALUE = "confirm"
     }
 }
+
+/** Exact JSON-array wire value expected by upstream multi-select clarify. */
+internal fun encodeClarifyMultiSelectAnswer(values: List<String>): String =
+    Json.encodeToString(values.map(String::trim).filter(String::isNotEmpty).distinct())
 
 /**
  * A label/value row inside a card. [value] is rendered as markdown so the

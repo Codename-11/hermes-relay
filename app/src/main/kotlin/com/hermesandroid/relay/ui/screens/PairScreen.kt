@@ -4,12 +4,15 @@ package com.hermesandroid.relay.ui.screens
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -17,9 +20,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -88,21 +96,47 @@ fun PairScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(innerPadding),
+            contentAlignment = Alignment.Center,
         ) {
-            ConnectionWizard(
-                connectionViewModel = connectionViewModel,
-                onComplete = {
-                    Toast.makeText(context, context.getString(R.string.pair_connection_updated), Toast.LENGTH_SHORT).show()
-                    onComplete()
-                },
-                onCancel = onCancel,
-                onManageSignIn = onManageSignIn,
-                showSkip = false,
-                autoStart = autoStart,
-                setupReady = setupReady,
-                onTryDemo = onTryDemo,
-            )
+            if (!setupReady) {
+                // Add connection navigates before its connection-scoped auth
+                // store is ready. Keep one stable surface on screen instead of
+                // composing a disabled wizard that is immediately invalidated
+                // by the placeholder switch's URL/auth/connection emissions.
+                Column(
+                    modifier = Modifier.semantics {
+                        liveRegion = LiveRegionMode.Polite
+                    },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator()
+                    Text(
+                        text = stringResource(R.string.cw_preparing_connection),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.cw_preparing_connection_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                ConnectionWizard(
+                    connectionViewModel = connectionViewModel,
+                    onComplete = {
+                        Toast.makeText(context, context.getString(R.string.pair_connection_updated), Toast.LENGTH_SHORT).show()
+                        onComplete()
+                    },
+                    onCancel = onCancel,
+                    onManageSignIn = onManageSignIn,
+                    showSkip = false,
+                    autoStart = autoStart,
+                    setupReady = true,
+                    onTryDemo = onTryDemo,
+                )
+            }
         }
     }
 }

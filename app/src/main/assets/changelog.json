@@ -1,29 +1,301 @@
 {
  "versions": [
   {
-   "version": "1.5.0",
-   "title": "Voice that keeps pace",
-   "date": "2026-07-22",
+   "version": "1.9.0",
+   "title": "Better sessions, reactions, and voice",
+   "date": "2026-08-14",
    "sections": [
     {
-     "header": "A clearer voice studio",
+     "header": "Sessions keep their identity",
      "bullets": [
-      "Standard and Realtime paths now organize provider, model, and voice choices in focused cards with upstream-aware discovery and descriptions.",
-      "Preview voices inline with loading feedback and a lighter waveform, then expand and scroll the voice browser without leaving the page."
+      "Browse one profile or all profiles, customize sorting and filters, and optionally group sessions by project, recency, status, or profile.",
+      "Cross-profile sessions hydrate, resume, and send with their owning agent without changing the global profile selection; New Chat in All Profiles uses the default profile."
      ]
     },
     {
-     "header": "Natural streaming speech",
+     "header": "Conversation controls stay attached",
      "bullets": [
-      "Standard Hermes replies begin speaking completed segments while the rest of the answer is still being generated.",
-      "Starting new audio stops the prior preview or reply, and leaving voice mode stops playback."
+      "Reactions pin to durable rows on both user and assistant messages.",
+      "Vanilla Hermes voice stays on the authenticated Gateway instead of requiring the optional API fallback."
      ]
     },
     {
-     "header": "More upstream-aware controls",
+     "header": "Context without clutter",
      "bullets": [
-      "Manage and diagnostics consume Gateway health and compatibility details while keeping Standard Hermes usable without Relay.",
-      "Chat now shows one-turn model choices, queued recovery, project labels, interim events, and image-generation progress."
+      "Session rows show profile, project, branch, and pull-request context when Hermes supplies it, while the default view remains ungrouped.",
+      "The session drawer restores secondary actions in All Profiles and closes when you tap outside it."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.8.1",
+   "title": "Complete, reliable transcripts",
+   "date": "2026-08-09",
+   "sections": [
+    {
+     "header": "Keep long sessions complete",
+     "bullets": [
+      "Android pages explicitly through complete API-server and profile-scoped Dashboard history instead of silently stopping at Hermes' latest-500 default.",
+      "Sharing, retry, edit, and recovery retain stable transcript anchors while bounded safety limits keep unusually large reads controlled."
+     ]
+    },
+    {
+     "header": "Follow Gateway truth",
+     "bullets": [
+      "Authoritative submit rejections preserve the server's message without an unintended SSE fallback.",
+      "Gateway event envelopes and edit-and-regenerate truncation confirmation now follow current upstream contracts."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.8.0",
+   "title": "Conversations with more context",
+   "date": "2026-08-09",
+   "sections": [
+    {
+     "header": "Keep the whole turn together",
+     "bullets": [
+      "Quote, edit, search, and attach or reorder files without losing the active connection, profile, or session.",
+      "Share text from another Android app into a fresh Chat draft for review before sending."
+     ]
+    },
+    {
+     "header": "See the work without the clutter",
+     "bullets": [
+      "Live thinking settles into a compact Thought disclosure, while routine tool activity groups into concise runs.",
+      "Approvals, failures, generated media, file changes, risks, and delegated work remain clearly distinct."
+     ]
+    },
+    {
+     "header": "Switch agents, not identities",
+     "bullets": [
+      "The Profile Shelf switches agents from Chat while restoring each profile's last session.",
+      "Agent Passport model and reasoning controls remain scoped to the active session instead of rewriting server defaults."
+     ]
+    },
+    {
+     "header": "Make it yours",
+     "bullets": [
+      "Preview theme accents and shapes, Sphere skins, and pets in one Appearance workflow.",
+      "Message speech controls, pet touch targets, scrolling terrain, image rotation, and edge-to-edge settings layout are more reliable."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.7.1",
+   "title": "Safer, steadier conversations",
+   "date": "2026-08-08",
+   "sections": [
+    {
+     "header": "Chat stays with you",
+     "bullets": [
+      "Growing streamed replies stay visible while you are at the bottom, and intentional scrollback remains undisturbed.",
+      "Completed replies render Markdown immediately while live tool details remain expandable."
+     ]
+    },
+    {
+     "header": "Sessions keep their ownership",
+     "bullets": [
+      "Queued follow-ups retain their originating connection, profile, session, route, attachments, and voice context.",
+      "Session pins and archives persist across restarts, and duplicate model rows are reconciled before rendering."
+     ]
+    },
+    {
+     "header": "Safer controls and setup",
+     "bullets": [
+      "Approval cards require an explicit labeled decision, and Agent Passport safety controls are easier to read and dismiss.",
+      "Hosted Hermes setup completes through the official Dashboard system-browser sign-in flow."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.7.0",
+   "title": "Smarter controls, steadier sessions",
+   "date": "2026-08-06",
+   "sections": [
+    {
+     "header": "Model controls fit the model",
+     "bullets": [
+      "Reasoning effort choices follow the selected provider and model when an exact supported list is available.",
+      "Unmodified Hermes and setups without the optional Relay capability overlay keep a fail-soft standard choice list."
+     ]
+    },
+    {
+     "header": "Active chats stay easy to follow",
+     "bullets": [
+      "The searchable session drawer shows which conversations are working or waiting for input.",
+      "Restored and completed chats remain bottom-pinned through late layout changes without overriding intentional scrollback.",
+      "Chat and Voice keep stable rows through recovery, and Focus Voice controls receive taps normally."
+     ]
+    },
+    {
+     "header": "Support stays private and useful",
+     "bullets": [
+      "Review locally redacted support information before choosing to copy, share, or open GitHub; nothing uploads automatically.",
+      "Connection diagnostics identify the failed operation and offer targeted guidance without exposing hosts or credentials."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.6.1",
+   "title": "Clearer recovery, steadier chat",
+   "date": "2026-08-03",
+   "sections": [
+    {
+     "header": "Relay stays optional",
+     "bullets": [
+      "Relay-only surfaces now use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states without nagging from background session refreshes.",
+      "Foreground recovery retries ordinary reconnect backoff immediately and explains whether Relay credentials are merely stored or actually need re-pairing."
+     ]
+    },
+    {
+     "header": "Sessions and chat stay stable",
+     "bullets": [
+      "The session drawer restores its 200-row window through upstream-compatible 100-row pages.",
+      "Selecting streamed text stays stable when a completed response changes to rendered Markdown."
+     ]
+    },
+    {
+     "header": "Voice controls stay reachable",
+     "bullets": [
+      "Manual recording waits for the previous microphone owner to release it and gives a useful recovery message if capture cannot start.",
+      "New-chat coaching yields while Voice owns the composer so it cannot cover the expanding Voice drawer."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.6.0",
+   "title": "Pets, plugins, and voice",
+   "date": "2026-08-02",
+   "sections": [
+    {
+     "header": "A companion with personality",
+     "bullets": [
+      "Browse and install Petdex companions, or import your own pet without replacing the agent avatar or background Sphere.",
+      "Drag a pet anywhere or let it roam across measured chat bubbles, settings cards, controls, and other safe UI ledges."
+     ]
+    },
+    {
+     "header": "Native plugin pages",
+     "bullets": [
+      "Installed Hermes plugins can contribute host-rendered native pages without loading executable plugin code on the phone.",
+      "Scoped writes stay off until granted, while Relay 1.5.0 adds approval-gated agent-created page previews."
+     ]
+    },
+    {
+     "header": "Hermes as your assistant",
+     "bullets": [
+      "Optionally select Hermes as Android’s Digital Assistant and use a local “Hey Hermes” listener for background or locked-screen sessions.",
+      "Compact assistant and floating Voice controls expand for detail and continue the same turn when full Voice opens."
+     ]
+    },
+    {
+     "header": "More reliable everywhere",
+     "bullets": [
+      "Voice output recovery, long recordings, route failover, streamed chat identity, and pet terrain recovery are more resilient.",
+      "Android now includes a complete AI-assisted Russian catalog refreshed for the 1.6 feature set."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.5.3",
+   "title": "Voice stays open",
+   "date": "2026-07-31",
+   "sections": [
+    {
+     "header": "Stable voice transcripts",
+     "bullets": [
+      "Voice Focus keeps stable transcript rows while live messages reconcile with persisted chat history, preventing duplicate-key crashes that could close the app."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.5.2",
+   "title": "Sign in without detours",
+   "date": "2026-07-28",
+   "sections": [
+    {
+     "header": "Provider-compatible sign-in",
+     "bullets": [
+      "Self-hosted OIDC returns through the dashboard callback, while Nous Portal opens securely in the system browser.",
+      "Private-LAN and Tailscale dashboard routes preserve the configured HTTPS callback and keep credentials scoped to the active connection."
+     ]
+    },
+    {
+     "header": "Stable conversation updates",
+     "bullets": [
+      "Replayed upstream chat events are coalesced before rendering so duplicate message identifiers do not destabilize the conversation list."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.5.1",
+   "title": "Voice and chat stay in place",
+   "date": "2026-07-26",
+   "sections": [
+    {
+     "header": "Voice at the right depth",
+     "bullets": [
+      "Use Voice Focus for a compact spoken-turn view or Conversation for the complete Chat renderer without leaving the active voice session.",
+      "Keep intermediate work visual while supported voice paths wait to speak the settled final response."
+     ]
+    },
+    {
+     "header": "Reliable narration and background work",
+     "bullets": [
+      "Standard Voice now speaks valid completed replies after generation hands off to narration.",
+      "Realtime background tasks release foreground voice controls while their progress and results remain reachable."
+     ]
+    },
+    {
+     "header": "Formatted answers stay readable",
+     "bullets": [
+      "Completed streams render headings, lists, emphasis, and code blocks without returning to the beginning of the answer.",
+      "Assistant text uses stronger theme contrast and a more comfortable chat reading scale."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.5.0",
+   "title": "Hermes, always in reach",
+   "date": "2026-07-25",
+   "sections": [
+    {
+     "header": "One secure Hermes connection",
+     "bullets": [
+      "Connect through secure Dashboard sign-in while Chat, sessions, Manage, and Standard Voice follow the same active route.",
+      "Switch profiles and control personality, model, reasoning, approvals, and processing speed from the new Agent Passport."
+     ]
+    },
+    {
+     "header": "Active work stays reachable",
+     "bullets": [
+      "Multiple user-started chats remain active in the background until every session settles.",
+      "Approval, question, elevated-permission, and secure-response alerts reopen the correct conversation."
+     ]
+    },
+    {
+     "header": "Richer chat and voice",
+     "bullets": [
+      "Attachments, image generation, model routing, recovery, advisor progress, and upstream events are clearer and more reliable.",
+      "Browse and preview Standard and Realtime voices, and hear Standard replies begin speaking as completed segments arrive."
+     ]
+    },
+    {
+     "header": "Setup without surprises",
+     "bullets": [
+      "Onboarding explains optional notification, camera, microphone, companion, and device permissions without blocking standard chat.",
+      "Tailscale, QR, and remote routes now move all Hermes surfaces together and recover the original session after connection loss."
      ]
     }
    ]

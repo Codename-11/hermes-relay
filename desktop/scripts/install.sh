@@ -90,11 +90,9 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 case "$os-$arch" in
   linux-x86_64)  asset="hermes-relay-linux-x64" ;;
-  linux-aarch64) asset="hermes-relay-linux-arm64" ;;
-  linux-arm64)   asset="hermes-relay-linux-arm64" ;;
   darwin-x86_64) asset="hermes-relay-darwin-x64" ;;
   darwin-arm64)  asset="hermes-relay-darwin-arm64" ;;
-  *) die "unsupported platform: $os/$arch (supported: linux-x64/arm64, darwin-x64/arm64)" ;;
+  *) die "unsupported platform: $os/$arch (published binaries: linux-x64, darwin-x64/arm64; Windows uses install.ps1)" ;;
 esac
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL

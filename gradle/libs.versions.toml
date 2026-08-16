@@ -1,7 +1,7 @@
 [versions]
-appVersionName = "1.5.0"
-appVersionCode = "33"
-agp = "9.3.0"
+appVersionName = "1.9.0"
+appVersionCode = "43"
+agp = "9.3.1"
 kotlin = "2.4.10"
 compose-bom = "2026.06.01"
 navigation-compose = "2.9.8"
@@ -15,19 +15,23 @@ security-crypto = "1.1.0"
 tink-android = "1.23.0"
 lifecycle = "2.11.0"
 activity-compose = "1.13.0"
-browser = "1.9.0"
+browser = "1.10.0"
 appcompat = "1.7.1"
 core-ktx = "1.19.0"
+exifinterface = "1.4.2"
 datastore = "1.2.1"
 splashscreen = "1.2.0"
 markdown-renderer = "0.43.0"
 coil = "3.5.0"
 haze = "1.7.2"
 mlkit-barcode = "17.3.0"
+zxing-core = "3.5.4"
 camera = "1.6.1"
 play-publisher = "4.0.0"
-media3 = "1.10.1"
+media3 = "1.11.0"
 androidVad = "2.0.10"
+sherpaOnnx = "v1.13.4"
+onnxRuntime = "1.28.0"
 spatialsdk = "0.13.2"
 play-app-update = "2.1.0"
 
@@ -60,6 +64,7 @@ appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "a
 
 # Core
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
+exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 
 # Networking
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
@@ -80,6 +85,7 @@ haze-materials = { group = "dev.chrisbanes.haze", name = "haze-materials", versi
 
 # ML Kit Barcode Scanning
 mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkit-barcode" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing-core" }
 
 # CameraX
 camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camera" }
@@ -105,6 +111,8 @@ meta-spatial-sdk-mruk = { group = "com.meta.spatial", name = "meta-spatial-sdk-m
 
 # android-vad (Silero) — on-device voice activity detection for barge-in (B2)
 android-vad-silero = { group = "com.github.gkonovalov.android-vad", name = "silero", version.ref = "androidVad" }
+sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxRuntime" }
 
 # Google Play In-App Update — googlePlay flavor ONLY (FLEXIBLE flow).
 # Sideload uses the GitHub releases UpdateChecker instead and must NOT pull

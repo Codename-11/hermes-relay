@@ -6,19 +6,328 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Added
-
-- **Android onboarding finishes with a permission setup step.** After connecting, users can enable background chat alerts with one deliberate Android prompt, review optional feature permissions individually, or continue immediately without granting phone access.
-- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; the image canvas replaces generic streaming progress and crossfades into the result within one stable assistant bubble. Native Gateway lifecycle events remain authoritative and Relay remains optional.
+## [0.4.0-beta.4] - 2026-08-15
 
 ### Fixed
 
-- **Background chats stay reachable without an always-on connection.** Android now protects user-started work until every concurrent Gateway session settles, shows active and waiting counts in its ongoing notification, and gives each privacy-safe interaction alert expanded session context plus a direct review, answer, or secure-response action.
-- **Android alerts when a background Gateway turn needs input.** Approval, clarification, elevated-permission, and secret requests post privacy-safe notifications that reopen the correct conversation, survive reconnect replay without duplicates, and clear when the request is answered or expires.
-- **Promoted voice tasks keep their Chat row through background delivery.** Completing the provider's initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running background task.
-- **Android accepts deliberately installed private certificate authorities.** Google Play and sideload builds now use Android's user CA store alongside system roots for self-hosted HTTPS/WSS connections while preserving certificate-chain, hostname, and Relay pin verification.
-- **Malformed code blocks no longer crash Android Markdown rendering.** Syntax highlighting now bounds dependency-provided spans before applying them, preserving valid highlighting while safely ignoring reversed or out-of-bounds ranges.
+- **The Windows management UI remains available while the daemon is stopped.** Missing, stale, malformed, or temporarily unavailable daemon status now resolves to an explicit stopped state instead of trapping the tray on its loading screen, so configuration, diagnostics, host management, and daemon controls remain accessible.
+
+## [1.9.0] - 2026-08-14
+
+### Added
+
+- **Android session browsing matches Hermes Desktop's recent organization model.** The primary session drawer can toggle between the active profile and all profiles, group by recency, project, status, or profile, order by supported session metrics, and narrow rows by status, project, profile, or pull-request state without collapsing duplicate IDs across profile stores. Named profiles receive stable identity-color badges with locally persisted color overrides.
+- **Android can edit current Hermes profiles through the standard Gateway.** The Profile Inspector capability-gates `profiles.describe` and `profiles.configure`, keeps Relay-only memory editing and older-Hermes fallback intact, and reports partial section saves without discarding failed drafts.
+- **Android sessions show their coding context when Hermes supplies it.** Session rows can display repository, Git branch, and the current state of the pull request created by that session while older hosts remain unchanged.
+- Android Manage can now finish host-owned backup workflows, edit or remove learning nodes with explicit recovery guidance, configure and activate memory providers, and complete profile-scoped WhatsApp QR onboarding through the authenticated upstream Dashboard contracts.
+
+### Fixed
+
+- **Android network clients shut down safely during route changes.** Replacing an authenticated Dashboard client now moves OkHttp connection-pool eviction off the main thread, preventing a live TLS socket close from crashing the app with `NetworkOnMainThreadException`. (#334)
+- **Android preserves authoritative Gateway outcomes.** Protected-file cards cannot offer forbidden persistent scopes, compression no-ops show the server result, bounded resume failures do not create context-free replacement sessions, and edit/regenerate retains durable row identities across consecutive rewinds.
+- **Android routes and uploads against live upstream truth.** Multiplex API fallback trusts `served_profiles` instead of installed profiles, and generic documents carry the Gateway-issued `@file:` reference into ordinary and queued prompts.
+- **Android clarify cards preserve upstream decision semantics.** Multi-select prompts keep independent selections and submit one exact list, while server expiry events—not an invented local deadline—retire unanswered cards.
+- **Android keeps profile management and retained automation truthful.** Custom Endpoint list and mutation routes now follow the selected Hermes profile, while completed one-shot cron jobs show their retained outcome and expose only valid Runs/Delete actions.
+- **Android and Relay recover more generated media reliably.** Android accepts upstream-valid wrapped, punctuated, adjacent, spaced, and Windows `MEDIA:` markers without consuming fenced examples, and Relay translates Docker-visible workspace, home, cache, and configured-mount paths before applying its existing credential, sandbox, and size checks.
+- **Android keeps cross-profile sessions with their owning agent.** Opening a session from All Profiles hydrates, resumes, sends, and renders with that session's profile without changing the global profile selection; New Chat from that view starts with the default profile.
+- **Android reactions and standard voice follow the active conversation.** Reactions resolve durable rows for both user and assistant messages, while Vanilla Hermes voice remains on the authenticated Gateway instead of requiring the optional API fallback.
+- **Android session navigation behaves predictably.** The drawer closes on outside taps, uses an ungrouped recent-session list by default, retains project grouping as an explicit option, and exposes secondary actions in All Profiles mode.
+
+## [0.4.0-beta.3] - 2026-08-14
+
+### Fixed
+
+- **Windows tray polling can no longer accumulate unbounded helper processes.** Grant discovery now uses lightweight local state, management refreshes are single-flight and visibility-aware, and child probes have hard timeouts, bounded output, tree cleanup, caching, and backoff. A dedicated bounded `tray.log` records sanitized operational failures without mixing them into daemon logs.
+- **Concurrent Desktop lifecycle requests cannot start duplicate daemons.** Cross-process lifecycle and runtime ownership locks serialize startup and recovery while preserving stale-owner cleanup.
+
+## [1.8.0] - 2026-08-14
+
+### Added
+
+- **Official Hermes Desktop can surface Relay through its supported runtime Plugin SDK.** The unified plugin package now includes an opt-in, profile-scoped Desktop pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management. Loading, startup, reconnects, profile changes, and updates never open it; only labeled sidebar, status-bar, or command-palette actions register and reveal the movable native pane.
+
+## [0.4.0-beta.2] - 2026-08-14
+
+### Added
+
+- **Desktop Activity now keeps inspectable local evidence.** Commands, files, devices, connection lifecycle, and computer control share a truthful event stepper with dedicated failure details; screenshot events can retain bounded local PNG evidence and open it in a larger borderless viewer. Settings controls retention as Off, 1 day, 7 days, or 30 days and shows local file usage.
+
+### Fixed
+
+- **Tunnel state stays responsive through interruption and retry.** The CLI UI distinguishes connected, reconnecting, and stopped states, exposes retry attempt/timing and a Retry now action, records connection failures and recovery in Activity, and shows compact connection cards only while the main UI is hidden.
+- **Windows CUA readiness no longer depends on the flaky whole-desktop health scan.** Hermes-Relay verifies the canonical runtime, manifest, required tools, daemon, and safe permission mode before starting structured sessions, while accessibility health remains an explicit CLI/UI diagnostic that can be rechecked without forcing the compatibility backend. This temporary workaround is scoped to the upstream fixed-timeout issue and keeps individual actions fail-closed.
+
+## [0.4.0-beta.1] - 2026-08-14
+
+### Added
+
+- **CUA Driver is the preferred Windows structured-control engine.** New local settings prefer a verified CUA runtime for window-targeted background actions, fresh snapshot tokens, and optional per-session animated agent cursors without moving the physical pointer; Windows Input is the explicit compatibility backend and backend choice is fixed for each control session. Full-display observation remains on the read-only system capture path. CLI and UI can explicitly install, check, or update the canonical CUA package after verifying the upstream release manifest and installer checksum; nothing is bundled or updated automatically, driver telemetry stays off for Hermes sessions, and activity records contain only bounded, redacted control metadata.
+
+### Fixed
+
+- **Windows bundle updates fail closed when installed processes retain a binary lock.** Setup waits for the invoking CLI, quiesces the tray and its short-lived CLI children, checks every payload extraction before writing release metadata, preserves custom install directories, and returns a failure instead of reporting a mixed-version installation.
+- **CUA readiness follows the published driver contract.** Hermes accepts the documented `ok` health state, distinguishes an installed-but-degraded runtime from a missing installation, and constructs trusted Windows installer paths consistently across verification environments.
+
+## [1.7.0] - 2026-08-13
+
+### Added
+
+- **Hermes Secure Link provides self-hosted pinned TLS ingress.** Relay, API, and Dashboard namespaces share one operator-owned TLS endpoint while retaining their native authentication boundaries, QR-carried certificate continuity, explicit rotation, and fail-closed route validation.
+- **Hermes Reach is available for explicit experimentation.** The optional self-hosted rendezvous broker carries opaque Secure Link TLS records over outbound-only connections with bounded multiplexing, hashed credentials, replay protection, persistence, revocation, and no access to Hermes payloads.
+- **Remote-access management exposes supported reachability clearly.** Dashboard status and pairing metadata distinguish Tailscale reachability, Secure Link transport protection, direct routes, and experimental Reach without presenting the broker as a replacement for authentication.
+
+### Changed
+
+- **Tailscale is the recommended remote route.** Pairing, Dashboard, documentation, and public site guidance present Tailscale as the easiest supported remote-access path; Reach remains disabled by default, advanced, and lower priority than supported routes.
+- **Relay voice custom transports follow upstream provider security options.** Relay-owned OpenAI/xAI realtime and TTS clients honor custom headers, custom CA bundles, standard CA environment precedence, and an explicitly warned development-only verification override.
+- **Voice Lab xAI sign-in uses device authorization.** The standalone login shows a verification URL and user code and polls for approval without requiring a loopback callback.
+
+### Fixed
+
+- **Phone delivery remains compatible with strict Hermes targets.** Version-tolerant parser and validator hooks retain older-host registration and exactly-once standalone delivery.
+- **Profile-owned Relay registrations stay isolated.** Current Hermes uses profile-scoped ownership and context-local profile homes while legacy hosts retain a guarded compatibility path.
+- **Phone is discoverable before its first historical session.** The Relay phone adapter publishes its configured home destination through Hermes' standard channel directory.
+
+## [0.4.0-alpha.8] - 2026-08-13
+
+### Added
+
+- **Windows management separates each Relay host from this PC.** Host detail owns identity, pairing, access, capabilities, authorized clients, re-pairing, and guarded removal; Settings owns local daemon lifecycle, startup, privilege, terminal, logs, diagnostics, updates, and Help & About.
+- **Desktop access uses clear host-scoped presets and capabilities.** Restricted, Ask Every Time, Standard, Full Access, and Custom remain explicit across commands, files, screen/input, USB, microphone, and camera controls.
+- **Activity drilldown preserves bounded execution evidence.** Overview shows the latest three events and detail views expose request, output, result, exit, duration, and truncation metadata without copying sensitive inputs.
+- **Connection presentation shows the live Agent-to-PC path.** Host selection, bidirectional packet motion, transition feedback, route details, and connection testing stay compact, responsive, and reduced-motion aware.
+
+### Changed
+
+- **Connect and disconnect remain responsive during daemon work.** Lifecycle calls and snapshot collection run outside the UI thread, transition status polls quickly without overlapping probes, and progress remains visible until authoritative daemon state arrives.
+- **Tailscale is recommended for remote access.** Secure Link and direct TLS routes remain supported, while Hermes Reach is visibly experimental and lower priority.
+
+### Fixed
+
+- **Connection tests classify legacy private routes correctly.** A saved generic role is inferred from its actual endpoint, so LAN and Tailscale routes no longer appear as Custom VPN; results include reachability, latency, security, endpoint, and route count.
+- **Ask-mode approval cards show the requested action.** A bounded preview appears in the compact card with full context and an Open in UI action.
+- **Mixed capability policies are labeled Custom.** Overview no longer claims a preset when individual capability controls differ.
+- **Tray placement follows the notification-area monitor and DPI.** Responsive popup geometry stays anchored above the tray icon across compact and high-DPI desktops.
+- **PowerShell success output is complete and self-describing.** Scalar, pipeline, JSON, native stdout/stderr, exit status, and truncation metadata survive the desktop RPC response.
+
+## [1.6.4] - 2026-08-12
+
+### Added
+
+- **Desktop tools support explicit host targeting.** Every client-routed desktop tool accepts a stable device ID or unambiguous computer name, and `/desktop/health` enumerates connected targets and their advertised tools.
+- **USB operations retain both routing scopes.** Raw USB and ADB tools use `device` to select the desktop PC, while ADB operations continue to use `serial` to select hardware attached to that PC.
+
+### Fixed
+
+- **Multiple desktop clients remain connected simultaneously.** The Relay no longer replaces the previous desktop when another heartbeat arrives; concurrent requests are bound to their selected WebSockets, responses from another PC are ignored, and an untargeted call fails closed when several desktops are online.
+- **Pairing another desktop preserves existing credentials.** Legacy placeholder device identifiers are treated as absent instead of shared ownership, preventing an unrelated PC from revoking the first desktop's session.
+
+## [1.6.3] - 2026-08-11
+
+### Fixed
+
+- **Relay diagnostics distinguish a prior clean stop from a crash.** Doctor and `/relay/info` expose only bounded clean, unclean, or unknown gateway-exit state with an optional suspected out-of-memory hint, without returning raw log evidence.
+- **Relay reconnects spread out after shared gateway restarts.** Ordinary exponential reconnect delays use full jitter while explicit reconnects and server-directed retry timing retain their exact behavior.
+
+## [0.4.0-alpha.7] - 2026-08-11
+
+### Fixed
+
+- **Installer lifecycle validation uses an isolated Windows PATH fixture.** Release smoke tests now verify add/remove cleanup against a fixed registry value and restore the runner's original value afterward, independently of the temporary profile used for session-preservation checks.
+
+## [0.4.0-alpha.6] - 2026-08-11
+
+### Fixed
+
+- **Installer cleanup validation compares the unexpanded Windows PATH.** Release smoke tests now read the raw user registry value, ensuring `%USERPROFILE%` entries are verified without temporary-profile expansion changing their apparent value.
+
+## [0.4.0-alpha.5] - 2026-08-11
+
+### Fixed
+
+- **Installer cleanup validation handles expandable Windows PATH entries.** Release smoke tests restore the original profile environment before comparing user PATH, avoiding false failures when unchanged `%USERPROFILE%` entries are expanded inside an isolated test profile.
+
+## [0.4.0-alpha.4] - 2026-08-11
+
+### Fixed
+
+- **Windows release validation waits for installer processes.** The packaged install/uninstall lifecycle smoke now captures GUI-subsystem process exit codes reliably before validating installed files, preserved sessions, registry state, and cleanup.
+
+## [0.4.0-alpha.3] - 2026-08-11
+
+### Added
+
+- **Windows tray provides focused remote-access management.** The compact host-aware popup covers connection state, per-host Ask/Trusted/Full Access, pending grant dialogs, authorized-client revocation, activity, daemon controls, and settings without adding chat, terminal, plugin, voice, or session surfaces.
+- **Desktop access policy is isolated per Hermes host.** `hermes-relay hosts` lists and selects local pairings and stores fail-closed access modes independently for each canonical relay URL.
+- **Windows CLI installations can add or open the management UI directly.** `hermes-relay ui install|open|status` and the installed UI shim provide a supported lifecycle for optional UI setup, discovery, and activation.
+
+### Changed
+
+- **Daemon connectivity no longer requires a tool grant.** Ask mode can keep an authenticated daemon connected with zero desktop tools attached; Trusted enables command/file tools with task-scoped screen/input grants, while Full Access removes those task prompts only for the selected host.
+- **Windows bundle updates preserve the desktop lifecycle.** The CLI and tray coordinate one verified installer launch, restore the daemon and UI after setup, and permit same-version UI add or repair without silently downgrading a newer CLI.
+
+### Fixed
+
+- **Background daemon start reports real readiness.** Detached startup now waits for the spawned process to authenticate and connect, and returns actionable log evidence for configuration, authentication, early-exit, and timeout failures.
+- **Local and release tray builds embed the packaged UI.** Development installs use Tauri's production protocol instead of attempting to load a missing localhost development server, and release CI exercises a silent install/uninstall lifecycle.
 - **Windows-trusted certificates work in the desktop CLI.** The packaged Windows binary and newer Node runtimes add the Windows certificate store without dropping bundled or operator-supplied roots, while TLS verification and Relay certificate pinning remain enforced.
+
+## [1.6.2] - 2026-08-11
+
+### Fixed
+
+- **Paired sessions use recognizable device identities.** Relay sessions preserve a client-provided hostname as the primary name, retain model and platform details, and enrich valid reconnects without requiring users to pair again.
+- **Long-lived session expiry is readable.** The Dashboard presents paired-session lifetime in days or weeks with the exact local deadline available in the detail view instead of accumulating hundreds of hours.
+
+## [Android 1.8.1] - 2026-08-09
+
+### Fixed
+
+- **Android preserves complete long-session transcripts.** API-server and profile-scoped Dashboard history reads now use explicit bounded pagination, retain compatibility with older unpaginated responses, and keep edit, retry, sharing, and recovery anchors stable beyond Hermes' latest-500 default window.
+- **Android follows authoritative Gateway turn contracts.** Submit rejections retain the server's message without silently falling through to SSE, event envelopes reconcile consistently, and edit-and-regenerate requests send the required truncation confirmation.
+
+## [Android 1.8.0] - 2026-08-09
+
+### Added
+
+- **Android chat keeps work in context and makes live turns easier to read.** Draft text, edits, quotes, and attachments stay with their connection, profile, and session; conversation search and prompt-turn navigation jump by stable message identity; message actions reveal smoothly on tap; quoted replies use linked previews without placing markup in the composer; assistant replies retain their compact high-contrast bubbles; and pending attachments support preview, removal, and accessible reordering.
+- **Android reasoning and tool activity use a quieter transcript.** Live thinking opens as an inline disclosure and settles to a collapsed Thought row, while consecutive routine reads, searches, commands, browser actions, and device actions share one live activity ticker or concise completed summary. Approvals, failures, generated media, file changes, output risks, and delegated work keep their own visible lifecycle surfaces even when ordinary tool progress is hidden.
+- **Android Profile Shelf makes agent switching immediate without mixing conversations.** The Chat header expands a compact, accessible shelf with ordered profile avatars, a subtle Server-default home badge on the resolved identity, last-session restoration, display hiding, lock controls, and one full switcher shared with Agent Passport.
+- **Android accepts shared text as a new Chat draft.** Hermes Relay now appears in the system sharesheet for text, opens the active profile in a fresh conversation, and fills the composer for review without sending automatically.
+
+### Changed
+
+- **Android appearance controls are more expressive and easier to preview.** Theme presets, accent and shape customization, imported Sphere skins, and custom pet creation share one live-preview workflow while preserving separate agent, background, and companion identities.
+
+### Fixed
+
+- **Android restores complete Gateway activity and makes settled replies speakable.** Successful Gateway turns reconcile structured persisted tool calls even when an upstream server omits live tool lifecycle events, and a configured voice can read a completed assistant reply from its message actions without requiring Voice Mode. While that narration is active, the same message actions expose Stop without cancelling an unrelated chat turn.
+- **Android chat matches standard keyboard, scrolling, and photo behavior.** Sentence capitalization is enabled, physical Enter can send or insert a newline according to a device-level setting, Ctrl/Command+Enter always submits, directional keys stay with the text caret, expanded thinking and tool content retains bottom-follow until the user scrolls away, and portrait attachments honor their EXIF orientation in previews and message viewers.
+- **Android distinguishes live-turn corrections from queued follow-ups.** The composer names its current action with visible text and accessible state, successful gateway redirects show a correction lifecycle marker, and attachment-bearing follow-ups always enter the session-owned queue because the upstream redirect operation is text-only.
+- **Android visibly explains quiet startup work without an empty chat bubble.** The full-size thinking animation now sits directly in the conversation lane with a stable reviewable status until the first answer text arrives, while recovery keeps its explicit reconnecting state.
+- **Android keeps pets and screen chrome inside safe interaction bounds.** Floating companions avoid agent identity rows and controls during scrolling, remain touchable for their menu, and settings headers respect edge-to-edge system insets.
+
+## [Android 1.7.1] - 2026-08-08
+
+### Fixed
+
+- **Android chat follows a growing live reply.** Bottom-owned conversations now observe each replacement of the streaming message list, keeping newly added lines visible while preserving the reader's position after a manual scroll away.
+- **Hosted Hermes onboarding completes through the official Dashboard sign-in path.** Android recognizes hosted account addresses, uses the system-browser native PKCE flow, and resumes the verified Dashboard session after its loopback callback.
+- **Live Android tool cards remain expandable while a run is active.** Streaming Gateway updates preserve stable card identity and merge tool arguments and result previews into the existing row, so details can be opened before the session finishes.
+- **Completed Android replies format Markdown immediately.** Live assistant text keeps its stable plain renderer only while incomplete, then the same owned row transitions to rich code blocks, lists, emphasis, and links without leaving or reopening the session.
+- **Android approval cards require an explicit labeled decision.** Reading or scrolling a guarded command, navigating away, backgrounding, recomposition, later turn activity, and card dismissal cannot submit or locally resolve it; pending requests remain bound to their owning profile and session until an explicit response or authoritative upstream expiry.
+- **Android Agent Passport controls are readable and easy to dismiss.** Safety and speed choices use full-width accessible targets with plain-language selected-state explanations, while a persistent close action and boundary-aware downward swipe make the sheet reliably dismissible without stealing nested content scrolling.
+- **Android queued messages stay with their originating chat.** Follow-ups now retain their exact connection, profile, session, run, route, attachments, and voice context across concurrent Gateway session switches instead of following whichever session is visible when a run finishes.
+- **Android model pickers reject duplicate catalog identities before rendering.** Repeated provider/model rows from cached or refreshed inventories are merged at the provider boundary, while identical model IDs under different providers remain distinct choices with provider-aware reasoning capabilities.
+- **Android session pins and archives survive app restarts.** The session drawer now reads and updates the owning Hermes profile's durable session metadata, rolls failed changes back, and makes unpinned stars clearly distinct in light theme.
+
+## [1.6.1] - 2026-08-08
+
+### Fixed
+
+- **The Dashboard plugin hands hosted Hermes connections to Android reliably.** Mobile setup exposes the canonical Dashboard address and keeps dialog focus handling contained, so system-browser authentication can return to the correct connection without disrupting the Dashboard.
+
+## [Android 1.7.0] - 2026-08-06
+
+### Added
+
+- **Android exposes provider-aware reasoning controls.** The effort drawer consumes exact upstream or optional Relay capability metadata for each provider/model identity, while unmodified or older Hermes installations retain a fail-soft standard fallback including `max` and `ultra`.
+- **Android support information is local, redacted, and reviewable.** Fatal crashes and handled failures share a bounded on-device record, Diagnostics can copy or share the exact reviewed text, and nothing is uploaded automatically.
+
+### Fixed
+
+- **Android chat chrome follows its active interaction state.** Opening the session drawer dismisses the composer keyboard, refreshed sessions keep their newest row visible, and floating pets wait for measured chat terrain, sit flush on supported rails, and treat the complete scroll-to-bottom control as forbidden space.
+- **Android pets and optional model discovery initialize quietly.** Floating companions wait for a measured overlay before taking their home position, and background API model-inventory failures retain actionable local diagnostics without interrupting chat with a generic notice.
+- **Android chat and Voice stay precisely bottom-pinned through replies, restores, and layout changes.** The active tail keeps its stable live renderer until another row takes ownership, restored sessions follow late composer and message measurement without overriding a reader, and bottom-owned transcripts settle to the exact list boundary after replies and keyboard animations instead of leaving a small hidden remainder.
+- **Android Focus voice controls remain responsive.** The modal click-through guard now sits behind the voice UI instead of consuming pointer events from the mic, close, expansion, and panel controls.
+- **Android diagnostics explain what failed and what to try next.** Relay, route, WebSocket, and API checks distinguish the saved route from the redacted request they actually attempted, name the operation, and provide targeted guidance for connection, DNS, timeout, TLS, authentication, rate-limit, and server failures.
+- **Android chat and Voice keep one render identity through recovery.** Checkpoint restore, streamed callbacks, server-ID adoption, and replay now resolve the same owned transcript row before publication, preventing recurring Compose duplicate-key crashes.
+- **Android crash reports retain actionable release context.** Reports identify the Android surface, avoid exposing hosts and credentials, migrate earlier local crash records, and release automation retains exact Play and sideload R8 mappings for retrace.
+
+## [1.6.0] - 2026-08-06
+
+### Added
+
+- **Relay supplies exact provider/model reasoning capabilities when providers expose them.** The bounded, profile-aware overlay resolves dynamic catalogs for OpenAI Codex, Copilot, LM Studio, and Ollama Cloud, keeps provider credentials on the host, and leaves unknown or unavailable catalogs on the advisory fallback.
+
+## [Android 1.6.1] - 2026-08-03
+
+### Fixed
+
+- **Voice capture waits for the microphone to be released.** Manual recording no longer races barge-in teardown, and AudioRecord startup failures now explain how to free or permit the microphone before retrying.
+- **Android text selection stays stable as streamed replies finish.** Chat resets an active selection when live text becomes rich Markdown, preventing selection-handle drags from retaining removed text nodes.
+- **Android session history follows the upstream page-size contract.** The drawer keeps its 200-session window through bounded 100-row requests, avoiding HTTP 422 errors from current dashboard servers while preserving active-profile isolation.
+- **Android no longer mistakes optional-surface auth failures for expired Relay pairing.** Background session refreshes stay out of the global snackbar, Dashboard and API authorization errors name their owning credential, and Relay-only surfaces use consistent Optional, Ready, Reconnecting, Unavailable, and Needs re-pair states. Foreground recovery retries ordinary Relay backoff immediately while preserving server rate limits, and recovery prioritizes Dashboard or host session management while retained credentials are labeled as stored details instead of active pairing.
+- **Voice controls no longer collide with new-chat coaching.** The clean-view hint yields while Voice owns the composer so it cannot cover the expanding Voice drawer.
+
+## [1.5.1] - 2026-08-03
+
+### Fixed
+
+- **Re-pairing repairs one device instead of accumulating duplicate sessions.** An explicit host-approved pair replaces older sessions and refresh credentials for the same device, while the Dashboard and `/relay revoke <token-prefix>` remain available for operator cleanup.
+
+## [Android 1.6.0] - 2026-08-02
+
+### Added
+
+- **Hermes can be selected as Android’s default Digital Assistant.** The opt-in system role supports background and locked-screen invocation, while the separate experimental “Hey Hermes” listener keeps pre-activation audio on the phone and exposes an ongoing Stop control.
+- **Installed Hermes plugins can contribute native Android pages.** Android renders a bounded declarative schema instead of plugin code, keeps write access off until the user grants it, and supports approval-gated agent-created previews through Relay 1.5.0.
+- **Pets can stay with you across the Android app without replacing the agent.** Petdex and imported companions live in an app-level overlay, can be held and dragged, and optionally roam across live-measured chat and settings surfaces without reserving message space. (#267)
+- **Petdex browsing and one-tap installation are built into Appearance.** Search results use lightweight previews, full atlases download only after Install, creator attribution remains visible, and installed pets stay available offline. (#267)
+- **Android can be used in Russian.** Both product flavors include an AI-assisted Russian catalog, language picker support, localized plurals, and refreshed translations for the 1.6 feature set.
+
+### Changed
+
+- **Assistant and floating Voice surfaces use compact, expandable controls.** Opening full Voice continues the same turn and microphone owner instead of restarting the session.
+- **Voice interruption covers generation and playback.** Barge-in follows upstream RMS calibration and timing, exact stop phrases can end an active voice chat, and interrupted spoken context remains private to the next Standard turn.
+- **Profile identity, the Sphere, and pets are separate appearance choices.** Agent avatars identify messages, background visualization controls ambient art, and Floating pet controls the companion independently. (#267)
+- **The Agent Passport exposes more profile state and safer controls.** Profile configuration, skills, routing, reasoning, and scoped API access remain visibly distinct from the active session identity.
+
+### Fixed
+
+- **Voice output recovers when a streaming renderer produces no audio.** Android falls back to basic synthesis after a bounded first-audio timeout, and long Standard Voice uploads no longer retain duplicate encoded audio buffers.
+- **Relay route failover avoids competing reconnect loops.** Route changes settle through one generation-aware reconnect owner instead of rapidly switching between LAN and remote candidates.
+- **Live chat rows keep stable UI identity while upstream state reconciles.** Streamed messages and process rows no longer collide or restart merely because a server identity arrives later.
+- **Floating pets recover from invalid or scrolling terrain.** Roaming uses measured bubble edges, avoids the jump-to-latest control and text overlap, resumes after drag or scrolling, and preserves locomotion, held, drop, and fallback animation states.
+- **Hermes appears and activates in OEM Android assistant pickers.** Required Assist, Voice, recognition-service, and single-microphone lifecycle metadata now agree.
+- **Experimental wake detection handles completed sherpa results and empty speech cleanly.** Tests use the real local microphone/model path, and no-speech activation returns to ready state instead of surfacing a fatal server error.
+
+## [Android 1.5.3] - 2026-07-31
+
+### Fixed
+
+- **Voice transcripts retain stable rows after chat-history reconciliation.** Focus mode uses the same stable Compose identity as the main conversation, preventing duplicate-key crashes when live rows adopt persisted server IDs.
+
+## [1.5.0] - 2026-08-02
+
+### Added
+
+- **Realtime Agent sessions can speak only settled answers.** Clients may enable an optional per-session `final_answer_only` policy that suppresses routine acknowledgements, progress narration, and intermediate commentary while preserving spoken approvals, confirmation questions, blocking failures, and the final Hermes answer.
+- **Agents can draft native Android plugin pages through Relay.** New tools store bounded declarative JSON pages under the authenticated Relay plugin namespace, while Android retains control of enablement, publication, write grants, and persistent removal. Generated pages cannot include executable code, arbitrary network calls, Android intents, or backend action requests.
+## [Android 1.5.2] - 2026-07-28
+
+### Fixed
+
+- **Dashboard sign-in completes across supported providers and network routes.** Self-hosted OIDC stays on the dashboard cookie flow, while Nous Portal opens in the system browser and completes standards-compatible PKCE through HTTPS, private-LAN, or Tailscale dashboard routes.
+- **Replayed chat updates no longer destabilize the conversation list.** Duplicate upstream message identifiers are coalesced before Compose renders them.
+
+## [Android 1.5.1] - 2026-07-26
+
+### Added
+
+- **Voice supports focused and conversational layouts.** Focus keeps spoken turns, Markdown, tools, media, and actions in a compact voice surface, while Conversation opens the full Chat renderer without leaving the active voice session.
+- **Voice can speak only settled answers.** A global Voice setting keeps tool progress, service updates, and intermediate commentary visual while supported voice paths wait to speak the final Hermes answer.
+
+### Changed
+
+- **Chat answers are easier to read in every theme.** Primary assistant text now uses the theme's full-contrast foreground, and chat prose uses a 15sp size with 21sp line height.
+- **Google Play builds target Android 16.** The app now targets API level 36 while retaining its existing minimum-device support.
+
+### Fixed
+
+- **Completed streamed answers render their formatting without losing the reading position.** Markdown headings, lists, emphasis, and code blocks replace the live text renderer only after completion, then the measured trailing edge remains anchored at the bottom.
+- **Standard Voice speaks completed assistant replies again.** Session and message fences no longer suppress a valid final answer during the handoff from generation to narration.
+- **Realtime background work no longer blocks the active voice controls.** A promoted task releases the foreground spinner and microphone while its progress, tools, cancellation, and final result remain available in the owning chat.
 
 ## [Server 1.4.3] - 2026-07-22
 
@@ -32,14 +341,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Plugin bootstrap work no longer blocks the Gateway event loop.** Database initialization and compatibility-state inspection run off the async request path while preserving older upstream bootstrap behavior.
 - **Starting Relay no longer terminates a running Hermes gateway on Windows.** Profile discovery now checks gateway PIDs through non-signalling process APIs, including during periodic rescans.
 
-## [Android 1.5.0] - 2026-07-22
+## [Android 1.5.0] - 2026-07-25
 
 ### Added
 
 - **Voice settings are organized around Standard and Realtime paths.** Provider, model, and voice choices use a cleaner card layout with upstream-aware discovery, useful descriptions, inline previews, waveform feedback, loading skeletons, and an expandable scrolling voice browser.
 - **Standard Hermes speech streams while replies are generated.** Android plays completed speech segments as they arrive, interrupts prior playback before starting another preview or reply, and stops audio when leaving voice mode.
 - **Manage and diagnostics expose more upstream Gateway controls.** Android consumes health hints, follows canonical redirects, compresses larger RPC payloads, scopes diagnostics by profile, and surfaces compatibility information without requiring Relay-only behavior.
-- **Chat shows richer upstream state.** One-turn model selection, queued-recovery and project labels, interim Gateway events, and a theme-aware image-generation animation make active work easier to follow.
+- **Chat shows richer upstream state and media.** One-turn model selection, approval policies, advisor progress, queued-recovery and project labels, collapsible attachments, persisted images, interim Gateway events, and a theme-aware image-generation animation make active work easier to follow.
+- **The Agent Passport makes the active agent controllable.** The chat drawer now combines live connection and session context with profile switching, personality, model, reasoning, approval, and speed controls in one focused surface.
+- **Android onboarding finishes with a permission setup step.** After connecting, users can enable background chat alerts with one deliberate Android prompt, review optional feature permissions individually, or continue immediately without granting phone access.
+- **Image generation stays visible when upstream tool progress is hidden.** A paired Relay can expose read-only image-tool activity from Hermes session state so Android shows and completes its existing generation animation during Standard Gateway turns; native Gateway lifecycle events remain authoritative and Relay remains optional.
+- **Background work stays actionable.** User-started turns remain protected until every active session settles, while privacy-safe notifications reopen the correct conversation for approvals, questions, elevated permissions, and secure responses.
 
 ### Fixed
 
@@ -48,6 +361,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Relay pairing preserves Tailscale and other fallback routes.** Adding Relay to an existing Standard connection now keeps every signed QR route, restores older per-device endpoints hidden by the connection upgrade, and gives remote Dashboard routes their API fallback. When a host-scoped Dashboard sign-in is still required, Chat shows the route-specific sign-in action instead of loading indefinitely.
 - **Remote routes move every Hermes surface together.** Android uses `GET /health` instead of misclassifying the API server's `405 Method Not Allowed` response to `HEAD`, and the selected Tailscale route now carries Dashboard/Gateway, sessions, Manage, and Standard Voice with API and Relay instead of leaving them pinned to the saved LAN host. Manage also distinguishes host-side Nous provider authentication from Dashboard sign-in.
 - **Hosted Manage and direct-chat compatibility stay bounded and secure.** OAuth state remains tied to the selected dashboard, inline image memory is capped, and session reset and queued-recovery boundaries follow upstream contracts.
+- **Dashboard sign-in is secure and route-aware.** Browser-based authorization is scoped and serialized to the selected host, while cold start no longer activates a temporary localhost API fallback or reports a missing key before stored connection state is ready.
+- **Background and promoted voice work retain their owning chat rows.** Completing an initial spoken handoff no longer removes an otherwise empty assistant bubble that still owns a running task, and concurrent turns remain reachable without requiring an always-on idle connection.
+- **Self-hosted rendering is safer.** Android accepts deliberately installed user certificate authorities without bypassing chain, hostname, or Relay-pin verification, and malformed syntax-highlighting ranges no longer crash Markdown rendering.
+- **Developer Options reflect current product behavior.** The obsolete Relay feature toggle is removed, version-tap unlock and explicit relock persist correctly, and backup, import, reset, and completion messages now report their actual results.
 
 ## [1.4.9] - 2026-07-19
 
@@ -375,7 +692,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Spoken-turn badges (chat).** Voice-mode replies now carry a "Voice" chip and realtime replies a "Realtime Agent" chip — both with a speaker glyph — so spoken turns are distinguishable from typed ones in the scrollback.
 - **App themes.** A new theme picker in Settings → Appearance ships eight looks: the signature Hermes Relay brand (with full light/dark) plus ports of the Nous Hermes baselines — Hermes Teal, Nous Blue (light), Midnight, Ember, Mono, Cyberpunk, and Rosé. The whole app — brand chrome, accents, and chat background — follows the chosen theme. Light/Dark/Auto applies to themes that ship both modes; fixed-mode themes show their own complete look.
 - **Hot-swappable agent sphere.** The orb is now a pluggable "skin": an Adaptive skin that recolors to match your theme, built-in Classic / Aurora / Solar / Mono looks, and support for **user-authored skins** loaded from a small JSON spec. Each skin declares which live signals it reacts to (voice, tool bursts, activity), shown as capability badges in the picker. See `docs/sphere-spec.md`.
-- **Connections separate features from routes (Android).** Connection settings now distinguish what a connection can *do* (a **Features** section) from how this phone *reaches* Hermes (a **Route** section), so you can enable Relay features over whichever transport you prefer. A plugin-provided **Secure proxy** route is surfaced alongside LAN, Tailscale, public, and custom routes. The standard direct-to-upstream path is unchanged and still needs no plugin. See `docs/plans/2026-06-18-native-secure-routes.md`.
+- **Connections separate features from routes (Android).** Connection settings now distinguish what a connection can *do* (a **Features** section) from how this phone *reaches* Hermes (a **Route** section), so you can enable Relay features over whichever transport you prefer. The optional plugin-provided **Hermes Secure Link** route is surfaced alongside LAN, Tailscale, public, and custom routes. The standard direct-to-upstream path is unchanged and still needs no plugin. See `docs/plans/2026-06-18-native-secure-routes.md`.
 - **Enhanced voice control (Gemini & xAI).** When the relay uses a Gemini or xAI voice provider, Voice Settings can now steer it: pick a Gemini voice and model and turn on expressive tone tags (with optional natural-language voice direction), or set an xAI voice with expressive speech tags. Expressive tags also apply to xAI on the streaming voice-output renderer. Standard (no-plugin) voice stays configured server-side.
 - **Voice render-path visibility.** Voice Settings shows which path is rendering speech (streaming vs. basic), and Diagnostics records it each session, making voice issues easier to troubleshoot.
 - **Agent pets — a living, swappable avatar.** The orb can be replaced with an animated "pet" that reacts to what the agent is doing: idle / thinking / writing / speaking / listening states, a distinct **working** pose during tool calls, one-shot **greet** / **celebrate** reactions, and a loop that quickens as output streams. Add or remove pets right in Settings → Appearance (no `adb` needed), with a live state preview, a playback-speed slider, and optional frame auto-stabilization; capability badges (Voice · Tools · Activity) show honestly what each pet actually reacts to. Pets are pure data — an AI authoring kit and a JSON schema let you generate one from sprite art. See `docs/pet-spec.md` and the custom-avatars guide.

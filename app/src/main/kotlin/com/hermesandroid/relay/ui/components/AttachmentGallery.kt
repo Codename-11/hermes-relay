@@ -332,7 +332,7 @@ private fun decodeGalleryBitmap(bytes: ByteArray): android.graphics.Bitmap? {
         sample *= 2
     }
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    return decodeOrientedBitmap(bytes, options)
 }
 
 private const val GALLERY_COLUMNS = 2

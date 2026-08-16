@@ -22,6 +22,7 @@ class GatewayEventMapperTest {
         val reconciledInterims = mutableListOf<String>()
         val thinkingDeltas = mutableListOf<String>()
         val toolStarts = mutableListOf<Pair<String, String>>()
+        val toolStartArgs = mutableListOf<Pair<String, String?>>()
         val toolDones = mutableListOf<Pair<String, String?>>()
         val toolFails = mutableListOf<Pair<String, String?>>()
         val toolOutputRisks = mutableListOf<GatewayToolOutputRisk>()
@@ -30,7 +31,6 @@ class GatewayEventMapperTest {
         val moaReferences = mutableListOf<GatewayMoaReference>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
-        val interactionResolutions = mutableListOf<GatewayAskExpiry>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
         val statusClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
@@ -49,7 +49,10 @@ class GatewayEventMapperTest {
             onInterimMessage = { text, alreadyStreamed -> interimMessages += text to alreadyStreamed },
             onInterimReconciled = { text -> reconciledInterims += text },
             onThinkingDelta = { thinkingDeltas += it },
-            onToolCallStart = { id, name -> toolStarts += id to name },
+            onToolCallStart = { id, name, args ->
+                toolStarts += id to name
+                toolStartArgs += id to args
+            },
             onToolCallDone = { id, preview -> toolDones += id to preview },
             onToolCallFailed = { id, err -> toolFails += id to err },
             onToolOutputRisk = { toolOutputRisks += it },
@@ -63,7 +66,6 @@ class GatewayEventMapperTest {
             onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
-            onInteractionResolved = { interactionResolutions += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
             onStatusClear = { statusClears += it },
         )
@@ -451,6 +453,54 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `tool cards retain live arguments and results for expansion`() {
+        val verbose = Recorder()
+        val verboseMapper = mapperWith(verbose)
+        verboseMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t1","name":"terminal","context":"echo fallback","args_text":"{\"command\":\"echo live\"}"}"""),
+        )
+        verboseMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t1","name":"terminal","summary":"finished","result_text":"live output"}"""),
+        )
+
+        assertEquals(listOf("t1" to "{\"command\":\"echo live\"}"), verbose.toolStartArgs)
+        assertEquals(listOf("t1" to "live output"), verbose.toolDones)
+
+        val standard = Recorder()
+        val standardMapper = mapperWith(standard)
+        standardMapper.onEvent(
+            "tool.start",
+            obj("""{"tool_id":"t2","name":"skill","context":"review repository"}"""),
+        )
+        standardMapper.onEvent(
+            "tool.complete",
+            obj("""{"tool_id":"t2","name":"skill","summary":"completed skill"}"""),
+        )
+
+        assertEquals(listOf("t2" to "review repository"), standard.toolStartArgs)
+        assertEquals(listOf("t2" to "completed skill"), standard.toolDones)
+    }
+
+    @Test
+    fun `structured tool arguments win over legacy previews`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent(
+            "tool.start",
+            obj(
+                """{"tool_id":"t3","name":"terminal","args":{"command":"echo live","timeout":30},"args_text":"stale","context":"older"}""",
+            ),
+        )
+
+        assertEquals(
+            listOf("t3" to "{\"command\":\"echo live\",\"timeout\":30}"),
+            recorder.toolStartArgs,
+        )
+    }
+
+    @Test
     fun `tool complete with error routes to failed`() {
         val r = Recorder()
         val mapper = mapperWith(r)
@@ -541,7 +591,7 @@ class GatewayEventMapperTest {
     fun `subagent lifecycle maps phases and fields`() {
         val r = Recorder()
         val mapper = mapperWith(r)
-        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3}"""))
+        mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17"}"""))
         mapper.onEvent("subagent.thinking", obj("""{"goal":"research topic","task_index":1,"task_count":3,"text":"hmm"}"""))
         mapper.onEvent(
             "subagent.tool",
@@ -567,6 +617,7 @@ class GatewayEventMapperTest {
         assertEquals(1, start.taskIndex)
         assertEquals(3, start.taskCount)
         assertEquals("research topic", start.goal)
+        assertEquals("child-17", start.subagentId)
         assertEquals("hmm", r.subagentEvents[1].preview)
         val tool = r.subagentEvents[2]
         assertEquals("web_search", tool.toolName)
@@ -664,8 +715,44 @@ class GatewayEventMapperTest {
         assertEquals("r1", ask.requestId)
         assertEquals("Which file?", ask.text)
         assertEquals(listOf("a.txt", "b.txt"), ask.choices)
+        assertFalse(ask.multiSelect)
         assertNull(ask.envVar)
-        assertEquals(300, ask.timeoutSeconds)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify request carries multi select only with bounded usable choices`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "clarify.request",
+            obj(
+                """{"request_id":"r1","question":"Where?","multi_select":true,"choices":""" +
+                    """[" dev ","prod","dev","","stage","canary","extra"]}""",
+            ),
+        )
+
+        val ask = r.interactions.single()
+        assertTrue(ask.multiSelect)
+        assertEquals(listOf("dev", "prod", "stage", "canary"), ask.choices)
+        assertEquals(0, ask.timeoutSeconds)
+    }
+
+    @Test
+    fun `clarify ignores malformed multi select and consumes additive timeout metadata`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r1","multi_select":true,"choices":null,"timeout_seconds":42}"""),
+        )
+        mapper.onEvent(
+            "clarify.request",
+            obj("""{"request_id":"r2","multi_select":false,"choices":["a"]}"""),
+        )
+
+        assertFalse(r.interactions[0].multiSelect)
+        assertEquals(42, r.interactions[0].timeoutSeconds)
+        assertFalse(r.interactions[1].multiSelect)
     }
 
     @Test
@@ -705,6 +792,32 @@ class GatewayEventMapperTest {
         val ask = r.interactions.single()
         assertEquals(listOf("once", "session", "always", "deny"), ask.choices)
         assertTrue(ask.smartDenied)
+    }
+
+    @Test
+    fun `approval request removes explicitly forbidden persistent scopes`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"<write to AGENTS.md>","choices":["once","session","always","deny"],"allow_session":false,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "deny"), r.interactions.single().choices)
+    }
+
+    @Test
+    fun `approval request retains session while permanent scope is forbidden`() {
+        val r = Recorder()
+        mapperWith(r).onEvent(
+            "approval.request",
+            obj(
+                """{"command":"guarded command","choices":["once","session","always","deny"],"allow_session":true,"allow_permanent":false}""",
+            ),
+        )
+
+        assertEquals(listOf("once", "session", "deny"), r.interactions.single().choices)
     }
 
     @Test
@@ -796,7 +909,7 @@ class GatewayEventMapperTest {
     }
 
     @Test
-    fun `replayed request is deduplicated and resumed turn resolves it`() {
+    fun `duplicate request and later turn activity keep decision pending`() {
         val r = Recorder()
         val mapper = mapperWith(r)
         val request = obj("""{"request_id":"r1","question":"Choose","choices":["A","B"]}""")
@@ -804,12 +917,17 @@ class GatewayEventMapperTest {
         mapper.onEvent("clarify.request", request)
         mapper.onEvent("clarify.request", request)
         mapper.onEvent("message.delta", obj("""{"text":"Continuing"}"""))
+        mapper.onEvent("tool.complete", obj("""{"tool_id":"other","name":"read_file"}"""))
+        mapper.onEvent("message.complete", obj("""{"text":"Continuing"}"""))
 
         assertEquals(1, r.interactions.size)
-        assertEquals(
-            GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"),
-            r.interactionResolutions.single(),
-        )
+        assertEquals(r.interactions.single(), mapper.currentInteraction)
+        assertFalse(mapper.turnEnded)
+
+        mapper.onEvent("clarify.expire", obj("""{"request_id":"r1"}"""))
+        assertNull(mapper.currentInteraction)
+        assertEquals(GatewayAskExpiry(GatewayAsk.Kind.CLARIFY, "r1"), r.interactionExpiries.single())
+        assertTrue(mapper.turnEnded)
     }
 
     @Test

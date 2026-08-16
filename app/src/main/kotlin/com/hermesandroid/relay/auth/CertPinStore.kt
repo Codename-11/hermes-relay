@@ -90,10 +90,26 @@ class CertPinStore(private val context: Context) {
         if (pins.isEmpty()) return CertificatePinner.DEFAULT
         val builder = CertificatePinner.Builder()
         for ((hostPort, pin) in pins) {
-            val host = hostPort.substringBefore(':')
+            val host = hostPort.substringBeforeLast(':')
             builder.add(host, pin)
         }
         return builder.build()
+    }
+
+    /**
+     * Build a pinner for one exact URL authority. CertificatePinner keys by
+     * hostname only, so adding every stored host:port entry to one client
+     * accidentally lets a pin learned on one port govern another port.
+     */
+    fun buildPinnerSnapshotFor(url: String): CertificatePinner {
+        val hostPort = hostPortFromUrl(url) ?: return CertificatePinner.DEFAULT
+        val pin = getPinsBlocking()[hostPort] ?: return CertificatePinner.DEFAULT
+        val host = runCatching { URI(url.trim()).host }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: return CertificatePinner.DEFAULT
+        return CertificatePinner.Builder()
+            .add(host, pin)
+            .build()
     }
 
     /**

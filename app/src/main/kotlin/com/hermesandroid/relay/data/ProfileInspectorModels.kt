@@ -136,3 +136,91 @@ data class ProfileMemoryUpdateResponse(
     @SerialName("bytes_written")
     val bytesWritten: Long,
 )
+
+/** Authoritative upstream `profiles.describe` snapshot. */
+data class GatewayProfileDescription(
+    val name: String,
+    val description: String,
+    val soul: String,
+    val provider: String,
+    val model: String,
+    val skills: List<GatewayProfileSkill>,
+    val toolsets: List<GatewayProfileToolset>,
+    val toolsetsPinned: Boolean,
+)
+
+data class GatewayProfileSkill(val name: String, val enabled: Boolean)
+
+data class GatewayProfileToolset(
+    val name: String,
+    val description: String,
+    val toolCount: Int,
+    val enabled: Boolean,
+)
+
+enum class GatewayProfileSection(val wireName: String) {
+    Description("description"),
+    Soul("soul"),
+    Model("model"),
+    Skills("skills"),
+    Toolsets("toolsets"),
+}
+
+/** Null leaves a section unchanged; empty lists retain upstream replace semantics. */
+data class GatewayProfilePatch(
+    val description: String? = null,
+    val soul: String? = null,
+    val provider: String? = null,
+    val model: String? = null,
+    val disabledSkills: List<String>? = null,
+    val enabledToolsets: List<String>? = null,
+) {
+    val requestedSections: Set<GatewayProfileSection>
+        get() = buildSet {
+            if (description != null) add(GatewayProfileSection.Description)
+            if (soul != null) add(GatewayProfileSection.Soul)
+            if (provider != null && model != null) add(GatewayProfileSection.Model)
+            if (disabledSkills != null) add(GatewayProfileSection.Skills)
+            if (enabledToolsets != null) add(GatewayProfileSection.Toolsets)
+        }
+}
+
+data class GatewayProfileConfigureResult(
+    val requested: Set<GatewayProfileSection>,
+    val applied: Set<GatewayProfileSection>,
+) {
+    val failed: Set<GatewayProfileSection> get() = requested - applied
+}
+
+interface GatewayProfileEditorClient {
+    suspend fun describeProfile(profileName: String): Result<GatewayProfileDescription>
+    suspend fun configureProfile(
+        profileName: String,
+        patch: GatewayProfilePatch,
+    ): Result<GatewayProfileConfigureResult>
+}
+
+class GatewayProfileEditorUnsupportedException : Exception(
+    "Profile editing is not supported by this gateway",
+)
+
+/** Relay fallback retained for older gateways and Relay-only memory files. */
+interface LegacyProfileInspectorClient {
+    suspend fun fetchConfig(profileName: String): Result<ProfileConfigResponse>
+    suspend fun fetchSkills(profileName: String): Result<ProfileSkillsResponse>
+    suspend fun fetchSoul(profileName: String): Result<ProfileSoulResponse>
+    suspend fun fetchMemory(profileName: String): Result<ProfileMemoryResponse>
+    suspend fun updateSoul(profileName: String, content: String): Result<ProfileSoulUpdateResponse>
+    suspend fun updateMemoryEntry(
+        profileName: String,
+        filename: String,
+        content: String,
+    ): Result<ProfileMemoryUpdateResponse>
+    suspend fun updateSkillToggle(skillName: String, enabled: Boolean): Result<RelaySkillToggleResult>
+    suspend fun probeSkillToggleSupported(): Boolean
+}
+
+sealed interface RelaySkillToggleResult {
+    data object Ok : RelaySkillToggleResult
+    data object NotImplemented : RelaySkillToggleResult
+}

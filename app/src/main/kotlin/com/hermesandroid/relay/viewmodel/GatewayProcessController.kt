@@ -209,7 +209,12 @@ internal class GatewayProcessController(
     }
 
     private fun applySnapshot(incoming: List<GatewayProcess>) {
-        val incomingById = incoming.associateBy(GatewayProcess::id)
+        // process.list is authoritative by process id. A replayed row must not
+        // reach the two keyed LazyColumn sections twice; retain its first list
+        // position while adopting the latest snapshot of its state.
+        val incomingById = LinkedHashMap<String, GatewayProcess>(incoming.size)
+        incoming.forEach { process -> incomingById[process.id] = process }
+        val coalesced = incomingById.values.toList()
 
         // A server can eventually reuse a process id. Never let a local
         // dismissal hide the new command instance.
@@ -217,7 +222,7 @@ internal class GatewayProcessController(
             val next = incomingById[id]
             next == null || next.identity() != dismissedIdentity
         }
-        allProcesses = incoming
+        allProcesses = coalesced
         publishVisibleSnapshot()
         updatePoller()
     }

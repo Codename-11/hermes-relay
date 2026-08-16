@@ -36,42 +36,139 @@ Or run with the platform-appropriate full path:
 
 If Command Prompt says `'\"C:\Users\...\hermes-relay.exe\"' is not recognized`, the quotes were copied with a literal apostrophe/backslash wrapper. Use the exact `cmd.exe` form above.
 
-## The tray icon is running but no desktop window opens
+## Clicking the tray icon does not open the management UI
 
-That is expected. The Windows systray is deliberately menu-only. Find **Hermes Relay** in the notification area (including the hidden-icons chevron) and right-click it. Interactive actions open the real CLI in a terminal; there is no dashboard or WebView window.
+Find **Hermes-Relay CLI UI** in the notification area, including the hidden-icons chevron, and left-click it. The compact popup should open directly above the taskbar icon. It is intentionally a focused management surface rather than a full chat or terminal application.
 
-If the icon is absent, launch **Hermes Relay Systray** from the Start menu. Check `~/.hermes/tray.log` for startup errors and confirm only one copy is running:
+If the icon is absent, run `hermes-relay ui` or launch **Hermes-Relay CLI UI** from the Start menu. Check `~/.hermes/tray.log` for startup errors, inspect the installation, and confirm only one copy is running:
 
 ```powershell
 Get-Process hermes-relay-tray -ErrorAction SilentlyContinue
+hermes-relay ui status
 ```
+
+For a CLI-only installation, add the UI with `hermes-relay ui install`.
+
+## Many `Bun` or `hermes-relay.exe` processes / Windows error `0xc0000142`
+
+Quit **Hermes-Relay CLI UI** first, then open a fresh PowerShell and stop the
+normal background daemon:
+
+```powershell
+hermes-relay daemon stop
+```
+
+If the CLI cannot start, identify Hermes-Relay-owned processes by their exact
+installed executable path. Review the rows before stopping anything:
+
+```powershell
+$relayBin = [IO.Path]::GetFullPath("$env:USERPROFILE\.hermes\bin\")
+$relayProcesses = Get-CimInstance Win32_Process | Where-Object {
+  $_.ExecutablePath -and
+  [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($relayBin, [StringComparison]::OrdinalIgnoreCase) -and
+  $_.Name -in @('hermes-relay.exe', 'hermes-relay-tray.exe')
+}
+$relayProcesses | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine
+
+# Run only after confirming every row belongs to the installed Hermes-Relay bundle:
+$relayProcesses | ForEach-Object { Stop-Process -Id $_.ProcessId }
+```
+
+Do not stop every process named `Bun`. Bun is a shared runtime name, so a broad
+name-based cleanup can terminate unrelated development tools. Do not broadly
+terminate `adb.exe` or `reg.exe` either; exit the tray and let its owned probes
+end, then target only processes whose executable path and command line you have
+reviewed.
+
+The affected tray build refreshed its complete management snapshot from a
+hidden grant window every second. Each refresh launched several short-lived CLI,
+registry, and ADB probes. A slow or stuck probe allowed refreshes to overlap,
+building an unbounded process queue until Windows began rejecting new process
+initialization. Updated builds coalesce refreshes, use a lightweight local grant
+read, cache static probes, and apply child timeouts and retry backoff.
+
+After cleanup, inspect these separate logs:
+
+- `~/.hermes/tray.log` — tray snapshot, subprocess timeout, launch, exit, and
+  panic failures.
+- `~/.hermes/daemon.log` — the one long-running daemon's authentication,
+  transport, reconnect, and desktop-tool router lifecycle.
+
+If unrelated Windows programs still fail with `0xc0000142`, restart Windows
+before relaunching the tray. A process storm and memory exhaustion can explain
+the application failures, but a Windows stop or reboot cannot be attributed to
+this defect conclusively without the corresponding Windows crash dump.
 
 ## The daemon is User but I need Administrator access
 
-Normal-user operation is the safe default. Right-click the tray and choose **Start daemon as Administrator…** or **Restart daemon as Administrator…**, then approve the Windows UAC prompt. The tray remains a normal user process; only the daemon and its approved tool/input actions are elevated.
+Normal-user operation is the safe default. Open UI Settings and choose **Restart as Administrator...**, then approve the Windows UAC prompt. The UI remains a normal user process; only the daemon and its approved tool/input actions are elevated.
 
 Use `hermes-relay daemon status` or the tray status row to confirm the privilege. Elevation is never automatic and is not required for ordinary user files/apps.
 
-## Desktop use is enabled but the daemon still advertises 23 tools
+When elevated access is no longer needed, choose **Return to user mode**. The tray stops the elevated daemon once and starts a normal daemon; it does not retain elevation as a startup preference.
+
+## I need the CLI, logs, or a diagnostic report
+
+Open UI Settings and use **Open terminal** for a normal command prompt with `hermes-relay` available, or **Open Hermes CLI** to start the paired Hermes TUI directly. **View daemon log** opens `~/.hermes/daemon.log`; tray startup and child-process failures are recorded separately in `~/.hermes/tray.log`. **Run diagnostics** uses the CLI diagnostic path so the UI and `hermes-relay doctor` report the same local install state.
+
+The **Help & About** page links to the [desktop documentation](https://hermes-relay.dev/docs/desktop/), [troubleshooting guide](https://hermes-relay.dev/docs/desktop/troubleshooting/), and [release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) in your default browser and also provides the log and diagnostic shortcuts.
+
+## Changing host access did not change the daemon's tools
 
 The persistent preference is read when the daemon starts. Check the state and restart requirement:
 
 ```powershell
-hermes-relay computer-use status
+hermes-relay hosts list
 hermes-relay daemon restart
 ```
 
-The Windows tray restarts automatically after **Enable desktop use…** or **Disable desktop use** while preserving the daemon's User/Administrator level. `--no-computer-use` suppresses the feature for one invocation even when the preference is enabled.
+Access is stored per host. **Restricted** connects with no desktop tools, **Ask Every Time** requests local approval for each available operation, **Standard** enables typed operations without general raw command launch, and **Full Access** allows every available capability without task grants for the selected host. New pairings default to Ask Every Time, while existing hosts keep their stored policy. Commands, Files, Screen & Input, Raw USB, Microphone, and Camera can be changed individually; an exact combination selects its preset automatically and any other combination is Custom. ADB remains secondary to the host-wide Raw USB gate. The UI normally restarts a running daemon after a host or access change; use the explicit restart above if an interrupted transition left stale state.
 
 ## A desktop-control request is waiting or needs to be stopped
 
-Run `hermes-relay grants` to review pending assist/control requests. The Windows tray raises a native alert and its **Review pending grants…** action opens the same command. To end active access immediately:
+The Windows UI presents a focused approval card without requiring the main popup. Approve or reject there, or run `hermes-relay grants` for terminal review. To end active access immediately:
 
 ```powershell
 hermes-relay computer-use cancel
 ```
 
-Disabling desktop use also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
+Switching the host to **Restricted** or using emergency stop also requests cancellation. Without a local approval response, a headless request times out and input remains blocked.
+
+## CUA Driver is unavailable, incompatible, or degraded
+
+Inspect the machine-local engine report:
+
+```powershell
+hermes-relay computer-use status --json
+```
+
+- **Not installed** means the canonical package was not found at
+  `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`. A PATH-only shim
+  is intentionally ignored.
+- **Incompatible** means the executable, manifest, supported version, required
+  tool set, or permission mode did not match the Hermes adapter contract.
+- **Accessibility health** is a separate, explicit diagnostic on Windows. Use
+  **Recheck** in the UI or run `hermes-relay computer-use cua health`. A
+  degraded result does not disable the runtime while the temporary workaround
+  for the upstream fixed-timeout issue is active; canonical runtime checks and
+  each structured action still fail closed. Confirm the driver is running in
+  the interactive user's logon session rather than Session 0 before deeper
+  diagnosis.
+
+CUA is preferred for new structured-control sessions. If its executable,
+manifest, required tool set, daemon status, or safe permission mode is not
+ready before a session begins, Hermes can select the Windows input compatibility backend;
+it never changes backend in the middle of a control session. Re-check with
+`hermes-relay computer-use cua status`, repair explicitly with
+`computer-use cua install --yes`, or use `computer-use cua check-update` followed
+by `computer-use cua update --yes`. The UI exposes matching Install, Check, and
+Update actions. None run automatically.
+
+If a CUA action reports that background delivery is unavailable, Hermes does
+not silently foreground the target. Use another structured action or complete
+that step manually. **Allow foreground escalation** is reserved in this release:
+runtime status remains off even if an older preview saved the preference, and
+Full Access does not turn it on.
 
 ## `auth timed out after 15000ms`
 

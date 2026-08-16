@@ -2,7 +2,7 @@
 #
 #   irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
 #
-# Downloads the CLI + optional menu-only systray installer by default - no Node.js required.
+# Downloads the CLI + optional compact management tray installer by default - no Node.js required.
 # Install only the CLI binary instead:
 #   $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm ... | iex
 # Pin a specific release:
@@ -23,8 +23,11 @@ $ErrorActionPreference = 'Stop'
 
 $repo    = if ($env:HERMES_RELAY_REPO)    { $env:HERMES_RELAY_REPO }    else { 'Codename-11/hermes-relay' }
 $version = if ($env:HERMES_RELAY_VERSION) { $env:HERMES_RELAY_VERSION } else { 'latest' }
-$dir     = if ($env:HERMES_RELAY_INSTALL_DIR) { $env:HERMES_RELAY_INSTALL_DIR } else { Join-Path $HOME '.hermes\bin' }
 $surface = if ($env:HERMES_RELAY_INSTALL_SURFACE) { $env:HERMES_RELAY_INSTALL_SURFACE.ToLowerInvariant() } else { 'tray' }
+$registeredDir = if ($surface -eq 'tray' -and -not $env:HERMES_RELAY_INSTALL_DIR) {
+  (Get-ItemProperty -Path 'HKCU:\Software\HermesRelay' -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+} else { $null }
+$dir     = if ($env:HERMES_RELAY_INSTALL_DIR) { $env:HERMES_RELAY_INSTALL_DIR } elseif ($registeredDir) { $registeredDir } else { Join-Path $HOME '.hermes\bin' }
 $aliasMode = if ($env:HERMES_RELAY_HERMES_ALIAS) { $env:HERMES_RELAY_HERMES_ALIAS.ToLowerInvariant() } else { 'skip' }
 
 function Say($msg)  { Write-Host "  $msg" }
@@ -172,6 +175,16 @@ Say ""
 
 if ($surface -eq 'tray') {
   $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("hermes-relay-" + [Guid]::NewGuid()))
+  $daemonWasRunning = $false
+  $existingCli = Join-Path $dir 'hermes-relay.exe'
+  if (Test-Path -LiteralPath $existingCli) {
+    try {
+      & $existingCli daemon status --json *> $null
+      $daemonWasRunning = $LASTEXITCODE -eq 0
+    } catch {
+      $daemonWasRunning = $false
+    }
+  }
   try {
     Say '-> downloading tray installer...'
     $installer = Join-Path $tmp $asset
@@ -204,17 +217,29 @@ if ($surface -eq 'tray') {
     if ($env:HERMES_RELAY_TRAY_SILENT -eq '1') {
       $installerArgs += '/S'
     }
+    # NSIS requires /D to be the final argument. Keeping the existing registered
+    # install directory avoids splitting an upgrade across two PATH locations.
+    $installerArgs += "/D=$dir"
     Say '-> launching installer...'
     $proc = Start-Process -FilePath $installer -ArgumentList $installerArgs -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
       Die "tray installer exited with code $($proc.ExitCode)"
+    }
+    if ($daemonWasRunning) {
+      Say '-> restarting the Relay daemon with the updated CLI...'
+      $restart = Start-Process -FilePath (Join-Path $dir 'hermes-relay.exe') -ArgumentList @('daemon', 'start') -WindowStyle Hidden -Wait -PassThru
+      if ($restart.ExitCode -ne 0) {
+        Say "   WARN: the updated CLI installed, but the daemon restart exited with code $($restart.ExitCode)"
+        Say '   Run: hermes-relay daemon start'
+      }
     }
   } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
   }
 
   Say ''
-  Say 'Installed the Hermes Relay CLI and optional menu-only systray. Right-click the tray icon to manage the daemon or open the real CLI/TUI.'
+  Say 'Installed Hermes-Relay CLI and the optional Hermes-Relay CLI UI. Click the tray icon to manage hosts, access, grants, and the daemon; use the CLI for chat and TUI workflows.'
+  Say 'Open it later with: hermes-relay ui'
   Say 'For CLI-only installs, rerun with:'
   Say "  `$env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/install.ps1 | iex"
   return
@@ -348,6 +373,7 @@ if ($installedVersion) {
 }
 Say '  hermes-relay --help'
 Say '  hermes-relay pair --remote ws://<host>:8767'
+Say '  hermes-relay ui install    # add the optional Windows management UI later'
 Say ''
 Say 'Optional Orca/upstream-style alias:'
 Say "  `$env:HERMES_RELAY_HERMES_ALIAS='enable'; irm https://raw.githubusercontent.com/$repo/main/desktop/scripts/hermes-alias.ps1 | iex"

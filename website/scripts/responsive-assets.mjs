@@ -9,6 +9,10 @@ const mode = process.argv[2] ?? 'check';
 const variants = [
   { source: 'chat.png', destination: 'chat-260.webp', width: 260 },
   { source: 'chat.png', destination: 'chat-520.webp', width: 520 },
+  { source: 'voice.png', destination: 'voice-360.webp', width: 360 },
+  { source: 'voice.png', destination: 'voice-720.webp', width: 720 },
+  { source: 'voice-conversation.png', destination: 'voice-conversation-360.webp', width: 360 },
+  { source: 'voice-conversation.png', destination: 'voice-conversation-720.webp', width: 720 },
   { source: 'manage.png', destination: 'manage-360.webp', width: 360 },
   { source: 'manage.png', destination: 'manage-720.webp', width: 720 },
 ];

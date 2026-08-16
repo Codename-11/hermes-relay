@@ -1,5 +1,603 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-14 — Android 1.9.0 session identity and conversation controls
+
+Hermes-Relay Android 1.9.0 is published from the immutable
+`android-v1.9.0` tag. Multi-profile session browsing now keeps the aggregate
+drawer scope selected while transcript hydration, resume, sending, and header
+identity follow the session's owning profile. New Chat from All Profiles uses
+the default profile, and the session list starts ungrouped while retaining
+project grouping and the other desktop-style views as explicit options.
+
+Message reactions now resolve durable rows for both user and assistant
+messages. Vanilla Hermes voice remains on the authenticated Gateway instead of
+requiring the optional API fallback. Session rows can expose profile, project,
+branch, and pull-request context without crowding the chat header, secondary
+drawer actions remain available in All Profiles, and outside taps dismiss the
+drawer.
+
+## 2026-08-09 — Gateway activity recovery and chat speech
+
+Successful Android Gateway turns now reconcile against their profile-owned,
+structured session history. This recovers persisted tool calls when an upstream
+Gateway completes a turn without emitting live tool lifecycle events; assistant
+prose is never inspected for inferred activity, and the recovered calls continue
+through the existing Off, Compact, and Detailed display policy.
+
+The Speak message action now follows configured voice readiness and idle output
+state instead of active Voice Mode or presentation style. A settled assistant
+reply can therefore be read aloud directly from chat, while live or provider
+playback still prevents overlapping output. One-shot message narration owns its
+completion state outside Voice Mode and replaces Speak with Stop while active;
+stopping drains only that narration pipeline and does not cancel a chat turn
+started while the response was playing.
+
+## 2026-08-09 — Quiet reasoning and grouped tool activity
+
+Android Chat now treats reasoning and routine tools as transcript scaffolding.
+Visible live reasoning opens automatically without a tinted card, then collapses
+to a quiet Thought disclosure when it settles unless the reader has explicitly
+chosen its state. Empty reasoning remains absent and the existing first-token
+status continues to own the waiting state.
+
+Top-level routine calls retain their source order but render as consecutive
+activity runs. A live run keeps one summary and one latest-activity ticker in a
+stable footprint; a settled run becomes one collapsed summary that can disclose
+the original identity-preserving tool rows. File edits, approval/question tools,
+generated media, failures, output-risk findings, and delegated work split runs
+and retain independent surfaces. Off hides only ordinary activity runs, Compact
+uses compact disclosed rows, and Detailed preserves the full per-tool detail
+surface on demand. Expansion still yields bottom-follow ownership, and each run
+registers its measured bounds as Chat pet terrain.
+
+## 2026-08-09 — Android chat experience and attachment polish
+
+The Android composer now declares sentence capitalization and a Send IME
+action. A device-level setting chooses whether unmodified physical Enter sends
+or inserts a newline; Shift+Enter remains a newline and Ctrl/Command+Enter
+always submits. Every submit route converges on the existing live-turn owner,
+so the current gateway state still decides whether content steers the active
+turn or queues behind it. Directional focus traversal is cancelled while the
+editor owns focus so hardware arrow keys continue to move the caret and
+selection.
+
+Conversation bottom-follow now remains owned when thinking or tool details
+expand. Only an actual drag ending above the bottom yields that ownership, and
+a chat first measured while the IME is already visible now captures the same
+resize-follow state as a keyboard opened after composition.
+
+Bitmap-backed attachment surfaces now apply EXIF rotation and reflection before
+display. Attachment reads and Base64 conversion also leave the UI thread, so
+selecting a larger photo no longer performs the full ingestion path inside the
+activity-result callback.
+
+Composer drafts now belong to the stable connection, profile, and session
+identity. Text, edit context, and pending attachments restore when returning to
+a chat without persisting attachment bytes. Pending attachments expose bounded,
+orientation-aware previews plus explicit remove and reorder controls.
+
+Conversation overflow now opens transcript search with previous/next matches
+and a prompt-turn rail, both keyed to the same stable UI identity as the message
+list. Assistant prose retains the compact bubble and subtle edge treatment that
+keeps it legible above the animated chat background. Tapping a message reveals
+the existing copy, quote, speak, and edit actions with reduced-motion-aware
+expansion and accessible targets.
+
+Quotes are composer-owned structured references instead of raw blockquote text.
+The composer and sent message render a linked, highlighted author preview; the
+transport remains ordinary Markdown so unmodified Desktop and TUI clients show
+a readable quoted reply. Thinking and top-level tools continue to use their
+independent compact thought bubbles and configured compact or full tool cards,
+without an aggregate completion card. The composer also names Correction and
+Queue states with visible labels. Gateway redirects remain text-only:
+follow-ups with attachments are forced through the existing destination-owned
+queue so files cannot be left behind by a correction request.
+
+## 2026-08-08 — Standalone Android thinking status
+
+Blank streaming assistant rows now present the full-size working animation
+directly in the conversation lane above the visible `Still working…` label,
+without painting an empty assistant bubble around the status. The first answer
+token replaces that standalone state with the normal response bubble, while
+recovery retains the distinct `Reconnecting to your answer…` wording. The
+status owns one stable TalkBack description and suppresses animated child
+nodes, avoiding repeated announcements without claiming measurable progress.
+
+## 2026-08-08 — Android text-share draft handoff
+
+The shared Android manifest now advertises a `text/*` `ACTION_SEND` target for
+both app flavors. `MainActivity` accepts only non-blank single-item text shares
+and places them in a process-local, identity-fenced handoff that survives cold
+Compose initialization. Once the configured chat context settles, the app root
+navigates to Chat and delegates draft creation and composer prefill to
+`ChatViewModel`.
+
+The ViewModel reuses the existing new-chat lifecycle, preserving Gateway
+background-turn reconciliation and the active connection/profile/transport
+namespace. Composer prefills use a one-consumer conflated channel so an intent
+received before Chat composition is delivered once. Shared text is never
+routed through message sending; the user must review and submit it explicitly.
+
+## 2026-08-08 — Android Profile Shelf and profile-context identity
+
+Chat profile selection now lives in a collapsible shelf directly below the top
+app bar. The header toggles the shelf, the active capsule opens Agent Passport,
+inactive 48 dp avatars switch context, and a pinned overflow opens the same full
+switcher used by Passport. Saved ordering and hidden state drive both surfaces;
+the selected hidden profile remains disclosed, while a one-identity shelf stays
+out of the layout. Long-press actions expose inspection, Passport, profile lock,
+and hiding without adding activity or presence claims.
+
+The shelf uses the chat surface instead of a second elevated toolbar. A neutral
+active capsule, 36 dp avatar artwork inside 48 dp targets, compact spacing, and
+a contained overflow affordance keep the row visually subordinate to Chat. When
+Server default resolves to a concrete profile, that profile's avatar remains
+the identity and a small home badge discloses its default routing role.
+Local avatar lookup remains keyed to the Server-default presentation identity,
+so an image customized while that row is selected appears consistently in both
+the Chat header and shelf rather than being re-keyed to whichever explicit
+profile is currently active.
+
+The Server-default sentinel is now distinct from a profile literally named
+`default`. Profile selection restores the last compatible connection/profile/
+transport session, otherwise leaves a fresh draft. Gateway turns detach and
+reconcile in their original session, live SSE turns keep switching disabled,
+and every profile transition clears session-scoped model, provider, personality,
+reasoning, approval, Fast, and YOLO state before the destination session seeds
+its own values. Server sticky-default state is never written.
+
+## 2026-08-08 — Streaming reply tail follow
+
+Android's conversation-bottom follower now reads the current immutable message
+list from Compose state inside its long-lived layout observer. Each streamed
+replacement can therefore advance the viewport as the active bubble gains
+lines, while dragging or scrolling away still releases bottom ownership.
+
+## 2026-08-08 — Settled live replies transition to Markdown
+
+Android now releases the live plain-text renderer immediately after an
+assistant row settles. The transition retains the row's stable UI identity,
+commits the final live frame before replacing its selectable text topology,
+and anchors the same bottom-owned row during the Markdown remeasure. Readers
+who scrolled away retain their viewport, while completed code fences, lists,
+emphasis, links, and interrupted partial replies no longer require session
+navigation before rich rendering appears.
+
+## 2026-08-08 — Explicit-consent ownership for Android approvals
+
+Android no longer treats unrelated Gateway activity or a terminal display event
+as proof that an approval was resolved. Approval cards remain pending through
+scrolling, recomposition, navigation, and background restoration, and retain
+their exact connection, profile, and session ownership. Only a labeled action
+that successfully reaches `approval.respond`, an authoritative upstream expiry,
+or an explicit interrupt can retire the local request; the interrupt path stays
+visibly denied because upstream force-denies it.
+
+## 2026-08-08 — Agent Passport control and dismissal accessibility
+
+The Android Agent Passport keeps its title and explicit close action outside
+the nested content scroller. Material bottom-sheet gestures are enabled again,
+so a downward gesture scrolls long content toward its top boundary before the
+sheet receives the gesture and dismisses; backdrop and Back dismissal retain
+the same callback.
+
+Safety and speed choices now sit below their labels instead of competing for a
+narrow horizontal column. Every segment provides at least a 48 dp target,
+allows two-line labels, exposes radio-selection semantics, and states the
+meaning of the current approval, chat override, or processing-tier choice in
+plain language. The layout remains scrollable on compact heights and at larger
+font scales without moving the close action off-screen.
+
+## 2026-08-08 — Session-owned Android send queues
+
+Android follow-up queues now capture the composing connection/profile context,
+stored session, configured transport, originating run, attachments, and voice
+context as one immutable destination. Queue presentation is filtered to the
+visible session, while completion eligibility is tied to the exact run and live
+Gateway generation that owned the queue. A completion from another session or
+an older live generation cannot dispatch through the current composer route.
+
+In-flight checkpoints retain bounded queued text across process restoration.
+Attachment bytes are not copied into Preferences DataStore; an attachment queue
+that cannot be restored is rejected with a visible review-and-resend notice.
+Connection replacement and session deletion cancel their owned queues, while
+switching among concurrent Gateway sessions preserves each session's queue.
+
+## 2026-08-07 — Provider-owned model inventory identity
+
+Android now normalizes Gateway and API model inventories before publishing
+them to picker consumers. Repeated provider rows merge by canonical provider
+slug, repeated exact model IDs collapse within that provider, and capability
+metadata follows the same provider/model identity. Models intentionally offered
+by different providers remain distinct choices, even when their display labels
+and model IDs match.
+
+The searchable picker groups and keys rows by provider slug plus exact model ID
+instead of provider display text. Cached loads, dynamic refreshes, API aliases,
+and Manage inventory use the same idempotent identity rule, preventing duplicate
+catalog data from reaching keyed Compose lists without hiding valid routes.
+
+## 2026-08-05 — Restored chat bottom ownership and effort fallback clarity
+
+Opening an existing Android session now retains exact bottom ownership through
+late, non-streaming layout changes. Composer capability controls, status rows,
+and restored message content can finish measuring after history first reaches
+the footer; a session-scoped geometry observer corrects those changes without
+using a fixed delay. New-message following remains governed by the smooth
+auto-scroll setting, while a real drag, IME ownership, and the Voice dock keep
+their existing anchors.
+
+The advisory effort drawer now states that Hermes does not advertise exact
+levels for the selected model before explaining why standard options are shown.
+The wording is consistent across all shipped Android locales.
+
+## 2026-08-05 — Provider-aware reasoning effort discovery
+
+The optional Relay plugin now exposes a bearer-protected, profile-aware model
+capability overlay without requiring changes to upstream Hermes. Android merges
+that overlay with the standard `model.options` inventory using exact provider
+and model identities, while older or unpaired Relay installations continue with
+the canonical advisory fallback.
+
+Dynamic LM Studio, Ollama Cloud, and Copilot discovery is bounded by a shared
+network limiter, cached by profile, endpoint, model, and credential fingerprint,
+and fenced across refresh generations. Neither credentials nor internal cache
+scope are returned to clients. Composer controls, Agent Passport, session
+creation, and asynchronous server reconciliation share the same capability
+resolver so a displayed effort cannot silently differ from the value sent.
+
+## 2026-08-05 — Chat drawer and companion terrain ownership
+
+The Chat screen now clears composer focus when the session drawer commits to
+opening, dismissing the IME without continuously clearing focus from drawer
+search or rename fields. Drawer refreshes override keyed list anchoring only
+when the leading session identity changes, keeping the newest row visible after
+activity-based reordering.
+
+Floating companions wait for Chat's measured composer rail before publishing
+their first roaming position. Their collision footprint contains both the
+pointer target and rendered sprite, and the complete scroll-to-bottom control
+envelope is an obstacle rather than a landing perch. Supported rails add no
+visual lift, and the floating-only renderer aligns each frame's opaque bottom
+edge to its canvas baseline so transparent atlas padding cannot make pets hover;
+centered previews and message avatars remain unchanged.
+
+## 2026-08-05 — Measured pet placement and passive model sync
+
+The floating pet now remains unpublished until the app-level overlay has a
+positive measured viewport. Its initial home coordinate is therefore derived
+from the real safe bounds instead of the zero-size pre-measure bounds that
+collapsed to the top-left corner.
+
+API provider inventory remains an optional background catalog on Gateway-led
+connections. A timeout, refusal, or unavailable optional route no longer emits
+a global chat notice during initialization, reconnection, or connection-sheet
+refresh. The failure is retained as a contextual warning in local Diagnostics,
+including the operation, endpoint role, redacted stack trace, preserved network
+cause, and targeted troubleshooting guidance. Cached and Gateway-owned model
+options remain unchanged.
+
+## 2026-08-05 — Stable chat-tail completion
+
+Chat and Voice now treat the active streamed reply as the owner of its live
+renderer until a different row becomes the conversation tail. Stream
+completion retains the existing Compose subtree and list anchor; the full
+Markdown renderer is deferred until the row is no longer active or the session
+is revisited.
+
+The last-in-group timestamp occupies its final geometry from the first
+streaming frame and is only revealed at completion. Measured positive growth
+during an active stream continues to follow the bottom without replacing the
+logical anchor. Once completion layout stabilizes, a bottom-owned transcript
+settles to the exact LazyColumn boundary; proximity slop is reserved for
+retaining follow intent during motion and cannot define the final position. The
+visible footer supplies the exact remaining distance so rounding or adjacent
+layout changes cannot leave a residual forward range.
+
+IME expansion participates in that same viewport owner. A transcript already
+at the bottom advances by the measured viewport-height loss throughout the
+keyboard animation, then settles exactly after inset updates stop on both open
+and close. A transcript being read above the bottom preserves its existing
+anchor, and a real drag cancels keyboard follow immediately. Host-side coverage
+verifies renderer ownership, unchanged bubble height, exact footer settling,
+keyboard arming, viewport loss, completion/IME settlement ownership, and
+history-reading behavior.
+
+## 2026-08-05 — Focus voice input boundary repair
+
+The Focus voice presentation remains modal without installing a consuming
+pointer handler on the full overlay ancestor. Its click-through guard is now a
+behind-content sibling: empty-space gestures cannot reach the chat or drawer,
+while the mic, close, expand/collapse, and panel controls receive their full
+pointer sequence.
+
+Host-side Compose coverage injects real touch events instead of invoking
+semantic click actions. It verifies both child callback delivery and the modal
+background boundary so the two requirements cannot regress independently.
+
+## 2026-08-05 — Actionable Android connection diagnostics
+
+Android diagnostic entries now separate the configured route from the exact
+request operation and path used to test it. Relay health checks identify the
+HTTP `/health` probe that precedes a WebSocket connection, route selection
+records its Dashboard, API, or Relay probe, and WebSocket and API checks name
+their handshake or authentication stage.
+
+Known network and HTTP failure classes attach a bounded next step for refused
+listeners, DNS, routing, timeouts, TLS, credentials, rate limits, missing
+routes, and server failures. The activity list, status timeline, detail dialog,
+copy text, and GitHub issue prefill all carry the same context. Public issue
+text preserves protocol and request paths while redacting hosts, credentials,
+queries, and user information.
+
+## 2026-08-04 — Android transcript identity ownership
+
+ChatHandler now owns one render identity for every published transcript row.
+Checkpoint recovery and all streamed message mutations resolve both the mutable
+server/domain ID and the stable UI identity, so history adoption cannot leave a
+stale client reference that appends a second row. The publication boundary also
+coalesces repeated render identities before Chat or Voice can observe them,
+while keeping the first transcript position and latest state.
+
+Focused coverage composes history reconciliation with checkpoint restore,
+exercises stale post-adoption callbacks, and runs deterministic transition
+sequences across restore, replay, deltas, thinking, and usage updates. Voice's
+temporary transcript row now occupies an auxiliary key namespace disjoint from
+real message rows.
+
+## 2026-08-04 — Android reliability and support foundation
+
+Android fatal capture and centrally classified handled failures now converge on
+a versioned, allowlisted reliability record. Reports are redacted before local
+persistence, capped at 20 records with 14-day retention, written atomically,
+and correlated only with random app/report identifiers. Expected cancellation
+and permission denial remain non-reportable. The pre-existing one-file crash
+format migrates locally on first launch.
+
+Crash recovery leads with the recovery outcome and no-upload guarantee, then
+requires an explicit review before copy, share, or GitHub actions. Diagnostics
+adds an offline support-information review using the same exact redacted text.
+Android issue prefills now request the Android area while repository-wide issue
+ownership remains maintainer-reviewed, and the release workflow retains both
+variant R8 mappings for deterministic retrace.
+
+The architecture audit defers an ANR watchdog, richer allowlisted breadcrumbs,
+hashed product correlation, and OOM emergency writing until their lifecycle,
+privacy, and false-positive behavior can be validated on devices.
+
+## 2026-08-02 — Android Russian localization
+
+Android now ships complete Russian catalogs for the main and sideload builds.
+The in-app language picker, Android locale configuration, chat and voice labels,
+tool and status presentation, diagnostics, onboarding, and plural resources are
+registered against the canonical English catalog. Existing non-English catalogs
+were refreshed to retain exact resource and format-argument parity.
+
+The integration preserves PR #276 as the source contribution while excluding
+unrelated recovery, routing, and test-stability changes from the localization
+scope. The localization registry records Android coverage only; Russian public
+documentation and marketing pages continue to use the canonical English
+fallback until those surfaces are translated separately.
+
+## 2026-07-31 — Upstream-compatible voice interruption semantics
+
+Android full-turn barge-in now follows upstream Hermes' RMS behavior: roughly
+450 ms of quiet-room calibration, a 90th-percentile floor, 3× default
+multiplier, separate generation/playback minimums, a bounded ceiling, 500 ms
+playback grace, and an 80%-majority decision window. Calibration remains frozen
+against speaker output and cannot itself trigger. Renderer-driven phase tracking
+returns to generation thresholds in quiet output gaps and rearms playback grace
+only after a gap of at least one second. Opt-in Logcat diagnostics expose the
+inputs used for device tuning. Barge-in is enabled by default while retaining its master,
+Silero sensitivity, RMS multiplier, playback grace, and resume controls.
+
+Voice stop phrases now use an editable exact-match list that defaults to
+`stop`; clearing the list disables the behavior. A match ends the active voice
+chat in generation or playback, but the same word outside voice chat and longer
+requests continue through normal Hermes input. Continuous-mode pause/resume and
+explicit background-task cancellation retain their narrower state gates.
+
+Interrupting spoken playback arms the upstream one-shot interruption note for
+the next Standard model-bound message. The latch expires after 120 seconds and
+travels only in API-local voice interface context, never in visible or
+persisted user text. Generation and pre-audio synthesis interruption do not mark
+an unspoken reply, Realtime keeps its provider-session context, and silencing remains independent
+from cancellation of promoted background work.
+
+## 2026-07-30 — Expandable Android assistant surface
+
+Android Digital Assistant sessions now open as a compact bottom bar over the
+current app, expand in place for transcript and response detail, and collapse
+without changing the active turn. Open full voice disables only the
+system-owned session UI and reveals the existing app Voice surface, preserving
+the same session, response stream, and microphone owner.
+
+Connection, chat, and voice state machines now have one main-process,
+application-lifetime owner. Assistant activation can initialize and run a cold
+voice turn without constructing or foregrounding `MainActivity`; opening full
+Voice binds the Activity to those same ViewModels and audio resources.
+
+The optional `SYSTEM_ALERT_WINDOW` Voice surface now follows the same
+wide-bar-to-expanded-sheet progression while retaining its minimized bubble.
+It remains a separately user-invoked control for turns that began in the app;
+the Assistant-role session does not require display-over-other-apps permission.
+
+The assistant window is transparent outside the bar or sheet, leaves the
+underlying app unresized, and restricts touch interception to the measured
+surface. Back collapses an expanded surface first; Back from compact, Stop, and
+ordinary dismissal remain terminal. A hidden full-Voice handoff instead follows
+the app-owned turn through its final Closed state.
+Package-scoped lifecycle reconciliation also clears assistant state if Android
+reclaims the separately processed UI while full Voice remains active.
+
+Assistant activation is ID-aware and single-flight. Duplicate delivery cannot
+re-arm capture, Retry replaces a pending readiness attempt, and Stop invalidates
+the attempt before chat, Voice, or microphone mutations. Scoped voice settings
+must hydrate from DataStore before route readiness, and process extraction
+preserves connection-catalog isolation plus the existing gateway route-flip
+settle window.
+
+Physical-device validation on a Samsung SM-S938U confirmed cold invocation over
+a non-Hermes foreground app, compact and expanded presentation without
+foregrounding `MainActivity`, and one main-process microphone owner. Locked
+invocation reached a shown system assistant session without runtime or recorder
+errors; Samsung's secure lock screen prevented screenshot-based visual review.
+
+## 2026-07-30 — Foreground wake-word diagnostics and recovery
+
+The Android-local sherpa listener now treats each non-empty keyword result as a
+completed KWS event, resets the stream immediately, and maps the stored
+confirmation setting to sherpa's native trailing-blank confirmation instead of
+requiring an already-completed result to recur across application frames. Voice
+settings can arm a ten-second test against the same foreground service,
+microphone owner, installed model, and current tuning; it displays live input
+level and reports detection without opening voice or transmitting audio.
+
+Expected empty-transcript responses after activation now record a no-speech
+diagnostic and return voice to its ready state with a retry hint rather than
+surfacing the provider's HTTP error. Other transcription failures retain the
+existing error path. Foreground-service behavior is documented explicitly:
+background detections remain pending behind the notification until Hermes is
+visible; Android default-assistant integration is a separate mode. Opening the
+visible Voice settings screen also reconciles an enabled listener after package
+replacement or process death without adding boot/background auto-start.
+
+Focused wake preferences/core and no-speech classification tests pass.
+Sideload lint, sideload debug packaging, and Google Play debug Kotlin
+compilation pass. This batch adds no model, native library, ABI, permission, or
+network dependency; the existing approximately 6 MB downloaded model and
+packaged sherpa ABI footprint are unchanged.
+
+## 2026-07-30 — Voice transcript identity alignment
+
+Android voice Focus mode now keys transcript rows with the same stable UI
+identity as the main Chat list. A live row may adopt its persisted server
+message ID during history reconciliation while retaining its original Compose
+identity; using the mutable domain ID in the voice overlay could otherwise
+collide during that transition and close the app.
+
+Focused JVM coverage recreates two visible rows with a shared reconciled server
+ID and verifies distinct stable transcript keys. Sideload production and
+Android-test Kotlin compilation pass. The existing full-overlay instrumentation
+fixture remains blocked by its continuously animating surface never reaching
+Compose idleness.
+
+## 2026-07-30 — Opt-in Android Digital Assistant mode
+
+Android now declares an explicit `VoiceInteractionService` and separately
+processed `VoiceInteractionSessionService`. Only Android's user-confirmed
+Assistant role activates the integration. Optional background “Hey Hermes”
+detection reuses the local sherpa model and tuning, releases its recorder before
+the system session opens the existing voice flow, and resumes after session
+exit. Package-scoped lifecycle messages reconcile prompt/listen state,
+transcript/response presentation, cancellation, errors, and process recreation.
+
+The Digital Assistant listener and the existing experimental microphone
+foreground service are separate, mutually exclusive opt-ins. Both retain local
+pre-activation privacy and the shared one-microphone contract. Standard voice
+continues through the upstream Dashboard audio surface. Voice settings include
+role status, setup, removal, runtime status, and the limitation that third-party
+assistants do not receive Google's low-power hotword hardware.
+
+## 2026-07-29 — Full-turn voice interruption and local wake-word preview
+
+Android barge-in now owns one microphone/VAD listener from response generation
+through playback drain for both Standard and Realtime voice. Quiet-room RMS
+calibration freezes before output begins, playback receives a grace interval,
+and model-confirmed majority filtering separates actual interruption from raw
+ducking hints. Turn epochs, stream cancellation, late-delta suppression, and
+an awaited microphone handoff keep an interrupted response from speaking again
+or racing the replacement recording. Exact stop/pause intent is phase-aware,
+while explicit background-task cancellation remains separate from silencing.
+
+An opt-in Android-local “Hey Hermes” preview uses sherpa-onnx in a user-started
+microphone foreground service. Its approximately 6 MB English model is
+downloaded and hash-verified on first enable rather than bundled. The service
+keeps pre-activation audio local, exposes an ongoing Stop notification, pauses
+for active voice, and shares a process-wide single-microphone ownership
+contract with voice recording, barge-in, and realtime diagnostics. The stored
+configuration includes strictness, confirmation frames, new-session behavior,
+and a deliberately inactive future profile-routing shape.
+
+Focused JVM coverage exercises calibration, grace, listener teardown,
+Thinking-to-Speaking ownership, generation/playback interruption, command
+gating, wake preferences, activation, and microphone exclusion. Android
+compilation for both distribution flavors, sideload lint, and sideload APK
+packaging pass with all four supported ABIs. On-device acoustic, foreground
+service, and lifecycle checks remain the corresponding validation gates.
+## 2026-07-28 — Android 1.5.2 production release
+
+Android 1.5.2 shipped from the approved `dev` to `main` release tree as
+versionCode 35. The release adds provider-aware Dashboard sign-in: Nous uses
+the advertised native PKCE system-browser flow, while compatible self-hosted
+providers retain cookie-backed full-page Dashboard authentication. Callback
+origin discovery remains server-driven, private-network HTTP compatibility is
+preserved, and arbitrary public HTTP redirects remain rejected.
+
+The private Play preflight validated the exact application tree before release
+PR #265 merged. The immutable `android-v1.5.2` tag resolves to the resulting
+`main` tip, the production workflow promoted versionCode 35 to the completed
+Google Play production track, and the public GitHub release contains the
+signed AAB, sideload APK, and SHA-256 manifest. The published sideload APK
+checksum was independently verified; replacing the debug-signed phone build
+with the release-signed artifact requires an uninstall because Android
+correctly rejects cross-signature in-place updates.
+
+## 2026-07-27 — Android replayed-message identity reconciliation
+
+Android history reconciliation now collapses reconnect/rejoin replays of the
+same persisted message ID before publishing the transcript to Compose. The
+latest repeated snapshot replaces the value at the message's first transcript
+position, preserving stable ordering, distinct messages, and the LazyColumn
+identity contract without index- or random-key fallbacks.
+
+Focused coverage reproduces the duplicate UUID condition and verifies that the
+authoritative final content wins while every rendered message keeps a unique
+stable UI key.
+
+## 2026-07-26 — Android 1.5.1 patch reconciliation
+
+Android 1.5.1 reconciles the post-1.5.0 voice and chat fixes into versionCode
+34. Voice now offers compact Focus and full Conversation presentation,
+Standard narration preserves valid completed replies, and promoted Realtime
+tasks release foreground voice controls while retaining progress and results.
+
+Completed streamed answers promote from the stable live text node to full
+Markdown only after completion. The measured Markdown row is then positioned
+by its trailing edge until deferred code and attachment measurement settles,
+preventing the LazyColumn from restoring the start of a tall response.
+
+The release also targets Android API level 36. Release notes, in-app What's
+New assets, localized Play notes, and the Play listing reference were updated
+for Android 1.5.1.
+
+## 2026-07-25 — Immutable Android release dispatch repair
+
+Android approval now dispatches the current release workflow definition from
+`main`, while every release job explicitly checks out the immutable
+`android-v*` tag. Validation confirms the dispatched version resolves to that
+checked-out commit and accepts the repository's surface-qualified
+`[Android x.y.z]` changelog heading. Existing tags remain unchanged, and a
+workflow-only correction can resume a failed publication without rebuilding
+from a different application tree.
+
+Audited `.github/workflows/approve-release-android.yml`,
+`.github/workflows/release-android.yml`, `RELEASE.md`, and `DEVLOG.md`.
+
+## 2026-07-25 — Android 1.5.0 final release reconciliation
+
+The final Android 1.5.0 release tree reconciles the accumulated Dashboard-first
+connection, Gateway recovery, background delivery, Agent Passport, onboarding,
+voice, attachment, image-generation, security, localization, and Developer
+Options work into one public release narrative. Android remains version 1.5.0
+with monotonic versionCode 33 because that prepared version was not previously
+tagged or uploaded to production.
+
+Release notes, the in-app What's New assets, localized Play release notes, and
+the Play listing reference now describe the final tree rather than the earlier
+voice-focused candidate. The release train is gated by the exact-tree private
+Play preflight before the `dev` to `main` release merge and public tag.
+
 ## 2026-07-25 — Active-turn retention and actionable interaction alerts
 
 Android now promotes user-started chat work to foreground execution until every
@@ -6671,3 +7269,16 @@ After:  Phone (HTTP/SSE) → API Server (:8642)          [chat — direct]
 - Deploy docs site (GitHub Pages or similar)
 - Phase 2: Terminal channel (xterm.js in WebView, tmux integration)
 - Phase 3: Bridge channel migration
+
+# 2026-07-30 — Wake-word strictness tuning
+
+- Lowered the unset Android wake-word strictness default from `0.6` to `0.3` after physical-device testing showed reliable activation only at the lower slider positions.
+- Added the live numeric strictness value to Voice settings so tuning is observable.
+- Preserved saved user values and the existing three-frame confirmation default; this adjustment does not migrate working installations or broaden the detector acceptance window beyond the selected threshold.
+
+# 2026-07-30 — OEM assistant-picker compatibility
+
+- Added the standard `android.intent.action.ASSIST` activity filter because some OEM assistant pickers enumerate Assist activities even when a valid `VoiceInteractionService` is present.
+- Routed activity-based Assist invocations through the existing system-assistant activation protocol so both Android entry points share microphone ownership and session lifecycle behavior.
+- Added the required `recognitionService` metadata and a bounded recognition component after device validation showed Samsung could grant the package role while leaving the active voice-interaction service empty. The component does not open the microphone; Hermes assistant sessions continue to use the established transcription pipeline.
+- Declared `CATEGORY_VOICE` on the Assist activity and retained `ACTION_ASSIST` on the explicit activation intent. `VoiceInteractionSession.startVoiceActivity()` adds the voice category, and Android rejects the launch as `START_NOT_VOICE_COMPATIBLE` unless the target filter matches both.

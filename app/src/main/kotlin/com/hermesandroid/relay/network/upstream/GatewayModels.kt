@@ -1,6 +1,11 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Shared types for the Gateway chat transport — upstream hermes-agent's
@@ -122,6 +127,8 @@ data class GatewayInflightTurn(
     val user: String,
     val assistant: String,
     val streaming: Boolean,
+    /** Accepted active-turn redirects in display order; additive on newer Hermes. */
+    val corrections: List<String> = emptyList(),
     val status: String? = null,
     val error: String? = null,
     val recoverable: Boolean = false,
@@ -166,6 +173,7 @@ data class GatewaySessionRecovery(
 /** A detached sibling turn reached its terminal event on the shared Gateway socket. */
 data class GatewayBackgroundTurnCompletion(
     val storedSessionId: String,
+    val liveSessionId: String,
     val profile: String?,
     val expectedAssistantText: String?,
 )
@@ -182,7 +190,8 @@ sealed interface GatewayBackgroundInteractionEvent {
         override val ask: GatewayAsk,
     ) : GatewayBackgroundInteractionEvent
 
-    data class Resolved(
+    /** An authoritative upstream `*.expire` event ended this request. */
+    data class Expired(
         override val storedSessionId: String,
         override val profile: String?,
         override val ask: GatewayAsk,
@@ -209,13 +218,15 @@ data class GatewayAsk(
     val text: String,
     /** Server-advertised answers for clarify and approval requests. */
     val choices: List<String>? = null,
+    /** Clarify-only: several advertised choices may be returned together. */
+    val multiSelect: Boolean = false,
     /** Approval-only: the smart observer denied and the owner may override once. */
     val smartDenied: Boolean = false,
     /** Secret-only: the env var the value will be stored under. */
     val envVar: String? = null,
     /**
-     * Upstream blocking timeout (clarify/secret 300s, sudo 120s). 0 means no
-     * countdown — approvals are session-scoped and never expire on their own.
+     * Server-advertised blocking timeout. 0 means no client countdown; the
+     * authoritative `*.expire` event still retires the interaction.
      */
     val timeoutSeconds: Int,
 ) {
@@ -261,6 +272,7 @@ data class GatewaySubagentEvent(
     val toolName: String? = null,
     val preview: String? = null,
     val durationSeconds: Double? = null,
+    val subagentId: String? = null,
 ) {
     enum class Phase { START, THINKING, TOOL, PROGRESS, COMPLETE }
 }
@@ -345,7 +357,121 @@ data class GatewayModelProvider(
     val unavailableModels: List<String> = emptyList(),
     val freeTier: Boolean = false,
     val totalModels: Int = 0,
+    /** Per-model capability rows keyed by the exact model id. */
+    val capabilities: Map<String, GatewayModelCapabilities> = emptyMap(),
 )
+
+/** Shared tolerant parser for the gateway RPC and API-server REST twins. */
+internal fun parseGatewayModelProvider(obj: JsonObject): GatewayModelProvider? {
+    val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull
+        ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val capabilities = (obj["capabilities"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+        val row = raw as? JsonObject ?: return@mapNotNull null
+        val effortsElement = row["reasoning_efforts"]
+        val efforts = if (effortsElement is JsonArray) {
+            effortsElement
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+                .distinct()
+        } else {
+            null
+        }
+        val modelId = model.trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        modelId to GatewayModelCapabilities(
+            reasoning = (row["reasoning"] as? JsonPrimitive)?.booleanOrNull,
+            reasoningEfforts = efforts,
+            reasoningEffortsExact =
+                (row["reasoning_efforts_exact"] as? JsonPrimitive)?.booleanOrNull,
+        )
+    }.toMap()
+    return GatewayModelProvider(
+        name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug,
+        slug = slug,
+        models = (obj["models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct(),
+        isCurrent = (obj["is_current"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        warning = (obj["warning"] as? JsonPrimitive)?.contentOrNull,
+        authenticated = (obj["authenticated"] as? JsonPrimitive)?.booleanOrNull ?: true,
+        unavailableModels = (obj["unavailable_models"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct(),
+        freeTier = (obj["free_tier"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        totalModels = (obj["total_models"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
+        capabilities = capabilities,
+    )
+}
+
+/**
+ * Publish one coherent row per provider identity.
+ *
+ * Dynamic catalogs and compatibility payloads can repeat a provider row or a
+ * model inside that row. Provider slugs are case-insensitive upstream, while
+ * model ids remain exact request values. Merge only equal provider slugs so a
+ * model intentionally offered by two different providers stays selectable.
+ */
+internal fun normalizeGatewayModelProviders(
+    providers: List<GatewayModelProvider>,
+): List<GatewayModelProvider> {
+    val normalized = linkedMapOf<String, GatewayModelProvider>()
+    providers.forEach { raw ->
+        val slug = raw.slug.trim()
+        if (slug.isEmpty()) return@forEach
+        val models = raw.models.map(String::trim).filter(String::isNotEmpty).distinct()
+        val unavailable = raw.unavailableModels
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+        val capabilities = raw.capabilities.mapNotNull { (model, capability) ->
+            model.trim().takeIf(String::isNotEmpty)?.let { it to capability }
+        }.toMap()
+        val row = raw.copy(
+            name = raw.name.trim().ifEmpty { slug },
+            slug = slug,
+            models = models,
+            unavailableModels = unavailable,
+            totalModels = maxOf(raw.totalModels, models.size),
+            capabilities = capabilities,
+        )
+        val identity = slug.lowercase()
+        val existing = normalized[identity]
+        normalized[identity] = if (existing == null) {
+            row
+        } else {
+            val mergedModels = (existing.models + row.models).distinct()
+            existing.copy(
+                models = mergedModels,
+                isCurrent = existing.isCurrent || row.isCurrent,
+                warning = existing.warning ?: row.warning,
+                authenticated = existing.authenticated || row.authenticated,
+                unavailableModels = (existing.unavailableModels + row.unavailableModels).distinct(),
+                freeTier = existing.freeTier || row.freeTier,
+                totalModels = maxOf(existing.totalModels, row.totalModels, mergedModels.size),
+                capabilities = mergeGatewayModelCapabilities(existing.capabilities, row.capabilities),
+            )
+        }
+    }
+    return normalized.values.toList()
+}
+
+private fun mergeGatewayModelCapabilities(
+    existing: Map<String, GatewayModelCapabilities>,
+    incoming: Map<String, GatewayModelCapabilities>,
+): Map<String, GatewayModelCapabilities> {
+    val merged = existing.toMutableMap()
+    incoming.forEach { (model, next) ->
+        val current = merged[model]
+        merged[model] = if (current == null) {
+            next
+        } else {
+            GatewayModelCapabilities(
+                reasoning = next.reasoning ?: current.reasoning,
+                reasoningEfforts = next.reasoningEfforts ?: current.reasoningEfforts,
+                reasoningEffortsExact = next.reasoningEffortsExact ?: current.reasoningEffortsExact,
+            )
+        }
+    }
+    return merged
+}
 
 data class GatewayMoaReference(
     val index: Int?,
@@ -362,6 +488,15 @@ data class GatewayModelOptions(
     val currentProvider: String,
 )
 
+/** Coherent model identity from a single `session.info` payload. */
+data class GatewayModelIdentity(val model: String, val provider: String)
+
+/** Model identity and effort observed together in one `session.info` payload. */
+data class GatewayReasoningIdentity(
+    val identity: GatewayModelIdentity,
+    val effort: String,
+)
+
 /** Reject provider catalogs that completed after a profile/context switch. */
 internal fun isCurrentModelOptionsResponse(
     requestGeneration: Long,
@@ -370,6 +505,21 @@ internal fun isCurrentModelOptionsResponse(
     currentProfileKey: String,
 ): Boolean =
     requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
+
+/**
+ * Selects the identity a model-options response may publish into chat UI state.
+ * Catalog-only requests populate picker choices without changing session identity.
+ */
+internal fun modelOptionsIdentityToPublish(
+    catalogOnly: Boolean,
+    hasLiveSession: Boolean,
+    sessionIdentity: GatewayModelIdentity?,
+    options: GatewayModelOptions,
+): GatewayModelIdentity? = when {
+    catalogOnly -> null
+    hasLiveSession && sessionIdentity != null -> sessionIdentity
+    else -> GatewayModelIdentity(options.currentModel, options.currentProvider)
+}
 
 /**
  * The explicit in-chat overrides to bind onto a gateway `session.create` as the
@@ -435,7 +585,7 @@ class GatewayTurnCallbacks(
      */
     val onInterimReconciled: (text: String) -> Unit = { _ -> },
     val onThinkingDelta: (String) -> Unit,
-    val onToolCallStart: (toolCallId: String, toolName: String) -> Unit,
+    val onToolCallStart: (toolCallId: String, toolName: String, argsPreview: String?) -> Unit,
     val onToolCallDone: (toolCallId: String, resultPreview: String?) -> Unit,
     val onToolCallFailed: (toolCallId: String, errorMsg: String?) -> Unit,
     /** Attach deterministic output-risk metadata to the matching tool card. */
@@ -468,8 +618,6 @@ class GatewayTurnCallbacks(
     val onInteractionRequest: (GatewayAsk) -> Unit,
     /** Server declared a pending interaction expired; clear only the matching card. */
     val onInteractionExpired: (GatewayAskExpiry) -> Unit,
-    /** The turn resumed after a pending interaction was resolved elsewhere. */
-    val onInteractionResolved: (GatewayAskExpiry) -> Unit = { _ -> },
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default

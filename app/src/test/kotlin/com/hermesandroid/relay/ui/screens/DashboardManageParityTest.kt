@@ -63,14 +63,35 @@ class DashboardManageParityTest {
     }
 
     @Test
-    fun mcpManagePlumbing_usesEffectiveProfileForListAndRowActions() {
+    fun completedOneShotCron_showsOutcomeAndOnlyOffersRunsAndDelete() {
+        val root = Json.parseToJsonElement(
+            """{"id":"once","name":"One shot","schedule":"@once","state":"completed","enabled":false,"last_status":"error","last_error":"model timeout","last_delivery_error":"phone offline"}""",
+        ).jsonObject
+
+        val row = summarizeObjectItem(root, "once")
+
+        assertTrue(row.meta.orEmpty().contains("last: error"))
+        assertTrue(row.meta.orEmpty().contains("error: model timeout"))
+        assertTrue(row.meta.orEmpty().contains("delivery: phone offline"))
+        assertEquals(
+            listOf(DashboardActionKind.ViewCronRuns, DashboardActionKind.DeleteCron),
+            row.actions.map(DashboardItemAction::kind),
+        )
+    }
+
+    @Test
+    fun profileScopedManagePlumbing_usesEffectiveProfileForListAndRowActions() {
         assertEquals(
             "/api/mcp/servers?profile=work%20profile",
             dashboardSectionRequestPath("/api/mcp/servers", "work profile"),
         )
         assertEquals(
-            "/api/providers/custom-endpoints",
+            "/api/providers/custom-endpoints?profile=work%20profile",
             dashboardSectionRequestPath("/api/providers/custom-endpoints", "work profile"),
+        )
+        assertEquals(
+            "/api/learning/graph?profile=work%20profile",
+            dashboardSectionRequestPath("/api/learning/graph", "work profile"),
         )
         val scoped = scopeDashboardManageItems(
             "/api/mcp/servers",
@@ -78,6 +99,12 @@ class DashboardManageParityTest {
             listOf(DashboardSummaryItem(id = "hosted", title = "Hosted")),
         )
         assertEquals("work profile", scoped.single().profile)
+        val endpoint = scopeDashboardManageItems(
+            "/api/providers/custom-endpoints",
+            "work profile",
+            listOf(DashboardSummaryItem(id = "local", title = "Local")),
+        )
+        assertEquals("work profile", endpoint.single().profile)
     }
 
     @Test

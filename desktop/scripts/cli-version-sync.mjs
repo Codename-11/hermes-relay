@@ -24,7 +24,10 @@ const paths = {
   packageLock: join(desktopRoot, 'package-lock.json'),
   generatedVersion: join(desktopRoot, 'src', 'version.ts'),
   cargoToml: join(desktopRoot, 'tray', 'Cargo.toml'),
-  cargoLock: join(desktopRoot, 'tray', 'Cargo.lock')
+  cargoLock: join(desktopRoot, 'tray', 'Cargo.lock'),
+  tauriConfig: join(desktopRoot, 'tray', 'tauri.conf.json'),
+  trayPackageJson: join(desktopRoot, 'tray', 'package.json'),
+  trayPackageLock: join(desktopRoot, 'tray', 'package-lock.json')
 }
 
 const packageJson = JSON.parse(readFileSync(paths.packageJson, 'utf8'))
@@ -80,12 +83,24 @@ if (write) {
     /(\[\[package\]\]\s*\r?\nname\s*=\s*"hermes-relay-tray"\s*\r?\nversion\s*=\s*")[^"]+("\s*$)/m,
     `$1${version}$2`
   )
+  const tauriConfig = JSON.parse(readFileSync(paths.tauriConfig, 'utf8'))
+  tauriConfig.version = version
+  writeFileSync(paths.tauriConfig, JSON.stringify(tauriConfig, null, 2) + '\n')
+  for (const packagePath of [paths.trayPackageJson, paths.trayPackageLock]) {
+    const metadata = JSON.parse(readFileSync(packagePath, 'utf8'))
+    metadata.version = version
+    if (metadata.packages?.['']) metadata.packages[''].version = version
+    writeFileSync(packagePath, JSON.stringify(metadata, null, 2) + '\n')
+  }
 }
 
 const packageLock = JSON.parse(readFileSync(paths.packageLock, 'utf8'))
 const generatedVersionText = readFileSync(paths.generatedVersion, 'utf8')
 const cargoTomlText = readFileSync(paths.cargoToml, 'utf8')
 const cargoLockText = readFileSync(paths.cargoLock, 'utf8')
+const tauriConfig = JSON.parse(readFileSync(paths.tauriConfig, 'utf8'))
+const trayPackageJson = JSON.parse(readFileSync(paths.trayPackageJson, 'utf8'))
+const trayPackageLock = JSON.parse(readFileSync(paths.trayPackageLock, 'utf8'))
 const generatedVersion = generatedVersionText.match(/export const VERSION\s*=\s*["']([^"']+)["']/)?.[1]
 const cargoVersion = cargoTomlText.match(/\[package\][\s\S]*?^version\s*=\s*"([^"]+)"/m)?.[1]
 const cargoLockVersion = cargoLockText.match(
@@ -97,7 +112,11 @@ const locations = [
   ['package-lock workspace root', packageLock.packages?.['']?.version],
   ['generated src/version.ts', generatedVersion],
   ['Cargo package', cargoVersion],
-  ['Cargo lock package', cargoLockVersion]
+  ['Cargo lock package', cargoLockVersion],
+  ['Tauri config', tauriConfig.version],
+  ['tray package', trayPackageJson.version],
+  ['tray package-lock root', trayPackageLock.version],
+  ['tray package-lock workspace root', trayPackageLock.packages?.['']?.version]
 ]
 const mismatches = locations.filter(([, value]) => value !== version)
 

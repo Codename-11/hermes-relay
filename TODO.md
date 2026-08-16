@@ -6,6 +6,74 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify the official Desktop Relay plugin
+
+The unified `plugin/desktop/plugin.js` implementation is covered by source-level
+SDK contract, packaging, explicit-open, no-auto-open, close, unload, and profile
+cache-isolation tests. A physical official Hermes Desktop session is still
+required before calling the UX live-certified:
+
+- Test default and named local profiles, ordinary authenticated remote mode,
+  and SSH mode with differently named local/remote profile mapping.
+- In two full app windows, prove enabling, registration, explicit open,
+  requests, close/reopen, hot reload, and disable/unload remain window-local.
+- Prove startup, reconnect, profile change, layout restore/reset, update, and
+  background events never open or focus Relay.
+- Drag and dock the pane across native zones, close it, reopen it from all three
+  labeled actions, and verify no private-hook fallback is needed.
+- Exercise Relay running/unreachable, zero/one/multiple devices, pairing,
+  revocation, bridge activity, media, remote access, and renderer error logging
+  without exposing credentials, pairing payloads, filesystem paths, or tokens.
+
+---
+
+## Structured desktop hardware capabilities
+
+Structured access and per-host USB policy now ship with typed, serial-bound ADB
+list, shell, push, pull, install, and bounded logcat operations. Remaining work:
+- Add microphone and camera only with backend readiness detection, bounded local
+  grants, active-use indicators, audit events, and immediate cancellation.
+- Reconcile legacy `desktop_screenshot` with the task-granted computer screenshot
+  path so screen capture follows one policy.
+- Extend capability policy beyond hardware only where a typed broker provides a
+  meaningfully stronger boundary than Structured mode already provides.
+
+---
+
+## Android Plugin Studio protocol follow-ups
+
+The first live declarative Plugin lane is host-local: Relay tools create bounded
+draft JSON, Android previews it through the authenticated Dashboard namespace,
+and exact-digest Keep/Remove actions require an Android user tap. Complete the
+multi-session protocol before treating `lifecycle=session` as an isolation claim:
+
+- Derive draft ownership from trusted Hermes task context and store only an HMAC
+  of that identifier; never accept a model-supplied session owner.
+- Filter draft discovery by the Android app's active Hermes session while keeping
+  profile and connection publications separate with explicit precedence.
+- Replace foreground five-second catalog polling with authenticated catalog
+  invalidation events plus ETag polling fallback.
+- Expire abandoned drafts and pending approvals, and add revision-bound profile
+  versus connection promotion targets.
+
+---
+
+## Split fast Android unit tests from resource and screenshot tests
+
+The quick-loop commands now narrow execution to the sideload debug variant and
+support one-class filtering, but all `:app` unit tests still share one Android
+test variant. That variant includes merged Android resources, gives every test
+worker a 2 GiB heap, runs on JDK 21, and enables Roborazzi recording because a
+small subset of Robolectric/screenshot tests requires those settings.
+
+Create a separate resource/screenshot test lane so pure state, parser, routing,
+and formatting tests can run as ordinary JVM tests without Android resource
+packaging. Keep golden-image recording explicit rather than applying it to all
+unit tests, preserve a CI task that runs both lanes, and benchmark cold plus
+warm focused-test latency before adopting the split.
+
+---
+
 ## Verify Android native dashboard sign-in on device
 
 Android now selects Custom Tab + PKCE for HTTPS gateways that advertise
@@ -717,9 +785,10 @@ Deferred:
 
 A 5-agent audit compared the chat surface to Discord/Telegram/Messenger/iMessage/
 GitHub-mobile. **Shipped this pass (pending on-device verification):** a chat-tuned
-`markdownTypography()` ramp (headings were falling through to M3 display roles —
-h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
-scaling down, list/paragraph unified to 14sp, inline+fenced code 13sp, `textLink`
+  `markdownTypography()` ramp (headings were falling through to M3 display roles —
+  h1=`displayLarge` 57sp in this app's scale — so a `#` was a billboard; now h1≈20sp
+  scaling down, list/paragraph unified to 15sp/21sp, primary assistant prose moved
+  to the theme's full-contrast `onSurface`, inline+fenced code 13sp, `textLink`
 accent+underline) in `MarkdownContent.kt`; timestamp gated to `isLastInGroup` (was on
 every bubble) + grouping breaks on a >5min gap (`GROUP_GAP_MS`) so a resumed
 conversation gets its own beat; long-press haptic on the action menu; streaming dots
@@ -731,10 +800,6 @@ gated to pre-first-token. Deferred:
   parses one full CommonMark document so global link references, indentation, and
   nested containers remain correct; the viewport now anchors that same remeasure.
   Verify lists, tables, quotes, HTML, nested fences, and reference links on-device.
-- **Bubble body 14sp → 15sp/21.** 14sp is the smallest body of the five reference
-  apps. Bump markdown paragraph/text/list + the two plain `Text` sites
-  (`MessageBubble.kt` user/system) together; keep ~1.4 leading so the ~272dp measure
-  stays ~36–38 chars/line. Debatable/broad — left out of the certain heading win.
 - **Tail-corner on last-in-group only (design decision).** The audit flagged the
   per-bubble bottom tail as "half-implemented," but it's a deliberate aesthetic
   (every bubble tails). Switching to iMessage-style "tail on the last bubble only"
@@ -878,7 +943,7 @@ Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_mes
 - Live gateway must discover the plugin (`~/.hermes/plugins/hermes-relay` → `plugin/`) and `plugins.enabled` must include `hermes-relay` for the `phone` platform to register. Confirm `phone` appears in `hermes gateway status` with `PHONE_ENABLED=1`.
 - End-to-end: with the app paired + "Let Hermes message me" on, run `send_message target=phone text=...` (and a cron `deliver=phone`) and confirm a notification on the device. Verify 503 (no phone) and the off-by-default gates.
 - **Phase 2c reply round-trip — ✅ DONE (verified on-device 2026-06-29).** Confirmed: agent → phone notification → inline reply → drained through the relay's loopback `GET /phone/replies` (different process) → `handle_message` (`role_authorized=True`, no `PHONE_ALLOW_ALL_USERS`) → agent answer back in the *same* thread. Both fixes required (see DEVLOG / the Phase 2c bullet above).
-- **FIX: cron `deliver=phone` / standalone send is broken.** Live testing: `hermes send --to phone` returns `{"error": "Unknown platform: phone"}`. The standalone (non-gateway) send path doesn't run a `kind=standalone` plugin's programmatic `ctx.register_platform`, so it never learns `phone` — only the running gateway (which loads `register()` at startup) does. The agent path (`send_message target=phone` in the gateway) works and was verified end-to-end on-device; the standalone/cron path needs the platform discoverable there too (declare it so the standalone loader picks it up, or route cron through the gateway). Until then `cron deliver=phone` won't work.
+- **Cron `deliver=phone` live certification pending.** The plugin now registers its standalone sender and enumerates the canonical phone home through the upstream adapter channel-directory hook. Re-run the device scenario above on the deployed plugin to certify scheduled delivery, including the offline queue and opt-in gates.
 - **FIX SHIPPED (2026-07-07) — installer + doctor guard against stale duplicate plugin copies; live-host verify pending.** Root cause of the 2026-06-29 round-trip failure: the gateway loader dedups discovered plugins by manifest `name`, so a second directory declaring `name: hermes-relay` (an old-installer backup copy, or a stray native install) could win the dedup and make the gateway load stale code — silently ignoring every later deploy. `plugin/doctor.py` now emits a `plugin-name-unique` warning when more than one directory under `~/.hermes/plugins/` declares the same plugin name (distinct real targets only — two links to the same target are deduped), and `install.sh` sweeps any such duplicate so only the canonical `hermes-relay` symlink survives. (Current `install.sh` already `rm -rf`s the old link rather than backing it up inside the plugins dir, so the original "back up outside the plugins dir" half is moot.) **Verify on the live host:** `hermes relay doctor` reports the `plugin-name-unique` check, and a reinstall leaves exactly one `hermes-relay` entry under `~/.hermes/plugins/`.
 
 ## Phone platform — usability roadmap (post device-verification, 2026-06-29)
@@ -891,7 +956,7 @@ Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_mes
 
 - **Outbound buffering — ✅ relay-side DONE (2026-06-29).** `ProactiveChannel.push()` now queues agent→phone messages in a bounded deque (drop-oldest, 24 h TTL) when no phone is subscribed and returns `{queued: true}` (not 503); `_flush_outbound` delivers FIFO on the next subscribe (stale pruned). Inspect/cancel via `peek_outbound`/`cancel_outbound` + loopback `GET`/`DELETE /phone/outbound`. **UI surfacing of the queued state** (host-side, since the queue exists while the phone is OFFLINE): (a) ✅ **desktop CLI `relay queue` / `relay queue --clear` / `--cancel <id>` DONE (2026-06-29)** over the new endpoints (loopback-only — run on the relay host); a dashboard Relay-tab view is the optional GUI equivalent; (b) **remaining** — in the threaded agent surface, mark messages that arrived-while-away, and show the user's OWN pending replies (the Phase 3 reply queue) with a sending/Cancel affordance — that's where phone-side "queued + cancel" belongs.
 - **Threads surface (unified-session model — see ADR 12 + the Refinement above).** Build order, each shippable: **(1)** source tags in the session drawer (`source=phone` → clean **Threads** chip + thread-spool icon, NOT a phone glyph) — also delivers the "source attribution in Chat" goal; **(2)** open a Thread in Chat from its session-store history (reuse the existing message-history path); **(3)** route the live `proactive` push into the session view + notification + unread, demoting `ProactiveInboxStore` to cache/outbox; **(4)** reply from the Chat composer via `proactive.reply` + persist the user turn + local `Sending/Queued/Failed` status — **MVP**; **(5)** a **Threads capability row** in the best-path UI + a pinned **Threads** entry atop the drawer (thread-spool icon, shown only when relay-paired + opted-in) + retire `HermesInboxScreen`, re-point the notification deep-link + Settings "View messages"; **(6)** outbox/retry on reconnect; **(7)** relay `proactive.reply.ack` (honest Delivered) + `proactive.cancel`; **(8)** multi-thread `chat_id` (named/project Threads). **Verify gate before (1):** confirm the app's session-list/history path surfaces a `source=phone` session cleanly (upstream `session.list` returns all sources flat, so it should — but check whether the drawer currently filters it out). Honesty call: do NOT show "Delivered" until (7) lands (can't confirm it client-side before the ack).
-  - **Status (2026-06-29, implemented UNBUILT — verify in Studio):** **CODE-COMPLETE on `dev`:** slice **1** (drawer source tags + `ThreadSpoolGlyph` + Threads filter), **2** (open a Thread from history — free via the existing `loadSessionHistory` path), **3-parse** (carry `reply_to` on `ProactiveMessage`), **4** (composer reply in a `source=phone` session routes over `proactive.reply`; `MessageDeliveryStatus` SENDING→DELIVERED/FAILED on the bubble), **5** (Threads capability row in `SessionPathCard` + `threadsCapabilityActive` drawer wiring), **7** (relay `proactive.reply.ack` + `proactive.cancel` — 25/25 `unittest` green — and client ack handling). **DONE since (2026-06-29, built + on phone):** live **in-thread reply rendering** (an agent reply lands in the open Thread as an ASSISTANT bubble, suppressing the notification/inbox — `injectIntoThread`); **user-created named Threads** ("+ New Thread"); **retire `HermesInboxScreen`** (deleted; route + nav removed; notification tap + Settings "View messages" re-pointed to Chat; surface renamed "Hermes messages" → **"Threads"**); relay slice-7 ack/cancel **DEPLOYED** to the host so **"Delivered" is live**. **DEFERRED (reasons):** per-session **unread badge**; **outbox/retry** (needs multiplexer connection-state); **exact-Thread deep-link** from the notification (opens Chat today, not the specific thread — needs select-session-on-entry); **remove the now-orphaned `ProactiveInboxStore`** (viewer-less write-only log); **agent-initiated** named Threads (upstream `send_message` thread param). On-device verifies for the create-flow: fresh-`chat_id` auto-create, the `…:dm:<chat_id>` id form, `renameSession` on a phone session.
+  - **Status (2026-06-29, implemented UNBUILT — verify in Studio):** **CODE-COMPLETE on `dev`:** slice **1** (drawer source tags + `ThreadSpoolGlyph` + Threads filter), **2** (open a Thread from history — free via the existing `loadSessionHistory` path), **3-parse** (carry `reply_to` on `ProactiveMessage`), **4** (composer reply in a `source=phone` session routes over `proactive.reply`; `MessageDeliveryStatus` SENDING→DELIVERED/FAILED on the bubble), **5** (Threads capability row in `SessionPathCard` + `threadsCapabilityActive` drawer wiring), **7** (relay `proactive.reply.ack` + `proactive.cancel` — 25/25 `unittest` green — and client ack handling). **DONE since (2026-06-29, built + on phone):** live **in-thread reply rendering**; **user-created named Threads** ("+ New Thread"); **retire `HermesInboxScreen`**; relay slice-7 ack/cancel **DEPLOYED** to the host so **"Delivered" is live**. **DONE (2026-08-14):** notification taps survive cold start and open the exact `chat_id`; agent-initiated outbound messages appear as connection-scoped provisional Threads backed by the bounded proactive store, then promote to the real `source=phone` session after the first reply. **DEFERRED:** per-session **unread badge**; **outbox/retry** (needs multiplexer connection-state); **agent-initiated** named Threads (upstream `send_message` thread param). On-device verifies for the create-flow: fresh-`chat_id` auto-create, the `…:dm:<chat_id>` id form, `renameSession` on a phone session.
   - **User-created Threads (slice 8, Discord-style) — CODE-COMPLETE on `dev` (built + installed 2026-06-29; on-device behavior pending).** "+ New Thread" in the drawer's Threads view → name dialog → `ChatViewModel.startNewThread` mints a fresh `chat_id`; the first composer message opens it over `proactive.reply` (gateway auto-creates the `source=phone` session) → `switchToCreatedThread` polls + switches to the real session + applies the name. Existing-thread replies route by the `chat_id` parsed from the session id (`…:dm:<chat_id>`; opaque id → home fallback). **On-device verifies:** (1) a fresh-`chat_id` no-`reply_to` inbound creates a new `source=phone` session; (2) the phone session id carries the `…:dm:<chat_id>` form the client parses; (3) `renameSession` titles a phone session. **Remaining slice-8:** AGENT-initiated named Threads (the upstream `send_message` thread/chat_id param so the agent can open its own named Threads).
   - **`chat_id` not exposed by `/api/sessions` (root cause of the 2026-06-29 on-device create-flow bugs — fixed client-side).** Confirmed on the host: a phone session's `id` is a timestamp (e.g. `20260629_204755_94f391d6`); the real `chat_id` lives in the `session_key` (`agent:main:phone:dm:<chat_id>`) and a `chat_id` column — but `/api/sessions` returns **neither `chat_id` nor `session_key`**, only `source` + the timestamp `id`. So the client could not map a session ↔ its `chat_id`, which broke create-thread switch/rename + reply routing + in-thread injection. **Client workaround shipped:** find a created thread by session-list **diff** (the new `source=phone` session), keep an in-memory `sessionId → chat_id` map (learned at creation + from incoming `phone.message`s) for reply routing, and inject by source (+ learned chat_id) rather than a parsed id. **Limitation:** for a thread the app didn't create *this* session (agent-created, another device, or after an app restart) `chat_id` is unknown until a message arrives while viewing it → its replies fall back to the home channel until then. **RESOLVED via the plugin (2026-06-29, per upstream-or-plugin policy):** the relay now exposes `GET /phone/threads` (`plugin/relay/session_store.py` reads the gateway store read-only → `[{session_id, chat_id, title}]`; `server.py` `handle_phone_threads`, bearer for the app / loopback for diag; 5 unit tests). The app (`RelayHttpClient.fetchPhoneThreads` → `ConnectionViewModel.phoneThreadChatIds` on every `auth.ok` → `ChatViewModel.seedThreadChatIds`, authoritative over the learned map) now routes replies correctly for **any** Thread — incl. ones it didn't create + after restart. Deployed + verified live. **Still-nice-to-have (lower priority): the upstream PR** to add `chat_id`/`session_key` to `/api/sessions` (the standard-path proper fix; the relay route then becomes redundant + the client prefers upstream when present).
 - **Threads as named/project conversations (Discord-parity — folds into multi-thread #8).** A stable *named* `chat_id` per project = a persistent, agent-reachable project Thread (Discord named-thread parity for "persist a session for a project"). Enables: the agent **opening** a new named Thread for a background job/topic (a relay/gateway "open thread" affordance + a `send_message`-adjacent tool); cron/job updates landing in their own Thread; and replying to a Thread from any surface (desktop CLI / dashboard) since it is just a gateway session. Also evaluate per-Thread profile binding (a project Thread uses the "work" profile — ties to profile=contact).
@@ -911,7 +976,7 @@ Phase 1 (end-to-end spine) shipped on `Codename-11/phone-platform` — `send_mes
 The gateway-platform model is the *correct + sufficient architecture* (the phone is a registered platform peer, so anything that routes to a platform — `send_message`, cron `deliver=`, channel directory, background jobs — can reach the phone). These are the concrete gaps between "architecturally a peer" and "I never open Discord":
 
 - **Guaranteed background delivery (the biggest gap; no push today).** Delivery is **live-WSS-only** + a 24 h relay buffer; there is **no FCM/UnifiedPush** wake-up. If the app process is dead AND not holding a socket, a message waits for the next reconnect, and the relay buffer is ephemeral (lost on relay restart). Discord/Telegram feel instant because they wake the device via push even when the app is dead. Decide a **push transport**: **UnifiedPush/ntfy** (recommended — self-hostable, no Google dependency, upstream *already* ships an `ntfy` platform, on-brand for self-hosted) vs **FCM** (simplest UX but adds Play Services + a push relay; clashes with self-hosted ethos — at most the `googlePlay` flavor) vs **persistent foreground keep-alive service** holding the relay WSS (zero new infra, like `GatewayKeepAliveService`, but battery cost + Doze-fragile). Likely: UnifiedPush primary + foreground-keepalive fallback.
-- **Cron / background-job delivery is BROKEN** (already tracked above): `deliver=phone` standalone path → `Unknown platform: phone`. This is load-bearing for "receiver of crons/background jobs" — fix is required, not optional, for the replacement goal.
+- **Cron / background-job delivery needs live certification.** The standalone sender and channel-directory enumeration are implemented; certify `deliver=phone` against a deployed Relay and paired device, including reconnect delivery from the bounded offline queue.
 - **Agent-initiated multi-thread creation remains.** The app already renders N
   `source=phone` sessions, user-created Threads vary `chat_id`, and replies route
   by `chat_id` + `reply_to`. The missing parity is letting the agent open/name a
@@ -920,7 +985,7 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
   session store; the relay buffer is only the live/offline-delivery layer, not a
   parallel history database.
 - **Profile = contact mapping (new idea, fold in).** Multiple Hermes **profiles** (distinct agent personas/configs) could each be a distinct thread *source*/"contact" — DMing different agents. Maps cleanly onto the per-thread `chat_id` + source-attribution work; lets the app feel like a contact list of agents.
-- **Per-thread notification controls + deep-link (Discord-parity affordances).** Per-thread notification channels, mute/DND/quiet-hours (Phase 3 partially), and a notification that **deep-links into the exact thread** (tap → land in that conversation) so dipping in/out while multitasking is frictionless.
+- **Per-thread notification controls (Discord-parity affordances).** Exact-thread notification deep-linking is shipped. Remaining: per-thread notification channels and mute/DND/quiet-hours controls (Phase 3 partially).
 - **Agent-initiated rich content.** Agent → phone thread with **images/cards** (relay media infra + `InboundAttachmentCard`/`HermesCardBubble` already exist on the chat side — reuse). Inbound (phone → agent) reply media stays deferred (text-first), but outbound rich content is low-cost parity.
 - **In-thread "agent is working" indicator.** A typing/working state in the thread while the agent thinks/runs tools (Discord typing-dots parity) — the chat surface already has thinking indicators to reuse.
 
@@ -1045,12 +1110,14 @@ to tool state, safety prompts, or the current task.
   playback-synchronized amplitude through `shouldMarkRealtimeOutputActive`,
   matching the basic-TTS path. Confirm visually on-device with the 1.4.1 batch.
 
-- **Voice command layer — initial 1.4.1 subset code-complete; live verify and
-  navigation residuals remain.** Exact final transcripts can stop speech,
+- **Voice command layer — upstream stop phrases and phase-aware pause are
+  code-complete; live verify and navigation residuals remain.** Exact final transcripts can end the active voice chat,
   explicitly cancel the active background task, pause/resume Continuous mode,
-  repeat a settled background answer, and start a new Standard chat. Bare `stop`
-  and `cancel`, partial transcripts, and command-like ordinary prompts stay on the
-  normal Hermes route. Realtime `new chat` remains gated on a clean websocket
+  repeat a settled background answer, and start a new Standard chat. Bare
+  `stop` is configurable and exact-only while voice chat is active; bare
+  `pause` remains phase-gated to Continuous mode. `cancel`, partial transcripts,
+  and command-like ordinary prompts stay on the normal Hermes route. Realtime
+  `new chat` remains gated on a clean websocket
   session-rebind boundary; `open overlay` and `return to Hermes` remain future
   navigation commands. Verify barge-in Stop, pause during a background run, local
   command Chat cleanup, and Continuous rearm on device.
@@ -1085,11 +1152,34 @@ and whether the agent is waiting on the user.
   experimental barge-in choice. Relay update is server-first; local Voice/barge-in
   values share one DataStore transaction, with relay rollback on local failure.
 
-- **Barge-in hardening** — keep barge-in experimental until echo/self-recording
+- **Barge-in hardening — code complete; on-device matrix remains.** Full-turn
+  listener ownership, AEC/noise suppression, upstream-compatible RMS
+  calibration and thresholds, configurable playback grace, duck/cut behavior,
+  late-delta fencing, next-turn interruption context, and single-microphone
+  handoff are implemented. Phone testing still needs to cover speakerphone/headphones, quiet/noisy rooms, Standard/Realtime
+  generation and playback, stop/pause, and resume-after-interruption.
 
-is solved. The target path is proper AEC, playback-ducking, and a rule that
+- **Experimental wake word — on-device validation.** Verify first-enable model
+  installation and integrity failure recovery, all supported ABIs, Android
+  notification/microphone permission variants, background-start restrictions,
+  task recreation from the detection notification, acoustic false-positive and
+  false-negative rates, battery impact, stop action, and wake→voice→wake
+  microphone handoff. Voice settings now provide a bounded real-microphone/model
+  test with an input meter; use it to distinguish audio capture from KWS tuning
+  before testing the full activation flow. The first release remains fixed to
+  “Hey Hermes”; do not
+  expose profile-specific phrases until routing and acoustic behavior are
+  implemented and validated.
 
-output audio can never become a user turn.
+- **Android Digital Assistant — on-device validation.** On a physical device,
+  select and remove Hermes through the system Assistant role; verify gesture,
+  power-button, screen-off, credential-lock, and unlocked “Hey Hermes”
+  invocation; confirm the system session appears without overlay/full-screen
+  permissions; exercise compact, expanded, collapsed, and full-Voice handoff
+  states, background tap-through, rotation and insets, cancel/back, microphone
+  denial, network failure, process kill/recreation, and wake→voice→wake
+  resumption. Measure idle battery drain because third-party assistants do not
+  receive Google's dedicated low-power hotword hardware.
 
 - **Audio quality guardrails** — normalize output volume across realtime and
 
@@ -1161,6 +1251,25 @@ When the answer becomes clearer, this section becomes either an ADR in `docs/dec
 
 ## Smaller deferred items
 
+- **Certify the preferred CUA Driver backend (ADR 56).** The canonical-runtime
+  probe, bounded adapter, server-owned control-session envelope, per-session
+  grant state, local engine/status controls, telemetry-off process environment,
+  and Hermes snapshot-token primitives now exist. Before graduating the engine,
+  finish end-to-end enforcement of app/display/folder scopes and sensitive
+  pixel/accessibility denial or redaction, harden the grant-bridge ACL and nonce
+  lifecycle, and complete live Windows certification proving the physical cursor and
+  foreground app stay unchanged, stale or cross-window tokens fail, two remote
+  control sessions receive isolated animated cursors, and foreground escalation
+  never happens implicitly. Exercise revoke on grant expiry, disconnect,
+  re-pair, policy downgrade, emergency stop, Windows-session change, and daemon
+  shutdown. The explicit local CUA install/update surface now verifies upstream
+  manifest identity and installer SHA-256; add Windows publisher verification
+  when upstream signs the installer. Keep raw CUA tools, configuration,
+  recording, replay, and JavaScript outside the remote agent surface.
+  Remove the temporary Windows readiness/health split once
+  [trycua/cua#3103](https://github.com/trycua/cua/issues/3103) ships in the
+  supported CUA range; restore a mandatory health gate only if the upstream
+  probe is bounded and cannot leave UI Automation falsely busy.
 - **MediaProjection consent flow** — wired in MainActivity (2026-04-12), needs end-to-end test on a real device
 - **WorkManager upgrade for auto-disable timer** — currently a coroutine `Job + delay()` in `AutoDisableWorker.kt`; documented at top of file. Upgrade when androidx.work joins the classpath
 - **Wave 3 voice-bridge multi-turn confirmation** — currently a 5s TTS countdown with cancel; conversational confirmation is the follow-up
@@ -1218,14 +1327,11 @@ Follow-ups:
   profile/skill-aware empty-state chips and the ~40-flow recomposition hotspot at
   the top of `ChatScreen`.
 - **Pet hot-load + in-app add/remove (shipped 2026-06-20).** Pets now live-refresh: an `avatarsRefreshTick` keys the avatar `produceState` in `RelayApp`, and Appearance re-scans `pets/` on open and after in-app import/delete — no app restart. Appearance gained "Add a pet" (SAF `.zip` import via `PetImporter`, zip-slip/zip-bomb guarded + validated through `toAvatar`) and an "Installed pets" list with per-pet remove (`PetLoader.deletePet`, confirm dialog, Sphere fallback). Remaining:
-  - **Sphere-skin parity.** Skins are still process-scoped + `adb push` only — the live tick and the importer cover pets, not skins. Extend the tick to `loadUserSkins` and add a `.json` skin import if hot-loading/adding skins in-app is wanted.
+  - **Sphere-skin parity (shipped 2026-08-09).** Appearance now imports a bounded, validated declarative `.json` skin through the system picker, hot-refreshes the shared sphere registry, and selects the imported skin without an app restart.
   - `**adb push` into `Android/data` hangs on Samsung scoped storage.** Confirmed: pushing a pet pack to `/sdcard/Android/data/<pkg>/files/pets/` stalls (no bytes written) although `adb shell ls` of the dir works. In-app `.zip` import is the supported path; `/sdcard/Download` pushes fine. Consider softening `docs/pet-spec.md` + user-docs to lead with in-app import over adb.
   - **On-device import/delete smoke.** Import `/sdcard/Download/lucy.zip` via Add a pet → confirm Lucy appears, selects, and animates all states; then remove it and confirm the avatar falls back to the Sphere.
-- **Pet state-change re-decode can flash one blank frame.** When the agent state switches clips, the first frame of the new clip may briefly be blank during decode; prewarm/hold-last-frame to smooth it. Root cause is the same as the next item: `PetAvatar.Render` re-decodes from disk on every clip change.
-- **Pet frame-sequence memory: no cap or downsample (audit 2026-06-19).** `decodeClip` decodes every frame of the selected clip into `List<ImageBitmap>` at full resolution with no `inSampleSize` downscale to the display size and no frame-count/dimension ceiling — a long sequence of large PNGs can use a lot of RAM and a single very large image can OOM `BitmapFactory`. Add `inSampleSize` downsampling to the avatar's draw size and/or a documented hard cap. Spec now warns authors (prefer sprite sheets), but the renderer doesn't enforce it.
-- **Pet decoded-clip cache (audit 2026-06-19).** `PetAvatar.Render` keys `produceState` on `clip`, so idle→thinking→speaking→idle within one turn re-runs `BitmapFactory.decodeFile` from disk each transition (repeated I/O + GC churn, and the blank-frame flash above). Add a small per-avatar `Map<SphereState, PetFrames>` decode cache.
 - **Pet behavior model — richer state association (spec'd 2026-06-19, `docs/pet-spec.md` "Agent states &amp; pet behavior").** Shipped: the honesty clamp (declared reactivity ∩ `PET_RENDERER_CAPABILITIES`), the friendly `writing` alias, the `**working`/tool-use overlay** (pet-local sub-state from `toolCallBurst`; opt-in `working` clip drives both the swap and the Tools badge), the **one-shot reaction layer** (`greet`/`wake` on appear, `done`/`celebrate` on turn-finish — opt-in, play-once-then-revert, transition-derived; `ONE_SHOT_MAX_MS` backstop), and `**intensity` modulation** (opt-in `reactive.intensity` → live playback speedup ≤1.6× via `rememberUpdatedState`; un-clamps the Activity badge). Voice · Tools · Activity reactivity is now complete. Remaining:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
-  - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Watch for the known clip re-decode flash on each swap (separate TODO — decoded-clip cache).
+  - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
 

@@ -8,7 +8,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -17,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.hermesandroid.relay.ui.components.SphereReactivity
@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.LinkedHashMap
 import kotlin.math.roundToInt
 
 /** Never animate a pet faster than this regardless of the spec's `fps`. */
@@ -58,8 +59,34 @@ private const val ONE_SHOT_MAX_MS = 4000L
 /** How long to show a one-frame one-shot reaction before returning to the base loop. */
 private const val ONE_SHOT_STILL_MS = 1800L
 
+/** Runtime guardrails also protect sideloaded custom packs, not only Petdex downloads. */
+internal const val PET_MAX_FRAME_SEQUENCE_FRAMES = 120
+internal const val PET_MAX_FRAME_SEQUENCE_PIXELS = 8L * 1024L * 1024L
+internal const val PET_MAX_SPRITE_SHEET_PIXELS = 16L * 1024L * 1024L
+private const val PET_DECODED_CLIP_CACHE_ENTRIES = 4
+private const val PET_DECODED_SHEET_CACHE_ENTRIES = 2
+
 internal fun petOneShotReleaseDelayMs(frameCount: Int): Long =
     if (frameCount <= 1) ONE_SHOT_STILL_MS else ONE_SHOT_MAX_MS
+
+/** Reject invalid dimensions and cumulative decode requests before allocating a bitmap. */
+internal fun petBitmapFitsPixelBudget(
+    width: Int,
+    height: Int,
+    usedPixels: Long,
+    maximumPixels: Long,
+): Boolean {
+    if (width <= 0 || height <= 0 || usedPixels < 0L || maximumPixels <= 0L) return false
+    val pixels = width.toLong() * height.toLong()
+    return pixels > 0L && usedPixels <= maximumPixels && pixels <= maximumPixels - usedPixels
+}
+
+/** Keep the current visual until the requested clip is decoded; null clips intentionally clear it. */
+internal fun <T> retainPetFrameDuringDecode(
+    previous: T?,
+    decoded: T?,
+    hasRequestedClip: Boolean,
+): T? = if (hasRequestedClip) decoded ?: previous else null
 
 /**
  * The live reactive signals the pet renderer actually consumes **today**. A pet's
@@ -125,13 +152,21 @@ data class SpriteSheetClip(
     val frameHeight: Int,
     override val frameCount: Int,
     override val fps: Float,
+    /** Zero-based first cell in the atlas, read row-major. */
+    val startFrame: Int = 0,
 ) : PetClip
 
+internal data class PetClipSelection(
+    val clip: PetClip?,
+    val mirrorHorizontally: Boolean = false,
+    /** Manifest key that produced [clip], used by the capability preview. */
+    val sourceKey: String? = null,
+)
+
 /**
- * User-loaded "pet" avatar — a bitmap frame-sequence / sprite-atlas companion
- * that replaces the sphere. Implements the C2 [AgentAvatar] seam, so once
- * selected it renders across chat, clean mode, the voice overlay, onboarding,
- * and the splash with no per-surface code.
+ * User-loaded bitmap frame-sequence / sprite-atlas companion. It renders in the
+ * floating-pet surface and remains separate from profile identity and the
+ * optional ambient Sphere.
  *
  * Rendering is deliberately dependency-free: frames are decoded with
  * [BitmapFactory] and drawn through a Compose [Canvas]. The frame loop is
@@ -141,7 +176,7 @@ data class SpriteSheetClip(
  *
  * Built by [PetSpec.toAvatar]; discovered by [PetLoader].
  *
- * @property clips a fully-resolved clip for every [SphereState] (the loader
+ * @property activityClips a fully-resolved clip for every [SphereState] (the loader
  *   pre-applies the idle/thinking/speaking fallback chain), so [Render] is a
  *   simple lookup.
  * @property workingClip optional distinct "agent is running a tool" loop. When
@@ -153,20 +188,134 @@ data class SpriteSheetClip(
  *   the base loop on its trigger, then returns; one-frame clips show as a brief
  *   still reaction. Empty → no reactions (today's behavior). Triggers are
  *   derived from activity-state transitions in [Render].
+ * @property locomotionClips optional manipulation and directional travel clips.
+ *   They take priority over agent activity, keeping direct movement visible and
+ *   the upstream `running-left` / `running-right` rows separate from the
+ *   in-place agent-work `running` row.
+ * @property legacyTravelClip optional `run`/`running` fallback for packs without
+ *   directional rows. Tool-only `working` is deliberately excluded.
  */
 class PetAvatar(
     override val id: String,
     override val label: String,
     override val description: String,
     override val reactivity: SphereReactivity,
-    private val clips: Map<SphereState, PetClip>,
-    private val workingClip: PetClip? = null,
-    private val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
+    internal val activityClips: Map<SphereState, PetClip>,
+    internal val activityClipSources: Map<SphereState, String> = emptyMap(),
+    internal val workingClip: PetClip? = null,
+    internal val workingClipSource: String? = null,
+    internal val legacyTravelClip: PetClip? = null,
+    internal val legacyTravelClipSource: String? = null,
+    internal val locomotionClips: Map<PetLocomotion, PetClip> = emptyMap(),
+    internal val locomotionClipSources: Map<PetLocomotion, String> = emptyMap(),
+    internal val oneShots: Map<PetOneShot, PetClip> = emptyMap(),
 ) : AgentAvatar {
     override val source: AvatarSource = AvatarSource.USER
+    private val decodedSheets = LinkedHashMap<String, DecodedSheet>(4, 0.75f, true)
+    private val decodedClips = LinkedHashMap<PetDecodeKey, PetFrames>(8, 0.75f, true)
+
+    private fun decode(clip: PetClip, stabilize: Boolean, groundOpaqueBottom: Boolean): PetFrames? {
+        val key = PetDecodeKey(clip, stabilize, groundOpaqueBottom)
+        synchronized(decodedClips) { decodedClips[key] }?.let { return it }
+        val decoded = decodeClip(clip, stabilize, groundOpaqueBottom, decodedSheets) ?: return null
+        synchronized(decodedClips) {
+            decodedClips[key] = decoded
+            while (decodedClips.size > PET_DECODED_CLIP_CACHE_ENTRIES) {
+                decodedClips.remove(decodedClips.keys.first())
+            }
+        }
+        return decoded
+    }
 
     /** A one-shot is fireable only if it ships a clip that can actually show. */
     private fun fireable(kind: PetOneShot): Boolean = (oneShots[kind]?.frameCount ?: 0) > 0
+
+    /** Resolve sustained motion without one-shot overlays; pure for focused tests. */
+    internal fun resolveBaseSelection(state: AvatarRenderState): PetClipSelection {
+        when (state.petLocomotion) {
+            PetLocomotion.Held -> {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Held] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Held]
+                        ?: activityClipSources[SphereState.Idle],
+                )
+            }
+            PetLocomotion.Wave -> {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Wave] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Wave]
+                        ?: activityClipSources[SphereState.Idle],
+                )
+            }
+            PetLocomotion.Jump -> {
+                return PetClipSelection(
+                    locomotionClips[PetLocomotion.Jump] ?: activityClips[SphereState.Idle],
+                    sourceKey = locomotionClipSources[PetLocomotion.Jump]
+                        ?: activityClipSources[SphereState.Idle],
+                )
+            }
+            PetLocomotion.Fall -> {
+                val clip = locomotionClips[PetLocomotion.Fall]
+                    ?: locomotionClips[PetLocomotion.Jump]
+                    ?: activityClips[SphereState.Idle]
+                val source = locomotionClipSources[PetLocomotion.Fall]
+                    ?: locomotionClipSources[PetLocomotion.Jump]
+                    ?: activityClipSources[SphereState.Idle]
+                return PetClipSelection(clip, sourceKey = source)
+            }
+            PetLocomotion.WalkLeft,
+            PetLocomotion.WalkRight,
+            PetLocomotion.RunLeft,
+            PetLocomotion.RunRight -> {
+                val exact = state.petLocomotion
+                val movingRight = exact == PetLocomotion.WalkRight || exact == PetLocomotion.RunRight
+                val sameDirectionAlternate = when (exact) {
+                    PetLocomotion.WalkLeft -> PetLocomotion.RunLeft
+                    PetLocomotion.WalkRight -> PetLocomotion.RunRight
+                    PetLocomotion.RunLeft -> PetLocomotion.WalkLeft
+                    PetLocomotion.RunRight -> PetLocomotion.WalkRight
+                }
+                val sameDirectionMotion = listOf(exact, sameDirectionAlternate)
+                    .firstOrNull { locomotionClips[it] != null }
+                if (sameDirectionMotion != null) {
+                    return PetClipSelection(
+                        clip = locomotionClips[sameDirectionMotion],
+                        sourceKey = locomotionClipSources[sameDirectionMotion],
+                    )
+                }
+                val oppositeDirection = when (exact) {
+                    PetLocomotion.WalkLeft -> listOf(PetLocomotion.WalkRight, PetLocomotion.RunRight)
+                    PetLocomotion.WalkRight -> listOf(PetLocomotion.WalkLeft, PetLocomotion.RunLeft)
+                    PetLocomotion.RunLeft -> listOf(PetLocomotion.RunRight, PetLocomotion.WalkRight)
+                    PetLocomotion.RunRight -> listOf(PetLocomotion.RunLeft, PetLocomotion.WalkLeft)
+                }
+                val oppositeMotion = oppositeDirection.firstOrNull { locomotionClips[it] != null }
+                if (oppositeMotion != null) {
+                    return PetClipSelection(
+                        clip = locomotionClips[oppositeMotion],
+                        mirrorHorizontally = true,
+                        sourceKey = locomotionClipSources[oppositeMotion],
+                    )
+                }
+                // Upstream treats the legacy in-place run row as left-facing
+                // for travel, mirroring it only for rightward motion.
+                return PetClipSelection(
+                    clip = legacyTravelClip ?: activityClips[SphereState.Idle],
+                    mirrorHorizontally = legacyTravelClip != null && movingRight,
+                    sourceKey = legacyTravelClipSource ?: activityClipSources[SphereState.Idle],
+                )
+            }
+            PetLocomotion.None -> Unit
+        }
+        val toolActive = workingClip != null &&
+            state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
+            (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
+        val clip = if (toolActive) workingClip else (activityClips[state.state] ?: activityClips[SphereState.Idle])
+        val source = if (toolActive) workingClipSource else activityClipSources[state.state]
+        return PetClipSelection(clip, sourceKey = source)
+    }
+
+    internal fun resolveBaseClip(state: AvatarRenderState): PetClip? = resolveBaseSelection(state).clip
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
@@ -202,33 +351,45 @@ class PetAvatar(
         // `working` clip if the pet ships one; otherwise the base-state clip.
         // toolCallBurst is ~0 outside tool activity, and Error keeps its own clip,
         // so this only fires while the agent actually operates a tool.
-        val toolActive = workingClip != null &&
-            state.toolCallBurst >= WORKING_BURST_THRESHOLD &&
-            (state.state == SphereState.Thinking || state.state == SphereState.Streaming)
         // A live reaction overlays everything; otherwise working overlays the base.
         val oneShotClip = activeOneShot?.let { oneShots[it] }
-        val baseClip = if (toolActive) workingClip else (clips[state.state] ?: clips[SphereState.Idle])
-        val clip = oneShotClip ?: baseClip
+        val baseSelection = resolveBaseSelection(state)
+        val clip = oneShotClip ?: baseSelection.clip
+        val mirrorHorizontally = oneShotClip == null && baseSelection.mirrorHorizontally
         val playOnce = oneShotClip != null
 
         // Re-center each frame on its own opaque content at decode time —
         // neutralizes the positional drift common in AI-generated sheets (a
         // character that floats/jumps cell-to-cell). Global Appearance toggle;
-        // flipping it re-decodes via the produceState key.
+        // flipping it selects a separately cached decode.
         val stabilize = LocalPetStabilize.current
+        val groundOpaqueBottom = LocalPetGroundOpaqueBottom.current
 
-        // Decode the active clip off the main thread; null until ready / on
-        // decode failure (graceful — the avatar just renders nothing).
-        val frames by produceState<PetFrames?>(initialValue = null, clip, stabilize) {
-            value = if (clip == null) {
+        // Decode the active clip off the main thread. Keep the last complete
+        // visual while a new state is loading so greet/done/locomotion swaps do
+        // not expose the Canvas as a blank frame.
+        var displayedClip by remember(id, stabilize, groundOpaqueBottom) {
+            mutableStateOf<DisplayedPetClip?>(null)
+        }
+        LaunchedEffect(id, clip, stabilize, groundOpaqueBottom, mirrorHorizontally) {
+            val decoded = if (clip == null) {
                 null
             } else {
-                withContext(Dispatchers.IO) { runCatching { decodeClip(clip, stabilize) }.getOrNull() }
+                withContext(Dispatchers.IO) {
+                    runCatching { decode(clip, stabilize, groundOpaqueBottom) }.getOrNull()
+                }
+                    ?.let { DisplayedPetClip(it, mirrorHorizontally) }
             }
+            displayedClip = retainPetFrameDuringDecode(
+                previous = displayedClip,
+                decoded = decoded,
+                hasRequestedClip = clip != null,
+            )
         }
 
-        var frameIndex by remember(clip) { mutableIntStateOf(0) }
-        val current = frames
+        val current = displayedClip?.frames
+        val displayedMirror = displayedClip?.mirrorHorizontally == true
+        var frameIndex by remember(current) { mutableIntStateOf(0) }
         val animate = current != null && current.frameCount > 1 && !state.paused
 
         // Live activity level + opt-in speedup, read inside the loop so playback
@@ -245,7 +406,7 @@ class PetAvatar(
             // the base loop wraps with modulo. With intensity modulation on, fps
             // is recomputed each tick from the live activity level.
             LaunchedEffect(current, playOnce) {
-                val f = current ?: return@LaunchedEffect
+                val f = current
                 val baseFps = f.fps.coerceIn(1f, PET_MAX_FPS)
                 var acc = 0f
                 var last = withFrameNanos { it }
@@ -293,7 +454,14 @@ class PetAvatar(
 
         Canvas(modifier = modifier) {
             val f = current ?: return@Canvas
-            drawPetFrame(f, frameIndex.coerceIn(0, (f.frameCount - 1).coerceAtLeast(0)), bounce)
+            val index = frameIndex.coerceIn(0, (f.frameCount - 1).coerceAtLeast(0))
+            if (displayedMirror) {
+                scale(scaleX = -1f, scaleY = 1f, pivot = center) {
+                    drawPetFrame(f, index, bounce)
+                }
+            } else {
+                drawPetFrame(f, index, bounce)
+            }
         }
     }
 }
@@ -306,13 +474,57 @@ private class PetFrames(
     val frameHeight: Int,
     val frameCount: Int,
     val fps: Float,
+    val startFrame: Int = 0,
     /** Per-frame recenter offset (source px) when stabilization is on; null = off. */
     val centerOffsets: List<IntOffset>? = null,
 )
 
-private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (clip) {
+private data class DisplayedPetClip(
+    val frames: PetFrames,
+    val mirrorHorizontally: Boolean,
+)
+
+private data class PetDecodeKey(
+    val clip: PetClip,
+    val stabilize: Boolean,
+    val groundOpaqueBottom: Boolean,
+)
+
+/** One decoded atlas per selected pet; all of its row clips share these pixels. */
+private data class DecodedSheet(val bitmap: Bitmap, val image: ImageBitmap)
+
+private fun decodeClip(
+    clip: PetClip,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+    decodedSheets: MutableMap<String, DecodedSheet>,
+): PetFrames? = when (clip) {
     is FrameSequenceClip -> {
-        val bitmaps = clip.files.mapNotNull { file -> BitmapFactory.decodeFile(file.absolutePath) }
+        if (clip.files.isEmpty() || clip.files.size > PET_MAX_FRAME_SEQUENCE_FRAMES) return null
+        val bitmaps = mutableListOf<Bitmap>()
+        var usedPixels = 0L
+        for (file in clip.files) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (
+                !petBitmapFitsPixelBudget(
+                    width = bounds.outWidth,
+                    height = bounds.outHeight,
+                    usedPixels = usedPixels,
+                    maximumPixels = PET_MAX_FRAME_SEQUENCE_PIXELS,
+                )
+            ) {
+                bitmaps.forEach(Bitmap::recycle)
+                return null
+            }
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            if (bitmap == null) {
+                bitmaps.forEach(Bitmap::recycle)
+                return null
+            }
+            bitmaps += bitmap
+            usedPixels += bounds.outWidth.toLong() * bounds.outHeight.toLong()
+        }
         if (bitmaps.isEmpty()) {
             null
         } else {
@@ -323,29 +535,76 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
                 frameHeight = bitmaps.first().height,
                 frameCount = bitmaps.size,
                 fps = clip.fps,
-                centerOffsets = if (stabilize) bitmaps.map { bitmapRecenter(it) } else null,
+                centerOffsets = if (stabilize || groundOpaqueBottom) {
+                    bitmaps.map { bitmap ->
+                        bitmapContentAlignment(bitmap, stabilize, groundOpaqueBottom)
+                    }
+                } else {
+                    null
+                },
             )
         }
     }
 
     is SpriteSheetClip -> {
-        val bmp = BitmapFactory.decodeFile(clip.sheet.absolutePath)
-        if (bmp == null) {
+        if (
+            clip.startFrame < 0 || clip.frameWidth <= 0 || clip.frameHeight <= 0 ||
+            clip.frameCount <= 0
+        ) return null
+        val decoded = synchronized(decodedSheets) {
+            decodedSheets[clip.sheet.absolutePath] ?: run {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(clip.sheet.absolutePath, bounds)
+                if (
+                    !petBitmapFitsPixelBudget(
+                        width = bounds.outWidth,
+                        height = bounds.outHeight,
+                        usedPixels = 0L,
+                        maximumPixels = PET_MAX_SPRITE_SHEET_PIXELS,
+                    )
+                ) {
+                    null
+                } else {
+                    BitmapFactory.decodeFile(clip.sheet.absolutePath)?.let { bitmap ->
+                        DecodedSheet(bitmap, bitmap.asImageBitmap()).also {
+                            decodedSheets[clip.sheet.absolutePath] = it
+                            while (decodedSheets.size > PET_DECODED_SHEET_CACHE_ENTRIES) {
+                                decodedSheets.remove(decodedSheets.keys.first())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (decoded == null) {
             null
         } else {
+            val bmp = decoded.bitmap
             // Clamp the declared frame count to what the sheet can actually hold.
             val cols = (bmp.width / clip.frameWidth).coerceAtLeast(1)
             val rows = (bmp.height / clip.frameHeight).coerceAtLeast(1)
-            val count = clip.frameCount.coerceIn(1, cols * rows)
+            val available = (cols * rows - clip.startFrame).coerceAtLeast(0)
+            if (available == 0) return null
+            val count = clip.frameCount.coerceIn(1, available)
             PetFrames(
                 frames = emptyList(),
-                sheet = bmp.asImageBitmap(),
+                sheet = decoded.image,
                 frameWidth = clip.frameWidth,
                 frameHeight = clip.frameHeight,
                 frameCount = count,
                 fps = clip.fps,
-                centerOffsets = if (stabilize) {
-                    sheetRecenter(bmp, cols, clip.frameWidth, clip.frameHeight, count)
+                startFrame = clip.startFrame,
+                centerOffsets = if (stabilize || groundOpaqueBottom) {
+                    sheetContentAlignment(
+                        bmp,
+                        cols,
+                        clip.frameWidth,
+                        clip.frameHeight,
+                        clip.startFrame,
+                        count,
+                        stabilize,
+                        groundOpaqueBottom,
+                    )
                 } else {
                     null
                 },
@@ -354,25 +613,65 @@ private fun decodeClip(clip: PetClip, stabilize: Boolean): PetFrames? = when (cl
     }
 }
 
-/** Per-cell recenter offsets for a sprite sheet (see [contentRecenter]). */
-private fun sheetRecenter(bmp: Bitmap, cols: Int, fw: Int, fh: Int, count: Int): List<IntOffset> {
+/** Per-cell alignment offsets for a sprite sheet (see [contentAlignment]). */
+private fun sheetContentAlignment(
+    bmp: Bitmap,
+    cols: Int,
+    fw: Int,
+    fh: Int,
+    startFrame: Int,
+    count: Int,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): List<IntOffset> {
     val buf = IntArray(fw * fh)
     return (0 until count).map { i ->
-        contentRecenter(bmp, (i % cols) * fw, (i / cols) * fh, fw, fh, buf)
+        val cell = startFrame + i
+        contentAlignment(
+            bmp,
+            (cell % cols) * fw,
+            (cell / cols) * fh,
+            fw,
+            fh,
+            buf,
+            stabilize,
+            groundOpaqueBottom,
+        )
     }
 }
 
-/** Recenter offset for one standalone frame bitmap. */
-private fun bitmapRecenter(bmp: Bitmap): IntOffset =
-    contentRecenter(bmp, 0, 0, bmp.width, bmp.height, IntArray(bmp.width * bmp.height))
+/** Content alignment offset for one standalone frame bitmap. */
+private fun bitmapContentAlignment(
+    bmp: Bitmap,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset = contentAlignment(
+    bmp,
+    0,
+    0,
+    bmp.width,
+    bmp.height,
+    IntArray(bmp.width * bmp.height),
+    stabilize,
+    groundOpaqueBottom,
+)
 
 /**
  * Scan the [w]×[h] region at ([x0],[y0]) of [bmp] for opaque pixels and return the
- * offset (source px) that moves their bounding-box center to the region center —
- * cancelling per-frame positional drift. [buf] (size ≥ [w]×[h]) is reused scratch.
- * Returns [IntOffset.Zero] for a fully-transparent region.
+ * offset (source px) that horizontally stabilizes the content and, when asked,
+ * grounds its opaque bottom. [buf] (size ≥ [w]×[h]) is reused scratch. Returns
+ * [IntOffset.Zero] for a fully-transparent region.
  */
-private fun contentRecenter(bmp: Bitmap, x0: Int, y0: Int, w: Int, h: Int, buf: IntArray): IntOffset {
+private fun contentAlignment(
+    bmp: Bitmap,
+    x0: Int,
+    y0: Int,
+    w: Int,
+    h: Int,
+    buf: IntArray,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset {
     bmp.getPixels(buf, 0, w, x0, y0, w, h)
     var minX = w
     var minY = h
@@ -391,7 +690,44 @@ private fun contentRecenter(bmp: Bitmap, x0: Int, y0: Int, w: Int, h: Int, buf: 
         }
     }
     if (maxX < 0) return IntOffset.Zero
-    return IntOffset(w / 2 - (minX + maxX) / 2, h / 2 - (minY + maxY) / 2)
+    return petContentAlignmentOffset(
+        width = w,
+        height = h,
+        minX = minX,
+        minY = minY,
+        maxX = maxX,
+        maxY = maxY,
+        stabilize = stabilize,
+        groundOpaqueBottom = groundOpaqueBottom,
+    )
+}
+
+/** Pure alignment policy shared by atlas and standalone frames. */
+internal fun petContentAlignmentOffset(
+    width: Int,
+    height: Int,
+    minX: Int,
+    minY: Int,
+    maxX: Int,
+    maxY: Int,
+    stabilize: Boolean,
+    groundOpaqueBottom: Boolean,
+): IntOffset {
+    if (
+        width <= 0 || height <= 0 || minX < 0 || minY < 0 ||
+        maxX < minX || maxY < minY || maxX >= width || maxY >= height
+    ) {
+        return IntOffset.Zero
+    }
+    val x = if (stabilize) width / 2 - (minX + maxX) / 2 else 0
+    val y = if (groundOpaqueBottom) {
+        height - 1 - maxY
+    } else if (stabilize) {
+        height / 2 - (minY + maxY) / 2
+    } else {
+        0
+    }
+    return IntOffset(x, y)
 }
 
 /** Draw frame [index] of [f], contain-fit + centered, scaled by [bounce]. */
@@ -401,8 +737,9 @@ private fun DrawScope.drawPetFrame(f: PetFrames, index: Int, bounce: Float) {
         val fh = f.frameHeight
         if (fw <= 0 || fh <= 0) return
         val cols = (f.sheet.width / fw).coerceAtLeast(1)
-        val col = index % cols
-        val row = index / cols
+        val cell = f.startFrame + index
+        val col = cell % cols
+        val row = cell / cols
         val (dstOffset, dstSize) = containFit(fw.toFloat(), fh.toFloat(), bounce)
         drawImage(
             image = f.sheet,

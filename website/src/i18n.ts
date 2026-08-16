@@ -27,7 +27,7 @@ type Copy = {
     chatDescription: string; voiceDescription: string; manageDescription: string; additional: string;
     cliTitle: string; cliLede: string; terminal: string; consentTitle: string; consentBody: string;
     capabilities: string; sessionsTitle: string; sessionsBody: string; daemonTitle: string; daemonBody: string;
-    auditTitle: string; auditBody: string; meetCli: string;
+    auditTitle: string; auditBody: string; uiTitle: string; uiBody: string; meetCli: string;
   };
   device: {
     eyebrow: string; title: string; lede: string; capabilities: string; read: string; tap: string; type: string;
@@ -35,6 +35,8 @@ type Copy = {
   };
   setup: {
     eyebrow: string; title: string; body: string; resources: string; androidCta: string; quickStart: string; plugin: string;
+    secureLinkTitle: string; secureLinkBody: string; secureLinkStatus: string; secureLinkCta: string;
+    tailscaleTitle: string; tailscaleBody: string; tailscaleStatus: string; tailscaleCta: string;
   };
   privacy: { aria: string; title: string; body: string; learn: string; support: string };
   footer: {
@@ -77,6 +79,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Pick up where you left off.', sessionsBody: 'Reconnect to named tmux sessions with recent scrollback already in place.',
       daemonTitle: 'Available in the background.', daemonBody: 'Keep approved desktop tools ready through the headless daemon.',
       auditTitle: 'See what ran on your machine.', auditBody: 'Review the local record of every desktop tool call—even while offline.',
+      uiTitle: 'Manage it without opening a terminal.', uiBody: 'Windows includes an optional compact tray UI for hosts, access, approvals, activity, updates, and daemon settings.',
       meetCli: 'Meet the CLI',
     },
     device: {
@@ -91,6 +94,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: 'Quick setup · Additive by design', title: 'Start simple. Add the plugin when you want more.',
       body: 'Chat, Manage, and standard voice work with unmodified Hermes. The optional Relay plugin adds terminal, enhanced voice, notifications, media handoff, desktop tools, and the path to Device Control.',
       resources: 'Setup resources', androidCta: 'Get the Android app', quickStart: 'Quick start', plugin: 'Explore the Relay plugin',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: 'One pairing-pinned TLS origin for Relay, API, and Dashboard routes, with separate authentication for each. It protects transport to the paired endpoint; you still choose how the phone reaches the host.',
+      secureLinkStatus: 'Optional · Relay plugin · port 9443', secureLinkCta: 'Secure Link setup',
+      tailscaleTitle: 'Tailscale', tailscaleBody: 'The recommended remote-access path for self-hosted Hermes. Private WireGuard routing and managed TLS work behind CGNAT without exposing Relay to the public internet.',
+      tailscaleStatus: 'Recommended · private remote access', tailscaleCta: 'Set up Tailscale',
     },
     privacy: {
       aria: 'Privacy and open source', title: 'Built for privacy. Powered by open source.',
@@ -134,6 +141,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Mach dort weiter, wo du aufgehört hast.', sessionsBody: 'Verbinde dich erneut mit benannten tmux-Sitzungen; der letzte Scrollback ist bereits vorhanden.',
       daemonTitle: 'Im Hintergrund verfügbar.', daemonBody: 'Halte genehmigte Desktop-Werkzeuge über den headless Daemon bereit.',
       auditTitle: 'Sieh, was auf deinem Rechner ausgeführt wurde.', auditBody: 'Prüfe den lokalen Verlauf jedes Desktop-Tool-Aufrufs — auch offline.',
+      uiTitle: 'Verwalten ohne Terminal.', uiBody: 'Windows bietet eine optionale kompakte Tray-Oberfläche für Hosts, Zugriff, Freigaben, Aktivitäten, Updates und Daemon-Einstellungen.',
       meetCli: 'CLI kennenlernen',
     },
     device: {
@@ -148,6 +156,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: 'Schnelle Einrichtung · Additiv konzipiert', title: 'Starte einfach. Füge das Plugin hinzu, wenn du mehr möchtest.',
       body: 'Chat, Manage und Standard-Voice funktionieren mit unverändertem Hermes. Das optionale Relay-Plugin ergänzt Terminal, erweiterte Sprache, Benachrichtigungen, Medienübergabe, Desktop-Werkzeuge und Device Control.',
       resources: 'Einrichtungsressourcen', androidCta: 'Android-App installieren', quickStart: 'Schnellstart', plugin: 'Relay-Plugin entdecken',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: 'Ein per Kopplungs-QR angehefteter TLS-Ursprung für Relay-, API- und Dashboard-Routen mit jeweils eigener Authentifizierung. Er schützt den Transport zum gekoppelten Endpunkt; wie das Smartphone den Host erreicht, bestimmst weiterhin du.',
+      secureLinkStatus: 'Optional · Relay-Plugin · Port 9443', secureLinkCta: 'Secure Link einrichten',
+      tailscaleTitle: 'Tailscale', tailscaleBody: 'Der empfohlene Fernzugriff für selbst gehostetes Hermes. Privates WireGuard-Routing und verwaltetes TLS funktionieren auch hinter CGNAT, ohne Relay öffentlich freizugeben.',
+      tailscaleStatus: 'Empfohlen · privater Fernzugriff', tailscaleCta: 'Tailscale einrichten',
     },
     privacy: {
       aria: 'Datenschutz und Open Source', title: 'Für Datenschutz gebaut. Von Open Source angetrieben.',
@@ -191,6 +203,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Continúa donde lo dejaste.', sessionsBody: 'Vuelve a conectarte a sesiones tmux con nombre y conserva el historial reciente.',
       daemonTitle: 'Disponible en segundo plano.', daemonBody: 'Mantén disponibles las herramientas de escritorio aprobadas mediante el daemon sin interfaz.',
       auditTitle: 'Consulta lo que se ejecutó en tu equipo.', auditBody: 'Revisa el registro local de cada llamada a herramientas de escritorio, incluso sin conexión.',
+      uiTitle: 'Adminístralo sin abrir una terminal.', uiBody: 'Windows incluye una interfaz compacta y opcional en la bandeja para hosts, acceso, aprobaciones, actividad, actualizaciones y el daemon.',
       meetCli: 'Conocer la CLI',
     },
     device: {
@@ -205,6 +218,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: 'Configuración rápida · Aditivo por diseño', title: 'Empieza simple. Añade el plugin cuando quieras más.',
       body: 'Chat, Manage y la voz estándar funcionan con Hermes sin modificar. El plugin Relay opcional añade terminal, voz avanzada, notificaciones, transferencia multimedia, herramientas de escritorio y Device Control.',
       resources: 'Recursos de configuración', androidCta: 'Obtener la app Android', quickStart: 'Inicio rápido', plugin: 'Explorar el plugin Relay',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: 'Un único origen TLS fijado por el QR para las rutas de Relay, API y Dashboard, cada una con autenticación separada. Protege el transporte al endpoint vinculado; tú sigues eligiendo cómo llega el teléfono al host.',
+      secureLinkStatus: 'Opcional · plugin Relay · puerto 9443', secureLinkCta: 'Configurar Secure Link',
+      tailscaleTitle: 'Tailscale', tailscaleBody: 'La ruta de acceso remoto recomendada para Hermes autoalojado. El enrutamiento WireGuard privado y TLS administrado funcionan detrás de CGNAT sin exponer Relay a Internet.',
+      tailscaleStatus: 'Recomendado · acceso remoto privado', tailscaleCta: 'Configurar Tailscale',
     },
     privacy: {
       aria: 'Privacidad y código abierto', title: 'Creado para la privacidad. Impulsado por código abierto.',
@@ -248,6 +265,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: '中断したところから再開。', sessionsBody: '名前付き tmux セッションへ再接続し、直前のスクロールバックもそのまま利用できます。',
       daemonTitle: 'バックグラウンドで待機。', daemonBody: '承認したデスクトップツールをヘッドレス daemon 経由で利用可能に保ちます。',
       auditTitle: 'マシンで実行された内容を確認。', auditBody: 'オフライン時を含む、すべてのデスクトップツール呼び出しのローカル記録を確認できます。',
+      uiTitle: 'ターミナルを開かずに管理。', uiBody: 'Windows には、ホスト、アクセス、承認、アクティビティ、更新、daemon 設定用のコンパクトなオプションのトレイ UI があります。',
       meetCli: 'CLI の詳細',
     },
     device: {
@@ -262,6 +280,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: 'かんたん設定 · 必要な機能だけ追加', title: 'まずはシンプルに。必要になったら plugin を追加。',
       body: 'Chat、Manage、標準 Voice は未改変の Hermes で動作します。任意の Relay plugin を追加すると、Terminal、高度な Voice、通知、メディア転送、デスクトップツール、Device Control が利用できます。',
       resources: 'セットアップ資料', androidCta: 'Android アプリを入手', quickStart: 'クイックスタート', plugin: 'Relay plugin を見る',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: 'ペアリング QR でピン留めした 1 つの TLS オリジンから、認証を分離した Relay、API、Dashboard の各ルートへ接続します。ペアリングしたエンドポイントまでの通信を保護しますが、スマートフォンからホストまでの到達経路は引き続き自分で選びます。',
+      secureLinkStatus: '任意 · Relay plugin · ポート 9443', secureLinkCta: 'Secure Link の設定',
+      tailscaleTitle: 'Tailscale', tailscaleBody: 'セルフホスト版 Hermes に推奨されるリモートアクセスです。プライベートな WireGuard ルーティングと管理 TLS により、Relay を公開せず CGNAT 配下でも利用できます。',
+      tailscaleStatus: '推奨 · プライベートなリモートアクセス', tailscaleCta: 'Tailscale を設定',
     },
     privacy: {
       aria: 'プライバシーとオープンソース', title: 'プライバシーのために設計。オープンソースで提供。',
@@ -305,6 +327,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: 'Continue de onde parou.', sessionsBody: 'Reconecte-se a sessões tmux nomeadas com o histórico recente já disponível.',
       daemonTitle: 'Disponível em segundo plano.', daemonBody: 'Mantenha as ferramentas de desktop aprovadas prontas por meio do daemon sem interface.',
       auditTitle: 'Veja o que foi executado na sua máquina.', auditBody: 'Revise o registro local de cada chamada de ferramenta de desktop, mesmo offline.',
+      uiTitle: 'Gerencie sem abrir um terminal.', uiBody: 'O Windows inclui uma interface compacta e opcional na bandeja para hosts, acesso, aprovações, atividades, atualizações e configurações do daemon.',
       meetCli: 'Conhecer a CLI',
     },
     device: {
@@ -319,6 +342,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: 'Configuração rápida · Aditivo por projeto', title: 'Comece simples. Adicione o plugin quando quiser mais.',
       body: 'Chat, Manage e voz padrão funcionam com o Hermes sem modificações. O plugin Relay opcional adiciona terminal, voz avançada, notificações, transferência de mídia, ferramentas de desktop e Device Control.',
       resources: 'Recursos de configuração', androidCta: 'Baixar o app Android', quickStart: 'Início rápido', plugin: 'Conhecer o plugin Relay',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: 'Uma única origem TLS fixada pelo QR para as rotas Relay, API e Dashboard, cada uma com autenticação separada. Ela protege o transporte até o endpoint pareado; você ainda escolhe como o telefone alcança o host.',
+      secureLinkStatus: 'Opcional · plugin Relay · porta 9443', secureLinkCta: 'Configurar o Secure Link',
+      tailscaleTitle: 'Tailscale', tailscaleBody: 'O caminho de acesso remoto recomendado para Hermes auto-hospedado. O roteamento WireGuard privado e o TLS gerenciado funcionam atrás de CGNAT sem expor o Relay à internet.',
+      tailscaleStatus: 'Recomendado · acesso remoto privado', tailscaleCta: 'Configurar o Tailscale',
     },
     privacy: {
       aria: 'Privacidade e código aberto', title: 'Criado para privacidade. Movido por código aberto.',
@@ -362,6 +389,7 @@ export const translations: Record<Locale, Copy> = {
       sessionsTitle: '从上次离开的地方继续。', sessionsBody: '重新连接到命名的 tmux 会话，并保留最近的回滚内容。',
       daemonTitle: '在后台保持可用。', daemonBody: '通过无界面的 daemon，让已批准的桌面工具保持就绪。',
       auditTitle: '查看计算机上执行过的操作。', auditBody: '即使离线，也能查看每次桌面工具调用的本地记录。',
+      uiTitle: '无需打开终端即可管理。', uiBody: 'Windows 提供可选的紧凑托盘界面，用于管理主机、访问权限、审批、活动、更新和 daemon 设置。',
       meetCli: '了解 CLI',
     },
     device: {
@@ -376,6 +404,10 @@ export const translations: Record<Locale, Copy> = {
       eyebrow: '快速设置 · 按需添加', title: '从简单开始，需要更多功能时再添加 plugin。',
       body: 'Chat、Manage 和标准 Voice 可直接配合未修改的 Hermes 使用。可选 Relay plugin 可添加终端、增强 Voice、通知、媒体传输、桌面工具以及 Device Control。',
       resources: '设置资源', androidCta: '获取 Android 应用', quickStart: '快速开始', plugin: '了解 Relay plugin',
+      secureLinkTitle: 'Hermes Secure Link', secureLinkBody: '通过配对二维码固定的单一 TLS 源站访问 Relay、API 和 Dashboard 路由，各服务仍使用独立身份验证。它保护到已配对端点的传输；手机如何到达主机仍由您选择。',
+      secureLinkStatus: '可选 · Relay plugin · 端口 9443', secureLinkCta: '设置 Secure Link',
+      tailscaleTitle: 'Tailscale', tailscaleBody: '自托管 Hermes 推荐的远程访问方式。私有 WireGuard 路由和托管 TLS 可在 CGNAT 后运行，无需将 Relay 暴露到公网。',
+      tailscaleStatus: '推荐 · 私有远程访问', tailscaleCta: '设置 Tailscale',
     },
     privacy: {
       aria: '隐私与开源', title: '为隐私而构建，由开源驱动。',

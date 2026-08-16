@@ -13,6 +13,8 @@ import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraftStore
+import com.hermesandroid.relay.data.ChatQueuedMessageCheckpoint
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -23,14 +25,19 @@ import com.hermesandroid.relay.data.ChatTurnMoaReferenceCheckpoint
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.DataStoreChatTurnCheckpointStore
+import com.hermesandroid.relay.data.InMemoryChatComposerDraftStore
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.MediaSettings
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.applyMessageReaction
+import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
@@ -41,6 +48,7 @@ import com.hermesandroid.relay.data.HermesCardInput
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import com.hermesandroid.relay.network.upstream.ActiveTurnHandle
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
@@ -56,11 +64,16 @@ import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
+import com.hermesandroid.relay.network.upstream.GatewayModelCapabilities
 import com.hermesandroid.relay.network.upstream.GatewayModelOptions
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
 import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
 import com.hermesandroid.relay.network.upstream.GatewaySessionModel
+import com.hermesandroid.relay.network.upstream.ReasoningEffortAvailability
+import com.hermesandroid.relay.network.upstream.ReasoningEffortIdentity
+import com.hermesandroid.relay.network.upstream.ReasoningEfforts
+import com.hermesandroid.relay.network.upstream.resolveReasoningEffortAvailability
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
@@ -70,6 +83,8 @@ import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
+import com.hermesandroid.relay.network.upstream.modelOptionsIdentityToPublish
+import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
 import com.hermesandroid.relay.network.upstream.sessionTurnModelHint
 import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.relay.RelayHttpClient
@@ -79,6 +94,9 @@ import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.formatPhoneActionResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.parseMessageReactions
+import com.hermesandroid.relay.network.upstream.SESSION_MESSAGE_PAGE_SIZE
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
@@ -100,12 +118,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -117,12 +137,23 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.sse.EventSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+internal fun modelInventoryFailureNotice(
+    failure: Throwable,
+    userInitiated: Boolean,
+): String? = if (userInitiated) {
+    "Couldn't refresh API model inventory: ${failure.message ?: "unknown error"}"
+} else {
+    null
+}
 
 /**
  * Absolute per-session context-window usage in tokens — the data behind the
@@ -139,17 +170,29 @@ data class ContextWindowUsage(
 /**
  * A successful Sessions SSE turn still needs the server-authoritative transcript
  * because that transport does not stream every persisted message boundary.
- * Gateway turns already deliver the assistant, reasoning, and tool lifecycle
- * directly; reloading their full transcript only republishes a healthy live turn.
- * A successful socket rejoin is the exception because events emitted during the
- * gap cannot be replayed.
+ * Gateway normally delivers the assistant, reasoning, and tool lifecycle
+ * directly, but upstream versions can persist tool calls without emitting the
+ * corresponding live lifecycle events. Inspect structured history after every
+ * successful Gateway turn, then reload only when activity is missing (or socket
+ * recovery requires it), so healthy turns keep their existing UI identity. This
+ * deliberately never infers tool activity from assistant text.
  */
 internal fun shouldReloadHistoryAfterSuccessfulTurn(
     actualTransport: String,
     gatewayReconcileRequired: Boolean,
+    missingPersistedToolActivity: Boolean,
 ): Boolean =
     actualTransport == "sessions" ||
-        (actualTransport == "gateway" && gatewayReconcileRequired)
+        (actualTransport == "gateway" &&
+            (gatewayReconcileRequired || missingPersistedToolActivity))
+
+internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwable?): Boolean {
+    if (context != "load_sessions" && context != "load_profile_sessions") return false
+    if (isConnectivityError(error)) return true
+    val message = error?.message?.lowercase().orEmpty()
+    return "401" in message || "403" in message ||
+        "unauthorized" in message || "forbidden" in message
+}
 
 class ChatViewModel : ViewModel() {
 
@@ -187,9 +230,37 @@ class ChatViewModel : ViewModel() {
     /** Durable UI checkpoints for recoverable, session-backed turns. */
     private var chatTurnCheckpointStore: ChatTurnCheckpointStore? = null
     private var activeTurnCheckpointSeed: ActiveTurnCheckpointSeed? = null
+    /** Stable local run owner for queued sends, including unsolicited Gateway turns. */
+    private var activeQueueOwnerRunId: String? = null
     private data class TurnCheckpointKey(val contextKey: String, val sessionId: String)
     private val backgroundTurnCheckpoints =
         ConcurrentHashMap<TurnCheckpointKey, ChatTurnCheckpoint>()
+    private val backgroundNeedsInputKeys = ConcurrentHashMap.newKeySet<TurnCheckpointKey>()
+    private val _backgroundSessionActivityStates =
+        MutableStateFlow<Map<String, SessionActivityState>>(emptyMap())
+    val backgroundSessionActivityStates: StateFlow<Map<String, SessionActivityState>> =
+        _backgroundSessionActivityStates.asStateFlow()
+
+    private fun publishBackgroundSessionActivity() {
+        val contextKey = activeProfileContextKey
+        _backgroundSessionActivityStates.value = if (contextKey == null) {
+            emptyMap()
+        } else {
+            backgroundTurnCheckpoints.keys
+                .asSequence()
+                .filter { it.contextKey == contextKey }
+                .associate { key ->
+                    key.sessionId to if (
+                        key in backgroundNeedsInputKeys ||
+                        backgroundPendingInteractions.containsKey(key)
+                    ) {
+                        SessionActivityState.NeedsInput
+                    } else {
+                        SessionActivityState.Working
+                    }
+                }
+        }
+    }
 
     private fun TurnCheckpointKey.keepAliveKey(): String = "$contextKey::$sessionId"
 
@@ -414,12 +485,12 @@ class ChatViewModel : ViewModel() {
         // the server" failure there is non-actionable noise — the themed
         // connection banner + startup sphere already surface the unreachable
         // state. Keep the diagnostics record (classifyError above) but suppress
-        // the redundant, scary "server isn't accepting connections" snackbar
-        // that used to flash from the bottom on first load. Actionable failures
-        // (auth rejected, server error) and all interactive contexts
-        // (send_message, …) still surface normally.
-        if ((context == "load_sessions" || context == "create_session") &&
-            isConnectivityError(t)
+        // the redundant, scary "server isn't accepting connections" snackbar.
+        // Passive session-list auth belongs to Dashboard/API setup and must not
+        // become a global Relay re-pair nag. Interactive create/send/media
+        // failures still surface normally.
+        if (shouldSuppressPassiveSessionError(context, t) ||
+            (context == "create_session" && isConnectivityError(t))
         ) {
             return
         }
@@ -427,6 +498,25 @@ class ChatViewModel : ViewModel() {
     }
 
     // --- Message queue ---
+    /**
+     * A queued send is owned by the exact turn it was composed behind. Keeping
+     * only its text here used to let whichever session happened to be visible
+     * at completion drain it (issue #315). The destination and all composer
+     * payload are therefore captured once and never inferred at dispatch time.
+     */
+    private data class QueuedMessage(
+        val id: String,
+        val text: String,
+        val contextKey: String,
+        val sessionId: String,
+        val transport: String,
+        val ownerRunId: String,
+        val attachments: List<Attachment>,
+        val interfaceContextPrompt: String?,
+    )
+
+    private val queuedMessageItems = mutableListOf<QueuedMessage>()
+    private val completedQueueOwnerRuns = ConcurrentHashMap.newKeySet<String>()
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
 
@@ -436,7 +526,7 @@ class ChatViewModel : ViewModel() {
     val recentPrompts: StateFlow<List<String>> = _recentPrompts.asStateFlow()
 
     private fun recordRecentPrompt(text: String) {
-        val t = text.trim()
+        val t = (parseChatQuotedPrompt(text)?.body ?: text).trim()
         if (t.isBlank() || t.startsWith("/")) return // skip blanks + slash commands
         _recentPrompts.update { prev ->
             (listOf(t) + prev.filterNot { it == t }).take(RECENT_PROMPTS_LIMIT)
@@ -466,6 +556,9 @@ class ChatViewModel : ViewModel() {
     private val _pendingAttachments = MutableStateFlow<List<Attachment>>(emptyList())
     val pendingAttachments: StateFlow<List<Attachment>> = _pendingAttachments.asStateFlow()
 
+    /** Session-keyed composer state; intentionally memory-only for attachment privacy. */
+    val composerDraftStore: ChatComposerDraftStore = InMemoryChatComposerDraftStore()
+
     fun addAttachment(attachment: Attachment) {
         _pendingAttachments.update { it + attachment }
     }
@@ -473,6 +566,22 @@ class ChatViewModel : ViewModel() {
     fun removeAttachment(index: Int) {
         _pendingAttachments.update { list ->
             list.filterIndexed { i, _ -> i != index }
+        }
+    }
+
+    fun replacePendingAttachments(attachments: List<Attachment>) {
+        _pendingAttachments.value = attachments.toList()
+    }
+
+    fun moveAttachment(fromIndex: Int, toIndex: Int) {
+        _pendingAttachments.update { attachments ->
+            if (fromIndex !in attachments.indices || toIndex !in attachments.indices) {
+                attachments
+            } else {
+                attachments.toMutableList().apply {
+                    add(toIndex, removeAt(fromIndex))
+                }
+            }
         }
     }
 
@@ -517,6 +626,11 @@ class ChatViewModel : ViewModel() {
      */
     private val _modelProviders = MutableStateFlow<List<GatewayModelProvider>>(emptyList())
     val modelProviders: StateFlow<List<GatewayModelProvider>> = _modelProviders.asStateFlow()
+    private val relayReasoningCapabilities =
+        MutableStateFlow<Map<ReasoningEffortIdentity, GatewayModelCapabilities>>(emptyMap())
+    private val _reasoningCapabilityRevision = MutableStateFlow(0L)
+    val reasoningCapabilityRevision: StateFlow<Long> = _reasoningCapabilityRevision.asStateFlow()
+    private val relayCapabilityGeneration = AtomicLong(0L)
     private val modelOptionsGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private val modelOptionsByProfile = mutableMapOf<String, GatewayModelOptions>()
 
@@ -526,10 +640,16 @@ class ChatViewModel : ViewModel() {
         return "$connectionProfile::$session"
     }
 
+    private fun reasoningCapabilityContextKey(): String =
+        activeProfileContextKey ?: "__unbound__"
+
     private fun activateModelOptionsProfile(profileKey: String) {
         modelOptionsGeneration.incrementAndGet()
         val cached = modelOptionsByProfile[profileKey]
         _modelProviders.value = cached?.providers.orEmpty()
+        relayCapabilityGeneration.incrementAndGet()
+        relayReasoningCapabilities.value = emptyMap()
+        _reasoningCapabilityRevision.value += 1L
         _gatewayCurrentModel.value = cached?.currentModel.orEmpty()
         _gatewayCurrentProvider.value = cached?.currentProvider.orEmpty()
         _apiModelOptions.value = emptyList()
@@ -562,6 +682,9 @@ class ChatViewModel : ViewModel() {
      */
     private val _selectedReasoningEffort = MutableStateFlow<String?>(null)
     val selectedReasoningEffort: StateFlow<String?> = _selectedReasoningEffort.asStateFlow()
+    /** Exact provider/model identity that confirmed the currently displayed effort. */
+    private var selectedReasoningEffortConfirmedIdentity: ReasoningEffortIdentity? = null
+    private val reasoningEffortRevision = AtomicLong(0)
 
     private val _reasoningDisplay = MutableStateFlow<String?>(null)
 
@@ -616,9 +739,13 @@ class ChatViewModel : ViewModel() {
      * Refresh the gateway's curated provider/model list (`model.options`).
      * Connects the gateway on demand. No-op without a gateway client.
      * [refresh] is the explicit upstream refresh path for dynamic/custom-provider catalogs;
-     * automatic picker opens stay on the cheap cached path.
+     * automatic picker opens stay on the cheap cached path. [catalogOnly] updates
+     * choices and capability metadata without publishing a model identity.
      */
-    fun refreshModelOptions(refresh: Boolean = false) {
+    fun refreshModelOptions(
+        refresh: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
             if (refresh) _modelOptionsRefreshing.value = false
@@ -642,8 +769,20 @@ class ChatViewModel : ViewModel() {
                     }
                     modelOptionsByProfile[profileKey] = it
                     _modelProviders.value = it.providers
-                    _gatewayCurrentModel.value = it.currentModel
-                    _gatewayCurrentProvider.value = it.currentProvider
+                    // Opening a picker refreshes catalog metadata, not session
+                    // identity. session.info/session.resume is canonical once a
+                    // live session exists; do not let a profile/global catalog
+                    // response repaint its controls.
+                    modelOptionsIdentityToPublish(
+                        catalogOnly = catalogOnly,
+                        hasLiveSession = hasLiveGatewaySession(),
+                        sessionIdentity = gateway.serverModelIdentity.value,
+                        options = it,
+                    )?.let { identity ->
+                        _gatewayCurrentModel.value = identity.model
+                        _gatewayCurrentProvider.value = identity.provider
+                    }
+                    refreshRelayReasoningCapabilities(refresh = refresh)
                     android.util.Log.i(
                         "ChatViewModel",
                         "model.options${if (refresh) " refresh" else ""}: ${it.providers.size} providers, " +
@@ -667,10 +806,20 @@ class ChatViewModel : ViewModel() {
             android.util.Log.i("ChatViewModel", "refreshReasoningSettings: no gateway client")
             return
         }
+        val revision = reasoningEffortRevision.get()
+        val identity = reasoningEffortIdentity()
         viewModelScope.launch {
             gateway.getReasoningSettings().fold(
                 onSuccess = {
+                    if (!isCurrentReasoningResponse(
+                            capturedRevision = revision,
+                            currentRevision = reasoningEffortRevision.get(),
+                            capturedIdentity = identity,
+                            activeIdentity = reasoningEffortIdentity(),
+                        )
+                    ) return@fold
                     _selectedReasoningEffort.value = normalizeReasoningEffort(it.effort)
+                    selectedReasoningEffortConfirmedIdentity = identity
                     _reasoningDisplay.value = it.display
                 },
                 onFailure = {
@@ -687,7 +836,7 @@ class ChatViewModel : ViewModel() {
             _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
             return
         }
-        val launchProfileOwned = sessionProfileNameProvider() == null
+        val launchProfileOwned = currentSessionProfileName() == null
         _approvalModeWritable.value = launchProfileOwned
         _approvalModeReadOnlyForProfile.value = !launchProfileOwned
         if (!launchProfileOwned) {
@@ -788,9 +937,101 @@ class ChatViewModel : ViewModel() {
      * model override is cleared.
      */
     private val _selectedProviderOverride = MutableStateFlow<String?>(null)
+    val selectedProviderOverride: StateFlow<String?> = _selectedProviderOverride.asStateFlow()
     private val apiSessionModelLocks = mutableMapOf<String, ApiModelSelectionAck.Locked>()
 
-    fun fetchModels() {
+    /** Active provider/model capability contract used by every reasoning control and send path. */
+    fun reasoningEffortAvailability(): ReasoningEffortAvailability {
+        val identity = reasoningEffortIdentity()
+        return resolveReasoningEffortAvailability(
+            providers = _modelProviders.value,
+            provider = identity?.provider,
+            model = identity?.model,
+            relayCapabilities = relayReasoningCapabilities.value,
+        )
+    }
+
+    private fun reasoningEffortIdentity(): ReasoningEffortIdentity? {
+        val selectedModel = _selectedModelOverride.value
+        val selectedProvider = _selectedProviderOverride.value
+        val aliasRoot = selectedModel?.let { selected ->
+            _apiModelOptions.value.firstOrNull { it.id == selected }?.root
+        }
+        val capabilityModel = aliasRoot ?: selectedModel ?: _gatewayCurrentModel.value
+        val capabilityProvider = selectedProvider ?: aliasRoot?.let { root ->
+            _modelProviders.value.singleOrNull { root in it.models }?.slug
+        } ?: if (selectedModel == null) {
+            _gatewayCurrentProvider.value
+        } else {
+            null
+        }
+        val provider = capabilityProvider?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val model = capabilityModel.trim().takeIf { it.isNotEmpty() } ?: return null
+        return ReasoningEffortIdentity(provider = provider.lowercase(), model = model)
+    }
+
+    private fun refreshRelayReasoningCapabilities(
+        focus: ReasoningEffortIdentity? = reasoningEffortIdentity(),
+        refresh: Boolean = false,
+    ) {
+        val relay = relayHttpClient ?: return
+        val pairs = buildList {
+            focus?.let(::add)
+            _modelProviders.value.forEach { provider ->
+                provider.models.forEach { model ->
+                    add(ReasoningEffortIdentity(provider.slug.lowercase(), model))
+                }
+            }
+        }.distinct().take(RelayHttpClient.MAX_MODEL_CAPABILITY_ROWS)
+        if (pairs.isEmpty()) return
+        val generation = relayCapabilityGeneration.incrementAndGet()
+        val profileKey = reasoningCapabilityContextKey()
+        val profile = currentSessionProfileName()
+        viewModelScope.launch {
+            val result = relay.fetchModelCapabilities(
+                models = pairs.map {
+                    RelayHttpClient.ModelCapabilityRequestRow(it.provider, it.model)
+                },
+                profile = profile,
+                refresh = refresh,
+            )
+            if (
+                relayHttpClient !== relay ||
+                !isCurrentReasoningCapabilityOverlay(
+                    requestGeneration = generation,
+                    currentGeneration = relayCapabilityGeneration.get(),
+                    requestProfileKey = profileKey,
+                    currentProfileKey = reasoningCapabilityContextKey(),
+                )
+            ) return@launch
+            val response = result.getOrNull()
+            val requested = pairs.toSet()
+            val capabilities = response?.capabilities.orEmpty()
+                .asSequence()
+                .take(RelayHttpClient.MAX_MODEL_CAPABILITY_ROWS)
+                .mapNotNull { row ->
+                    val identity = ReasoningEffortIdentity(
+                        provider = row.provider.trim().lowercase(),
+                        model = row.model.trim(),
+                    )
+                    if (identity !in requested) return@mapNotNull null
+                    identity to GatewayModelCapabilities(
+                        reasoning = row.reasoning,
+                        reasoningEfforts = row.reasoningEfforts,
+                        reasoningEffortsExact = row.reasoningEffortsExact,
+                    )
+                }
+                .toMap()
+            relayReasoningCapabilities.value = capabilities
+            _reasoningCapabilityRevision.value += 1L
+            reconcilePendingReasoningEffortForModel()
+        }
+    }
+
+    fun fetchModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
@@ -815,23 +1056,48 @@ class ChatViewModel : ViewModel() {
                 )
                 modelOptionsByProfile[profileKey] = options
                 _modelProviders.value = options.providers
-                _gatewayCurrentModel.value = options.currentModel
-                _gatewayCurrentProvider.value = options.currentProvider
+                modelOptionsIdentityToPublish(
+                    catalogOnly = catalogOnly,
+                    hasLiveSession = hasLiveGatewaySession(),
+                    sessionIdentity = gatewayClient?.serverModelIdentity?.value,
+                    options = options,
+                )?.let { identity ->
+                    _gatewayCurrentModel.value = identity.model
+                    _gatewayCurrentProvider.value = identity.provider
+                }
                 // Keep OpenAI route aliases visible alongside authenticated
                 // provider inventory. An alias remains the request id while
                 // its root is used only to validate the provider route.
                 _apiModelOptions.value = aliases
                 _availableModels.value =
                     (options.providers.flatMap { it.models } + aliases.map { it.id }).distinct()
+                refreshRelayReasoningCapabilities()
             } else {
                 val failure = providerResult.exceptionOrNull()
                 if (
                     failure !is ApiModelRoutingException ||
                     failure.code != ApiModelRoutingErrorCode.INVENTORY_UNSUPPORTED
                 ) {
-                    _transientNotice.tryEmit(
-                        failure?.message ?: "Model inventory could not be loaded.",
+                    val inventoryFailure = failure
+                        ?: ApiModelRoutingException(
+                            ApiModelRoutingErrorCode.INVENTORY_UNAVAILABLE,
+                            "Model inventory could not be loaded.",
+                        )
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Api,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Optional model inventory unavailable",
+                        detail = inventoryFailure.message,
+                        operation = "Load API model inventory",
+                        endpointRole = "Optional API server",
+                        suggestion = NetworkDiagnosticGuidance.forThrowable(
+                            inventoryFailure,
+                            "API server",
+                        ),
+                        stacktrace = inventoryFailure.stackTraceToString(),
                     )
+                    modelInventoryFailureNotice(inventoryFailure, userInitiated)
+                        ?.let(_transientNotice::tryEmit)
                     return@launch
                 }
                 // Confirmed older API servers expose only OpenAI-compatible aliases.
@@ -867,6 +1133,7 @@ class ChatViewModel : ViewModel() {
             if (locked != null) {
                 _selectedModelOverride.value = locked.model
                 _selectedProviderOverride.value = locked.provider
+                transitionReasoningEffortIdentity()
                 _transientNotice.tryEmit(
                     "This session is locked to ${locked.model}. Start a new chat to use Server default.",
                 )
@@ -880,6 +1147,7 @@ class ChatViewModel : ViewModel() {
         // model is cleared so the next new session falls back to the default.
         _selectedProviderOverride.value =
             provider?.takeIf { it.isNotBlank() && !model.isNullOrBlank() }
+        transitionReasoningEffortIdentity()
         val gateway = gatewayClient
         val handler = chatHandler
         if (model.isNullOrBlank()) {
@@ -889,7 +1157,7 @@ class ChatViewModel : ViewModel() {
                 // here skips the setModel below, leaving the gateway on its true
                 // server-configured default.
                 val defaultModel = AgentDisplay.requestModelName(
-                    (effectiveProfileProvider() ?: selectedProfileProvider())?.model
+                    (openedSessionDisplayProfile ?: effectiveProfileProvider() ?: selectedProfileProvider())?.model
                         ?: _serverModelName.value,
                 )
                 if (!defaultModel.isNullOrBlank()) {
@@ -966,10 +1234,16 @@ class ChatViewModel : ViewModel() {
                         // Pill update is the confirmation — no system bubble.
                         // Surface only a server warning, ephemerally.
                         warning?.let { _transientNotice.tryEmit(it) }
-                        gateway.modelOptions().onSuccess {
-                            _modelProviders.value = it.providers
-                            _gatewayCurrentModel.value = it.currentModel
-                            _gatewayCurrentProvider.value = it.currentProvider
+                        // Current upstream may defer the switch until the turn
+                        // boundary. Keep the optimistic requested identity; an
+                        // immediate model.options read still reports the old
+                        // model and would visibly snap the picker backward.
+                        if (!isDeferredConfigResult(result)) {
+                            gateway.modelOptions().onSuccess {
+                                _modelProviders.value = it.providers
+                                _gatewayCurrentModel.value = it.currentModel
+                                _gatewayCurrentProvider.value = it.currentProvider
+                            }
                         }
                     },
                     onFailure = { e ->
@@ -985,6 +1259,7 @@ class ChatViewModel : ViewModel() {
     fun selectApiModel(modelId: String) {
         _selectedModelOverride.value = modelId.trim().takeIf { it.isNotEmpty() }
         _selectedProviderOverride.value = null
+        transitionReasoningEffortIdentity()
         refreshActiveAgentName()
     }
 
@@ -1002,6 +1277,10 @@ class ChatViewModel : ViewModel() {
      */
     fun selectReasoningEffort(value: String) {
         val normalized = normalizeReasoningEffort(value)
+        if (!reasoningEffortAvailability().accepts(normalized)) return
+        val revision = reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
+        val identity = reasoningEffortIdentity()
         _selectedReasoningEffort.value = normalized
         val gateway = gatewayClient ?: return
         val handler = chatHandler
@@ -1011,9 +1290,17 @@ class ChatViewModel : ViewModel() {
             gateway.prewarm(handler.currentSessionId.value)
             gateway.setReasoning(normalized).fold(
                 onSuccess = { result ->
+                    if (!isCurrentReasoningResponse(
+                            capturedRevision = revision,
+                            currentRevision = reasoningEffortRevision.get(),
+                            capturedIdentity = identity,
+                            activeIdentity = reasoningEffortIdentity(),
+                        )
+                    ) return@fold
                     _selectedReasoningEffort.value = normalizeReasoningEffort(
                         result.stringValue("value") ?: normalized,
                     )
+                    selectedReasoningEffortConfirmedIdentity = identity
                 },
                 onFailure = { e ->
                     handler.addSystemNotice(
@@ -1022,6 +1309,27 @@ class ChatViewModel : ViewModel() {
                     refreshReasoningSettings()
                 },
             )
+        }
+    }
+
+    private fun transitionReasoningEffortIdentity() {
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
+        reconcilePendingReasoningEffortForModel()
+        refreshRelayReasoningCapabilities()
+    }
+
+    private fun reconcilePendingReasoningEffortForModel() {
+        val identity = reasoningEffortIdentity()
+        val reconciled = reconcilePendingReasoningEffort(
+            value = _selectedReasoningEffort.value,
+            confirmedIdentity = selectedReasoningEffortConfirmedIdentity,
+            activeIdentity = identity,
+            availability = reasoningEffortAvailability(),
+        )
+        if (reconciled != _selectedReasoningEffort.value) {
+            reasoningEffortRevision.incrementAndGet()
+            _selectedReasoningEffort.value = reconciled
         }
     }
 
@@ -1157,7 +1465,8 @@ class ChatViewModel : ViewModel() {
      * new profile's agent. SSE turns already carry the profile per-request as
      * `profileName`. [profile] = the new pick; null = the default profile.
      */
-    fun activateGatewayProfile(profile: Profile?) {
+    fun activateGatewayProfile(profile: Profile?, refreshModelOptions: Boolean = true) {
+        clearOpenedSessionOwner()
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
         // A profile switch is a UI/context detach, not a Stop action. Preserve
@@ -1194,6 +1503,8 @@ class ChatViewModel : ViewModel() {
         // session.info confirm it on the first turn (see the dropped
         // getReasoningSettings below).
         _selectedReasoningEffort.value = null
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         // The personality overlay is per-profile. On SSE, leaving a stale pick
         // here would inject the previous profile's overlay onto the new
@@ -1224,11 +1535,13 @@ class ChatViewModel : ViewModel() {
         // config.get would read the launch/global profile's effort (wrong
         // scope). It's left unknown above and confirmed by session.info on the
         // first turn — the same honesty discipline yolo/fast use.
-        viewModelScope.launch {
-            gateway.modelOptions().onSuccess {
-                _modelProviders.value = it.providers
-                _gatewayCurrentModel.value = it.currentModel
-                _gatewayCurrentProvider.value = it.currentProvider
+        if (refreshModelOptions) {
+            viewModelScope.launch {
+                gateway.modelOptions().onSuccess {
+                    _modelProviders.value = it.providers
+                    _gatewayCurrentModel.value = it.currentModel
+                    _gatewayCurrentProvider.value = it.currentProvider
+                }
             }
         }
         refreshActiveAgentName()
@@ -1261,6 +1574,8 @@ class ChatViewModel : ViewModel() {
      * "chats aren't auto-named here" hint in the session drawer.
      */
     val serverAutoTitles: StateFlow<Boolean> = _serverAutoTitles.asStateFlow()
+    private val _sessionArchivingSupported = MutableStateFlow(false)
+    val sessionArchivingSupported: StateFlow<Boolean> = _sessionArchivingSupported.asStateFlow()
 
     /**
      * Streaming endpoint to use for the next chat turn. Always one of
@@ -1282,6 +1597,10 @@ class ChatViewModel : ViewModel() {
             // and the drawer note. Mirror the capability so the UI can explain
             // why chats stay untitled on those transports (issue #133).
             _serverAutoTitles.value = value == "gateway"
+            // Current Dashboard lists archived rows explicitly; the API-server
+            // list does not, so enabling archive there would make restore
+            // disappear after process recreation.
+            _sessionArchivingSupported.value = value == "gateway"
         }
 
     /**
@@ -1311,6 +1630,9 @@ class ChatViewModel : ViewModel() {
     val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
     val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
 
+    private val _messageReactionsSupported = MutableStateFlow(true)
+    val messageReactionsSupported: StateFlow<Boolean> = _messageReactionsSupported.asStateFlow()
+
     fun refreshBackgroundProcesses() {
         gatewayProcessController.refresh()
     }
@@ -1337,6 +1659,7 @@ class ChatViewModel : ViewModel() {
         gatewayClient = client
         if (changed) {
             resetApprovalModeState()
+            _messageReactionsSupported.value = true
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
@@ -1346,7 +1669,7 @@ class ChatViewModel : ViewModel() {
         }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
-        client?.sessionProfileProvider = { sessionProfileNameProvider() }
+        client?.sessionProfileProvider = { currentSessionProfileName() }
         // Bind the in-chat picks onto each fresh session.create so a brand-new
         // chat actually runs on the picked model/provider AND the chosen
         // reasoning effort / fast tier (not the global default) — and so setting
@@ -1360,6 +1683,7 @@ class ChatViewModel : ViewModel() {
             val model = _selectedModelOverride.value?.takeIf { it.isNotBlank() }
             val provider = _selectedProviderOverride.value?.takeIf { it.isNotBlank() }
             val effort = _selectedReasoningEffort.value?.takeIf { it.isNotBlank() }
+                ?.takeIf { reasoningEffortAvailability().accepts(it) }
             // Contract v4 distinguishes all three states: null omits the field
             // and inherits the profile tier, true pins priority, and false pins
             // normal. Do not filter false here or a user's explicit Fast-off
@@ -1402,15 +1726,17 @@ class ChatViewModel : ViewModel() {
                     if (key != null) {
                         backgroundPendingInteractions[key] =
                             BackgroundPendingInteraction(event.profile, event.ask)
+                        backgroundNeedsInputKeys += key
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), true)
+                        publishBackgroundSessionActivity()
                     }
                     maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile)
                 }
-                is GatewayBackgroundInteractionEvent.Resolved -> {
+                is GatewayBackgroundInteractionEvent.Expired -> {
                     if (key != null) {
+                        backgroundNeedsInputKeys -= key
                         backgroundPendingInteractions.computeIfPresent(key) { _, current ->
-                            if (current.profile == event.profile &&
-                                current.ask.kind == event.ask.kind &&
+                            if (current.ask.kind == event.ask.kind &&
                                 current.ask.requestId == event.ask.requestId
                             ) {
                                 null
@@ -1419,6 +1745,7 @@ class ChatViewModel : ViewModel() {
                             }
                         }
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), false)
+                        publishBackgroundSessionActivity()
                     }
                     cancelInteractionNotification(event.storedSessionId, event.ask, event.profile)
                 }
@@ -1440,6 +1767,8 @@ class ChatViewModel : ViewModel() {
                 // null = unknown (honest); refreshReasoningSettings/session.info
                 // re-seed it. Never a stale default that could ride session.create.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
             }
             // Catalog fetch must never cold-open /api/ws — only fetch over an
@@ -1463,6 +1792,8 @@ class ChatViewModel : ViewModel() {
                 // null = unknown (honest); refreshReasoningSettings/session.info
                 // re-seed it. Never a stale default that could ride session.create.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
             }
         }
@@ -1477,15 +1808,21 @@ class ChatViewModel : ViewModel() {
     private fun settleBackgroundTurnCheckpoint(completion: GatewayBackgroundTurnCompletion) {
         val profileKey = AgentDisplay.profileSessionKey(completion.profile)
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
+            val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
-                key.contextKey.substringAfterLast("::") == profileKey
+                key.contextKey.substringAfterLast("::") == profileKey &&
+                checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
+        matching.mapNotNull(backgroundTurnCheckpoints::get)
+            .mapTo(completedQueueOwnerRuns) { it.user.id }
         matching.forEach(backgroundTurnCheckpoints::remove)
         matching.forEach { key ->
+            backgroundNeedsInputKeys -= key
             backgroundPendingInteractions.remove(key)
             ActiveTurnKeepAliveRegistry.release(key.keepAliveKey())
         }
+        publishBackgroundSessionActivity()
         chatTurnCheckpointStore?.let { store ->
             viewModelScope.launch {
                 checkpointMutex.withLock {
@@ -1495,6 +1832,7 @@ class ChatViewModel : ViewModel() {
                 }
             }
         }
+        drainQueue()
     }
 
     /**
@@ -1539,6 +1877,7 @@ class ChatViewModel : ViewModel() {
             }
             accepted = false
             boundHandle = null
+            activeQueueOwnerRunId = null
         }
 
         val callbacks = GatewayTurnCallbacks(
@@ -1574,8 +1913,10 @@ class ChatViewModel : ViewModel() {
             onThinkingDelta = { delta ->
                 if (acceptsEvent()) handler.onThinkingDelta(messageId, delta)
             },
-            onToolCallStart = { toolCallId, toolName ->
-                if (acceptsEvent()) handler.onToolCallStart(messageId, toolCallId, toolName)
+            onToolCallStart = { toolCallId, toolName, argsPreview ->
+                if (acceptsEvent()) {
+                    handler.onToolCallStart(messageId, toolCallId, toolName, argsPreview)
+                }
             },
             onToolCallDone = { toolCallId, preview ->
                 if (acceptsEvent()) handler.onToolCallComplete(messageId, toolCallId, preview)
@@ -1641,8 +1982,7 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
                     settleBoundTurnState()
-                    _queuedMessages.value = emptyList()
-                    clearPendingAsk(approvalStamp = "deny")
+                    clearQueue()
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         baselineAssistantCount = baselineAssistantCount,
@@ -1665,9 +2005,6 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (acceptsEvent()) expirePendingAsk(expiry)
-            },
-            onInteractionResolved = { resolved ->
-                if (acceptsEvent()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (acceptsEvent()) {
@@ -1717,6 +2054,7 @@ class ChatViewModel : ViewModel() {
                     accepted = true
                     activeStream = handle
                     activeStreamIsGateway = true
+                    activeQueueOwnerRunId = "gateway-inbound:$messageId"
                     _steerableTurn.value = true
                     queuedRecovery?.let { handoff ->
                         val now = System.currentTimeMillis()
@@ -1928,7 +2266,8 @@ class ChatViewModel : ViewModel() {
      * The live server-side interactive ask (clarify/approval/sudo/secret).
      * One at a time — the upstream agent thread blocks until the answer
      * arrives, so a second ask can't exist while the first is pending.
-     * Cleared on answer, turn end, cancel, and connection switch.
+     * Cleared only by an explicit answer, authoritative expiry, or explicit
+     * interrupt. Navigation and unrelated turn events must preserve it.
      */
     private val _pendingAsk = MutableStateFlow<PendingAsk?>(null)
     val pendingAsk: StateFlow<PendingAsk?> = _pendingAsk.asStateFlow()
@@ -1990,17 +2329,99 @@ class ChatViewModel : ViewModel() {
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
 
+    fun reactToMessage(message: ChatMessage, emoji: String?) {
+        val gateway = gatewayClient ?: return
+        val role = message.role
+        if (role != MessageRole.USER && role != MessageRole.ASSISTANT) return
+        val handler = chatHandler ?: return
+        val snapshot = messages.value.firstOrNull { it.uiKey == message.uiKey }?.reactions
+            ?: message.reactions
+        handler.mutateMessage(message.uiKey) { current ->
+            current.copy(reactions = applyMessageReaction(current.reactions, emoji))
+        }
+        viewModelScope.launch {
+            gateway.reactToMessage(message.rowId, role.name.lowercase(), emoji).fold(
+                onSuccess = { result ->
+                    val persisted = parseMessageReactions(result["reactions"])
+                    val rowId = (result["row_id"] as? JsonPrimitive)?.longOrNull
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(
+                            rowId = rowId ?: current.rowId,
+                            reactions = persisted,
+                        )
+                    }
+                    _transientNotice.tryEmit(if (emoji == null) "Reaction removed." else "Reaction added.")
+                },
+                onFailure = { error ->
+                    handler.mutateMessage(message.uiKey) { current ->
+                        current.copy(reactions = snapshot)
+                    }
+                    if ((error as? GatewayRpcException)?.code == -32601) {
+                        _messageReactionsSupported.value = false
+                        _transientNotice.tryEmit("Message reactions aren't supported by this gateway.")
+                    } else {
+                        _transientNotice.tryEmit("Couldn't update reaction: ${error.message ?: "unknown error"}")
+                    }
+                },
+            )
+        }
+    }
+
+    fun steerSubagent(subagentId: String, instruction: String) {
+        val gateway = gatewayClient ?: return
+        if (subagentId.isBlank() || instruction.isBlank()) return
+        viewModelScope.launch {
+            gateway.steerSubagent(subagentId, instruction).fold(
+                onSuccess = { result ->
+                    val status = result.stringValue("status") ?: "queued"
+                    _transientNotice.tryEmit(
+                        if (status == "rejected") "Subagent redirect was rejected."
+                        else "Subagent redirect queued.",
+                    )
+                },
+                onFailure = { error ->
+                    _transientNotice.tryEmit("Couldn't redirect subagent: ${error.message ?: "unknown error"}")
+                },
+            )
+        }
+    }
+
     /**
      * Composer prefill requests from server command dispatch
      * (`{type:"prefill"}` — e.g. `/undo`). ChatScreen collects and sets the
      * input text.
      */
-    private val _composerPrefill = MutableSharedFlow<String>(
-        replay = 0,
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val composerPrefill: SharedFlow<String> = _composerPrefill.asSharedFlow()
+    private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
+    val composerPrefill = _composerPrefill.receiveAsFlow()
+
+    /**
+     * Open a fresh draft for text received through Android's sharesheet.
+     * The composer event is queued until Chat is composed and is never routed
+     * through [sendMessage]. Existing new-chat transport and background-turn
+     * ownership remain authoritative.
+     */
+    fun openSharedTextDraft(text: String): Boolean {
+        if (text.isBlank() || chatHandler == null) return false
+        val canCreateDraft =
+            (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
+        if (!canCreateDraft) return false
+        createNewChat()
+        return _composerPrefill.trySend(text).isSuccess
+    }
+
+    // Navigation-safe draft handoff for explicit in-app workflows (for example,
+    // custom-pet creation). StateFlow keeps the reviewed text until ChatScreen
+    // is mounted; consuming it never sends the message.
+    private val _pendingComposerDraft = MutableStateFlow<String?>(null)
+    val pendingComposerDraft: StateFlow<String?> = _pendingComposerDraft.asStateFlow()
+
+    fun stageComposerDraft(text: String) {
+        _pendingComposerDraft.value = text.takeIf { it.isNotBlank() }
+    }
+
+    fun consumeComposerDraft(text: String) {
+        _pendingComposerDraft.compareAndSet(text, null)
+    }
 
     /**
      * One-shot request to open the personality picker — emitted when a bare
@@ -2046,7 +2467,12 @@ class ChatViewModel : ViewModel() {
      * [regenerateFromMessage] and consumed by the next [startStream]
      * gateway dispatch as `truncate_before_user_ordinal`.
      */
-    private var pendingTruncateOrdinal: Int? = null
+    private data class PendingGatewayTruncation(
+        val ordinal: Int,
+        val rowId: Long?,
+    )
+
+    private var pendingGatewayTruncation: PendingGatewayTruncation? = null
 
     /**
      * Provider for the active agent-profile pick — wired from [RelayApp] at
@@ -2090,6 +2516,22 @@ class ChatViewModel : ViewModel() {
     }
     private var displayAliasProvider: () -> String? = { null }
     private var activeProfileContextKey: String? = null
+    private val _openedSessionProfileName = MutableStateFlow<String?>(null)
+    val openedSessionProfileName: StateFlow<String?> = _openedSessionProfileName.asStateFlow()
+    private var openedSessionDisplayProfile: Profile? = null
+
+    /**
+     * Profile namespace owned by the conversation currently on screen. Opening a
+     * row from the global All Profiles browser must not mutate the persistent
+     * profile selector, but resume/history/send still need the row's exact owner.
+     */
+    private fun currentSessionProfileName(): String? =
+        _openedSessionProfileName.value ?: sessionProfileNameProvider()
+
+    private fun clearOpenedSessionOwner() {
+        _openedSessionProfileName.value = null
+        openedSessionDisplayProfile = null
+    }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
     private fun selectBackgroundProcessSession(
@@ -2179,15 +2621,29 @@ class ChatViewModel : ViewModel() {
      */
     var profileSessionRenamer: (suspend (String, String) -> Boolean)? = null
 
+    /** Profile-scoped durable session metadata writers; never cross to the shared API DB. */
+    var profileSessionPinner: (suspend (String, Boolean, String?) -> Boolean)? = null
+    var profileSessionArchiver: (suspend (String, Boolean, String?) -> Boolean)? = null
+
+    private val sessionFlagMutationRevisions = mutableMapOf<String, Int>()
+    private val sessionFlagMutationLocks = ConcurrentHashMap<String, Mutex>()
+
     /**
      * Loads a session's transcript scoped to the active profile (dashboard
      * `/api/sessions/{id}/messages?profile=`). Twin of [profileSessionLister]:
      * once the drawer lists a non-default profile's sessions, opening one must
      * read that profile's own DB. Returns `null` off the dashboard surface.
      */
-    private var profileMessageLoader: (suspend (String) -> Result<List<MessageItem>>?)? = null
+    private var profileMessageLoader:
+        (suspend (String?, String, SessionMessageLoadMode) -> Result<List<MessageItem>>?)? = null
 
     fun setProfileMessageLoader(loader: suspend (String) -> Result<List<MessageItem>>?) {
+        profileMessageLoader = { _, sessionId, _ -> loader(sessionId) }
+    }
+
+    fun setProfileMessageLoaderWithMode(
+        loader: suspend (String?, String, SessionMessageLoadMode) -> Result<List<MessageItem>>?,
+    ) {
         profileMessageLoader = loader
     }
 
@@ -2200,11 +2656,13 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadSessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
         if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope)
+            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode, profileName)
         }
-        return apiClient?.getMessages(sessionId) ?: emptyList()
+        return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
     /**
@@ -2216,15 +2674,17 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadGatewaySessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
-        val scoped = profileMessageLoader?.invoke(sessionId)
+        val scoped = profileMessageLoader?.invoke(profileName, sessionId, mode)
         if (scoped != null) {
             // A gateway profile owns a distinct state.db. Never fall through to
             // the launch/default API database when its scoped read fails: an
             // empty/default transcript is not authoritative for this session.
             return if (requireProfileScope) scoped.getOrThrow() else scoped.getOrElse { emptyList() }
         }
-        return apiClient?.getMessages(sessionId) ?: emptyList()
+        return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
     /**
@@ -2307,27 +2767,32 @@ class ChatViewModel : ViewModel() {
                 }
             }
             launch {
-                client.serverModel.collect { value ->
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    if (_gatewayCurrentModel.value != value) _gatewayCurrentModel.value = value
-                }
-            }
-            launch {
-                client.serverProvider.collect { value ->
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    if (_gatewayCurrentProvider.value != value) _gatewayCurrentProvider.value = value
-                }
-            }
-            launch {
-                client.serverReasoningEffort.collect { value ->
-                    // Ignore blank (upstream "" = reasoning disabled — never
-                    // clobber the chip). Compare on the normalized value, the
-                    // same form the optimistic setter + config.get refresh store.
-                    if (gatewayClient !== client || value.isNullOrBlank()) return@collect
-                    val normalized = normalizeReasoningEffort(value)
-                    if (_selectedReasoningEffort.value != normalized) {
-                        _selectedReasoningEffort.value = normalized
+                client.serverModelIdentity.collect { identity ->
+                    if (gatewayClient !== client || identity == null) return@collect
+                    _gatewayCurrentModel.value = identity.model
+                    _gatewayCurrentProvider.value = identity.provider
+                    // A session.info identity is authoritative and coherent.
+                    // Retaining a pending override after an acknowledgement or
+                    // external Desktop/TUI switch can otherwise pair its stale
+                    // model with the newly reported provider.
+                    if (_selectedModelOverride.value != null) {
+                        _selectedModelOverride.value = null
+                        _selectedProviderOverride.value = null
                     }
+                    transitionReasoningEffortIdentity()
+                }
+            }
+            launch {
+                client.serverReasoningIdentity.collect { state ->
+                    if (gatewayClient !== client || state == null) return@collect
+                    val activeIdentity = reasoningEffortIdentity() ?: return@collect
+                    if (
+                        !state.identity.provider.equals(activeIdentity.provider, ignoreCase = true) ||
+                        state.identity.model != activeIdentity.model
+                    ) return@collect
+                    reasoningEffortRevision.incrementAndGet()
+                    selectedReasoningEffortConfirmedIdentity = activeIdentity
+                    _selectedReasoningEffort.value = normalizeReasoningEffort(state.effort)
                 }
             }
             launch {
@@ -2369,7 +2834,7 @@ class ChatViewModel : ViewModel() {
                     approvalModeRevision.incrementAndGet()
                     _approvalMode.value = mode
                     _approvalModeCapability.value = GatewayApprovalModeCapability.Supported
-                    val launchProfileOwned = sessionProfileNameProvider() == null
+                    val launchProfileOwned = currentSessionProfileName() == null
                     _approvalModeWritable.value = launchProfileOwned
                     _approvalModeReadOnlyForProfile.value = !launchProfileOwned
                 }
@@ -2510,6 +2975,12 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        pendingThread?.let { pending ->
+            if (msgChatId == null || msgChatId == pending.chatId) {
+                handler.addAgentThreadMessage(msg.text, msg.messageId, msg.title)
+                return true
+            }
+        }
         // A freshly-created thread whose real session we're still switching to:
         // show the agent's first reply in the draft view now (the switch
         // reconciles it from history). Covers the gap before currentSessionId is
@@ -2687,6 +3158,7 @@ class ChatViewModel : ViewModel() {
         }
         ensureCheckpointObservers()
         this.relayHttpClient = relayHttpClient
+        if (_modelProviders.value.isNotEmpty()) refreshRelayReasoningCapabilities()
         this.mediaSettingsRepo = mediaSettingsRepo
         this.mediaCacheWriter = mediaCacheWriter
 
@@ -2763,19 +3235,31 @@ class ChatViewModel : ViewModel() {
         connectionSwitchJob?.cancel()
         connectionSwitchJob = viewModelScope.launch {
             events.collect { newConnectionId ->
+                // A connection navigation must detach a Gateway turn, never
+                // interrupt it: session.interrupt force-denies approvals.
+                // Persist the exact profile/session checkpoint before the old
+                // client is replaced so an unresolved ask remains recoverable.
+                chatHandler?.let(::releaseTurnForNavigation) ?: run {
+                    intentionallyCancelled = true
+                    activeStream?.cancel()
+                    activeStream = null
+                }
                 clearTurnCheckpoint()
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
-                intentionallyCancelled = true
                 activeStreamDeltas?.discard()
                 activeStreamDeltas = null
-                activeStream?.cancel()
-                activeStream = null
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 activeProfileContextKey = null
-                _queuedMessages.value = emptyList()
+                relayCapabilityGeneration.incrementAndGet()
+                relayReasoningCapabilities.value = emptyMap()
+                _reasoningCapabilityRevision.value += 1L
+                publishBackgroundSessionActivity()
+                queuedMessageItems.clear()
+                completedQueueOwnerRuns.clear()
+                publishQueuedMessages()
                 _pendingAttachments.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
@@ -2791,9 +3275,11 @@ class ChatViewModel : ViewModel() {
                 // reset to unknown/default so neither a stale chip nor a stale
                 // SSE persona overlay carries into the new connection.
                 _selectedReasoningEffort.value = null
+                reasoningEffortRevision.incrementAndGet()
+                selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
                 _selectedPersonality.value = "default"
-                pendingTruncateOrdinal = null
+                pendingGatewayTruncation = null
                 chatHandler?.let { handler ->
                     handler.clearMessages()
                     handler.clearSessions()
@@ -2808,7 +3294,50 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    fun openProfileSession(
+        profileName: String,
+        profile: Profile?,
+        contextKey: String,
+        sessionId: String,
+    ) {
+        // Detach the old live gateway session without reading launch/global
+        // model options: session.info for the resumed owner is authoritative.
+        activateGatewayProfile(profile, refreshModelOptions = false)
+        _openedSessionProfileName.value = profileName
+        openedSessionDisplayProfile = profile
+        refreshActiveAgentName(profile, relabelGenericMessages = true)
+        switchProfileContextInternal(contextKey, sessionId, persistLastSession = false)
+    }
+
+    /**
+     * Start a fresh draft owned by an explicit profile without changing the
+     * persistent profile selector. The All Profiles browser uses this for its
+     * New chat action, where upstream's literal `default` profile must win over
+     * the server's sticky active profile.
+     */
+    fun createProfileChat(
+        profileName: String,
+        profile: Profile?,
+        contextKey: String,
+    ) {
+        activateGatewayProfile(profile, refreshModelOptions = false)
+        _openedSessionProfileName.value = profileName
+        openedSessionDisplayProfile = profile
+        refreshActiveAgentName(profile, relabelGenericMessages = true)
+        switchProfileContextInternal(contextKey, sessionId = null, persistLastSession = false)
+        AppAnalytics.onSessionCreated()
+    }
+
     fun switchProfileContext(contextKey: String, sessionId: String?) {
+        clearOpenedSessionOwner()
+        switchProfileContextInternal(contextKey, sessionId)
+    }
+
+    private fun switchProfileContextInternal(
+        contextKey: String,
+        sessionId: String?,
+        persistLastSession: Boolean = true,
+    ) {
         val handler = chatHandler ?: return
         val isInitialContextBinding = activeProfileContextKey == null
         handler.activeAgentName = currentAgentDisplayName()
@@ -2816,6 +3345,7 @@ class ChatViewModel : ViewModel() {
             activeProfileContextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
+            publishQueuedMessages()
             _initialChatSettled.value = true
             return
         }
@@ -2826,9 +3356,12 @@ class ChatViewModel : ViewModel() {
         ) {
             activateModelOptionsProfile(contextKey)
             activeProfileContextKey = contextKey
+            refreshRelayReasoningCapabilities()
+            publishBackgroundSessionActivity()
             activeTurnCheckpointSeed?.contextKey = contextKey
             scheduleCheckpointWrite(immediate = true)
             selectBackgroundProcessSession(sessionId, contextKey)
+            publishQueuedMessages()
             _initialChatSettled.value = true
             return
         }
@@ -2838,12 +3371,14 @@ class ChatViewModel : ViewModel() {
         if (!isInitialContextBinding) releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        val sessionProfileName = currentSessionProfileName()
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
         _isLoadingSessions.value = false
         activateModelOptionsProfile(contextKey)
         activeProfileContextKey = contextKey
-        _queuedMessages.value = emptyList()
+        refreshRelayReasoningCapabilities()
+        publishBackgroundSessionActivity()
         _pendingAttachments.value = emptyList()
         _steerableTurn.value = false
         _steerNotice.value = null
@@ -2855,24 +3390,38 @@ class ChatViewModel : ViewModel() {
         _fastEnabled.value = null
         resetApprovalModeState()
         pendingYolo = null
+        publishQueuedMessages()
         // SSE profile switch: reset the reasoning chip to unknown (a sessionless
         // config.get reads the wrong profile's effort) and the personality to
         // default so composeInjectedContext can't inject the previous profile's
-        // overlay onto this profile's first SSE turn. The serverReasoningEffort /
-        // serverPersonality collectors (gateway) and session.info reconcile after
-        // the first turn; on pure SSE the new profile's own SOUL carries instead.
+        // overlay onto this profile's first SSE turn. The identity-bound reasoning
+        // and personality collectors reconcile gateway session.info after the
+        // first turn; on pure SSE the new profile's own SOUL carries instead.
         _selectedReasoningEffort.value = null
+        reasoningEffortRevision.incrementAndGet()
+        selectedReasoningEffortConfirmedIdentity = null
         _reasoningDisplay.value = null
         _selectedPersonality.value = "default"
+        // Model/provider overrides are session-scoped too. This reset is owned
+        // by the context switch (not just activateGatewayProfile) so the SSE
+        // path cannot carry the previous profile's explicit model into the
+        // restored session or fresh draft.
+        modelOptionsGeneration.incrementAndGet()
+        _modelProviders.value = emptyList()
+        _apiModelOptions.value = emptyList()
+        _availableModels.value = emptyList()
+        _selectedModelOverride.value = null
+        _selectedProviderOverride.value = null
         // The agent display name was stamped above with the pre-reset persona —
         // recompute it now that the overlay is cleared so the header/bubbles read
         // the new profile's base identity, not the old persona.
         handler.activeAgentName = currentAgentDisplayName()
-        pendingTruncateOrdinal = null
+        pendingGatewayTruncation = null
         handler.clearSessions()
         handler.setSessionId(sessionId)
+        publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
-        if (sessionId != null) {
+        if (sessionId != null && persistLastSession) {
             onSessionChanged?.invoke(sessionId)
         }
 
@@ -2905,7 +3454,7 @@ class ChatViewModel : ViewModel() {
                     false
                 }
                 if (!recovered) {
-                    val messages = loadSessionHistory(sessionId)
+                    val messages = loadSessionHistory(sessionId, profileName = sessionProfileName)
                     if (stillCurrent()) {
                         handler.loadMessageHistory(messages)
                         if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
@@ -2933,6 +3482,14 @@ class ChatViewModel : ViewModel() {
 
     private fun fetchPersonalities() {
         viewModelScope.launch {
+            val gatewayNames = if (
+                streamingEndpoint == "gateway" &&
+                gatewayClient?.connectionState?.value == GatewayConnectionState.Ready
+            ) {
+                gatewayClient?.personalityOptions()?.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
             val config = if (apiClient != null) {
                 apiClient?.getPersonalities()
             } else {
@@ -2940,11 +3497,12 @@ class ChatViewModel : ViewModel() {
                     ?.invoke()
                     ?.getOrNull()
                     ?.let(::parseDashboardPersonalityConfig)
-            } ?: return@launch
-            _personalityNames.value = config.names
-            _defaultPersonality.value = config.defaultName
-            personalityPrompts = config.prompts
-            _serverModelName.value = config.modelName
+            }
+            if (config == null && gatewayNames.isEmpty()) return@launch
+            _personalityNames.value = gatewayNames.ifEmpty { config?.names.orEmpty() }
+            _defaultPersonality.value = config?.defaultName.orEmpty()
+            personalityPrompts = config?.prompts.orEmpty()
+            _serverModelName.value = config?.modelName.orEmpty()
             refreshActiveAgentName(relabelGenericMessages = true)
         }
     }
@@ -2981,8 +3539,11 @@ class ChatViewModel : ViewModel() {
      * groups refresh via [refreshModelOptions]; this covers [availableModels] used
      * when no gateway model.options groups exist. Fetched once otherwise.
      */
-    fun refreshModels() {
-        fetchModels()
+    fun refreshModels(
+        userInitiated: Boolean = false,
+        catalogOnly: Boolean = false,
+    ) {
+        fetchModels(userInitiated, catalogOnly)
     }
 
     /** Clear server-owned catalogs before a different connection starts loading. */
@@ -3082,6 +3643,9 @@ class ChatViewModel : ViewModel() {
 
     fun createNewChat() {
         val handler = chatHandler ?: return
+        clearOpenedSessionOwner()
+        pendingThread = null
+        creatingThread = null
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
         releaseTurnForNavigation(handler)
@@ -3199,6 +3763,43 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Open an agent-initiated Thread before the gateway has a `source=phone`
+     * session for it. Outbound platform sends do not create gateway sessions;
+     * the first phone reply does. Until then the durable proactive inbox is the
+     * provisional transcript. The existing pending-thread send path promotes
+     * this draft to the real gateway session after the user's first reply.
+     */
+    fun openProactiveThread(chatId: String, entries: List<ProactiveInboxEntry>) {
+        val handler = chatHandler ?: return
+        val normalizedChatId = chatId.ifBlank { "phone" }
+        val ordered = entries
+            .filter { (it.chatId ?: "phone") == normalizedChatId }
+            .sortedBy { it.receivedAt }
+        if (ordered.isEmpty()) return
+
+        releaseTurnForNavigation(handler)
+        cancelAnswerRecovery(settleUi = false)
+        historyLoadGeneration.incrementAndGet()
+        pendingThread = PendingThread(
+            chatId = normalizedChatId,
+            name = ordered.last().title.ifBlank { "Hermes" },
+        )
+        creatingThread = null
+        gatewayClient?.clearSession()
+        handler.setSessionId(null)
+        selectBackgroundProcessSession(null)
+        handler.clearMessages()
+        ordered.forEach { entry ->
+            handler.addAgentThreadMessage(entry.text, entry.id, entry.title)
+        }
+        _contextUsage.value = null
+        _contextWindow.value = null
+        dismissPendingAskNotification()
+        _pendingAsk.value = null
+        onSessionChanged?.invoke(null)
+    }
+
+    /**
      * After a "+ New Thread" first send, poll the session list until the gateway
      * has created the new `source=phone` session, then switch to it (loading its
      * history) and apply the user's chosen name. The new session is found by
@@ -3242,7 +3843,10 @@ class ChatViewModel : ViewModel() {
 
     fun switchSession(sessionId: String) {
         val handler = chatHandler ?: return
+        clearOpenedSessionOwner()
         if (streamingEndpoint != "gateway" && apiClient == null) return
+        pendingThread = null
+        creatingThread = null
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.
@@ -3251,6 +3855,7 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
 
         handler.setSessionId(sessionId)
+        publishQueuedMessages()
         if (streamingEndpoint != "gateway") {
             val session = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
             if (session?.hasModelConfig == true && !session.model.isNullOrBlank()) {
@@ -3299,6 +3904,7 @@ class ChatViewModel : ViewModel() {
             }
             if (historyLoadGeneration.get() == loadGeneration) {
                 _isLoadingHistory.value = false
+                drainQueue()
             }
         }
     }
@@ -3318,6 +3924,16 @@ class ChatViewModel : ViewModel() {
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
+        val removedQueued = removeQueuedMessagesFor(activeProfileContextKey, sessionId)
+        if (removedQueued > 0) {
+            _transientNotice.tryEmit(
+                if (removedQueued == 1) {
+                    "A queued message was canceled because its chat was deleted."
+                } else {
+                    "$removedQueued queued messages were canceled because their chat was deleted."
+                },
+            )
+        }
 
         // Optimistic removal
         handler.removeSession(sessionId)
@@ -3390,6 +4006,85 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    fun setSessionPinned(sessionId: String, pinned: Boolean) {
+        val expectedContextKey = activeProfileContextKey
+        mutateSessionFlag(
+            sessionId = sessionId,
+            target = pinned,
+            localUpdate = { handler, value ->
+                handler.setSessionFlagsLocal(sessionId, pinned = value)
+            },
+            profileWrite = {
+                profileSessionPinner?.invoke(sessionId, pinned, expectedContextKey) ?: false
+            },
+            apiWrite = { apiClient?.setSessionPinned(sessionId, pinned) == true },
+            errorContext = "pin_profile_session",
+        )
+    }
+
+    fun setSessionArchived(sessionId: String, archived: Boolean) {
+        if (!_sessionArchivingSupported.value) {
+            emitError(
+                UnsupportedOperationException("Archive and restore require Dashboard sessions"),
+                context = "archive_session_unsupported",
+            )
+            return
+        }
+        val expectedContextKey = activeProfileContextKey
+        mutateSessionFlag(
+            sessionId = sessionId,
+            target = archived,
+            localUpdate = { handler, value ->
+                handler.setSessionFlagsLocal(sessionId, archived = value)
+            },
+            profileWrite = {
+                profileSessionArchiver?.invoke(sessionId, archived, expectedContextKey) ?: false
+            },
+            apiWrite = { apiClient?.setSessionArchived(sessionId, archived) == true },
+            errorContext = "archive_profile_session",
+        )
+    }
+
+    private fun mutateSessionFlag(
+        sessionId: String,
+        target: Boolean,
+        localUpdate: (ChatHandler, Boolean) -> Unit,
+        profileWrite: suspend () -> Boolean,
+        apiWrite: suspend () -> Boolean,
+        errorContext: String,
+    ) {
+        val handler = chatHandler ?: return
+        if (streamingEndpoint != "gateway" && apiClient == null) return
+        val generation = historyLoadGeneration.get()
+        val revisionKey = "$errorContext:$sessionId"
+        val revision = (sessionFlagMutationRevisions[revisionKey] ?: 0) + 1
+        sessionFlagMutationRevisions[revisionKey] = revision
+        localUpdate(handler, target)
+        viewModelScope.launch {
+            val success = sessionFlagMutationLocks
+                .getOrPut(revisionKey) { Mutex() }
+                .withLock {
+                    if (historyLoadGeneration.get() != generation) return@withLock false
+                    if (streamingEndpoint == "gateway") profileWrite() else apiWrite()
+                }
+            // A connection/profile transition owns a different session namespace.
+            // Never apply completion or rollback state to a newly selected scope.
+            if (historyLoadGeneration.get() != generation) return@launch
+            // A newer tap owns the visible state. Its server write and refresh
+            // will reconcile the row, so an older completion must not roll it back.
+            if (sessionFlagMutationRevisions[revisionKey] != revision) return@launch
+            if (success) {
+                refreshSessions()
+            } else {
+                localUpdate(handler, !target)
+                emitError(
+                    IllegalStateException("Server rejected the session metadata update"),
+                    context = errorContext,
+                )
+            }
+        }
+    }
+
     // --- Message sending ---
 
     fun sendMessage(text: String) {
@@ -3433,10 +4128,14 @@ class ChatViewModel : ViewModel() {
 
         // Mid-turn: redirect on the gateway transport, queue everywhere else.
         if (activeStream != null) {
-            if (_steerableTurn.value && streamingEndpoint == "gateway") {
+            if (
+                _steerableTurn.value &&
+                streamingEndpoint == "gateway" &&
+                _pendingAttachments.value.isEmpty()
+            ) {
                 steerActiveTurn(text.trim())
             } else {
-                _queuedMessages.update { it + text.trim() }
+                enqueueMessage(text.trim())
             }
             return
         }
@@ -3454,7 +4153,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         val gateway = gatewayClient
         if (gateway == null) {
-            _queuedMessages.update { it + text }
+            enqueueMessage(text)
             return
         }
         viewModelScope.launch {
@@ -3466,12 +4165,13 @@ class ChatViewModel : ViewModel() {
                             role = MessageRole.USER,
                             content = text,
                             timestamp = System.currentTimeMillis(),
+                            deliveryStatus = MessageDeliveryStatus.STEERED,
                         )
                     )
                 }
                 SteerResult.Rejected, SteerResult.Failed -> {
                     if (activeStream != null) {
-                        _queuedMessages.update { it + text }
+                        enqueueMessage(text)
                         _steerNotice.value = "Queued — sends after this turn"
                     } else {
                         // Turn ended while the correction RPC was in flight —
@@ -3602,9 +4302,7 @@ class ChatViewModel : ViewModel() {
 
     private fun dismissPendingAskNotification() {
         val pending = _pendingAsk.value ?: return
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
     }
 
     /**
@@ -3620,8 +4318,11 @@ class ChatViewModel : ViewModel() {
         restored: ChatTurnAskCheckpoint? = null,
     ) {
         val sessionId = handler.currentSessionId.value
+        val contextKey = activeProfileContextKey
         val existing = _pendingAsk.value
         if (existing != null &&
+            existing.contextKey == contextKey &&
+            existing.sessionId == sessionId &&
             existing.ask.kind == ask.kind &&
             existing.ask.requestId == ask.requestId
         ) {
@@ -3629,10 +4330,14 @@ class ChatViewModel : ViewModel() {
             return
         }
         existing?.let { pending ->
-            sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+            pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         }
         val activeKey = activeTurnCheckpointKey()
-        if (activeKey != null) backgroundPendingInteractions.remove(activeKey)
+        if (activeKey != null) {
+            backgroundNeedsInputKeys -= activeKey
+            backgroundPendingInteractions.remove(activeKey)
+            publishBackgroundSessionActivity()
+        }
         val now = restored?.receivedAt ?: System.currentTimeMillis()
         val cardKey = restored?.cardKey ?: ask.requestId
             ?: "approval-${handler.currentSessionId.value ?: "session"}-$now"
@@ -3671,6 +4376,7 @@ class ChatViewModel : ViewModel() {
                         HermesCardInput.Kinds.CHOICE
                     },
                     choices = ask.choices.orEmpty(),
+                    multiSelect = ask.multiSelect,
                     allowFreeText = true,
                     expiresAtMillis = expiresAt,
                 ),
@@ -3730,6 +4436,8 @@ class ChatViewModel : ViewModel() {
             ask = ask,
             messageId = messageId,
             cardKey = cardKey,
+            contextKey = contextKey,
+            sessionId = sessionId,
             receivedAt = now,
         )
         activeKey?.let { ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), true) }
@@ -3783,7 +4491,11 @@ class ChatViewModel : ViewModel() {
     fun answerAsk(messageId: String, cardKey: String, value: String) {
         val handler = chatHandler ?: return
         val pending = _pendingAsk.value
-        if (pending == null || pending.cardKey != cardKey) {
+        if (pending == null ||
+            pending.cardKey != cardKey ||
+            pending.contextKey != activeProfileContextKey ||
+            pending.sessionId != handler.currentSessionId.value
+        ) {
             handler.addSystemNotice("This request is no longer active.")
             return
         }
@@ -3833,9 +4545,7 @@ class ChatViewModel : ViewModel() {
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
                     if (_pendingAsk.value === pending) {
-                        handler.currentSessionId.value?.let {
-                            cancelInteractionNotification(it, pending.ask)
-                        }
+                        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
                         _pendingAsk.value = null
                         activeTurnCheckpointKey()?.let {
                             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -3864,9 +4574,7 @@ class ChatViewModel : ViewModel() {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -3880,36 +4588,22 @@ class ChatViewModel : ViewModel() {
         )
     }
 
-    private fun resolvePendingAsk(resolution: GatewayAskExpiry) {
-        val pending = _pendingAsk.value ?: return
-        if (pending.ask.kind != resolution.kind) return
-        if (resolution.kind != GatewayAsk.Kind.APPROVAL &&
-            pending.ask.requestId != resolution.requestId
-        ) {
-            return
-        }
-        clearPendingAsk(approvalStamp = "Resolved")
-    }
-
     /**
-     * Drop pending-ask UI state when the turn is torn down, stamping a
-     * still-open approval card with [approvalStamp] so its buttons don't
-     * outlive the ask — "deny" after an interrupt (`session.interrupt`
-     * force-denies server-side), "Resolved" when the turn completed without
-     * an answer. Timed asks self-collapse via their countdown.
+     * Drop pending-ask UI state after an explicit interrupt, stamping a
+     * still-open approval card as denied because `session.interrupt`
+     * force-denies server-side. Timed asks self-collapse only from
+     * authoritative expiry.
      */
-    private fun clearPendingAsk(approvalStamp: String) {
+    private fun clearPendingAskAfterInterrupt() {
         val pending = _pendingAsk.value ?: return
-        chatHandler?.currentSessionId?.value?.let {
-            cancelInteractionNotification(it, pending.ask)
-        }
+        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
         }
         scheduleCheckpointWrite(immediate = true)
         if (pending.ask.kind == GatewayAsk.Kind.APPROVAL) {
-            chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, approvalStamp)
+            chatHandler?.recordCardDispatch(pending.messageId, pending.cardKey, "deny")
         }
     }
 
@@ -3948,7 +4642,7 @@ class ChatViewModel : ViewModel() {
             .indexOfFirst { it.id == userMessageId }
         if (ordinal < 0) return false
         handler.truncateMessagesFrom(userMessageId)
-        pendingTruncateOrdinal = ordinal
+        pendingGatewayTruncation = PendingGatewayTruncation(ordinal, target.rowId)
         sendMessageInternal(apiClient, handler, newText)
         return true
     }
@@ -4082,7 +4776,7 @@ class ChatViewModel : ViewModel() {
                 }
                 val summary = when (result.status.lowercase()) {
                     "aborted" -> "Compression aborted."
-                    "noop", "no_op" -> "Nothing to compress."
+                    "noop", "no_op" -> result.output ?: "Nothing to compress."
                     "legacy" -> result.output ?: "Compression command sent through legacy slash support."
                     else -> result.output ?: compressionSummary(result)
                 }
@@ -4167,7 +4861,7 @@ class ChatViewModel : ViewModel() {
                     "exec", "plugin" ->
                         handler.addSystemNotice(result.stringValue("output") ?: "(no output)")
                     "skill" ->
-                        handler.addSystemNotice(result.stringValue("message") ?: "(no output)")
+                        handler.addSystemNotice(safeGatewayCommandDisplay(result, commandLine))
                     "alias" -> {
                         val target = result.stringValue("target")
                         if (target != null) {
@@ -4177,11 +4871,22 @@ class ChatViewModel : ViewModel() {
                     }
                     "send" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
-                        result.stringValue("message")?.let { sendMessage(it) }
+                        result.stringValue("message")?.let { expandedMessage ->
+                            // The corrected gateway supplies a bounded literal
+                            // display alongside the expanded skill/send body.
+                            // Execute the expansion but keep it out of local UI,
+                            // checkpoints, titles, diagnostics, and retry text.
+                            sendMessageInternal(
+                                client = apiClient,
+                                handler = handler,
+                                text = safeGatewayCommandDisplay(result, commandLine),
+                                transportText = expandedMessage,
+                            )
+                        }
                     }
                     "prefill" -> {
                         result.stringValue("notice")?.let { handler.addSystemNotice(it) }
-                        result.stringValue("message")?.let { _composerPrefill.tryEmit(it) }
+                        result.stringValue("message")?.let { _composerPrefill.trySend(it) }
                     }
                     else ->
                         handler.addSystemNotice(result.stringValue("output") ?: "Command completed.")
@@ -4198,7 +4903,7 @@ class ChatViewModel : ViewModel() {
     private fun maybeNotifyInteraction(
         sessionId: String,
         ask: GatewayAsk,
-        profile: String? = sessionProfileNameProvider(),
+        profile: String? = currentSessionProfileName(),
     ) {
         val context = appContext ?: return
         InteractionRequestNotifier.notify(
@@ -4214,7 +4919,7 @@ class ChatViewModel : ViewModel() {
     private fun cancelInteractionNotification(
         sessionId: String,
         ask: GatewayAsk,
-        profile: String? = sessionProfileNameProvider(),
+        profile: String? = currentSessionProfileName(),
     ) {
         val context = appContext ?: return
         InteractionRequestNotifier.cancel(context, sessionId, ask, profile)
@@ -4313,6 +5018,7 @@ class ChatViewModel : ViewModel() {
             },
             startedAt = assistantTimestamp,
         )
+        activeQueueOwnerRunId = userMessageId
         activeTurnCheckpointKey()?.let { ActiveTurnKeepAliveRegistry.acquire(it.keepAliveKey()) }
         // Remove a prior turn for THIS session immediately. Detached sibling
         // turns retain their own durable checkpoints while this chat starts a
@@ -4349,6 +5055,8 @@ class ChatViewModel : ViewModel() {
             baselineAssistantCount = checkpoint.baselineAssistantCount,
             startedAt = checkpoint.startedAt,
         )
+        activeQueueOwnerRunId = checkpoint.user.id
+        restoreQueuedMessages(checkpoint)
         activeTurnCheckpointKey()?.let { key ->
             ActiveTurnKeepAliveRegistry.acquire(key.keepAliveKey())
             ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), checkpoint.pendingAsk != null)
@@ -4475,6 +5183,7 @@ class ChatViewModel : ViewModel() {
                     requestId = ask.ask.requestId,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
+                    multiSelect = ask.ask.multiSelect,
                     smartDenied = ask.ask.smartDenied,
                     envVar = ask.ask.envVar,
                     timeoutSeconds = ask.ask.timeoutSeconds,
@@ -4483,9 +5192,52 @@ class ChatViewModel : ViewModel() {
                     receivedAt = ask.receivedAt,
                 )
             },
+            queuedMessages = queuedMessageItems
+                .filter {
+                    it.contextKey == contextKey &&
+                        it.sessionId == sessionId &&
+                        it.ownerRunId == seed.userMessageId
+                }
+                .map { item ->
+                    ChatQueuedMessageCheckpoint(
+                        id = item.id,
+                        text = item.text.take(MAX_CHECKPOINT_TEXT_CHARS),
+                        transport = item.transport,
+                        ownerRunId = item.ownerRunId,
+                        interfaceContextPrompt = item.interfaceContextPrompt,
+                        hadAttachments = item.attachments.isNotEmpty(),
+                    )
+                },
             startedAt = seed.startedAt,
             updatedAt = now,
         )
+    }
+
+    private fun restoreQueuedMessages(checkpoint: ChatTurnCheckpoint) {
+        var droppedAttachmentQueue = false
+        checkpoint.queuedMessages.forEach { saved ->
+            if (queuedMessageItems.any { it.id == saved.id }) return@forEach
+            if (saved.hadAttachments) {
+                droppedAttachmentQueue = true
+                return@forEach
+            }
+            queuedMessageItems += QueuedMessage(
+                id = saved.id,
+                text = saved.text,
+                contextKey = checkpoint.contextKey,
+                sessionId = checkpoint.sessionId,
+                transport = saved.transport,
+                ownerRunId = saved.ownerRunId,
+                attachments = emptyList(),
+                interfaceContextPrompt = saved.interfaceContextPrompt,
+            )
+        }
+        publishQueuedMessages()
+        if (droppedAttachmentQueue) {
+            _transientNotice.tryEmit(
+                "A queued attachment message could not be restored. Review the attachment and send it again.",
+            )
+        }
     }
 
     private fun scheduleCheckpointWrite(immediate: Boolean = false) {
@@ -4519,13 +5271,16 @@ class ChatViewModel : ViewModel() {
             seed.contextKey?.let { TurnCheckpointKey(it, seed.sessionId) }
         }
         activeTurnCheckpointSeed = null
+        activeQueueOwnerRunId = null
         val generation = checkpointGeneration.incrementAndGet()
         checkpointWriteJob?.cancel()
         checkpointWriteJob = null
         if (key != null) {
             backgroundTurnCheckpoints.remove(key)
+            backgroundNeedsInputKeys -= key
             backgroundPendingInteractions.remove(key)
             ActiveTurnKeepAliveRegistry.release(key.keepAliveKey())
+            publishBackgroundSessionActivity()
         }
         val store = chatTurnCheckpointStore ?: return
         viewModelScope.launch {
@@ -4540,6 +5295,7 @@ class ChatViewModel : ViewModel() {
     /** Drop visible ownership while preserving a detached sibling's checkpoint. */
     private fun releaseActiveTurnCheckpoint() {
         activeTurnCheckpointSeed = null
+        activeQueueOwnerRunId = null
         checkpointGeneration.incrementAndGet()
         checkpointWriteJob?.cancel()
         checkpointWriteJob = null
@@ -4560,6 +5316,8 @@ class ChatViewModel : ViewModel() {
             if (checkpoint != null) {
                 val key = TurnCheckpointKey(checkpoint.contextKey, checkpoint.sessionId)
                 backgroundTurnCheckpoints[key] = checkpoint
+                if (checkpoint.pendingAsk != null) backgroundNeedsInputKeys += key
+                publishBackgroundSessionActivity()
                 chatTurnCheckpointStore?.let { store ->
                     viewModelScope.launch {
                         checkpointMutex.withLock { runCatching { store.write(checkpoint) } }
@@ -4577,6 +5335,9 @@ class ChatViewModel : ViewModel() {
             return
         }
 
+        handler.currentSessionId.value?.let { sessionId ->
+            removeQueuedMessagesFor(activeProfileContextKey, sessionId)
+        }
         clearTurnCheckpoint()
         intentionallyCancelled = true
         activeStream?.cancel()
@@ -4607,6 +5368,7 @@ class ChatViewModel : ViewModel() {
                 requestId = saved.requestId,
                 text = saved.text,
                 choices = saved.choices,
+                multiSelect = saved.multiSelect,
                 smartDenied = saved.smartDenied,
                 envVar = saved.envVar,
                 timeoutSeconds = saved.timeoutSeconds,
@@ -4640,6 +5402,8 @@ class ChatViewModel : ViewModel() {
                 runCatching { store.read(contextKey, sessionId) }.getOrNull()
             }
             ?: return false
+        backgroundNeedsInputKeys -= key
+        publishBackgroundSessionActivity()
         if (checkpoint.transport !in setOf("gateway", "sessions")) return false
         if (activeStream != null) return true
         if (streamRecovery != null) {
@@ -4713,6 +5477,7 @@ class ChatViewModel : ViewModel() {
                 handler.restoreInFlightTurn(
                     checkpoint = checkpoint,
                     upstreamAssistantText = visibleText,
+                    corrections = retainedFailure.corrections,
                 )
                 finalizeFailedTurnSideEffects(handler, checkpoint.assistant.id)
                 refreshSessions()
@@ -4729,6 +5494,7 @@ class ChatViewModel : ViewModel() {
                     handler.restoreInFlightTurn(
                         checkpoint = checkpoint,
                         upstreamAssistantText = recovery.inflight?.assistant,
+                        corrections = recovery.inflight?.corrections.orEmpty(),
                     )
                     handler.setTurnStatus(
                         if (recovery.autoContinue != null) {
@@ -4793,9 +5559,9 @@ class ChatViewModel : ViewModel() {
             onThinkingDelta = { delta ->
                 if (owns()) handler.onThinkingDelta(messageId, delta)
             },
-            onToolCallStart = { toolCallId, toolName ->
+            onToolCallStart = { toolCallId, toolName, argsPreview ->
                 if (owns()) {
-                    handler.onToolCallStart(messageId, toolCallId, toolName)
+                    handler.onToolCallStart(messageId, toolCallId, toolName, argsPreview)
                     scheduleCheckpointWrite(immediate = true)
                 }
             },
@@ -4871,7 +5637,6 @@ class ChatViewModel : ViewModel() {
                         activeStream = null
                         _steerableTurn.value = false
                         _steerNotice.value = null
-                        clearPendingAsk(approvalStamp = "Resolved")
                     } else {
                         activeStream = null
                         _steerableTurn.value = false
@@ -4901,9 +5666,6 @@ class ChatViewModel : ViewModel() {
             },
             onInteractionExpired = { expiry ->
                 if (owns()) expirePendingAsk(expiry)
-            },
-            onInteractionResolved = { resolved ->
-                if (owns()) resolvePendingAsk(resolved)
             },
             onStatusUpdate = { kind, text ->
                 if (owns()) {
@@ -4941,9 +5703,24 @@ class ChatViewModel : ViewModel() {
             detail = cause,
         )
 
+        // A short transcript fits in Hermes' explicit latest window and can be
+        // polled with one bounded request. Long transcripts retain complete
+        // oldest-first pagination so the positional user anchor and visible
+        // history cannot silently shift when the oldest rows fall outside 500.
+        val recoveryLoadMode = if (handler.messages.value.size < SESSION_MESSAGE_PAGE_SIZE) {
+            SessionMessageLoadMode.LATEST
+        } else {
+            SessionMessageLoadMode.COMPLETE
+        }
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(checkpoint.sessionId, requireProfileScope = true) },
+            fetchHistory = {
+                loadSessionHistory(
+                    checkpoint.sessionId,
+                    requireProfileScope = true,
+                    mode = recoveryLoadMode,
+                )
+            },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery
@@ -4988,8 +5765,7 @@ class ChatViewModel : ViewModel() {
                     handler.onStreamError(message)
                     clearTurnCheckpoint()
                     emitError(Exception(message), context = "send_message")
-                    _queuedMessages.value = emptyList()
-                    clearPendingAsk(approvalStamp = "Resolved")
+                    removeQueuedMessagesForOwner(checkpoint.user.id)
                 }
             },
         )
@@ -5002,16 +5778,18 @@ class ChatViewModel : ViewModel() {
      * finalizes with exactly the completion semantics.
      */
     private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
+        val completedOwner = activeQueueOwnerRunId
         handler.onStreamComplete(messageId)
+        if (completedOwner != null && queuedMessageItems.any { it.ownerRunId == completedOwner }) {
+            completedQueueOwnerRuns += completedOwner
+        }
         clearTurnCheckpoint()
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
-        // Turn over — any blocked ask has been resolved server-side
-        // (answer, timeout, or interrupt). Timed cards self-collapse;
-        // an unanswered approval gets a neutral "Resolved" stamp so its
-        // buttons don't dead-end in "no longer active" notices.
-        clearPendingAsk(approvalStamp = "Resolved")
+        // A terminal turn event is not proof of a user's decision. Keep any
+        // unanswered card intact; only a labeled response, authoritative
+        // expiry, or explicit interrupt owns its transition.
 
         // Notify when the turn finished while the app is backgrounded —
         // never for cancelled streams; errors end via onErrorCb instead.
@@ -5034,7 +5812,6 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
-        clearPendingAsk(approvalStamp = "Resolved")
         AppAnalytics.onStreamError()
     }
 
@@ -5119,9 +5896,20 @@ class ChatViewModel : ViewModel() {
         val priorUserCount = (
             handler.messages.value.count { it.role == MessageRole.USER } - 1
         ).coerceAtLeast(0)
+        val recoveryLoadMode = if (handler.messages.value.size < SESSION_MESSAGE_PAGE_SIZE) {
+            SessionMessageLoadMode.LATEST
+        } else {
+            SessionMessageLoadMode.COMPLETE
+        }
         val recovery = ChatStreamRecovery(
             scope = viewModelScope,
-            fetchHistory = { loadSessionHistory(sessionId, requireProfileScope = true) },
+            fetchHistory = {
+                loadSessionHistory(
+                    sessionId,
+                    requireProfileScope = true,
+                    mode = recoveryLoadMode,
+                )
+            },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
         )
         streamRecovery = recovery
@@ -5180,25 +5968,102 @@ class ChatViewModel : ViewModel() {
                     AppAnalytics.onStreamError()
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
-                    _queuedMessages.value = emptyList()
-                    // Parity with the sibling stream-error branch: the turn is
-                    // over server-side, so force-deny any still-blocked approval
-                    // card instead of leaving its buttons dead-ended.
-                    clearPendingAsk(approvalStamp = "deny")
+                    clearQueue()
                 }
             },
         )
     }
 
+    private fun enqueueMessage(text: String) {
+        val seed = activeTurnCheckpointSeed
+        val contextKey = seed?.contextKey ?: activeProfileContextKey
+        val sessionId = seed?.sessionId?.takeIf { it.isNotBlank() }
+            ?: chatHandler?.currentSessionId?.value
+        val activeOwnerRunId = activeQueueOwnerRunId
+        if (contextKey == null || sessionId == null || activeOwnerRunId == null) {
+            _transientNotice.tryEmit(
+                "This message could not be queued because the active chat destination is not available.",
+            )
+            return
+        }
+        // Queue order is a run-generation chain: the first item waits for the
+        // active turn; each later item waits for the queued turn before it.
+        // sendMessageInternal reuses each item's stable id as that turn's user
+        // id, so this ownership also survives checkpoint persistence.
+        val ownerRunId = queuedMessageItems.lastOrNull {
+            it.contextKey == contextKey && it.sessionId == sessionId
+        }?.id ?: activeOwnerRunId
+        val item = QueuedMessage(
+            id = UUID.randomUUID().toString(),
+            text = text,
+            contextKey = contextKey,
+            sessionId = sessionId,
+            transport = streamingEndpoint,
+            ownerRunId = ownerRunId,
+            attachments = _pendingAttachments.value,
+            interfaceContextPrompt = nextInterfaceContextPrompt,
+        )
+        _pendingAttachments.value = emptyList()
+        nextInterfaceContextPrompt = null
+        queuedMessageItems += item
+        publishQueuedMessages()
+        scheduleCheckpointWrite(immediate = true)
+    }
+
+    private fun currentQueueDestination(): Pair<String, String>? {
+        val contextKey = activeProfileContextKey ?: return null
+        val sessionId = chatHandler?.currentSessionId?.value ?: return null
+        return contextKey to sessionId
+    }
+
+    private fun publishQueuedMessages() {
+        val destination = currentQueueDestination()
+        _queuedMessages.value = if (destination == null) {
+            emptyList()
+        } else {
+            queuedMessageItems.filter {
+                it.contextKey == destination.first && it.sessionId == destination.second
+            }.map(QueuedMessage::text)
+        }
+    }
+
+    private fun removeQueuedMessagesFor(contextKey: String?, sessionId: String): Int {
+        if (contextKey == null) return 0
+        val removedOwners = queuedMessageItems
+            .filter { it.contextKey == contextKey && it.sessionId == sessionId }
+            .mapTo(mutableSetOf(), QueuedMessage::ownerRunId)
+        val before = queuedMessageItems.size
+        queuedMessageItems.removeAll { it.contextKey == contextKey && it.sessionId == sessionId }
+        removedOwners.forEach { owner ->
+            if (queuedMessageItems.none { it.ownerRunId == owner }) completedQueueOwnerRuns -= owner
+        }
+        publishQueuedMessages()
+        return before - queuedMessageItems.size
+    }
+
+    private fun removeQueuedMessagesForOwner(ownerRunId: String) {
+        queuedMessageItems.removeAll { it.ownerRunId == ownerRunId }
+        completedQueueOwnerRuns -= ownerRunId
+        publishQueuedMessages()
+    }
+
     fun clearQueue() {
-        _queuedMessages.value = emptyList()
+        val destination = currentQueueDestination() ?: return
+        removeQueuedMessagesFor(destination.first, destination.second)
     }
 
     /** Drop a single queued message by index (no-op if out of range). */
     fun removeQueuedAt(index: Int) {
-        _queuedMessages.update { list ->
-            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        val destination = currentQueueDestination() ?: return
+        val visible = queuedMessageItems.filter {
+            it.contextKey == destination.first && it.sessionId == destination.second
         }
+        val item = visible.getOrNull(index) ?: return
+        queuedMessageItems.removeAll { it.id == item.id }
+        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
+            completedQueueOwnerRuns -= item.ownerRunId
+        }
+        publishQueuedMessages()
     }
 
     /**
@@ -5206,12 +6071,18 @@ class ChatViewModel : ViewModel() {
      * the composer can prefill it. Null if the index is out of range.
      */
     fun takeQueuedForEdit(index: Int): String? {
-        val current = _queuedMessages.value
-        if (index !in current.indices) return null
-        _queuedMessages.update { list ->
-            if (index in list.indices) list.toMutableList().apply { removeAt(index) } else list
+        val destination = currentQueueDestination() ?: return null
+        val item = queuedMessageItems.filter {
+            it.contextKey == destination.first && it.sessionId == destination.second
+        }.getOrNull(index) ?: return null
+        queuedMessageItems.removeAll { it.id == item.id }
+        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
+            completedQueueOwnerRuns -= item.ownerRunId
         }
-        return current[index]
+        _pendingAttachments.value = item.attachments
+        nextInterfaceContextPrompt = item.interfaceContextPrompt
+        publishQueuedMessages()
+        return item.text
     }
 
     private fun drainQueue() {
@@ -5219,33 +6090,60 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
         if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
-        val next = _queuedMessages.value.firstOrNull() ?: return
-        _queuedMessages.update { it.drop(1) }
-        sendMessageInternal(client, handler, next)
+        if (activeStream != null || streamRecovery != null) return
+        val destination = currentQueueDestination() ?: return
+        val next = queuedMessageItems.firstOrNull {
+            it.contextKey == destination.first &&
+                it.sessionId == destination.second &&
+                it.ownerRunId in completedQueueOwnerRuns
+        } ?: return
+        if (next.transport != streamingEndpoint) {
+            queuedMessageItems.removeAll { it.id == next.id }
+            publishQueuedMessages()
+            _transientNotice.tryEmit(
+                "A queued message was not sent because this chat's route changed.",
+            )
+            return
+        }
+        queuedMessageItems.removeAll { it.id == next.id }
+        if (queuedMessageItems.none { it.ownerRunId == next.ownerRunId }) {
+            completedQueueOwnerRuns -= next.ownerRunId
+        }
+        publishQueuedMessages()
+        sendMessageInternal(client, handler, next.text, queuedFollowUp = true, queuedMessage = next)
     }
 
-    private fun sendMessageInternal(client: HermesApiClient?, handler: ChatHandler, text: String) {
+    private fun sendMessageInternal(
+        client: HermesApiClient?,
+        handler: ChatHandler,
+        text: String,
+        transportText: String = text,
+        queuedFollowUp: Boolean = false,
+        queuedMessage: QueuedMessage? = null,
+    ) {
         AppAnalytics.onMessageSent()
-        val interfaceContextPrompt = nextInterfaceContextPrompt
-        nextInterfaceContextPrompt = null
+        val displayText = text.trim()
+        val outboundText = transportText.trim()
+        val interfaceContextPrompt = queuedMessage?.interfaceContextPrompt ?: nextInterfaceContextPrompt
+        if (queuedMessage == null) nextInterfaceContextPrompt = null
 
         // Snapshot and clear pending attachments
-        val attachments = _pendingAttachments.value.ifEmpty { null }
-        _pendingAttachments.value = emptyList()
+        val attachments = (queuedMessage?.attachments ?: _pendingAttachments.value).ifEmpty { null }
+        if (queuedMessage == null) _pendingAttachments.value = emptyList()
 
-        val messageId = UUID.randomUUID().toString()
+        val messageId = queuedMessage?.id ?: UUID.randomUUID().toString()
 
         // Add user message locally (with attachments for display)
         handler.addUserMessage(
             ChatMessage(
                 id = messageId,
                 role = MessageRole.USER,
-                content = text.trim(),
+                content = displayText,
                 timestamp = System.currentTimeMillis(),
                 attachments = attachments ?: emptyList()
             )
         )
-        handler.setLastSentMessage(text.trim())
+        handler.setLastSentMessage(displayText)
 
         val assistantMessageId = UUID.randomUUID().toString()
         val sessionId = handler.currentSessionId.value
@@ -5264,7 +6162,7 @@ class ChatViewModel : ViewModel() {
                     .map { it.sessionId }
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
-                send(text.trim(), pending.chatId, null, messageId)
+                send(outboundText, pending.chatId, null, messageId)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -5284,7 +6182,7 @@ class ChatViewModel : ViewModel() {
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
-                send(text.trim(), threadChatIds[activeThread.sessionId], null, messageId)
+                send(outboundText, threadChatIds[activeThread.sessionId], null, messageId)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -5298,7 +6196,7 @@ class ChatViewModel : ViewModel() {
         sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
             val row = handler.sessions.value.firstOrNull { it.sessionId == sid }
             if (row != null && (row.title.isNullOrBlank() || row.title == "New Chat")) {
-                val preview = text.trim().take(50).let { if (text.trim().length > 50) "$it…" else it }
+                val preview = displayText.take(50).let { if (displayText.length > 50) "$it…" else it }
                 if (preview.isNotBlank()) handler.renameSessionLocal(sid, preview)
             }
         }
@@ -5311,22 +6209,26 @@ class ChatViewModel : ViewModel() {
                 client,
                 handler,
                 sessionId ?: "",
-                text.trim(),
+                outboundText,
                 assistantMessageId,
                 messageId,
                 attachments,
                 interfaceContextPrompt,
+                queuedFollowUp,
+                displayText,
             )
         } else if (sessionId != null) {
             startStream(
                 client,
                 handler,
                 sessionId,
-                text.trim(),
+                outboundText,
                 assistantMessageId,
                 messageId,
                 attachments,
                 interfaceContextPrompt,
+                queuedFollowUp,
+                displayText,
             )
         } else {
             if (client == null) {
@@ -5361,16 +6263,18 @@ class ChatViewModel : ViewModel() {
                             client,
                             handler,
                             session.id,
-                            text.trim(),
+                            outboundText,
                             assistantMessageId,
                             messageId,
                             attachments,
                             interfaceContextPrompt,
+                            queuedFollowUp,
+                            displayText,
                         )
 
                         // Auto-title: use first ~50 chars of user message
-                        val autoTitle = text.trim().take(50).let {
-                            if (text.length > 50) "$it..." else it
+                        val autoTitle = displayText.take(50).let {
+                            if (displayText.length > 50) "$it..." else it
                         }
                         client.renameSession(session.id, autoTitle)
                         handler.renameSessionLocal(session.id, autoTitle)
@@ -5922,6 +6826,13 @@ class ChatViewModel : ViewModel() {
                         queuedCount = event.queuedCount ?: 0,
                     ),
                 )
+                if (event.spokenHandoff == false) {
+                    // Silent promotion is the foreground turn boundary. The
+                    // background run keeps its owner/card and continues to
+                    // receive progress, cancellation, and delivery events.
+                    handler.onStreamComplete(assistantMessageId)
+                    activeStream = null
+                }
             }
             "hermes.run.queued" -> {
                 handler.updateBackgroundTask(assistantMessageId) { task ->
@@ -6205,6 +7116,8 @@ class ChatViewModel : ViewModel() {
         userMessageId: String,
         attachments: List<Attachment>? = null,
         interfaceContextPrompt: String? = null,
+        queuedFollowUp: Boolean = false,
+        checkpointUserText: String = message,
     ) {
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
@@ -6266,7 +7179,7 @@ class ChatViewModel : ViewModel() {
             sessionId = sessionId,
             transport = streamingEndpoint,
             userMessageId = userMessageId,
-            userText = message,
+            userText = checkpointUserText,
             assistantMessageId = assistantMessageId,
             assistantTimestamp = assistantTimestamp,
         )
@@ -6364,17 +7277,24 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
-        val onToolCallStartCb = { toolCallId: String, toolName: String ->
+        val handleToolCallStart = { toolCallId: String, toolName: String, argsPreview: String? ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
                 toolName == "image_generate" &&
                     observedImageToolStates.putIfAbsent(toolCallId, "running") != null
             if (!alreadyObserved) {
-                handler.onToolCallStart(currentMessageId, toolCallId, toolName)
+                handler.onToolCallStart(currentMessageId, toolCallId, toolName, argsPreview)
             }
             scheduleCheckpointWrite(immediate = true)
         }
+        val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            handleToolCallStart(toolCallId, toolName, null)
+        }
+        val onGatewayToolCallStartCb =
+            { toolCallId: String, toolName: String, argsPreview: String? ->
+                handleToolCallStart(toolCallId, toolName, argsPreview)
+            }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
             ensurePostInterimMessage()
             streamDeltas.flushNow()
@@ -6479,13 +7399,11 @@ class ChatViewModel : ViewModel() {
                 refreshApprovalMode()
             }
 
-            // Sessions SSE does not stream every persisted message boundary, so it
-            // still needs the server-authoritative transcript after success. A healthy
-            // Gateway turn is already authoritative in memory through its structured
-            // assistant/reasoning/tool events; reloading the full transcript here would
-            // republish the entire visible list and cause a completion flash. A Gateway
-            // socket rejoin explicitly flags this completion for the same profile-aware
-            // history reconcile because events emitted during the gap may be missing.
+            // Stateful transports reconcile from server-authoritative history after
+            // success. Gateway usually streams every structured lifecycle event, but
+            // some upstream versions persist tool_calls without emitting tool.start /
+            // tool.complete. The structured reload recovers those calls without ever
+            // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
@@ -6495,18 +7413,24 @@ class ChatViewModel : ViewModel() {
             // local error visible — but still refresh the drawer + drain the queue.
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
                 viewModelScope.launch {
-                    if (!turnErrored && shouldReloadHistoryAfterSuccessfulTurn(
-                            completedTransport,
-                            gatewayHistoryReconcileRequired,
-                        )
-                    ) {
+                    if (!turnErrored) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
                         // → a silent wipe of the just-finished turn. loadSessionHistory
                         // prefers the `?profile=` dashboard loader on gateway connections.
                         val serverMessages = loadSessionHistory(sid)
-                        handler.loadMessageHistory(serverMessages)
+                        val missingPersistedToolActivity =
+                            completedTransport == "gateway" &&
+                                handler.hasMissingPersistedToolActivity(serverMessages)
+                        if (shouldReloadHistoryAfterSuccessfulTurn(
+                                actualTransport = completedTransport,
+                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                missingPersistedToolActivity = missingPersistedToolActivity,
+                            )
+                        ) {
+                            handler.loadMessageHistory(serverMessages)
+                        }
                     }
                     // Re-sync the drawer now that the turn is persisted server-side.
                     // The only other auto-refresh fires ~160ms after session creation
@@ -6573,10 +7497,9 @@ class ChatViewModel : ViewModel() {
                 handler.messages.value.findLast { it.isStreaming }
                     ?.let { handler.onStreamComplete(it.id) }
                 activeStream = null
-                _queuedMessages.value = emptyList()
+                removeQueuedMessagesForOwner(userMessageId)
                 _steerableTurn.value = false
                 _steerNotice.value = null
-                clearPendingAsk(approvalStamp = "deny")
                 clearTurnCheckpoint()
             } else if (
                 dispatchedSseEndpoint == "sessions" &&
@@ -6646,10 +7569,9 @@ class ChatViewModel : ViewModel() {
                     }
                 }
                 activeStream = null
-                _queuedMessages.value = emptyList()
+                removeQueuedMessagesForOwner(userMessageId)
                 _steerableTurn.value = false
                 _steerNotice.value = null
-                clearPendingAsk(approvalStamp = "deny")
                 clearTurnCheckpoint()
             }
         }
@@ -6666,10 +7588,9 @@ class ChatViewModel : ViewModel() {
             handler.onStreamError(errorMsg)
             emitError(error, context = "send_message")
             activeStream = null
-            _queuedMessages.value = emptyList()
+            removeQueuedMessagesForOwner(userMessageId)
             _steerableTurn.value = false
             _steerNotice.value = null
-            clearPendingAsk(approvalStamp = "deny")
             clearTurnCheckpoint()
         }
 
@@ -6884,54 +7805,22 @@ class ChatViewModel : ViewModel() {
         // Edit-and-regenerate ordinal — armed by regenerateFromMessage for
         // exactly the next turn; consumed even when the turn lands on SSE
         // (the post-turn reload reconciles divergence in that case).
-        val truncateOrdinal = pendingTruncateOrdinal
-        pendingTruncateOrdinal = null
+        val pendingTruncation = pendingGatewayTruncation
+        pendingGatewayTruncation = null
 
         val gateway = gatewayClient
         _steerableTurn.value = false
-        // Voice turns must deliver their interface + spoken-output-formatting
-        // context to the model, but the gateway prompt.submit RPC has NO
-        // system-message slot (it is bare text — see the else branch). Prepending
-        // to the user text would persist the instruction into the transcript.
-        // The SSE endpoints carry it in the non-persisted system_message field
-        // instead, so force any turn that has a per-turn interface context
-        // (set only by sendVoiceMessage) onto SSE. resolveSseFallback picks the
-        // best available SSE route.
+        // Gateway prompt.submit has no system-message slot, so its voice turn
+        // cannot carry the optional spoken-output formatting hint. Keep the turn
+        // on Gateway anyway: the API server is an optional fallback and may not
+        // be reachable from the phone. A working vanilla Gateway turn is more
+        // important than silently making standard voice depend on port 8642.
+        // SSE-selected connections still receive the interface context normally.
         //
-        // Synthetic voice-intent and provider-answered realtime traces have the
-        // same gateway limitation — prompt.submit can't carry them — but on a
-        // gateway-primary phone "leave them for the next SSE turn" means *never*.
-        // Drain those voice-only traces by forcing this one turn onto the sessions
-        // SSE route, but ONLY when that is strictly safe:
-        //  - an existing session id + the sessions fallback route (a stateless
-        //    completions/runs detour would drop THIS turn from the transcript
-        //    to save a trace — worse than deferring), and
-        //  - the default profile (a non-default profile's gateway session lives
-        //    in that profile's own state.db, which the shared api_server surface
-        //    can't see — the sessions POST would 404 and fail the user's turn).
-        // Cost when it fires: one turn without live gateway thinking. The synced
-        // traces persist server-side, so this happens at most once per batch.
-        //
-        // Rich-card actions are different: the action itself is the current user
-        // turn. Keep it on the selected Gateway and defer its optional synthetic
-        // audit trace until a naturally selected SSE turn. A card must never
-        // activate or depend on the optional API fallback.
-        val sseDrainEndpoint = resolveSseFallback(handler)
-        val forceSseForVoiceTraceDrain =
-            client != null &&
-            (hasVoiceIntents || hasRealtimeTurns) &&
-                streamingEndpoint == "gateway" &&
-                profileName == null &&
-                sseDrainEndpoint == "sessions"
-        val effectiveEndpoint =
-            if (client != null &&
-                (interfaceContextPrompt != null || forceSseForVoiceTraceDrain) &&
-                streamingEndpoint == "gateway"
-            ) {
-                sseDrainEndpoint
-            } else {
-                streamingEndpoint
-            }
+        // Synthetic local traces also wait for a naturally selected SSE turn.
+        // They are supplemental context and must never make a connected Gateway
+        // turn depend on the optional API server.
+        val effectiveEndpoint = streamingEndpoint
         updateTurnCheckpointTransport(effectiveEndpoint)
         // Remember whether this turn runs on the gateway client (vs an SSE
         // EventSource) so a mid-turn route handoff doesn't cancel it — only the
@@ -6993,7 +7882,7 @@ class ChatViewModel : ViewModel() {
                         onInterimMessage = onInterimMessageCb,
                         onInterimReconciled = onInterimReconciledCb,
                         onThinkingDelta = onThinkingDeltaCb,
-                        onToolCallStart = onToolCallStartCb,
+                        onToolCallStart = onGatewayToolCallStartCb,
                         onToolCallDone = onToolCallDoneCb,
                         onToolCallFailed = onToolCallFailedCb,
                         onToolOutputRisk = { risk ->
@@ -7032,9 +7921,6 @@ class ChatViewModel : ViewModel() {
                         onInteractionExpired = { expiry ->
                             expirePendingAsk(expiry)
                         },
-                        onInteractionResolved = { resolved ->
-                            resolvePendingAsk(resolved)
-                        },
                         onStatusUpdate = { kind, text ->
                             handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
@@ -7052,7 +7938,10 @@ class ChatViewModel : ViewModel() {
                     ),
                     attachments = attachments.orEmpty()
                         .map { it.toGatewayAttachment() },
-                    truncateBeforeUserOrdinal = truncateOrdinal,
+                    truncateBeforeUserOrdinal = pendingTruncation?.ordinal,
+                    truncateBeforeRowId = pendingTruncation?.rowId,
+                    queuedFollowUp = queuedFollowUp,
+                    onSurvivorUserRowIds = handler::rebindSurvivorUserRowIds,
                     onPreflightFailure = {
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {
@@ -7119,6 +8008,7 @@ class ChatViewModel : ViewModel() {
     ): String? {
         val selectedProfile = selectedProfileProvider()
         val effectiveProfile = effectiveProfileOverride
+            ?: openedSessionDisplayProfile
             ?: displayProfileProvider()
             ?: effectiveProfileProvider()
             ?: selectedProfile
@@ -7127,7 +8017,11 @@ class ChatViewModel : ViewModel() {
             selectedPersonality = _selectedPersonality.value,
             defaultPersonality = _defaultPersonality.value,
             connectionLabel = null,
-            localDisplayAlias = displayAliasProvider(),
+            localDisplayAlias = if (_openedSessionProfileName.value == null) {
+                displayAliasProvider()
+            } else {
+                null
+            },
         ).ifBlank { null }
     }
 
@@ -7155,12 +8049,12 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         imageActivityJob?.cancel()
         imageActivityJob = null
-        _queuedMessages.value = emptyList()
+        clearQueue()
         _steerableTurn.value = false
         _steerNotice.value = null
         // Gateway cancel issues session.interrupt, which force-denies any
         // blocked approval server-side — stamp the card to match.
-        clearPendingAsk(approvalStamp = "deny")
+        clearPendingAskAfterInterrupt()
         clearTurnCheckpoint()
         AppAnalytics.onStreamCancelled()
         chatHandler?.let { handler ->
@@ -7758,6 +8652,8 @@ class ChatViewModel : ViewModel() {
         gatewayClient?.setUnmatchedTurnCompleteListener(null)
         gatewayClient?.setBackgroundInteractionListener(null)
         backgroundPendingInteractions.clear()
+        backgroundNeedsInputKeys.clear()
+        publishBackgroundSessionActivity()
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = null
         backgroundProcessSessionJob?.cancel()
@@ -7809,7 +8705,9 @@ class ChatViewModel : ViewModel() {
 }
 
 private fun queuedPromptPreview(prompt: String, maxChars: Int = 96): String {
-    val compact = prompt.replace(Regex("\\s+"), " ").trim()
+    val compact = (parseChatQuotedPrompt(prompt)?.body ?: prompt)
+        .replace(Regex("\\s+"), " ")
+        .trim()
     return if (compact.length <= maxChars) compact else compact.take(maxChars - 1).trimEnd() + "…"
 }
 
@@ -7842,6 +8740,10 @@ data class PendingAsk(
     /** ChatMessage id of the local ask-card message (`ask-<cardKey>`). */
     val messageId: String,
     val cardKey: String,
+    /** Exact connection/profile namespace that owns this request. */
+    val contextKey: String?,
+    /** Stored session id within [contextKey]; approvals are session-scoped upstream. */
+    val sessionId: String?,
     val receivedAt: Long = System.currentTimeMillis(),
 )
 
@@ -7893,6 +8795,19 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
     }
     val seen = mutableSetOf<String>()
     val out = mutableListOf<SlashCommand>()
+    val skillMetadata = (catalog["skills"] as? JsonObject)
+        ?.entries
+        ?.take(MAX_CATALOG_SKILLS)
+        ?.associate { (rawName, element) ->
+            val normalized = if (rawName.startsWith("/")) rawName.lowercase() else "/${rawName.lowercase()}"
+            val metadata = element as? JsonObject
+            val usage = (metadata?.get("usage") as? JsonPrimitive)?.intOrNull
+                ?.coerceIn(0, MAX_SKILL_USAGE) ?: 0
+            val origin = metadata?.stringValue("origin")
+                ?.trim()?.take(MAX_SKILL_ORIGIN_CHARS)?.takeIf { it.isNotBlank() }
+            normalized to (usage to origin)
+        }
+        .orEmpty()
     (catalog["pairs"] as? JsonArray)?.forEach { pairElement ->
         val pair = pairElement as? JsonArray ?: return@forEach
         val rawName = (pair.getOrNull(0) as? JsonPrimitive)?.contentOrNull?.trim()
@@ -7901,15 +8816,34 @@ internal fun parseCommandsCatalog(catalog: JsonObject): List<SlashCommand> {
         if (isUnsupportedMobileCommand(name, pair)) return@forEach
         if (!seen.add(name.lowercase())) return@forEach
         val description = (pair.getOrNull(1) as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        val skill = skillMetadata[name.lowercase()]
         out += SlashCommand(
             command = name,
             description = description.ifBlank { "Server command" },
             category = categoryByName[name.lowercase()] ?: SlashCommand.CATEGORY_SERVER,
             source = SlashCommand.SOURCE_SERVER,
+            usageRank = skill?.first ?: 0,
+            origin = skill?.second,
         )
     }
-    return out
+    // Preserve every non-skill command's exact catalog position. Rank only
+    // entries occupying skill slots, so built-ins and quick commands do not
+    // jump around when usage changes.
+    val rankedSkills = out.filter { skillMetadata.containsKey(it.command.lowercase()) }
+        .sortedWith(compareByDescending<SlashCommand> { it.usageRank }.thenBy { it.command })
+        .iterator()
+    return out.map { command ->
+        if (skillMetadata.containsKey(command.command.lowercase())) rankedSkills.next() else command
+    }
 }
+
+private const val MAX_CATALOG_SKILLS = 512
+private const val MAX_SKILL_USAGE = 1_000_000_000
+private const val MAX_SKILL_ORIGIN_CHARS = 32
+
+internal fun isDeferredConfigResult(result: JsonObject): Boolean =
+    (result["deferred"] as? JsonPrimitive)?.contentOrNull
+        ?.trim()?.lowercase() in setOf("true", "1", "yes")
 
 /** Dashboard `/api/config` response -> the same personality catalog as API mode. */
 internal fun parseDashboardPersonalityConfig(
@@ -7918,14 +8852,9 @@ internal fun parseDashboardPersonalityConfig(
     // Dashboard builds have returned both the API-compatible `{config:{...}}`
     // envelope and the config tree directly; accept either without guessing.
     val config = root["config"] as? JsonObject ?: root
-    val personalities = ((config["agent"] as? JsonObject)?.get("personalities") as? JsonObject)
-        ?.entries
-        ?.mapNotNull { (name, value) ->
-            val prompt = (value as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
-            name to prompt
-        }
-        ?.toMap()
-        .orEmpty()
+    val personalities = parsePersonalityPrompts(
+        (config["agent"] as? JsonObject)?.get("personalities") as? JsonObject,
+    )
     val display = config["display"] as? JsonObject
     val configuredPersonality = display?.stringValue("personality")
     val defaultName = listOf(
@@ -8052,16 +8981,47 @@ private fun summarizeToolPreviewObject(obj: JsonObject): String? {
     return if (keys.isBlank()) null else "Structured result: $keys"
 }
 
+internal fun safeGatewayCommandDisplay(result: JsonObject, literalInvocation: String): String {
+    val literal = literalInvocation.trim().ifBlank { "Command completed." }
+    return (result["display"] as? JsonPrimitive)
+        ?.contentOrNull
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.take(MAX_GATEWAY_COMMAND_DISPLAY_CHARS)
+        ?: literal.take(MAX_GATEWAY_COMMAND_DISPLAY_CHARS)
+}
+
 private fun JsonObject.stringValue(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
 
 private const val RECENT_PROMPTS_LIMIT = 15
-private const val DEFAULT_REASONING_EFFORT = "medium"
-private val VALID_REASONING_EFFORTS = setOf("none", "minimal", "low", "medium", "high", "xhigh")
+private const val MAX_GATEWAY_COMMAND_DISPLAY_CHARS = 2_000
+internal fun normalizeReasoningEffort(value: String?): String = ReasoningEfforts.normalize(value)
 
-private fun normalizeReasoningEffort(value: String?): String {
-    val normalized = value?.trim()?.lowercase().orEmpty()
-    return normalized.takeIf { it in VALID_REASONING_EFFORTS } ?: DEFAULT_REASONING_EFFORT
+internal fun isCurrentReasoningResponse(
+    capturedRevision: Long,
+    currentRevision: Long,
+    capturedIdentity: ReasoningEffortIdentity?,
+    activeIdentity: ReasoningEffortIdentity?,
+): Boolean = capturedRevision == currentRevision && capturedIdentity == activeIdentity
+
+internal fun isCurrentReasoningCapabilityOverlay(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    requestProfileKey: String,
+    currentProfileKey: String,
+): Boolean = requestGeneration == currentGeneration && requestProfileKey == currentProfileKey
+
+internal fun reconcilePendingReasoningEffort(
+    value: String?,
+    confirmedIdentity: ReasoningEffortIdentity?,
+    activeIdentity: ReasoningEffortIdentity?,
+    availability: ReasoningEffortAvailability,
+): String? = when {
+    value == null -> null
+    confirmedIdentity != null && confirmedIdentity == activeIdentity -> value
+    availability.accepts(value) -> value
+    else -> null
 }
 
 private fun String.compactWords(): String = replace(Regex("\\s+"), " ").trim()

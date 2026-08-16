@@ -18,6 +18,10 @@ from ....voice_lab.auth import (
     read_xai_oauth_token,
 )
 from ....voice_lab.providers.base import ProviderRunError, ProviderUnavailable
+from ....voice_lab.transport import (
+    merge_transport_headers,
+    resolve_voice_transport_options,
+)
 
 from ..models import (
     ProviderEvent,
@@ -88,7 +92,7 @@ class XAIRealtimeAgentProvider:
     capabilities = RealtimeAgentCapabilities(provider_id=provider_id)
 
     def __init__(self, socket_factory: SocketFactory | None = None) -> None:
-        self._socket_factory = socket_factory or _create_aiohttp_websocket
+        self._socket_factory = socket_factory
 
     async def connect(
         self,
@@ -114,12 +118,24 @@ class XAIRealtimeAgentProvider:
         ).rstrip("/")
         model = urllib.parse.quote(config.model or DEFAULT_MODEL, safe="")
         url = f"{base_url}?model={model}"
+        transport = resolve_voice_transport_options(
+            config.provider_options,
+            base_url=base_url,
+        )
+        headers = merge_transport_headers(
+            {"Authorization": f"Bearer {auth.value}"},
+            transport,
+        )
         try:
-            socket = await self._socket_factory(
-                url,
-                {"Authorization": f"Bearer {auth.value}"},
-                timeout,
-            )
+            if self._socket_factory is None:
+                socket = await _create_aiohttp_websocket(
+                    url,
+                    headers,
+                    timeout,
+                    ssl=transport.aiohttp_ssl,
+                )
+            else:
+                socket = await self._socket_factory(url, headers, timeout)
         except aiohttp.WSServerHandshakeError as exc:
             if exc.status in {401, 403}:
                 raise ProviderUnavailable(
@@ -308,6 +324,8 @@ async def _create_aiohttp_websocket(
     url: str,
     headers: dict[str, str],
     timeout: float,
+    *,
+    ssl: Any = None,
 ) -> XAIProviderSocket:
     # Liveness is explicit: the WS heartbeat detects a dead peer instead of an
     # ambient ClientTimeout(total=...) bounding the whole connection — a
@@ -317,7 +335,10 @@ async def _create_aiohttp_websocket(
         timeout=aiohttp.ClientTimeout(total=None, connect=timeout, sock_connect=timeout)
     )
     try:
-        ws = await session.ws_connect(url, headers=headers, heartbeat=20.0)
+        kwargs: dict[str, Any] = {"headers": headers, "heartbeat": 20.0}
+        if ssl is not None:
+            kwargs["ssl"] = ssl
+        ws = await session.ws_connect(url, **kwargs)
     except Exception:
         await session.close()
         raise

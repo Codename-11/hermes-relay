@@ -16,6 +16,9 @@ AccessibilityService-backed Device Control (screen reading, taps, typing, screen
 - Codes use the full `A-Z / 0-9` alphabet (36 chars). The earlier "no ambiguous 0/O/1/I" restriction was dropped when the pairing flow moved from "human retypes code from display" to "code flows phone ↔ server via QR + HTTP" (see `docs/decisions.md` §6a).
 - `POST /pairing/register` is gated to loopback callers only (`127.0.0.1` / `::1`) — only a process with host shell access on the relay machine can inject pairing codes. A LAN attacker cannot.
 - Relay session tokens carry per-channel grants. Voice routes require explicit `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grants when called with a Relay session token.
+- Remote `POST /relay/model-capabilities` calls require a valid Relay session
+  bearer with an active `chat` grant. Loopback host-operator calls may omit the
+  bearer. Hermes API bearer tokens are not accepted on this route.
 - `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, and `/voice/realtime/*` may also accept the Hermes API bearer token used by API-server clients. The Android app uses this fallback for chat+voice-only setups when no Relay session is paired. This is a narrow exception for chat/media-adjacent voice features only; the API bearer token is not accepted for sessions, media, clipboard, terminal, TUI, bridge, profile writes, or Android control routes.
 - Hermes API bearer use on voice routes requires HTTPS for non-loopback callers by default. Loopback plaintext is allowed for local clients; reverse-proxy TLS is accepted only when `RELAY_TRUST_PROXY_HEADERS=1`, and plaintext LAN testing requires an explicit opt-in. Use `hermes relay insecure-api-key on` for a running relay, or `RELAY_ALLOW_INSECURE_API_BEARER=1` at startup.
 
@@ -28,6 +31,21 @@ AccessibilityService-backed Device Control (screen reading, taps, typing, screen
 - The phone connects **out** to the server (NAT-friendly)
 - The server relay only accepts one phone at a time
 - All tool commands are proxied through the relay — the phone is never directly exposed
+
+### Model capability discovery
+
+The optional model-capability route accepts 1–64 validated provider/model pairs
+and a bounded profile name. Resolution is isolated to that profile's config and
+credential scope. Dynamic provider checks use short timeouts and a shared
+four-request concurrency ceiling; results are cached for five minutes. An
+explicit refresh advances a profile generation so an older in-flight request
+cannot restore stale cache entries.
+
+Provider credentials are loaded and used only on the Hermes host. The response
+contains capability metadata and diagnostic source labels, never credentials,
+credential fingerprints, provider response bodies, or internal cache keys.
+Unsupported providers and probe failures return non-exact advisory metadata
+instead of expanding authority or preventing chat.
 
 ## Known Limitations
 
@@ -63,13 +81,33 @@ The Bridge screen keeps an on-device activity log of executed device-control com
 
 ### Remote connectivity
 
-Hermes-Relay does **not** ship its own application-layer crypto. The operator owns both endpoints, and the trust model assumes TLS is terminated somewhere on the path that the operator already controls — Tailscale (managed TLS + tailnet ACL identity), a reverse proxy with Let's Encrypt, a WireGuard / other VPN, or a Cloudflare Tunnel. See [`docs/remote-access.md`](remote-access.md) for the decision matrix and setup recipes per mode.
+Hermes-Relay does **not** ship its own application-layer cryptography. The
+operator owns both endpoints and can use Tailscale (managed TLS + tailnet ACL
+identity), a reverse proxy with Let's Encrypt, WireGuard or another VPN, or a
+Cloudflare Tunnel. The Relay plugin also offers opt-in **Hermes Secure Link**:
+one TLS origin whose SPKI pin is imported from the operator-reviewed pairing QR.
+Secure Link verifies continuity with that paired endpoint; it does not
+independently identify the physical host or make the listener reachable.
+Relay, API, and Dashboard keep separate session, bearer, and cookie/native
+bearer authentication inside their fixed namespaces. See
+[`docs/remote-access.md`](remote-access.md) and the
+[`Hermes Secure Link security contract`](security-native-proxy.md).
+
+**Hermes Reach** is an explicitly enabled experimental outbound-only rendezvous
+route. It does not move the security
+boundary to the broker. The outer broker connection uses WSS, while the Hermes
+stream stays inside QR-pinned Secure Link TLS end-to-end. A Reach broker can see
+routing identity, source information, timing, and byte counts and can disrupt
+availability; it cannot read successfully authenticated inner traffic. Reach
+does not provide anonymity or independently identify the physical host. It is
+ordered after Tailscale and supported direct TLS routes. See
+[`docs/security-broker-transport.md`](security-broker-transport.md).
 
 Multi-endpoint pairing (ADR 24) makes "same phone, different networks" a first-class case: a single QR carries `lan` / `tailscale` / `public` candidates in strict-priority order and the phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` gating — an unencrypted leg is used only after the operator has enabled and acknowledged plain connections. The TOFU cert pin is keyed by `host:port`, so two endpoints pointing at the same hostname share a pin (correct — same cert, same pin) while distinct hostnames each get their own.
 
 ## Recommendations for Production Use
 
-1. **Use Tailscale (built-in) or a reverse proxy + Let's Encrypt.** `hermes-relay-tailscale enable` is the shortest path to a managed-TLS remote-access story; Caddy + Let's Encrypt is the shortest path to a real public domain. Either works. See [`docs/remote-access.md`](remote-access.md).
+1. **Use Tailscale (built-in) or a reverse proxy + Let's Encrypt.** `hermes-relay-tailscale enable` is the shortest path to a managed-TLS remote-access story; Caddy + Let's Encrypt is the shortest path to a real public domain. Optional Hermes Secure Link can add pairing-pinned TLS once the host is already reachable. See [`docs/remote-access.md`](remote-access.md).
 2. **Use a strong pairing code**: Don't share your code publicly
 3. **Disconnect when idle**: Tap Disconnect in the app when you're not actively using it
 4. **Monitor the phone**: Keep the status overlay enabled to see when the bridge is active

@@ -1,9 +1,14 @@
 package com.hermesandroid.relay.auth
 
 import android.content.Context
+import android.provider.Settings
 import android.util.Log
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.BrokerEndpoint
+import com.hermesandroid.relay.data.hasHermesReach
+import com.hermesandroid.relay.data.replaceHermesReachCredential
+import com.hermesandroid.relay.data.sameBrokerAuthority
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
@@ -14,11 +19,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -48,6 +56,7 @@ data class ConnectionAuthSecrets(
     val refreshToken: String? = null,
     val deviceId: String? = null,
     val apiKey: String? = null,
+    val profileApiKeys: Map<String, String> = emptyMap(),
     val pairedSessionMetaJson: String? = null,
 )
 
@@ -114,6 +123,7 @@ class AuthManager(
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_API_KEY = "api_server_key"
+        private const val KEY_PROFILE_API_KEYS = "profile_api_server_keys"
         private const val HINT_API_KEY_PRESENT = "api_key_present"
         private const val KEY_PAIRED_META = "paired_session_meta_json"
         // Marker (in the connection-0 token store) recording that the one-shot
@@ -131,6 +141,29 @@ class AuthManager(
          * a real connection id through.
          */
         const val CONNECTION_ID_LEGACY: String = "legacy"
+
+        internal fun encodeProfileApiKeys(keys: Map<String, String>): String =
+            Json.encodeToString(
+                keys.mapNotNull { (profile, key) ->
+                    val normalizedProfile = profile.trim()
+                    val normalizedKey = key.trim()
+                    if (normalizedProfile.isBlank() || normalizedKey.isBlank()) null
+                    else normalizedProfile to normalizedKey
+                }.toMap(),
+            )
+
+        internal fun decodeProfileApiKeys(raw: String?): Map<String, String> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            return runCatching { Json.decodeFromString<Map<String, String>>(raw) }
+                .getOrDefault(emptyMap())
+                .mapNotNull { (profile, key) ->
+                    val normalizedProfile = profile.trim()
+                    val normalizedKey = key.trim()
+                    if (normalizedProfile.isBlank() || normalizedKey.isBlank()) null
+                    else normalizedProfile to normalizedKey
+                }
+                .toMap()
+        }
 
         internal fun shouldPreservePairedSessionOnAuthFail(
             currentState: AuthState,
@@ -173,6 +206,7 @@ class AuthManager(
                 refreshToken = store.getString(KEY_REFRESH_TOKEN),
                 deviceId = store.getString(KEY_DEVICE_ID),
                 apiKey = store.getString(KEY_API_KEY),
+                profileApiKeys = decodeProfileApiKeys(store.getString(KEY_PROFILE_API_KEYS)),
                 pairedSessionMetaJson = store.getString(KEY_PAIRED_META),
             )
         }
@@ -188,6 +222,11 @@ class AuthManager(
                 writeOrRemove(store, KEY_REFRESH_TOKEN, secrets.refreshToken)
                 writeOrRemove(store, KEY_DEVICE_ID, secrets.deviceId)
                 writeOrRemove(store, KEY_API_KEY, secrets.apiKey)
+                writeOrRemove(
+                    store,
+                    KEY_PROFILE_API_KEYS,
+                    secrets.profileApiKeys.takeIf { it.isNotEmpty() }?.let(::encodeProfileApiKeys),
+                )
                 writeOrRemove(store, KEY_PAIRED_META, secrets.pairedSessionMetaJson)
             }
         }
@@ -290,6 +329,7 @@ class AuthManager(
 
     private var _store: SessionTokenStore? = null
     private val storeMutex = Mutex()
+    private val profileApiKeysMutex = Mutex()
 
     /**
      * The encrypted-store filename for this connection — shared by [store]
@@ -416,6 +456,7 @@ class AuthManager(
             KEY_REFRESH_TOKEN,
             KEY_DEVICE_ID,
             KEY_API_KEY,
+            KEY_PROFILE_API_KEYS,
             KEY_PAIRED_META,
         )
         var migrated = false
@@ -522,6 +563,12 @@ class AuthManager(
      * Either way, we leave the previously-persisted list untouched.
      */
     private var pendingEndpoints: List<EndpointCandidate>? = null
+    private var activeEndpointProvider: () -> EndpointCandidate? = { null }
+
+    /** Bind auth.ok route credentials to the transport that actually carried them. */
+    fun setActiveEndpointProvider(provider: () -> EndpointCandidate?) {
+        activeEndpointProvider = provider
+    }
 
     /**
      * Server-advertised agent profiles from the `auth.ok` payload's
@@ -596,7 +643,7 @@ class AuthManager(
         val now = System.currentTimeMillis() / 1000L
         val defaults = PairedSession(
             token = token,
-            deviceName = android.os.Build.MODEL,
+            deviceName = relayDeviceName(),
             expiresAt = null,
             grants = emptyMap(),
             transportHint = null,
@@ -616,7 +663,7 @@ class AuthManager(
             val transportHint = obj["transport_hint"]?.jsonPrimitive?.contentOrNull
             val firstSeen = obj["first_seen"]?.jsonPrimitive?.longOrNull ?: now
             val deviceName = obj["device_name"]?.jsonPrimitive?.contentOrNull
-                ?: android.os.Build.MODEL
+                ?: relayDeviceName()
 
             PairedSession(
                 token = token,
@@ -715,6 +762,26 @@ class AuthManager(
         })
     }
 
+    private fun JsonObjectBuilder.putRelayDeviceIdentity() {
+        val model = android.os.Build.MODEL.orEmpty().ifBlank { "Android device" }
+        val deviceName = relayDeviceName()
+        put("device_name", deviceName)
+        put("device_hostname", deviceName)
+        put("device_model", model)
+        put("device_platform", "Android ${android.os.Build.VERSION.RELEASE}")
+        put("client_surface", "android")
+        put("device_form_factor", "phone")
+    }
+
+    private fun relayDeviceName(): String {
+        val configured = runCatching {
+            Settings.Global.getString(context.contentResolver, "device_name")
+        }.getOrNull()?.trim().orEmpty()
+        return configured.ifBlank {
+            android.os.Build.MODEL.orEmpty().ifBlank { "Android device" }
+        }
+    }
+
     /**
      * Send auth envelope when connection is established.
      *
@@ -749,7 +816,7 @@ class AuthManager(
                             put("refresh_token", refreshToken)
                         }
                         put("device_id", deviceId)
-                        put("device_name", android.os.Build.MODEL)
+                        putRelayDeviceIdentity()
                         putRelayClientSupports()
                     }
                 }
@@ -765,7 +832,7 @@ class AuthManager(
                     buildJsonObject {
                         put("pairing_code", codeToSend)
                         put("device_id", deviceId)
-                        put("device_name", android.os.Build.MODEL)
+                        putRelayDeviceIdentity()
                         putRelayClientSupports()
                         pendingTtlSeconds?.let { put("ttl_seconds", it) }
                         pendingGrants?.let { grants ->
@@ -947,6 +1014,27 @@ class AuthManager(
         recordApiKeyHint(false)
     }
 
+    suspend fun getProfileApiKey(profileName: String): String? =
+        decodeProfileApiKeys(store().getString(KEY_PROFILE_API_KEYS))[profileName.trim()]
+
+    suspend fun setProfileApiKey(profileName: String, key: String) {
+        val normalizedProfile = profileName.trim()
+        require(normalizedProfile.isNotBlank()) { "Profile name must not be blank" }
+        profileApiKeysMutex.withLock {
+            val tokenStore = store()
+            val keys = decodeProfileApiKeys(tokenStore.getString(KEY_PROFILE_API_KEYS)).toMutableMap()
+            val normalizedKey = key.trim()
+            if (normalizedKey.isBlank()) keys.remove(normalizedProfile)
+            else keys[normalizedProfile] = normalizedKey
+            if (keys.isEmpty()) tokenStore.remove(KEY_PROFILE_API_KEYS)
+            else tokenStore.putString(KEY_PROFILE_API_KEYS, encodeProfileApiKeys(keys))
+        }
+    }
+
+    suspend fun clearProfileApiKey(profileName: String) {
+        setProfileApiKey(profileName, "")
+    }
+
     val isPaired: Boolean
         get() = _authState.value is AuthState.Paired
 
@@ -965,6 +1053,7 @@ class AuthManager(
                 }
 
                 if (token != null) {
+                    applyBrokerRouteCredential(payload)
                     val s = store()
                     s.putString(KEY_SESSION_TOKEN, token)
                     val refreshToken = payload["refresh_token"]
@@ -1010,7 +1099,7 @@ class AuthManager(
 
                     val paired = PairedSession(
                         token = token,
-                        deviceName = android.os.Build.MODEL,
+                        deviceName = relayDeviceName(),
                         expiresAt = expiresAt,
                         grants = grantsMap,
                         transportHint = transportHint,
@@ -1072,6 +1161,40 @@ class AuthManager(
             }
         }
     }
+
+    private suspend fun applyBrokerRouteCredential(payload: JsonObject) {
+        val active = activeEndpointProvider()?.takeIf { it.hasHermesReach() } ?: return
+        val current = active.broker ?: return
+        // Fresh pairing is scoped by pendingEndpoints; reconnect rotation is
+        // accepted only by this connection-scoped AuthManager's live session.
+        if (pendingEndpoints == null && _authState.value !is AuthState.Paired) return
+        val credential = payload["route_credential"] as? JsonObject ?: return
+        if (credential["kind"]?.jsonPrimitive?.contentOrNull != "broker_route") return
+        val brokerUrl = credential["broker_url"]?.jsonPrimitive?.contentOrNull ?: return
+        val hostId = credential["host_id"]?.jsonPrimitive?.contentOrNull ?: return
+        if (!sameBrokerAuthority(brokerUrl, current.url) || hostId != current.hostId) {
+            Log.w(TAG, "Ignoring broker route credential that does not match the active paired route")
+            return
+        }
+        val replacement = BrokerEndpoint(
+            url = current.url,
+            protocolVersion = current.protocolVersion,
+            hostId = current.hostId,
+            credentialKind = "route",
+            token = credential["token"]?.jsonPrimitive?.contentOrNull ?: return,
+            expiresAt = credential["expires_at"]?.jsonPrimitive?.longOrNull,
+        )
+        val validated = active.copy(broker = replacement).takeIf { it.hasHermesReach() } ?: return
+        val deviceId = getDeviceId()
+        val source = pendingEndpoints
+            ?: PairingPreferences.getDeviceEndpoints(context, deviceId).first()
+        val updated = replaceHermesReachCredential(source, current, validated)
+        if (updated == source) return
+        if (pendingEndpoints != null) pendingEndpoints = updated
+        else PairingPreferences.setDeviceEndpoints(context, deviceId, updated)
+        Log.i(TAG, "Accepted a durable Hermes Reach route credential for the active paired route")
+    }
+
 
     private fun handleAuthFail(envelope: Envelope) {
         try {

@@ -1,7 +1,7 @@
 # Issue → fix dev-loop
 
 How an incoming issue becomes a worktree you (or a local agent) can start working
-in. This documents deterministic issue labeling, subscription-backed Codex review,
+in. This documents maintainer issue labeling, subscription-backed Codex review,
 path-aware required CI, and the local bridge `scripts/start-issue.sh`.
 
 It complements — does not replace — `RELEASE.md` (how a fix ships) and `CLAUDE.md`
@@ -11,7 +11,7 @@ public-repo writing hygiene).
 ## The loop at a glance
 
 ```
-issue opened ──▶ deterministic type + area labels ──▶ maintainer triage
+issue opened ──▶ maintainer triage + labels
                                                         │
                                                         ▼
                          scripts/start-issue.sh <N>   ── local bridge
@@ -25,15 +25,12 @@ issue opened ──▶ deterministic type + area labels ──▶ maintainer tri
                                                   └─▶ Codex review
 ```
 
-## Deterministic issue triage
+## Manual issue triage
 
-`.github/workflows/issue-triage.yml` runs a no-LLM keyword classifier when an
-issue opens. It applies a title-derived type label and, when the issue text is
-clear, one `area:*` label. It never closes an issue, edits its body, diagnoses a
-root cause, or posts an automated opinion.
-
-To label an older issue again, use the workflow's `workflow_dispatch` input or
-run `gh workflow run issue-triage.yml -f issue_number=NNN`.
+Maintainers review new issues and apply the appropriate type and `area:*` labels.
+Area labels are deliberately manual: generic words such as “relay”, “plugin”,
+“chat”, and “voice” cross product boundaries and cannot reliably identify the
+owning implementation surface from issue text alone.
 
 ## PR review
 
@@ -99,9 +96,7 @@ gh label create "area:docs"               -c "bfd4f2" -d "docs/ or user-docs/"
 
 ## Operational notes
 
-- **Activation lag.** Issue-triggered workflows run the copy on the default branch
-  (`main`). Changes stay dormant on `dev` until a release merge lands them on main.
-- **No model cost for issue labeling.** The issue workflow is deterministic
-  `github-script`; Codex review usage is accounted through the connected Codex plan.
-- **No write-access escalation here.** Issue triage cannot push code or open PRs.
-  Auto-attempting a fix from untrusted issue text remains intentionally out of scope.
+- **Manual issue labels.** Type and area labels are applied during maintainer
+  triage; no issue-open workflow guesses ownership from keywords.
+- **No write-access escalation from issues.** Auto-attempting a fix from
+  untrusted issue text remains intentionally out of scope.

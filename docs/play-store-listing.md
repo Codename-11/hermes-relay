@@ -14,9 +14,9 @@ It's not a hosted AI service. It's a companion app for the Hermes agent you run,
 
 QUICK START
 
-1. Run hermes-agent with its API server enabled on your computer or home server.
-2. Install Hermes-Relay and enter your server's address (for example [http://192.168.1.100:8642](http://192.168.1.100:8642)).
-3. The setup wizard checks what your server supports and shows a readiness card — then you're talking.
+1. Run hermes-agent with its Dashboard/Gateway enabled on your computer or home server.
+2. Install Hermes-Relay and select the nearby Dashboard, or enter its address and custom port.
+3. Sign in through the Dashboard when prompted. The setup wizard verifies Chat, sessions, Manage, and voice before finishing.
 
 No server yet? Tap "Try the demo" on the setup screen to explore the app offline — a sample conversation, no login or server required.
 
@@ -24,7 +24,7 @@ A plain Hermes install is enough. Chat, management, and voice all work with no p
 
 HOW IT WORKS
 
-Chat streams directly from your Hermes API Server in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
+Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. A headless API server remains an automatic compatibility fallback. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
 GOOGLE PLAY BUILD
 
@@ -36,7 +36,11 @@ FEATURES
 
 ◆ Manage Your Agent — the Hermes dashboard on your phone: switch models from your provider catalog, manage provider keys (masked), edit profiles, and browse, install, and update skills.
 
-◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Relay-paired setups add per-profile voices and an experimental realtime engine.
+◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection; Relay-paired setups add per-profile voices and an experimental realtime engine.
+
+◆ Floating Pets — browse and install Petdex companions or import your own. Keep the pet separate from your agent identity, drag it anywhere, or let it roam across UI-aware ledges.
+
+◆ Native Plugin Pages — installed Hermes plugins can add safe, host-rendered Android pages without loading executable plugin code on your phone. Write actions require an explicit per-plugin grant.
 
 ◆ Works Away From Home — add a Tailscale or public URL and the app switches routes automatically; when a server is unreachable it tells you what to fix instead of just going red.
 
@@ -50,7 +54,7 @@ FEATURES
 
 ◆ Stats for Nerds — local-only counters for response timing, token usage, cost, and stream health.
 
-◆ Material You — Material 3 dynamic color, light/dark/system themes, and haptics.
+◆ Material You — Material 3 dynamic color, light/dark/system themes, haptics, and complete Android catalogs for English, German, Spanish, Brazilian Portuguese, Japanese, Russian, and Simplified Chinese.
 
 SECURITY &amp; PRIVACY
 
@@ -85,11 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.4.9 - Clearer Hermes connections
+v1.9.0 - Better sessions, reactions, and voice
 
-* Connect through the Hermes dashboard with one sign-in.
-* Setup now explains nearby, remote, Tailscale, custom-port, and optional Relay paths.
-* Server default consistently displays Hermes' pinned active profile.
+* Browse all profiles without losing the session's owning agent.
+* Start new chats with the default profile.
+* Pin reactions to user and assistant messages.
+* Keep Vanilla Hermes voice on the authenticated Gateway.
+* Default to an ungrouped session list; project grouping remains available.
 ```
 
 ## Category
@@ -156,12 +162,43 @@ This app is a client for a Hermes server the user runs themselves, so a fresh in
 
 ### Foreground service permissions
 
-The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for `GatewayKeepAliveService`. It protects user-started active chat turns automatically and also backs the opt-in **Persistent connection** feature for idle connectivity. At submission, complete **App content → Foreground service permissions** for `specialUse`:
+Before promoting any Play release, compare this section with the merged
+`googlePlayRelease` manifest and complete **App content → Foreground service
+permissions** for every declared type. Google blocks the Android Publisher API
+edit at commit time when a declaration is missing, even if the Production draft
+upload itself succeeded.
+
+The Play build declares `**FOREGROUND_SERVICE_SPECIAL_USE**` for
+`GatewayKeepAliveService`. It protects user-started active chat turns
+automatically and also backs the opt-in **Persistent connection** feature for
+idle connectivity. Declare `specialUse` with:
 
 - **Use case:** keeps a user-started Hermes turn connected until it finishes or pauses for user input, including multiple concurrent sessions; optionally maintains the idle connection when the user enables Persistent connection.
 - **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
 - **User control:** the service starts when the user sends a chat message and stops after all active turns settle. Continuous idle retention is off by default and enabled only via *Settings → Quick Controls → Persistent connection*. The ongoing notification shows the active/waiting session count; its **Turn off always-on** action disables idle retention without interrupting active work. Swiping the app from recents ends it.
 - Google usually asks for a short screen recording of a backgrounded active turn, the ongoing notification, and the optional persistent toggle.
+
+The Play build also declares `**FOREGROUND_SERVICE_MICROPHONE**` for two
+explicitly user-started voice features. Declare `microphone` and cover both
+entry points in its description and demonstration:
+
+- **Local wake word:** when the user explicitly enables *Hey Hermes* in Voice
+  settings, `WakeWordForegroundService` listens on-device for the configured
+  wake phrase. Audio before activation remains on the device, the ongoing
+  microphone notification has a Stop action, and the service is never started
+  at boot.
+- **Voice overlay:** when the user opens the app-owned voice overlay while
+  Hermes is visible, `VoiceOverlayForegroundService` preserves microphone
+  access for that active voice session while the overlay is shown over another
+  app. Hiding or exiting the overlay, stopping voice, or removing the task ends
+  the service.
+- **Why a foreground service:** Android requires an active microphone
+  foreground service for user-visible capture that continues while the app is
+  backgrounded. Both paths are opt-in, show Android's persistent microphone
+  indicator and ongoing notification, and expose an immediate Stop action.
+- Record a short video that enables the wake listener and shows its notification
+  and Stop action, then opens the voice overlay, backgrounds Hermes, and ends
+  the session from the overlay or notification.
 
 The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.
 
@@ -171,7 +208,7 @@ No data collection or sharing to declare: no telemetry, ads, or third-party anal
 
 ### Sensitive / runtime permissions in the Play build
 
-- `RECORD_AUDIO` — Voice mode, requested at use.
+- `RECORD_AUDIO` — Voice mode and opt-in local wake detection, requested at use.
 - `POST_NOTIFICATIONS` — chat input, turn-complete, and keep-alive notifications, requested on API 33+.
 - `CAMERA` — QR pairing / attachments, requested at use.
 - Notification listener (companion) — user-enabled in system settings.

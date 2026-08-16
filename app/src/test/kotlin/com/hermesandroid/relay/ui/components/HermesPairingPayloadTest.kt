@@ -337,6 +337,74 @@ class HermesPairingPayloadTest {
     }
 
     @Test
+    fun dashboardOnlyGenericJson_buildsStandardPayloadWithoutOptionalSurfaces() {
+        val raw = """
+            {
+              "dashboard_url": "https://agent.example.com/hermes/"
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        val parsed = payload!!
+        assertFalse(parsed.hasApiServer)
+        assertEquals("", parsed.serverUrl)
+        assertEquals("https://agent.example.com/hermes", parsed.dashboardUrl)
+        assertNull(parsed.relay)
+        assertEquals("", parsed.key)
+        assertEquals(1, parsed.endpoints.orEmpty().size)
+        assertEquals("public", parsed.endpoints.orEmpty()[0].role)
+        assertNull(parsed.endpoints.orEmpty()[0].api)
+        assertNull(parsed.endpoints.orEmpty()[0].relay)
+        assertEquals(
+            "https://agent.example.com/hermes",
+            parsed.endpoints.orEmpty()[0].dashboard?.url,
+        )
+    }
+
+    @Test
+    fun dashboardOnlyGenericJson_acceptsCamelCaseAliasAndLanOrigin() {
+        val payload = parseHermesPairingQr(
+            """{ "dashboardUrl": "http://192.168.1.50:9119" }""",
+        )
+
+        assertNotNull(payload)
+        assertEquals("lan", payload!!.endpoints.orEmpty().single().role)
+        assertEquals("http://192.168.1.50:9119", payload.dashboardUrl)
+    }
+
+    @Test
+    fun dashboardOnlyGenericJson_rejectsInvalidOriginsAndMalformedApiFallback() {
+        assertNull(parseHermesPairingQr("""{ "dashboard_url": "ftp://agent.example.com" }"""))
+        assertNull(parseHermesPairingQr("""{ "dashboard_url": "agent.example.com" }"""))
+        assertNull(
+            parseHermesPairingQr(
+                """{
+                    "api_url": "ftp://agent.example.com",
+                    "dashboard_url": "https://agent.example.com"
+                }""".trimIndent(),
+            ),
+        )
+    }
+
+    @Test
+    fun genericApiJson_withDashboard_stillUsesLegacyApiPayloadContract() {
+        val payload = parseHermesPairingQr(
+            """{
+                "url": "https://api.example.com:8642",
+                "dashboard_url": "https://agent.example.com/hermes"
+            }""".trimIndent(),
+        )
+
+        assertNotNull(payload)
+        assertTrue(payload!!.hasApiServer)
+        assertEquals("https://api.example.com:8642", payload.serverUrl)
+        assertEquals("https://agent.example.com/hermes", payload.dashboardUrl)
+        assertEquals("api.example.com", payload.endpoints.orEmpty().single().api?.host)
+    }
+
+    @Test
     fun missingHost_rejectsPayload() {
         // The parser's minimum contract: a payload without `host` is not
         // a pair QR — return null so the scanner keeps scanning.

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Notifications
@@ -72,6 +73,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,7 +93,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
@@ -101,6 +102,9 @@ import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
+import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
+import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
+import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
@@ -109,6 +113,20 @@ import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
+import kotlinx.coroutines.flow.distinctUntilChanged
+
+private const val SETTINGS_PET_SURFACE_ROUTE = "settings"
+private val SETTINGS_PET_SURFACE_ROUTES = setOf(SETTINGS_PET_SURFACE_ROUTE)
+
+/** A settings card is a walkable top edge and a forbidden interactive body. */
+private fun Modifier.settingsPetSurface(key: String): Modifier =
+    petPerchSurface(
+        key = key,
+        routes = SETTINGS_PET_SURFACE_ROUTES,
+    ).petObstacleSurface(
+        key = "$key:controls",
+        routes = SETTINGS_PET_SURFACE_ROUTES,
+    )
 
 /**
  * Root Settings destination. After the 2026-04-11 split, Settings is a
@@ -152,6 +170,7 @@ fun SettingsScreen(
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
     onNavigateToManage: () -> Unit,
+    onNavigateToPlugins: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
     onNavigateToBridge: () -> Unit,
@@ -189,14 +208,12 @@ fun SettingsScreen(
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
-    val authState by connectionViewModel.authState.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val apiServerReachable by connectionViewModel.apiServerReachable.collectAsState()
     val apiServerHealth by connectionViewModel.apiServerHealth.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val devOptionsUnlocked by FeatureFlags.devOptionsUnlocked(context)
         .collectAsState(initial = FeatureFlags.isDevBuild)
-    val relayPaired = authState is AuthState.Paired
     val chatRuntimeStatus = resolveChatRuntimeStatus(
         gateway = when (gatewayAvailability) {
             GatewayAvailability.Ready -> ChatTransportReadiness.Ready
@@ -256,17 +273,28 @@ fun SettingsScreen(
     // The Power tools below all ride the relay plugin. Rather than stamp an
     // identical badge on every card (noise, not signal), the dependency is
     // surfaced ONCE on the section header as a single plugin-state badge.
-    val pluginBadge = when {
-        !relayPaired ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_required), tone = SettingsStatusTone.Info)
-        relayUiState == RelayUiState.Disconnected ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_offline), tone = SettingsStatusTone.Warning)
-        relayUiState == RelayUiState.Stale ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_stale), tone = SettingsStatusTone.Warning)
-        relayUiState == RelayUiState.Connecting ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_connecting), tone = SettingsStatusTone.Info)
-        else ->
-            SettingsStatusPillModel(label = stringResource(R.string.settings_plugin_active), tone = SettingsStatusTone.Good)
+    val pluginBadge = when (relayUiState) {
+        RelayUiState.NotConfigured -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_optional),
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Connected -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_ready),
+            tone = SettingsStatusTone.Good,
+        )
+        RelayUiState.Connecting -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_reconnecting),
+            tone = SettingsStatusTone.Info,
+        )
+        RelayUiState.Stale,
+        RelayUiState.Disconnected -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_unavailable),
+            tone = SettingsStatusTone.Warning,
+        )
+        RelayUiState.Expired -> SettingsStatusPillModel(
+            label = stringResource(R.string.relay_state_needs_repair),
+            tone = SettingsStatusTone.Warning,
+        )
     }
 
     // Kick a WSS reconnect when Settings first composes so the Connections
@@ -292,6 +320,26 @@ fun SettingsScreen(
     // self-contained full-screen Dialog (no nav route). Always available, not
     // gated on the post-update "seen" state that drives the auto dialog.
     var showChangelog by remember { mutableStateOf(false) }
+
+    val settingsScrollState = rememberScrollState()
+    val petCompanionCoordinator = LocalPetCompanionCoordinator.current
+    LaunchedEffect(settingsScrollState, petCompanionCoordinator) {
+        snapshotFlow {
+            settingsScrollState.isScrollInProgress to
+                (showAgentSheet || showProfileLockDialog || showChangelog)
+        }
+            .distinctUntilChanged()
+            .collect { (scrolling, hidden) ->
+                petCompanionCoordinator.publishSurface(
+                    owner = SETTINGS_PET_SURFACE_ROUTE,
+                    scrolling = scrolling,
+                    hidden = hidden,
+                )
+            }
+    }
+    DisposableEffect(petCompanionCoordinator) {
+        onDispose { petCompanionCoordinator.clearSurface(SETTINGS_PET_SURFACE_ROUTE) }
+    }
 
     // Profile lock state — this card/dialog is the ONE surface that always
     // lists every profile, so it does NOT gate on isProfileLocked.
@@ -322,7 +370,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(settingsScrollState)
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -349,6 +397,7 @@ fun SettingsScreen(
                 statusPills = listOfNotNull(chatPill),
                 onClick = { showAgentSheet = true },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.settingsPetSurface("settings-card:active-agent"),
             )
 
             // ── Inspect Agent ──────────────────────────────────────────
@@ -364,6 +413,7 @@ fun SettingsScreen(
                 activeProfile = inspectorTarget,
                 onClick = { profileName -> onNavigateToProfileInspector(profileName) },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.settingsPetSurface("settings-card:profile-inspector"),
             )
 
             // ── Profile lock ───────────────────────────────────────────
@@ -374,7 +424,6 @@ fun SettingsScreen(
             val lockedDisplayName: String? = when {
                 !isProfileLocked -> null
                 lockedProfileName == null ||
-                    AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
                     lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                     serverDefaultLabel
                 else ->
@@ -387,6 +436,7 @@ fun SettingsScreen(
                 lockedDisplayName = lockedDisplayName,
                 onClick = { showProfileLockDialog = true },
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.settingsPetSurface("settings-card:profile-lock"),
             )
 
             // ── Quick Controls ─────────────────────────────────────────
@@ -398,6 +448,7 @@ fun SettingsScreen(
             QuickControlsCard(
                 connectionViewModel = connectionViewModel,
                 isDarkTheme = isDarkTheme,
+                modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
             )
 
             // (The "Active Connection quick-look card" that used to live
@@ -434,6 +485,14 @@ fun SettingsScreen(
                 subtitle = stringResource(R.string.settings_hermes_management_desc),
                 badge = dashboardPill,
                 onClick = onNavigateToManage,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Extension,
+                title = stringResource(R.string.plugins_title),
+                subtitle = stringResource(R.string.settings_plugins_desc),
+                onClick = onNavigateToPlugins,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -649,10 +708,11 @@ private fun ActiveAgentCard(
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     statusPills: List<SettingsStatusPillModel>,
+    modifier: Modifier = Modifier,
 ) {
     val subtitle = "$connectionLabel \u00B7 $model \u00B7 $personalityLabel"
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -750,9 +810,10 @@ private fun ProfileLockCard(
     lockedDisplayName: String?,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -814,6 +875,7 @@ private fun ProfileLockCard(
 private fun QuickControlsCard(
     connectionViewModel: ConnectionViewModel,
     isDarkTheme: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val gatewayKeepAlive by connectionViewModel.gatewayKeepAlive.collectAsState()
     val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
@@ -832,7 +894,7 @@ private fun QuickControlsCard(
         }
     }
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),
@@ -992,13 +1054,12 @@ private fun ProfileLockDialog(
     onUnlock: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Selectable rows: a synthetic "Server default" sentinel + the advertised
-    // profiles, minus the synthetic "default" alias (folded into Server default).
-    val selectableProfiles = profiles.filterNot { AgentDisplay.isServerDefaultAlias(it.name) }
+    // Selectable rows: a synthetic "Server default" sentinel + every advertised
+    // profile, including a profile literally named `default`.
+    val selectableProfiles = profiles
 
-    // Is the stored lock target Server default (sentinel / "default" alias / null)?
+    // Is the stored lock target Server default (sentinel / null)?
     val lockedIsServerDefault = lockedProfileName == null ||
-        AgentDisplay.isServerDefaultAlias(lockedProfileName) ||
         lockedProfileName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
     val lockedProfile = if (lockedIsServerDefault) {
         null
@@ -1232,9 +1293,11 @@ private fun SettingsCategoryRow(
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     badge: SettingsStatusPillModel? = null,
+    petPerchKey: String = title,
 ) {
     Card(
         modifier = Modifier
+            .settingsPetSurface("settings-category:$petPerchKey")
             .fillMaxWidth()
             .gradientBorder(
                 shape = RoundedCornerShape(12.dp),

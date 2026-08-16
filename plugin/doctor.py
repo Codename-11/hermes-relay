@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .compat import collect_compat_status
-from .gateway_diagnostics import assess_gateway_heartbeat
+from .gateway_diagnostics import assess_gateway_heartbeat, assess_gateway_prior_exit
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_NAME = "hermes-relay"
@@ -466,6 +466,7 @@ def collect_doctor_report(
     bootstrap = _bootstrap_status(site_dirs)
     relay_import = _relay_import_chain()
     gateway_heartbeat = assess_gateway_heartbeat()
+    gateway_prior_exit = assess_gateway_prior_exit()
     checks: list[dict[str, str]] = []
 
     _check(
@@ -562,6 +563,20 @@ def collect_doctor_report(
         "missing": "gateway event-loop heartbeat is not present",
     }[heartbeat_status]
     _check(checks, "gateway-heartbeat", heartbeat_check_status, heartbeat_summary)
+    prior_exit = gateway_prior_exit["prior_exit"]
+    prior_exit_summary = {
+        "clean": "previous gateway life reached a recorded exit path",
+        "unclean": "previous gateway life ended without reaching an exit path",
+        "unknown": "previous gateway exit could not be classified from bounded evidence",
+    }[prior_exit]
+    if gateway_prior_exit.get("suspected_oom") is True:
+        prior_exit_summary += "; low-memory evidence suggests a possible OOM kill"
+    _check(
+        checks,
+        "gateway-prior-exit",
+        "warn" if prior_exit == "unclean" else "ok",
+        prior_exit_summary,
+    )
     _check(
         checks,
         "dashboard-manage-surface",
@@ -657,6 +672,7 @@ def collect_doctor_report(
             "import_chain": relay_import,
         },
         "gateway_heartbeat": gateway_heartbeat,
+        "gateway_prior_exit": gateway_prior_exit,
         "bootstrap": bootstrap,
         "lifecycle": {
             "upstream_plugin_remove_cleans_external_artifacts": False,
