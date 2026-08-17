@@ -458,77 +458,18 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
-    fun `stream start captures the live tail renderer`() {
-        assertEquals(
-            "assistant-live",
-            retainedLiveTailAfterTransition(
-                retainedUiKey = null,
-                streamStarted = true,
-                streamCompleted = false,
-                lastMessageUiKey = "assistant-live",
-            ),
+    fun `settled markdown tail growth remains owned at the bottom`() {
+        val previous = viewportSnapshot(
+            tailSizePx = 420,
+            visibleBottomDistancePx = 0,
+            followTailGrowth = true,
         )
-    }
-
-    @Test
-    fun `same-tail completion releases the live renderer for markdown`() {
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-live",
-                streamStarted = false,
-                streamCompleted = true,
-                lastMessageUiKey = "assistant-live",
-            ),
-        )
-    }
-
-    @Test
-    fun `late completion survives server id adoption on the same ui row`() {
-        val live = snapshot().copy(
-            lastMessageId = "assistant-client-id",
-            lastContentLength = 40,
-            isStreaming = true,
-        )
-        val completed = live.copy(
-            lastMessageId = "assistant-server-id",
-            lastContentLength = 120,
-            isStreaming = false,
+        val markdownPromotion = previous.copy(
+            tailSizePx = 510,
+            visibleBottomDistancePx = 90,
         )
 
-        assertEquals(true, completed.isCompletionAfter(live))
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-ui-key",
-                streamStarted = false,
-                streamCompleted = completed.isCompletionAfter(live),
-                lastMessageUiKey = completed.lastMessageUiKey,
-            ),
-        )
-    }
-
-    @Test
-    fun `restored settled history does not invent a live completion transition`() {
-        assertEquals(false, snapshot().isCompletionAfter(previous = null))
-    }
-
-    @Test
-    fun `new tail releases the retained renderer`() {
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-live",
-                streamStarted = false,
-                streamCompleted = false,
-                lastMessageUiKey = "next-row",
-            ),
-        )
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = null,
-                streamStarted = false,
-                streamCompleted = false,
-                lastMessageUiKey = "next-row",
-            ),
-        )
+        assertEquals(90, ownedBottomFollowScroll(previous, markdownPromotion))
     }
 
     @Test

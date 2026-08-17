@@ -1,7 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -578,26 +577,6 @@ fun MessageBubble(
             shape = bubbleShape,
             color = backgroundColor,
             modifier = Modifier
-                .then(
-                    if (!isUser && !isSystem &&
-                        (message.isStreaming || retainStreamingLayout)
-                    ) {
-                        // The frame-paced text node is already measured at its
-                        // new size. Animate and clip the owning surface so a
-                        // newly wrapped line is revealed inside the expanding
-                        // bubble instead of drawing below the previous bounds
-                        // for one frame. TopStart keeps existing prose fixed.
-                        Modifier.animateContentSize(
-                            animationSpec = tween(
-                                durationMillis = 72,
-                                easing = LinearOutSlowInEasing,
-                            ),
-                            alignment = Alignment.TopStart,
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
                 .then(
                     if (!isUser && !isSystem && isDarkTheme) {
                         Modifier.leftEdgeGlow(
