@@ -5,12 +5,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasImeAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
@@ -136,13 +138,20 @@ class ChatInputBarTest {
     }
 
     @Test
-    fun `ime send uses the same composer action`() {
+    fun `software keyboard exposes newline without submitting`() {
+        var value = "Hello"
         var sent = 0
-        setComposer(value = "Hello") { sent++ }
+        setComposer(value = value, onValueChange = { value = it }) { sent++ }
 
-        input().performClick().performImeAction()
+        input()
+            .assert(hasImeAction(ImeAction.Default))
+            .performClick()
+            .performTextInput("\nWorld")
 
-        compose.runOnIdle { assertEquals(1, sent) }
+        compose.runOnIdle {
+            assertEquals("Hello\nWorld", value)
+            assertEquals(0, sent)
+        }
     }
 
     private fun setComposer(
