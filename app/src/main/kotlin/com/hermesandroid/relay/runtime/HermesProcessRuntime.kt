@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelStore
 import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceSettings
+import com.hermesandroid.relay.data.PersistentChatComposerDraftStore
+import java.io.File
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -70,7 +72,13 @@ class HermesProcessRuntime internal constructor(
     }
 
     val chatViewModel: ChatViewModel by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        viewModelProvider[ChatViewModel::class.java]
+        viewModelProvider[ChatViewModel::class.java].also { chat ->
+            chat.installComposerDraftStore(
+                PersistentChatComposerDraftStore(
+                    File(application.noBackupFilesDir, "chat-composer-drafts"),
+                ),
+            )
+        }
     }
 
     val voiceViewModel: VoiceViewModel by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {

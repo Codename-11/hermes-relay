@@ -2288,6 +2288,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    val convertLargePastesToAttachments: StateFlow<Boolean> =
+        chatInputPreferencesRepository.convertLargePastesToAttachments
+            .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setConvertLargePastesToAttachments(enabled: Boolean) {
+        viewModelScope.launch {
+            chatInputPreferencesRepository.setConvertLargePastesToAttachments(enabled)
+        }
+    }
+
     // Turn-complete notification (default ON). RelayApp mirrors this into
     // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
     // + the POST_NOTIFICATIONS runtime request on first enable.

@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ChatInputPreferencesTest {
+
+    @Test
+    fun `large paste conversion defaults on and round trips`() = runTest {
+        val store = InMemoryChatInputDataStore()
+        val repository = ChatInputPreferencesRepository(store)
+
+        assertEquals(true, repository.convertLargePastesToAttachments.first())
+
+        repository.setConvertLargePastesToAttachments(false)
+        assertEquals(false, repository.convertLargePastesToAttachments.first())
+
+        repository.setConvertLargePastesToAttachments(true)
+        assertEquals(true, repository.convertLargePastesToAttachments.first())
+    }
 
     @Test
     fun `enter defaults to send and unknown values fall back safely`() = runTest {
@@ -35,13 +50,20 @@ class ChatInputPreferencesTest {
     @Test
     fun `all enter behaviors round trip without replacing unrelated settings`() = runTest {
         val unrelatedKey = stringPreferencesKey("unrelated_chat_input_test")
-        val store = InMemoryChatInputDataStore(mutablePreferencesOf(unrelatedKey to "keep-me"))
+        val unrelatedBoolean = booleanPreferencesKey("unrelated_chat_input_boolean_test")
+        val store = InMemoryChatInputDataStore(
+            mutablePreferencesOf(
+                unrelatedKey to "keep-me",
+                unrelatedBoolean to true,
+            ),
+        )
         val repository = ChatInputPreferencesRepository(store)
 
         PhysicalKeyboardEnterBehavior.entries.forEach { behavior ->
             repository.setPhysicalKeyboardEnterBehavior(behavior)
             assertEquals(behavior, repository.physicalKeyboardEnterBehavior.first())
             assertEquals("keep-me", store.data.first()[unrelatedKey])
+            assertEquals(true, store.data.first()[unrelatedBoolean])
         }
     }
 }

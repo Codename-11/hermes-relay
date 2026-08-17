@@ -13,6 +13,8 @@ import com.hermesandroid.relay.data.AttachmentState
 import com.hermesandroid.relay.data.BackgroundTaskPhase
 import com.hermesandroid.relay.data.BackgroundTaskState
 import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.ChatComposerDraft
+import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatComposerDraftStore
 import com.hermesandroid.relay.data.ChatQueuedMessageCheckpoint
 import com.hermesandroid.relay.data.ChatSession
@@ -33,6 +35,7 @@ import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
+import com.hermesandroid.relay.data.prepareTextTransportAttachments
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
@@ -573,8 +576,27 @@ class ChatViewModel : ViewModel() {
     private val _pendingAttachments = MutableStateFlow<List<Attachment>>(emptyList())
     val pendingAttachments: StateFlow<List<Attachment>> = _pendingAttachments.asStateFlow()
 
-    /** Session-keyed composer state; intentionally memory-only for attachment privacy. */
-    val composerDraftStore: ChatComposerDraftStore = InMemoryChatComposerDraftStore()
+    /** Session-keyed composer state; the process runtime installs durable app-private storage. */
+    var composerDraftStore: ChatComposerDraftStore = InMemoryChatComposerDraftStore()
+        private set
+
+    fun installComposerDraftStore(store: ChatComposerDraftStore) {
+        composerDraftStore = store
+    }
+
+    fun persistComposerDraft(key: ChatComposerDraftKey, draft: ChatComposerDraft) {
+        viewModelScope.launch { composerDraftStore.save(key, draft) }
+    }
+
+    fun removeComposerDraft(key: ChatComposerDraftKey) {
+        viewModelScope.launch { composerDraftStore.remove(key) }
+    }
+
+    fun removeComposerDraftSession(connectionId: String, profileId: String, sessionId: String) {
+        viewModelScope.launch {
+            composerDraftStore.removeSession(connectionId, profileId, sessionId)
+        }
+    }
 
     fun addAttachment(attachment: Attachment) {
         _pendingAttachments.update { it + attachment }
@@ -588,6 +610,21 @@ class ChatViewModel : ViewModel() {
 
     fun replacePendingAttachments(attachments: List<Attachment>) {
         _pendingAttachments.value = attachments.toList()
+    }
+
+    fun replaceAttachment(composerId: String, attachment: Attachment) {
+        _pendingAttachments.update { attachments ->
+            var replaced = false
+            val updated = attachments.map { current ->
+                if (current.composerId == composerId) {
+                    replaced = true
+                    attachment
+                } else {
+                    current
+                }
+            }
+            if (replaced) updated else updated + attachment
+        }
     }
 
     fun moveAttachment(fromIndex: Int, toIndex: Int) {
@@ -3435,7 +3472,6 @@ class ChatViewModel : ViewModel() {
                 queuedMessageItems.clear()
                 completedQueueOwnerRuns.clear()
                 publishQueuedMessages()
-                _pendingAttachments.value = emptyList()
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 dismissPendingAskNotification()
@@ -3554,7 +3590,6 @@ class ChatViewModel : ViewModel() {
         activeProfileContextKey = contextKey
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
-        _pendingAttachments.value = emptyList()
         _steerableTurn.value = false
         _steerNotice.value = null
         dismissPendingAskNotification()
@@ -4120,7 +4155,7 @@ class ChatViewModel : ViewModel() {
         switchSession(sessionId)
     }
 
-    fun deleteSession(sessionId: String) {
+    fun deleteSession(sessionId: String, onDeleted: () -> Unit = {}) {
         val handler = chatHandler ?: return
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
@@ -4162,6 +4197,7 @@ class ChatViewModel : ViewModel() {
                 client?.deleteSession(sessionId) == true
             }
             if (success) {
+                onDeleted()
                 // Re-fetch so a server that still has the row can't leave it
                 // resurrected in the drawer; mirrors session create's refresh.
                 refreshSessions()
@@ -6339,6 +6375,7 @@ class ChatViewModel : ViewModel() {
         // Snapshot and clear pending attachments
         val attachments = (queuedMessage?.attachments ?: _pendingAttachments.value).ifEmpty { null }
         if (queuedMessage == null) _pendingAttachments.value = emptyList()
+        val textTransport = prepareTextTransportAttachments(outboundText, attachments.orEmpty())
 
         val messageId = queuedMessage?.id ?: UUID.randomUUID().toString()
 
@@ -6371,7 +6408,7 @@ class ChatViewModel : ViewModel() {
                     .map { it.sessionId }
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
-                send(outboundText, pending.chatId, null, messageId)
+                send(textTransport.message, pending.chatId, null, messageId)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -6391,7 +6428,7 @@ class ChatViewModel : ViewModel() {
             val send = onProactiveReply
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
-                send(outboundText, threadChatIds[activeThread.sessionId], null, messageId)
+                send(textTransport.message, threadChatIds[activeThread.sessionId], null, messageId)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -7875,7 +7912,8 @@ class ChatViewModel : ViewModel() {
         // image_url), but no SSE path carries non-image files, and sessions/runs
         // carry no attachments at all. Text always sends regardless.
         fun warnIfAttachmentsDropped(endpoint: String) {
-            val dropped = attachments.orEmpty().filter { att ->
+            val dropped = prepareTextTransportAttachments(message, attachments.orEmpty())
+                .attachments.filter { att ->
                 if (endpoint == "completions") !att.isImage else true
             }
             if (dropped.isEmpty()) return
@@ -7898,15 +7936,16 @@ class ChatViewModel : ViewModel() {
                 onErrorCb("Gateway unavailable and no API fallback is configured.")
                 return null
             }
+            val prepared = prepareTextTransportAttachments(message, attachments.orEmpty())
             return when (endpoint) {
             "runs" -> {
                 dispatchedSseEndpoint = endpoint
                 updateTurnCheckpointTransport(endpoint)
                 warnIfAttachmentsDropped(endpoint)
                 sseClient.sendRunStream(
-                    message = message,
+                    message = prepared.message,
                     systemMessage = systemMsg,
-                    attachments = attachments,
+                    attachments = prepared.attachments,
                     voiceIntentMessages = voiceIntentMessages,
                     onSessionId = { sid ->
                         handler.setSessionId(sid)
@@ -7932,9 +7971,9 @@ class ChatViewModel : ViewModel() {
                 updateTurnCheckpointTransport(endpoint)
                 warnIfAttachmentsDropped(endpoint)
                 sseClient.sendChatCompletionsStream(
-                    message = message,
+                    message = prepared.message,
                     systemMessage = systemMsg,
-                    attachments = attachments,
+                    attachments = prepared.attachments,
                     voiceIntentMessages = voiceIntentMessages,
                     onSessionId = { /* stateless OpenAI-compatible endpoint */ },
                     onMessageStarted = onMessageStartedCb,
@@ -7977,9 +8016,9 @@ class ChatViewModel : ViewModel() {
                             warnIfAttachmentsDropped(endpoint)
                             delegated = sseClient.sendChatStream(
                                 sessionId = sessionId,
-                                message = message,
+                                message = prepared.message,
                                 systemMessage = systemMsg,
-                                attachments = attachments,
+                                attachments = prepared.attachments,
                                 voiceIntentMessages = voiceIntentMessages,
                                 onSessionId = { /* already set */ },
                                 onMessageStarted = onMessageStartedCb,

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android preserves composer drafts across app restarts.** Text, quote/edit context, and pending attachments remain scoped to their exact connection, profile, and session in bounded app-private no-backup storage, and successful sends remove the saved draft.
+- **Android can turn large pastes into reviewable text attachments.** The default-on Chat setting converts inserts of at least 5,000 characters into a compact attachment while preserving surrounding text; Gateway uploads the file through upstream Hermes and fallback transports retain the pasted content as text.
+
+### Fixed
+
+- **The Android software keyboard exposes Return in the multiline composer.** The dedicated composer button sends, while physical Enter, Shift+Enter, and caret-arrow behavior remain unchanged. (#367)
+
 ## [1.9.1] - 2026-08-16
 
 ### Added

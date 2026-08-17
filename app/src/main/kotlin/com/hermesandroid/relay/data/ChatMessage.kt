@@ -328,7 +328,13 @@ data class Attachment(
      * existing outbound/inbound call site stays valid and unflagged media
      * renders exactly as before.
      */
-    val sensitive: Boolean = false
+    val sensitive: Boolean = false,
+    /** Local composer metadata; never serialized onto the Hermes wire. */
+    val isLargePaste: Boolean = false,
+    /** Stable id for an asynchronous composer preparation; never sent to Hermes. */
+    val composerId: String? = null,
+    /** Raw UTF-8 text retained only while a large-paste attachment is preparing. */
+    val composerRawText: String? = null,
 ) {
     val isImage: Boolean get() = contentType.startsWith("image/")
 

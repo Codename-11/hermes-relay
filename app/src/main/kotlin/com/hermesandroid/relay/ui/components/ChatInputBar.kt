@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -187,9 +186,12 @@ fun ChatInputBar(
     modifier: Modifier = Modifier,
     surfaceModifier: Modifier = Modifier,
     enabled: Boolean = true,
+    submitEnabled: Boolean = true,
     physicalEnterSends: Boolean = true,
+    largePasteThreshold: Int? = null,
+    onLargePaste: (String) -> Unit = {},
 ) {
-    val canSubmit = enabled && trailing in setOf(
+    val canSubmit = enabled && submitEnabled && trailing in setOf(
         ChatInputTrailing.SEND,
         ChatInputTrailing.STEER,
         ChatInputTrailing.QUEUE,
@@ -345,7 +347,16 @@ fun ChatInputBar(
                 ) {
                     BasicTextField(
                         value = value,
-                        onValueChange = { if (it.length <= charLimit) onValueChange(it) },
+                        onValueChange = { updated ->
+                            val converted = largePasteThreshold
+                                ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
+                            if (converted != null) {
+                                onValueChange(converted.remainingText)
+                                onLargePaste(converted.insertedText)
+                            } else if (updated.length <= charLimit) {
+                                onValueChange(updated)
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 30.dp)
@@ -382,10 +393,10 @@ fun ChatInputBar(
                         enabled = enabled,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onSend = { if (canSubmit) onSend() },
+                            // The field is multiline and already has a dedicated
+                            // send button. Leave the software keyboard action as
+                            // Return; hardware Enter remains handled above.
+                            imeAction = ImeAction.Default,
                         ),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             color = MaterialTheme.colorScheme.onSurface,
@@ -521,12 +532,12 @@ fun ChatInputBar(
                             when (state) {
                                 ChatInputTrailing.SEND -> IconButton(
                                     onClick = onSend,
-                                    enabled = enabled,
+                                    enabled = canSubmit,
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
                                         contentDescription = stringResource(R.string.chat_input_send_message),
-                                        tint = if (enabled) MaterialTheme.colorScheme.primary
+                                        tint = if (canSubmit) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -580,7 +591,7 @@ fun ChatInputBar(
 
                                 ChatInputTrailing.STEER -> IconButton(
                                     onClick = onSend,
-                                    enabled = enabled,
+                                    enabled = canSubmit,
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
@@ -591,7 +602,7 @@ fun ChatInputBar(
 
                                 ChatInputTrailing.QUEUE -> IconButton(
                                     onClick = onSend,
-                                    enabled = enabled,
+                                    enabled = canSubmit,
                                 ) {
                                     Box {
                                         Icon(
@@ -618,6 +629,39 @@ fun ChatInputBar(
         }
     }
 }
+}
+
+internal data class LargeTextInsertion(
+    val insertedText: String,
+    val remainingText: String,
+)
+
+/** Finds one large contiguous edit without requiring clipboard access or retaining clipboard data. */
+internal fun detectLargeTextInsertion(
+    previous: String,
+    updated: String,
+    threshold: Int,
+): LargeTextInsertion? {
+    if (threshold <= 0 || updated == previous) return null
+    val prefixLength = previous.commonPrefixWith(updated).length
+    val maxSuffixLength = minOf(
+        previous.length - prefixLength,
+        updated.length - prefixLength,
+    )
+    var suffixLength = 0
+    while (
+        suffixLength < maxSuffixLength &&
+        previous[previous.lastIndex - suffixLength] == updated[updated.lastIndex - suffixLength]
+    ) {
+        suffixLength++
+    }
+    val insertedEnd = updated.length - suffixLength
+    val inserted = updated.substring(prefixLength, insertedEnd)
+    if (inserted.length < threshold) return null
+    return LargeTextInsertion(
+        insertedText = inserted,
+        remainingText = updated.removeRange(prefixLength, insertedEnd),
+    )
 }
 
 @Composable

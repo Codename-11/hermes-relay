@@ -3424,3 +3424,44 @@ silently destroying existing phone or Relay-host choices. Older Gateways keep
 their prior behavior, credentials never return to or enter Android logs, and
 phone-local pet packs remain local. Physical two-client/avatar/pet and
 shared-versus-isolated first-turn/voice certification remains required.
+
+---
+
+## ADR 62 — Android composer drafts are durable and large pastes stay reviewable
+
+**Status:** Accepted (2026-08-17).
+
+**Context.** Session-scoped drafts previously lived only in the process-owned
+ViewModel. They survived navigation and Activity recreation, but process death
+discarded them. Profile and connection switches could also clear the shared
+pending-attachment list before the composer's key-change effect saved it. The
+4,096-character default message limit rejected larger clipboard inserts before
+the user could review or send them as files.
+
+**Decision.** The composer remains keyed by stable connection, owning profile,
+session, and draft slot. Its production store writes small JSON metadata plus
+content-addressed attachment blobs under Android's app-private no-backup
+directory. Writes run on IO, use replace-safe temporary files, retain at most
+64 drafts and 128 MB of blobs outside the active draft, and collect unreferenced
+blobs after send, removal, or pruning. Chat debounces ordinary edits, flushes
+the latest snapshot on lifecycle stop, removes the active draft immediately
+after a successful dispatch, and saves the previous owner before restoring a
+session/profile/connection destination. Pending attachments are no longer
+cleared by the profile-switch owner before that handoff.
+
+A device-wide Chat setting, on by default, treats one insertion of at least
+5,000 characters as pasted text. Android immediately replaces that insertion
+with a loading `pasted-text.txt` card, prepares UTF-8/Base64 content off the UI
+thread, and disables only submission until the attachment is ready. The
+surrounding composer text remains editable. Gateway delivers the file through
+upstream `file.attach`. Because vanilla API-server SSE and proactive Thread
+transports have no generic-file channel, Android materializes this client-made
+text attachment back into the outgoing text for those paths while retaining
+ordinary supported attachments and their existing failure behavior.
+
+**Consequences.** Closing or recreating the app no longer discards reviewed
+composer work, navigation cannot rebind a draft or attachment to another agent,
+and large structured pastes remain visible before send without making the
+default path depend on Relay. Draft content stays local, is excluded from cloud
+backup, is cleared on uninstall, and remains subject to the app's attachment
+size limit.
