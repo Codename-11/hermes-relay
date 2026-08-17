@@ -172,6 +172,11 @@ class DataManager(
 
     suspend fun restoreConnectionBackup(backup: AppBackup) {
         val store = connectionStore ?: return
+        // Validate every credential before deleting or replacing any current
+        // encrypted state. A malformed/hostile backup fails atomically.
+        backup.connectionSecrets.forEach { secret ->
+            AuthManager.validateStoredSecrets(secret.auth)
+        }
         deleteSensitivePreferenceFiles()
         store.replaceConnections(
             connections = backup.connections,

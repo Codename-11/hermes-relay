@@ -109,6 +109,30 @@ class HermesApiClientTest {
         }
     }
 
+    @Test
+    fun malformedMultilineApiCredentialFailsBeforeAuthorizationHeaderConstruction() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val result = HermesApiClient(
+                server.url("/").toString(),
+                "first-line\nsecond-line",
+            ).checkHealthDetailed()
+
+            assertTrue(result is HealthCheckResult.Unhealthy)
+            val message = (result as HealthCheckResult.Unhealthy).message
+            assertEquals(
+                "Invalid API credential — enter or import a single-line value.",
+                message,
+            )
+            assertFalse(message.contains("first-line"))
+            assertFalse(message.contains("second-line"))
+            assertEquals(0, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
     // --- HealthCheckResult sealed interface ---
 
     @Test

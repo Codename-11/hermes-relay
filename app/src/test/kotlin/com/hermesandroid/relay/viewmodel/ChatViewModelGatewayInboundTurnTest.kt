@@ -1545,6 +1545,26 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun visibleChatReattachesWhenSocketClosesAfterForegroundPrewarmRace() {
+        persistedHistory = persistedAnswerHistory()
+        viewModel.setChatVisible(true)
+
+        // Foreground arrives while OkHttp still reports the old socket ready,
+        // so the one-shot prewarm is an intentional no-op. The delayed close
+        // callback must itself trigger an exact-session reattach.
+        viewModel.prewarmGateway()
+        serverWs.close(1012, "late background close")
+
+        awaitCondition { gatewayHarness.ticketMints.get() >= 2 }
+        serverWs = gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
+        }
+        assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
     fun gatewayVoiceTurnDoesNotRequireApiFallback() {
         viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
         val params = gatewayHarness.awaitRpc("prompt.submit")

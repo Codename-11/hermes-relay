@@ -2434,6 +2434,7 @@
     <string name="active_section_api_key_not_configured">API key not configured</string>
     <string name="active_section_api_key_optional">API key for direct API</string>
     <string name="active_section_api_key_stored_hint">Key is stored securely.</string>
+    <string name="api_credential_single_line_error">API credentials must be a single line.</string>
     <string name="active_section_api_reachable_voice_review">API reachable — review voice config</string>
     <string name="active_section_api_relay_voice_reachable">API reachable — Relay voice is configured</string>
     <string name="active_section_api_server">API Server</string>

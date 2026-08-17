@@ -2200,6 +2200,7 @@
     <string name="active_section_api_key_not_configured">API キーが構成されていません</string>
     <string name="active_section_api_key_optional">直接 API の API キー</string>
     <string name="active_section_api_key_stored_hint">鍵は安全に保管されます。</string>
+    <string name="api_credential_single_line_error">API 認証情報は 1 行で入力してください。</string>
     <string name="active_section_api_reachable_voice_review">API に到達可能 — 音声設定を確認してください</string>
     <string name="active_section_api_relay_voice_reachable">API 到達可能 — Relay 音声が設定されています</string>
     <string name="active_section_api_server">API サーバー</string>

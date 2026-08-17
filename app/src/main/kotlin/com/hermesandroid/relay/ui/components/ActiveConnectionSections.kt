@@ -821,12 +821,21 @@ private fun ManualUrlSubsection(
     val apiServerUrl by connectionViewModel.apiServerUrl.collectAsState()
     val relayUrl by connectionViewModel.relayUrl.collectAsState()
     val apiKeyPresent by connectionViewModel.authManager.apiKeyPresent.collectAsState()
+    val savedApiKeyError by connectionViewModel.authManager.apiKeyError.collectAsState()
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
 
     // Keyed on the backing URL so a connection switch refreshes the input.
     var apiUrlInput by remember(apiServerUrl) { mutableStateOf(apiServerUrl) }
     var apiKeyInput by remember { mutableStateOf("") }
     var apiKeyVisible by remember { mutableStateOf(false) }
+    val apiKeySingleLineError = stringResource(R.string.api_credential_single_line_error)
+    val inputApiKeyError = remember(apiKeyInput, apiKeySingleLineError) {
+        if (apiKeyInput.trim(' ', '\t').any { it < '!' || it > '~' }) {
+            apiKeySingleLineError
+        } else {
+            null
+        }
+    }
     var relayUrlInput by remember(relayUrl) { mutableStateOf(relayUrl) }
     var isTestingApi by remember { mutableStateOf(false) }
     var apiVoiceSetupResult by remember {
@@ -900,13 +909,14 @@ private fun ManualUrlSubsection(
         },
         supportingText = {
             Text(
-                if (apiKeyPresent && apiKeyInput.isBlank()) {
+                inputApiKeyError ?: savedApiKeyError ?: if (apiKeyPresent && apiKeyInput.isBlank()) {
                     apiKeyStoredHint
                 } else {
                     apiKeyNeededHint
                 },
             )
         },
+        isError = inputApiKeyError != null || (apiKeyInput.isBlank() && savedApiKeyError != null),
         singleLine = true,
         visualTransformation = if (apiKeyVisible) {
             VisualTransformation.None
@@ -962,7 +972,7 @@ private fun ManualUrlSubsection(
                     ).show()
                 }
             },
-            enabled = apiUrlInput.isNotBlank() && !isTestingApi,
+            enabled = apiUrlInput.isNotBlank() && !isTestingApi && inputApiKeyError == null,
         ) {
             Text(saveAndTestText)
         }

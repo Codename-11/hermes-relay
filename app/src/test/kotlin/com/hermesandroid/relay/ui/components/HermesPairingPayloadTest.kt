@@ -27,6 +27,20 @@ import org.junit.Test
 class HermesPairingPayloadTest {
 
     @Test
+    fun multilineApiCredentialIsRejectedAcrossPairingQrShapes() {
+        assertNull(
+            parseHermesPairingQr(
+                """{"api_url":"https://example.test:8642","api_key":"first\nsecond"}""",
+            ),
+        )
+        assertNull(
+            parseHermesPairingQr(
+                """{"host":"example.test","port":8642,"key":"first\nsecond","tls":true}""",
+            ),
+        )
+    }
+
+    @Test
     fun v1LegacyPayload_synthesizesLanEndpoint() {
         // v1 QR: no `hermes` field at all. Defaults to version 1. Parser
         // must synthesize a single priority-0 LAN endpoint from the

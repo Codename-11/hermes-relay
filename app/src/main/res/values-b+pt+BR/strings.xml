@@ -2091,6 +2091,7 @@
     <string name="active_section_api_key_not_configured">Chave da API não configurada</string>
     <string name="active_section_api_key_optional">Chave da API direta</string>
     <string name="active_section_api_key_stored_hint">A chave está armazenada com segurança.</string>
+    <string name="api_credential_single_line_error">As credenciais da API devem estar em uma única linha.</string>
     <string name="active_section_api_reachable_voice_review">API acessível — revise a configuração de voz</string>
     <string name="active_section_api_relay_voice_reachable">API acessível — a voz do Relay está configurada</string>
     <string name="active_section_api_server">Servidor API</string>

@@ -1996,6 +1996,7 @@
     <string name="active_section_api_key_not_configured">Clave API no configurada</string>
     <string name="active_section_api_key_optional">Clave API para API directa</string>
     <string name="active_section_api_key_stored_hint">La clave se almacena de forma segura.</string>
+    <string name="api_credential_single_line_error">Las credenciales de API deben estar en una sola línea.</string>
     <string name="active_section_api_reachable_voice_review">API accesible: revisar la configuración de voz</string>
     <string name="active_section_api_relay_voice_reachable">API accesible: la voz Relay está configurada</string>
     <string name="active_section_api_server">Servidor API</string>

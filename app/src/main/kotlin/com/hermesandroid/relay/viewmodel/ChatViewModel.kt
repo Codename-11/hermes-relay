@@ -1756,6 +1756,9 @@ class ChatViewModel : ViewModel() {
      */
     private var gatewayClient: GatewayChatClient? = null
     private var gatewayHistoryReconcileJob: Job? = null
+    private var gatewayVisibleReattachJob: Job? = null
+    @Volatile
+    private var chatVisible = false
     private var gatewayProcessSource: GatewayProcessSource? = null
     private val gatewayProcessController = GatewayProcessController(viewModelScope)
 
@@ -1790,6 +1793,8 @@ class ChatViewModel : ViewModel() {
         val previousClient = gatewayClient
         val changed = previousClient !== client
         if (changed) {
+            gatewayVisibleReattachJob?.cancel()
+            gatewayVisibleReattachJob = null
             previousClient?.setUnsolicitedTurnProvider(null)
             previousClient?.setColdPrewarmSessionReadyListener(null)
             previousClient?.setUnmatchedTurnCompleteListener(null)
@@ -1889,6 +1894,24 @@ class ChatViewModel : ViewModel() {
             gatewayStateSyncJob?.cancel()
             gatewayStateSyncJob = null
             client?.let { startGatewayStateSync(it) }
+            if (client != null) {
+                gatewayVisibleReattachJob = viewModelScope.launch {
+                    client.connectionState.collect { state ->
+                        if (
+                            state == GatewayConnectionState.Idle &&
+                            chatVisible &&
+                            gatewayClient === client
+                        ) {
+                            // Foreground can race OkHttp's delayed close callback:
+                            // the first prewarm sees the old socket as Ready, then
+                            // the callback moves it to Idle. Re-run from this exact
+                            // client transition so the visible durable session is
+                            // resumed and its authoritative history reconciled.
+                            prewarmGateway()
+                        }
+                    }
+                }
+            }
         }
         when {
             client == null -> {
@@ -2390,6 +2413,17 @@ class ChatViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    /**
+     * Marks whether Chat is currently visible in the foreground. A visible
+     * Gateway chat owns automatic idle-socket reattachment; other tabs and a
+     * backgrounded app retain the normal no-reconnect behavior.
+     */
+    fun setChatVisible(visible: Boolean) {
+        val changed = chatVisible != visible
+        chatVisible = visible
+        if (visible && changed) prewarmGateway()
     }
 
     // === Gateway desktop-parity state ===
@@ -8864,6 +8898,8 @@ class ChatViewModel : ViewModel() {
         publishBackgroundSessionActivity()
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = null
+        gatewayVisibleReattachJob?.cancel()
+        gatewayVisibleReattachJob = null
         backgroundProcessSessionJob?.cancel()
         backgroundProcessSessionJob = null
         gatewayProcessController.close()
