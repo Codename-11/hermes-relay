@@ -100,6 +100,7 @@ import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.network.shared.ProfileApiUrlResolver
+import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
@@ -5403,6 +5404,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         routeCandidatesOverride: List<EndpointCandidate>? = null,
         onResult: (StandardApiSetupResult) -> Unit,
     ) {
+        val normalizedApiKey = runCatching {
+            normalizeCredentialForHeader(apiKey, "API credential")
+        }.getOrElse {
+            onResult(
+                StandardApiSetupResult(
+                    ok = false,
+                    message = it.message ?: "Invalid API credential",
+                    apiReachable = false,
+                    relayPaired = authState.value is AuthState.Paired,
+                ),
+            )
+            return
+        }
         // Bare host/IP input gets http:// and the surface's default port —
         // typing `192.168.1.10` or a Tailscale `100.x.y.z` without a scheme
         // is the common case and used to either block the wizard or silently
@@ -5464,8 +5478,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 relayUrl = routeRelayUrl,
                 routeCandidates = routeCandidates,
             )
-            if (apiKey.isNotBlank()) {
-                authManager.setApiKey(apiKey.trim())
+            if (normalizedApiKey.isNotBlank()) {
+                authManager.setApiKey(normalizedApiKey)
             }
 
             getApplication<Application>().relayDataStore.edit { preferences ->
@@ -5668,6 +5682,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         manualRelayUrlOverride: String?,
         onResult: (ApiVoiceSetupResult) -> Unit,
     ) {
+        val normalizedApiKey = runCatching {
+            normalizeCredentialForHeader(apiKey, "API credential")
+        }.getOrElse {
+            onResult(
+                ApiVoiceSetupResult(
+                    apiReachable = false,
+                    relayUrl = null,
+                    relayAutoDerived = false,
+                    voiceConfigReachable = false,
+                    voiceConfigError = it.message,
+                    voiceRoute = "none",
+                ),
+            )
+            return
+        }
         val trimmedApiUrl = apiUrl.trim()
         val trimmedOverride = manualRelayUrlOverride?.trim().orEmpty()
         val derivedRelayUrl = RelayUrlDeriver.deriveFromApiUrl(trimmedApiUrl)
@@ -5686,8 +5715,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         viewModelScope.launch {
-            if (apiKey.isNotBlank()) {
-                authManager.setApiKey(apiKey.trim())
+            if (normalizedApiKey.isNotBlank()) {
+                authManager.setApiKey(normalizedApiKey)
             }
             getApplication<Application>().relayDataStore.edit { preferences ->
                 preferences[KEY_API_SERVER_URL] = trimmedApiUrl
@@ -5766,8 +5795,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updateApiKey(key: String) {
         viewModelScope.launch {
-            authManager.setApiKey(key)
-            rebuildApiClient()
+            runCatching {
+                authManager.setApiKey(key)
+                rebuildApiClient()
+            }.onFailure {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Api,
+                    severity = DiagnosticSeverity.Warning,
+                    title = "API credential was not saved",
+                    detail = it.message,
+                )
+            }
         }
     }
 

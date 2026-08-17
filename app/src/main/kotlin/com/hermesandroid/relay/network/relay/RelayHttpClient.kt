@@ -299,10 +299,10 @@ class RelayHttpClient(
                 Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
-            Log.w(TAG, "fetchMedia failed for $token: ${e.message}")
+            Log.w(TAG, "fetchMedia failed: ${e.message}")
             Result.failure(e)
         } catch (e: Exception) {
-            Log.w(TAG, "fetchMedia unexpected error for $token: ${e.message}")
+            Log.w(TAG, "fetchMedia unexpected error: ${e.message}")
             Result.failure(e)
         }
     }

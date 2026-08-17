@@ -102,7 +102,11 @@ fun buildPluginProxyClient(
                 ?.takeIf { it.isNotBlank() }
             val request = if (token != null) {
                 chain.request().newBuilder()
-                    .header("X-Hermes-Relay-Session", token)
+                    .credentialHeader(
+                        "X-Hermes-Relay-Session",
+                        token,
+                        "Relay session credential",
+                    )
                     .build()
             } else {
                 chain.request()

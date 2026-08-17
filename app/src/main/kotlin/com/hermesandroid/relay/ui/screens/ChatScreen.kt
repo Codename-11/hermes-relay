@@ -922,6 +922,7 @@ fun ChatScreen(
     // sessions-SSE falls back to bounded persisted-history reconciliation.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
+        chatViewModel.setChatVisible(appForeground && chatReady)
         if (appForeground && chatReady) {
             chatViewModel.prewarmGateway()
         }
@@ -929,6 +930,9 @@ fun ChatScreen(
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
         }
+    }
+    DisposableEffect(chatViewModel) {
+        onDispose { chatViewModel.setChatVisible(false) }
     }
 
     // Cold-open recovery: the dashboard probe that flips gatewayAvailability to

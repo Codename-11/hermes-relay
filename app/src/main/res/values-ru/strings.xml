@@ -2187,6 +2187,7 @@
     <string name="active_section_api_key_not_configured">Ключ API не настроен</string>
     <string name="active_section_api_key_optional">Ключ API для прямого API</string>
     <string name="active_section_api_key_stored_hint">Ключ хранится безопасно.</string>
+    <string name="api_credential_single_line_error">Учетные данные API должны быть указаны в одной строке.</string>
     <string name="active_section_api_reachable_voice_review">API доступен — проверьте настройку голоса</string>
     <string name="active_section_api_relay_voice_reachable">API доступен — голос Relay настроен</string>
     <string name="active_section_api_server">Сервер API</string>
