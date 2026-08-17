@@ -1057,9 +1057,7 @@ internal fun messageSelectionTopologyKey(
     markdownBody: String,
 ): MessageSelectionTopologyKey = when {
     isPlainText -> MessageSelectionTopologyKey(renderer = "plain", markdownBody = null)
-    isStreaming || retainStreamingLayout ->
-        MessageSelectionTopologyKey(renderer = "live", markdownBody = null)
-    else -> MessageSelectionTopologyKey(renderer = "markdown", markdownBody = markdownBody)
+    else -> MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null)
 }
 
 /**

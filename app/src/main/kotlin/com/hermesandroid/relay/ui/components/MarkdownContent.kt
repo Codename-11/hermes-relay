@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -294,34 +295,208 @@ fun StreamingMarkdownContent(
     isStreaming: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    if (isStreaming) {
-        // Keep one stable layout node for the entire live turn. Promoting each
-        // blank-terminated paragraph into Markdown replaced the Text subtree
-        // repeatedly; LazyColumn then exposed its fallback anchor for a frame,
-        // which looked like the whole chat reloaded. Updating this Text value
-        // only remeasures the growing bubble. Full Markdown is parsed once the
-        // owning row releases its stable live-tail layout.
-        Text(
-            // CommonMark ignores blank lines before the first block. The live
-            // Text renderer must do the same or a response whose transport
-            // prefix contains newlines appears to start several lines down.
-            // Preserve indentation on the first non-blank line so indented
-            // code and deliberately spaced prose are not altered.
-            text = content.withoutLeadingBlankLines(),
-            modifier = modifier,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
-                lineHeight = 21.sp,
-            ),
-            color = textColor,
-        )
-    } else {
-        MarkdownContent(
-            content = content,
-            textColor = textColor,
-            modifier = modifier,
-        )
+    val partitionState = remember { StreamingMarkdownState() }
+    val partition = partitionState.update(content, finalizeTail = !isStreaming)
+    Column(modifier = modifier) {
+        partition.blocks.forEach { block ->
+            // Start offsets never move as the response grows. Already-promoted
+            // Markdown therefore keeps its composition/selection identity while
+            // only the live tail is remeasured or promoted.
+            key(block.startOffset) {
+                MarkdownContent(
+                    content = block.content,
+                    textColor = textColor,
+                )
+            }
+        }
+        partition.tail?.let { tail ->
+            key(tail.startOffset) {
+                Text(
+                    text = tail.content,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                    ),
+                    color = textColor,
+                )
+            }
+        }
     }
+}
+
+internal data class StreamingMarkdownBlock(
+    val startOffset: Int,
+    val content: String,
+)
+
+internal data class StreamingMarkdownPartition(
+    val blocks: List<StreamingMarkdownBlock>,
+    val tail: StreamingMarkdownBlock?,
+)
+
+/** Retains immutable promoted blocks and rescans only the unfinished suffix. */
+internal class StreamingMarkdownState {
+    private var previousContent: String? = null
+    private var previousPartition = StreamingMarkdownPartition(emptyList(), null)
+    private var previousFinalized = false
+
+    internal var lastScanStart: Int = 0
+        private set
+
+    fun update(source: String, finalizeTail: Boolean): StreamingMarkdownPartition {
+        val content = source.withoutLeadingBlankLines()
+        val previous = previousContent
+        if (content == previous && finalizeTail == previousFinalized) {
+            return previousPartition
+        }
+        val canAppend = previous != null &&
+            !previousFinalized &&
+            content.startsWith(previous)
+        val scanStart = if (canAppend) {
+            previousPartition.tail?.startOffset ?: previous.length
+        } else {
+            0
+        }
+        val stableBlocks = if (canAppend) previousPartition.blocks else emptyList()
+
+        lastScanStart = scanStart
+        previousPartition = partitionStreamingMarkdownNormalized(
+            content = content,
+            startOffset = scanStart,
+            stableBlocks = stableBlocks,
+            finalizeTail = finalizeTail,
+        )
+        previousContent = content
+        previousFinalized = finalizeTail
+        return previousPartition
+    }
+}
+
+/**
+ * Splits an accumulating response into immutable Markdown blocks plus one live
+ * plain-text tail. A block is promoted only after a blank-line boundary, or a
+ * newline-terminated matching fenced-code close. That conservative boundary
+ * means inline delimiters, links, tables, list markers, and malformed fences
+ * can arrive across arbitrary transport chunks without reparsing an earlier
+ * selectable subtree.
+ */
+internal fun partitionStreamingMarkdown(
+    source: String,
+    finalizeTail: Boolean,
+): StreamingMarkdownPartition {
+    val content = source.withoutLeadingBlankLines()
+    return partitionStreamingMarkdownNormalized(
+        content = content,
+        startOffset = 0,
+        stableBlocks = emptyList(),
+        finalizeTail = finalizeTail,
+    )
+}
+
+private fun partitionStreamingMarkdownNormalized(
+    content: String,
+    startOffset: Int,
+    stableBlocks: List<StreamingMarkdownBlock>,
+    finalizeTail: Boolean,
+): StreamingMarkdownPartition {
+    if (content.isEmpty()) return StreamingMarkdownPartition(emptyList(), null)
+
+    val blocks = stableBlocks.toMutableList()
+    var blockStart = startOffset
+    var lineStart = startOffset
+    var fence: MarkdownFence? = null
+
+    while (lineStart < content.length) {
+        val newline = content.indexOf('\n', lineStart)
+        if (newline < 0) break
+        val lineEnd = newline + 1
+        val line = content.substring(lineStart, newline).removeSuffix("\r")
+
+        val activeFence = fence
+        if (activeFence != null) {
+            if (line.closes(activeFence)) {
+                blocks += StreamingMarkdownBlock(
+                    startOffset = blockStart,
+                    content = content.substring(blockStart, lineEnd),
+                )
+                blockStart = lineEnd
+                fence = null
+            }
+        } else {
+            val openingFence = line.openingFenceOrNull()
+            when {
+                openingFence != null -> fence = openingFence
+                line.isBlank() -> {
+                    val candidate = content.substring(blockStart, lineStart)
+                    when {
+                        candidate.isBlank() -> blockStart = lineEnd
+                        !candidate.containsPotentialReferenceSyntax() -> {
+                            blocks += StreamingMarkdownBlock(
+                                startOffset = blockStart,
+                                content = content.substring(blockStart, lineEnd),
+                            )
+                            blockStart = lineEnd
+                        }
+                    }
+                }
+            }
+        }
+        lineStart = lineEnd
+    }
+
+    val remaining = content.substring(blockStart)
+    if (remaining.isNotEmpty()) {
+        if (finalizeTail) {
+            blocks += StreamingMarkdownBlock(blockStart, remaining)
+        } else {
+            return StreamingMarkdownPartition(
+                blocks = blocks,
+                tail = StreamingMarkdownBlock(blockStart, remaining),
+            )
+        }
+    }
+    return StreamingMarkdownPartition(blocks = blocks, tail = null)
+}
+
+private data class MarkdownFence(val marker: Char, val length: Int)
+
+private fun String.openingFenceOrNull(): MarkdownFence? {
+    val candidate = dropWhileLimitedSpaces(maxSpaces = 3)
+    val marker = candidate.firstOrNull()?.takeIf { it == '`' || it == '~' } ?: return null
+    val length = candidate.takeWhile { it == marker }.length
+    if (length < 3) return null
+    if (marker == '`' && candidate.drop(length).contains('`')) return null
+    return MarkdownFence(marker, length)
+}
+
+private fun String.closes(fence: MarkdownFence): Boolean {
+    val candidate = dropWhileLimitedSpaces(maxSpaces = 3)
+    val markerLength = candidate.takeWhile { it == fence.marker }.length
+    return markerLength >= fence.length && candidate.drop(markerLength).isBlank()
+}
+
+private fun String.dropWhileLimitedSpaces(maxSpaces: Int): String {
+    var count = 0
+    while (count < length && count < maxSpaces && this[count] == ' ') count++
+    return substring(count)
+}
+
+/**
+ * Reference links/definitions have document scope. Keep their segment live
+ * until finalization rather than freezing an unresolved label in an earlier
+ * independently parsed Markdown block. Inline links (`[text](url)`) are local
+ * and can still promote at the normal blank-line boundary.
+ */
+private fun String.containsPotentialReferenceSyntax(): Boolean {
+    var open = indexOf('[')
+    while (open >= 0) {
+        val escaped = open > 0 && this[open - 1] == '\\'
+        val close = indexOf(']', startIndex = open + 1)
+        if (close < 0) return false
+        if (!escaped && getOrNull(close + 1) != '(') return true
+        open = indexOf('[', startIndex = close + 1)
+    }
+    return false
 }
 
 internal fun String.withoutLeadingBlankLines(): String {

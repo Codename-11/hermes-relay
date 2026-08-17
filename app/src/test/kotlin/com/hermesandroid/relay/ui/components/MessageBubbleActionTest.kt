@@ -4,7 +4,6 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,7 +65,7 @@ class MessageBubbleActionTest {
     }
 
     @Test
-    fun partialSelection_resetsOnlyWhenSelectableTopologyChanges() {
+    fun partialSelection_keepsOneTopologyAcrossStreamingAndFinalization() {
         val initialLive = messageSelectionTopologyKey(
             isPlainText = false,
             isStreaming = true,
@@ -100,12 +99,12 @@ class MessageBubbleActionTest {
 
         assertEquals(initialLive, updatedLive)
         assertEquals(initialLive, retainedLive)
-        assertNotEquals(initialLive, settledMarkdown)
-        assertNotEquals(settledMarkdown, revisedMarkdown)
+        assertEquals(initialLive, settledMarkdown)
+        assertEquals(settledMarkdown, revisedMarkdown)
     }
 
     @Test
-    fun completedAssistantSyntax_selectsMarkdownRendererWithoutChangingContent() {
+    fun completedAssistantSyntax_usesStableStreamingMarkdownRenderer() {
         val completedBodies = listOf(
             "```kotlin\nval answer = 42\n```",
             "- first\n- second",
@@ -115,7 +114,7 @@ class MessageBubbleActionTest {
 
         completedBodies.forEach { body ->
             assertEquals(
-                MessageSelectionTopologyKey(renderer = "markdown", markdownBody = body),
+                MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null),
                 messageSelectionTopologyKey(
                     isPlainText = false,
                     isStreaming = false,
@@ -127,11 +126,11 @@ class MessageBubbleActionTest {
     }
 
     @Test
-    fun interruptedPartialReply_selectsSettledMarkdownRenderer() {
+    fun interruptedPartialReply_keepsStableStreamingMarkdownRenderer() {
         val partialFence = "```kotlin\nval partial ="
 
         assertEquals(
-            MessageSelectionTopologyKey(renderer = "markdown", markdownBody = partialFence),
+            MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null),
             messageSelectionTopologyKey(
                 isPlainText = false,
                 isStreaming = false,
