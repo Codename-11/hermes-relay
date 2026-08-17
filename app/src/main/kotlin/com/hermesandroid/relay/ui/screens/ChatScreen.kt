@@ -130,6 +130,7 @@ import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import com.hermesandroid.relay.ui.components.resolveSessionModelUiState
+import com.hermesandroid.relay.ui.components.rememberAccessibleMotionState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -274,7 +275,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -444,6 +448,72 @@ internal fun ownedBottomFollowScroll(
     // new-message auto-follow when smooth auto-scroll is disabled.
     if (!sameTranscript && !current.followTailGrowth) return 0
     return requiredBottomFollowScroll(previous, current)
+}
+
+/**
+ * One frame of the live bottom-follow ramp. The maximum step is derived from
+ * the viewport, never the transcript distance, so a long session cannot make
+ * token updates accelerate into a full-list race. The symmetric braking limit
+ * keeps the last few frames from stopping abruptly.
+ */
+internal fun boundedBottomFollowStep(
+    remainingPx: Int,
+    previousStepPx: Int,
+    viewportHeightPx: Int,
+    motionEnabled: Boolean,
+): Int {
+    if (remainingPx <= 0) return 0
+    if (!motionEnabled) return remainingPx
+
+    val maxStep = (viewportHeightPx / 14).coerceIn(12, 56)
+    val acceleration = (maxStep / 5).coerceAtLeast(3)
+    val accelerated = (previousStepPx + acceleration).coerceIn(acceleration, maxStep)
+    val brakingLimit = kotlin.math.sqrt(
+        2.0 * acceleration.toDouble() * remainingPx.toDouble(),
+    ).toInt().coerceAtLeast(acceleration)
+    return minOf(remainingPx, accelerated, brakingLimit)
+}
+
+internal fun shouldInitiallyPositionConversation(
+    positionedSessionId: String?,
+    currentSessionId: String?,
+    isLoadingHistory: Boolean,
+    hasMessages: Boolean,
+): Boolean = currentSessionId != null &&
+    positionedSessionId != currentSessionId &&
+    !isLoadingHistory &&
+    hasMessages
+
+internal enum class ChatFollowEvent {
+    UserSend,
+    UserMovedAway,
+    ReturnedToBottom,
+    JumpToLatest,
+    StreamStarted,
+    StreamUpdated,
+    QueuedTurnStarted,
+    TurnCompleted,
+    HistoryRefreshed,
+    AppResumed,
+}
+
+/** User intent is the only state transition; transport/layout events retain it. */
+internal fun reduceUserScrolledAway(
+    current: Boolean,
+    event: ChatFollowEvent,
+): Boolean = when (event) {
+    ChatFollowEvent.UserSend,
+    ChatFollowEvent.ReturnedToBottom,
+    ChatFollowEvent.JumpToLatest -> false
+
+    ChatFollowEvent.UserMovedAway -> true
+
+    ChatFollowEvent.StreamStarted,
+    ChatFollowEvent.StreamUpdated,
+    ChatFollowEvent.QueuedTurnStarted,
+    ChatFollowEvent.TurnCompleted,
+    ChatFollowEvent.HistoryRefreshed,
+    ChatFollowEvent.AppResumed -> current
 }
 
 internal fun shouldFollowImeAfterInsetChange(
@@ -959,6 +1029,7 @@ fun ChatScreen(
 
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
+    val accessibleMotion = rememberAccessibleMotionState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
     val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
@@ -1158,6 +1229,7 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     PetInteractionLayer(
         owner = "chat-interaction-layer",
@@ -1201,6 +1273,13 @@ fun ChatScreen(
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
+        // Sending is an explicit "follow my turn" action, including when it
+        // queues behind an active run. Automatic queued-turn handoff itself
+        // never re-arms follow after the reader has deliberately moved away.
+        userScrolledAwayState.value = reduceUserScrolledAway(
+            current = userScrolledAwayState.value,
+            event = ChatFollowEvent.UserSend,
+        )
         activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
         quotedMessage = null
         if (closeDrawerOnSend && drawerState.isOpen) {
@@ -1509,7 +1588,7 @@ fun ChatScreen(
     // streaming auto-scroll effect respects this — it will not yank the
     // user back to the latest token while they are reading history.
     // Reset to false the moment the user returns to the bottom.
-    var userScrolledAway by remember(currentSessionId) { mutableStateOf(false) }
+    var userScrolledAway by userScrolledAwayState
     var isUserDragging by remember(currentSessionId) { mutableStateOf(false) }
     var programmaticBottomScroll by remember { mutableStateOf(false) }
     var retainedLiveTailUiKey by remember(currentSessionId) { mutableStateOf<String?>(null) }
@@ -1563,7 +1642,10 @@ fun ChatScreen(
                 // settlement must reach the real LazyColumn boundary.
                 slopPx = 0,
             )
-            userScrolledAway = false
+            userScrolledAway = reduceUserScrolledAway(
+                current = userScrolledAway,
+                event = ChatFollowEvent.JumpToLatest,
+            )
         } finally {
             programmaticBottomScroll = false
         }
@@ -1587,7 +1669,14 @@ fun ChatScreen(
                 }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> {
                     isUserDragging = false
-                    userScrolledAway = !listState.isAtConversationBottom(atBottomSlopPx)
+                    userScrolledAway = reduceUserScrolledAway(
+                        current = userScrolledAway,
+                        event = if (listState.isAtConversationBottom(atBottomSlopPx)) {
+                            ChatFollowEvent.ReturnedToBottom
+                        } else {
+                            ChatFollowEvent.UserMovedAway
+                        },
+                    )
                 }
             }
         }
@@ -1624,7 +1713,12 @@ fun ChatScreen(
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
     LaunchedEffect(isAtBottom) {
-        if (isAtBottom) userScrolledAway = false
+        if (isAtBottom) {
+            userScrolledAway = reduceUserScrolledAway(
+                current = userScrolledAway,
+                event = ChatFollowEvent.ReturnedToBottom,
+            )
+        }
     }
 
     // IME insets arrive as an animation, not one layout. Wait until inset
@@ -1841,9 +1935,18 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(currentSessionId, isLoadingHistory) {
-        if (!isLoadingHistory && currentSessionId != null && messages.isNotEmpty()) {
+    var positionedSessionId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentSessionId, isLoadingHistory, messages.isNotEmpty()) {
+        if (
+            shouldInitiallyPositionConversation(
+                positionedSessionId = positionedSessionId,
+                currentSessionId = currentSessionId,
+                isLoadingHistory = isLoadingHistory,
+                hasMessages = messages.isNotEmpty(),
+            )
+        ) {
             scrollConversationToBottom(animated = false)
+            positionedSessionId = currentSessionId
         }
     }
 
@@ -1872,12 +1975,6 @@ fun ChatScreen(
                 previous.messageCount != tailTransition.messageCount ||
                 previous.lastMessageUiKey != tailTransition.lastMessageUiKey)
 
-        if (streamStarted) {
-            // Sending a turn means "follow my new answer" even if the idle
-            // transcript had previously been left above the bottom. Do not
-            // clear isUserDragging: a real finger keeps priority until release.
-            userScrolledAway = false
-        }
         retainedLiveTailUiKey = retainedLiveTailAfterTransition(
             retainedUiKey = retainedLiveTailUiKey,
             streamStarted = streamStarted,
@@ -1887,7 +1984,7 @@ fun ChatScreen(
 
         val shouldAnchor = smoothAutoScroll &&
             !isUserDragging &&
-            (!userScrolledAway || streamStarted) &&
+            !userScrolledAway &&
             (streamStarted || streamCompleted || tailStructureChanged)
         if (shouldAnchor) {
             listState.requestScrollToItem(tailTransition.messageCount + 1)
@@ -1955,8 +2052,46 @@ fun ChatScreen(
                 )
                 previousLayout = current
                 if (scrollPx > 0) {
-                    listState.scroll(MutatePriority.Default) {
-                        scrollBy(scrollPx.toFloat())
+                    val viewportHeight = current.viewportHeightPx.coerceAtLeast(1)
+                    try {
+                        if (scrollPx > viewportHeight) {
+                            // A large Markdown/table remeasure or restored turn can
+                            // exceed a viewport. Snap once to the stable footer;
+                            // never animate across the transcript at a velocity
+                            // proportional to its total distance.
+                            val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                            if (lastIndex >= 0) listState.scrollToItem(lastIndex)
+                        } else {
+                            listState.scroll(MutatePriority.Default) {
+                                var remaining = scrollPx
+                                var previousStep = 0
+                                while (
+                                    remaining > 0 &&
+                                    !isUserDragging &&
+                                    !userScrolledAway
+                                ) {
+                                    val step = boundedBottomFollowStep(
+                                        remainingPx = remaining,
+                                        previousStepPx = previousStep,
+                                        viewportHeightPx = viewportHeight,
+                                        motionEnabled = animationEnabled &&
+                                            accessibleMotion.osAnimations &&
+                                            !accessibleMotion.touchExploration,
+                                    )
+                                    val consumed = scrollBy(step.toFloat()).toInt()
+                                    if (consumed <= 0) break
+                                    remaining = (remaining - consumed).coerceAtLeast(0)
+                                    previousStep = step
+                                    if (remaining > 0) withFrameNanos { }
+                                }
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        // User-input mutations have higher priority and cancel
+                        // either follow path immediately. Preserve parent/effect
+                        // cancellation, but let a drag merely stop this request
+                        // rather than kill the long-lived follow owner.
+                        if (!currentCoroutineContext().isActive) throw cancelled
                     }
                 } else if (correctLateLayout) {
                     val lastIndex = listState.layoutInfo.totalItemsCount - 1
@@ -1965,6 +2100,8 @@ fun ChatScreen(
                         try {
                             listState.scrollToItem(lastIndex)
                             userScrolledAway = false
+                        } catch (cancelled: CancellationException) {
+                            if (!currentCoroutineContext().isActive) throw cancelled
                         } finally {
                             programmaticBottomScroll = false
                         }
@@ -4260,6 +4397,10 @@ fun ChatScreen(
                 enabled = chatReady,
                 onSend = { text ->
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    userScrolledAwayState.value = reduceUserScrolledAway(
+                        current = userScrolledAwayState.value,
+                        event = ChatFollowEvent.UserSend,
+                    )
                     chatViewModel.sendMessage(text)
                 },
                 onExit = { ambientMode = false },

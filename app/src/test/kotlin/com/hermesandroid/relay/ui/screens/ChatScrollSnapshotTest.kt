@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatScrollSnapshotTest {
@@ -366,6 +367,97 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
+    fun `bounded follow ramps without transcript-distance velocity`() {
+        val shortSteps = followSteps(distance = 480, viewportHeight = 840)
+        val longSteps = followSteps(distance = 48_000, viewportHeight = 840)
+
+        assertTrue(shortSteps.take(3).zipWithNext().all { (a, b) -> b >= a })
+        assertTrue(shortSteps.takeLast(3).zipWithNext().all { (a, b) -> b <= a })
+        assertTrue(longSteps.max() <= 56)
+        assertEquals(shortSteps.max(), longSteps.max())
+        assertEquals(480, shortSteps.sum())
+        assertEquals(48_000, longSteps.sum())
+    }
+
+    @Test
+    fun `reduced motion consumes the measured delta without animation frames`() {
+        assertEquals(
+            720,
+            boundedBottomFollowStep(
+                remainingPx = 720,
+                previousStepPx = 0,
+                viewportHeightPx = 840,
+                motionEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `history refresh and resume preserve an already positioned session`() {
+        assertEquals(
+            false,
+            shouldInitiallyPositionConversation(
+                positionedSessionId = "session-a",
+                currentSessionId = "session-a",
+                isLoadingHistory = false,
+                hasMessages = true,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldInitiallyPositionConversation(
+                positionedSessionId = "session-a",
+                currentSessionId = "session-b",
+                isLoadingHistory = false,
+                hasMessages = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `only clear user actions rearm bottom follow`() {
+        val passiveEvents = listOf(
+            ChatFollowEvent.StreamStarted,
+            ChatFollowEvent.StreamUpdated,
+            ChatFollowEvent.QueuedTurnStarted,
+            ChatFollowEvent.TurnCompleted,
+            ChatFollowEvent.HistoryRefreshed,
+            ChatFollowEvent.AppResumed,
+        )
+
+        passiveEvents.forEach { event ->
+            assertEquals(true, reduceUserScrolledAway(current = true, event = event))
+        }
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.UserSend),
+        )
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.ReturnedToBottom),
+        )
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.JumpToLatest),
+        )
+    }
+
+    @Test
+    fun `user movement cancels follow until explicitly rearmed`() {
+        val movedAway = reduceUserScrolledAway(
+            current = false,
+            event = ChatFollowEvent.UserMovedAway,
+        )
+        val stillAway = reduceUserScrolledAway(
+            current = movedAway,
+            event = ChatFollowEvent.StreamUpdated,
+        )
+
+        assertEquals(true, movedAway)
+        assertEquals(true, stillAway)
+    }
+
+    @Test
     fun `stream start captures the live tail renderer`() {
         assertEquals(
             "assistant-live",
@@ -473,4 +565,22 @@ class ChatScrollSnapshotTest {
         followTailGrowth = followTailGrowth,
         followViewportResize = followViewportResize,
     )
+
+    private fun followSteps(distance: Int, viewportHeight: Int): List<Int> {
+        var remaining = distance
+        var previous = 0
+        return buildList {
+            while (remaining > 0) {
+                val step = boundedBottomFollowStep(
+                    remainingPx = remaining,
+                    previousStepPx = previous,
+                    viewportHeightPx = viewportHeight,
+                    motionEnabled = true,
+                )
+                add(step)
+                remaining -= step
+                previous = step
+            }
+        }
+    }
 }

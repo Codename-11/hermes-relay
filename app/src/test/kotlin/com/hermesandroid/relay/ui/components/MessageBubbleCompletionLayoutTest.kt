@@ -141,4 +141,40 @@ class MessageBubbleCompletionLayoutTest {
         compose.onNodeWithText("**bold**").assertDoesNotExist()
         compose.onNodeWithTag("completion-tail").assertExists()
     }
+
+    @Test
+    fun `completed markdown block renders while unfinished tail stays plain`() {
+        val content = mutableStateOf("**bold**\n\nunfinished *tail")
+        val streaming = mutableStateOf(true)
+        val message = ChatMessage(
+            id = "assistant-segmented-live",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message.copy(
+                        content = content.value,
+                        isStreaming = streaming.value,
+                    ),
+                    modifier = Modifier.testTag("segmented-live-tail"),
+                )
+            }
+        }
+
+        compose.onNodeWithText("**bold**").assertDoesNotExist()
+        compose.onNodeWithText("unfinished *tail").assertExists()
+
+        compose.runOnIdle {
+            content.value = "**bold**\n\nunfinished *tail*"
+            streaming.value = false
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("unfinished *tail*").assertDoesNotExist()
+        compose.onNodeWithTag("segmented-live-tail").assertExists()
+    }
 }
