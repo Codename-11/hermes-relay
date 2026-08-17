@@ -168,7 +168,9 @@ import com.hermesandroid.relay.util.AttachmentTooLargeException
 import com.hermesandroid.relay.util.readBase64Bounded
 import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.LARGE_PASTE_THRESHOLD_CHARS
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
+import com.hermesandroid.relay.data.largePasteAttachment
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
@@ -226,6 +228,7 @@ import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
+import java.util.UUID
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
@@ -882,6 +885,8 @@ fun ChatScreen(
         connectionViewModel.keepComposerFocusedOnSend.collectAsState()
     val physicalKeyboardEnterBehavior by
         connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
+    val convertLargePastesToAttachments by
+        connectionViewModel.convertLargePastesToAttachments.collectAsState()
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -1025,11 +1030,13 @@ fun ChatScreen(
     val composerDraftKey = remember(
         activeConnection?.id,
         selectedProfile?.name,
+        openedSessionProfileName,
         currentSessionId,
     ) {
         ChatComposerDraftKey(
             connectionId = activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline",
-            profileId = selectedProfile?.name?.takeIf(String::isNotBlank)
+            profileId = (openedSessionProfileName ?: selectedProfile?.name)
+                ?.takeIf(String::isNotBlank)
                 ?: ChatComposerDraftKey.DEFAULT_PROFILE_ID,
             sessionId = currentSessionId?.takeIf(String::isNotBlank) ?: "new-session",
         )
@@ -1056,7 +1063,7 @@ fun ChatScreen(
         }
         restoringComposerDraft = true
         val restored = chatViewModel.composerDraftStore.snapshot(composerDraftKey)
-        inputText = restored.text.take(charLimit)
+        inputText = restored.text
         editingMessage = restored.context.editingMessageId?.let { messageId ->
             messages.firstOrNull { it.id == messageId }
         }
@@ -1076,6 +1083,7 @@ fun ChatScreen(
     ) {
         val key = activeComposerDraftKey ?: return@LaunchedEffect
         if (restoringComposerDraft) return@LaunchedEffect
+        delay(200)
         chatViewModel.composerDraftStore.save(
             key,
             ChatComposerDraft(
@@ -1196,12 +1204,39 @@ fun ChatScreen(
         onDispose { petCompanionCoordinator.clearSurface("chat") }
     }
     val scope = rememberCoroutineScope()
+    val latestComposerDraft by rememberUpdatedState {
+        activeComposerDraftKey?.let { key ->
+            key to ChatComposerDraft(
+                text = inputText,
+                selectionStart = inputText.length,
+                selectionEnd = inputText.length,
+                context = ChatComposerDraftContext(
+                    quotedMessageId = quotedMessage?.id,
+                    editingMessageId = editingMessage?.id,
+                ),
+                attachments = pendingAttachments,
+            )
+        }
+    }
+    DisposableEffect(lifecycleOwner, chatViewModel.composerDraftStore) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                latestComposerDraft()?.let { (key, draft) ->
+                    chatViewModel.persistComposerDraft(key, draft)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
     val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
-        activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
+        activeComposerDraftKey?.let { key ->
+            chatViewModel.removeComposerDraft(key)
+        }
         quotedMessage = null
         if (closeDrawerOnSend && drawerState.isOpen) {
             scope.launch { drawerState.close() }
@@ -2162,7 +2197,17 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteSession = { sessionId ->
-                    chatViewModel.deleteSession(sessionId)
+                    val connectionId = activeConnection?.id
+                    val profileId = openedSessionProfileName ?: selectedProfile?.name
+                    chatViewModel.deleteSession(sessionId) {
+                        if (!connectionId.isNullOrBlank() && !profileId.isNullOrBlank()) {
+                            chatViewModel.removeComposerDraftSession(
+                                connectionId,
+                                profileId,
+                                sessionId,
+                            )
+                        }
+                    }
                 },
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
@@ -2289,6 +2334,13 @@ fun ChatScreen(
                         if (connectionViewModel.deleteSession(profileName, sessionId)) {
                             allProfileSessions = allProfileSessions.filterNot {
                                 it.profile == profileName && it.session.sessionId == sessionId
+                            }
+                            activeConnection?.id?.let { connectionId ->
+                                chatViewModel.removeComposerDraftSession(
+                                    connectionId,
+                                    profileName,
+                                    sessionId,
+                                )
                             }
                         }
                     }
@@ -3802,6 +3854,11 @@ fun ChatScreen(
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
             val stoppedMessage = stringResource(R.string.chat_stopped_snackbar)
             val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
+            val largePasteAttachedMessage = stringResource(R.string.chat_large_paste_attached)
+            val largePasteTooLargeMessage = stringResource(
+                R.string.chat_large_paste_too_large,
+                maxAttachmentMb,
+            )
             val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
                 (apiModelOptions +
                     agentProfiles.mapNotNull { profile ->
@@ -4068,6 +4125,52 @@ fun ChatScreen(
                 isDarkTheme = isDarkTheme,
                 physicalEnterSends = physicalKeyboardEnterBehavior ==
                     PhysicalKeyboardEnterBehavior.SendMessage,
+                submitEnabled = pendingAttachments.none {
+                    it.state == com.hermesandroid.relay.data.AttachmentState.LOADING
+                },
+                largePasteThreshold = LARGE_PASTE_THRESHOLD_CHARS
+                    .takeIf { convertLargePastesToAttachments },
+                onLargePaste = { pastedText ->
+                    val owner = activeComposerDraftKey ?: composerDraftKey
+                    val sizeBytes = pastedText.toByteArray(Charsets.UTF_8).size.toLong()
+                    val maxBytes = maxAttachmentMb.toLong() * 1024L * 1024L
+                    if (sizeBytes > maxBytes) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(largePasteTooLargeMessage)
+                        }
+                    } else {
+                        val composerId = UUID.randomUUID().toString()
+                        val placeholder = Attachment(
+                            contentType = "text/plain; charset=utf-8",
+                            content = "",
+                            fileName = "pasted-text.txt",
+                            fileSize = sizeBytes,
+                            state = com.hermesandroid.relay.data.AttachmentState.LOADING,
+                            isLargePaste = true,
+                            composerId = composerId,
+                            composerRawText = pastedText,
+                        )
+                        if (activeComposerDraftKey == owner) {
+                            chatViewModel.addAttachment(placeholder)
+                        }
+                        scope.launch {
+                            val attachment = withContext(Dispatchers.Default) {
+                                largePasteAttachment(pastedText, composerId)
+                            }
+                            if (activeComposerDraftKey == owner) {
+                                chatViewModel.replaceAttachment(composerId, attachment)
+                            } else {
+                                chatViewModel.composerDraftStore.update(owner) { draft ->
+                                    draft.copy(
+                                        attachments = draft.attachments
+                                            .filterNot { it.composerId == composerId } + attachment,
+                                    )
+                                }
+                            }
+                            snackbarHostState.showSnackbar(largePasteAttachedMessage)
+                        }
+                    }
+                },
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
                     if (option.provider == null && apiModelOptions.any { it.id == option.value }) {

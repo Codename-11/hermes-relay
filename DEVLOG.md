@@ -1,5 +1,23 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-17 — Android composer continuity and large-paste review
+
+Android's multiline composer now leaves the software IME action as Return while
+the dedicated trailing button sends. Physical keyboard Enter, Shift+Enter, and
+directional caret behavior retain their existing contracts.
+
+Composer drafts now persist in bounded app-private no-backup storage using
+small owner metadata plus content-addressed attachment blobs. Draft ownership
+follows the exact connection, opened session profile, session, and draft slot;
+profile and connection switches save before restoring, lifecycle stop flushes
+the latest state, and successful sends remove the saved draft.
+
+A default-on Chat setting converts a single insertion of at least 5,000
+characters into a reviewable text attachment. Preparation runs off the UI
+thread behind a visible loading card. Current Gateways send it through upstream
+`file.attach`; API-server SSE and proactive Thread paths materialize the same
+UTF-8 content into the prompt so no route silently loses the paste.
+
 ## 2026-08-14 — Android 1.9.0 session identity and conversation controls
 
 Hermes-Relay Android 1.9.0 is published from the immutable

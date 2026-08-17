@@ -774,6 +774,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">Show your recent messages as tappable chips above the composer to send them again. Off by default.</string>
     <string name="chat_settings_keep_keyboard_open">Keep keyboard open on send</string>
     <string name="chat_settings_keep_keyboard_open_desc">Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.</string>
+    <string name="chat_settings_large_pastes">Convert large pastes to attachments</string>
+    <string name="chat_settings_large_pastes_desc">Turn pastes of 5,000 or more characters into reviewable text attachments. On by default.</string>
+    <string name="chat_large_paste_attached">Large paste added as a text attachment</string>
+    <string name="chat_large_paste_too_large">Pasted text exceeds the %1$d MB attachment limit</string>
     <string name="chat_settings_physical_keyboard_enter">Physical keyboard Enter key</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Choose whether Enter sends or inserts a new line. Ctrl+Enter always sends.</string>
     <string name="chat_settings_insert_newline">Insert new line</string>

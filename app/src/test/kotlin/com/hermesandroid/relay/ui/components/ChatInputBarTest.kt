@@ -8,13 +8,16 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasImeAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -154,12 +157,69 @@ class ChatInputBarTest {
         }
     }
 
+    @Test
+    fun `large insertion becomes attachment while surrounding draft stays in composer`() {
+        var value = "before  after"
+        var pasted: String? = null
+        val largePaste = "x".repeat(5_000)
+        setComposer(
+            value = value,
+            onValueChange = { value = it },
+            largePasteThreshold = 5_000,
+            onLargePaste = { pasted = it },
+        )
+
+        input().performClick().performTextReplacement("before $largePaste after")
+
+        compose.runOnIdle {
+            assertEquals(largePaste, pasted)
+            assertEquals("before  after", value)
+        }
+    }
+
+    @Test
+    fun `large paste conversion can be disabled`() {
+        var value = ""
+        var conversions = 0
+        val largePaste = "x".repeat(5_000)
+        setComposer(
+            value = value,
+            onValueChange = { value = it },
+            largePasteThreshold = null,
+            onLargePaste = { conversions++ },
+            charLimit = 8_000,
+        )
+
+        input().performClick().performTextInput(largePaste)
+
+        compose.runOnIdle {
+            assertEquals(largePaste, value)
+            assertEquals(0, conversions)
+        }
+    }
+
+    @Test
+    fun `send stays disabled while composer content is preparing`() {
+        var sent = 0
+        setComposer(value = "Ready soon", submitEnabled = false) { sent++ }
+
+        compose.onNodeWithContentDescription("Send message")
+            .assertIsNotEnabled()
+        input().performClick().performKeyInput { pressKey(Key.Enter) }
+
+        compose.runOnIdle { assertEquals(0, sent) }
+    }
+
     private fun setComposer(
         value: String,
         onValueChange: (String) -> Unit = {},
         trailing: ChatInputTrailing = ChatInputTrailing.SEND,
         physicalEnterSends: Boolean = true,
         caption: String? = null,
+        largePasteThreshold: Int? = null,
+        onLargePaste: (String) -> Unit = {},
+        charLimit: Int = 4_000,
+        submitEnabled: Boolean = true,
         onSend: () -> Unit = {},
     ) {
         var currentValue by mutableStateOf(value)
@@ -181,13 +241,16 @@ class ChatInputBarTest {
                     onAttachCamera = {},
                     onPasteImage = {},
                     onLongPressAttach = {},
-                    charLimit = 4_000,
+                    charLimit = charLimit,
                     caption = caption,
                     voiceReady = true,
                     showVoiceHint = false,
                     onVoiceHintShown = {},
                     isDarkTheme = false,
                     physicalEnterSends = physicalEnterSends,
+                    largePasteThreshold = largePasteThreshold,
+                    onLargePaste = onLargePaste,
+                    submitEnabled = submitEnabled,
                 )
             }
         }

@@ -10,7 +10,7 @@ class ChatComposerDraftStoreTest {
     private val store = InMemoryChatComposerDraftStore()
 
     @Test
-    fun draftsAreIsolatedByCompleteOwnerIdentity() {
+    fun draftsAreIsolatedByCompleteOwnerIdentity() = runBlocking {
         val original = key(connection = "connection-a", profile = "coder", session = "session-a")
         val otherConnection = original.copy(connectionId = "connection-b")
         val otherProfile = original.copy(profileId = "default")
@@ -26,7 +26,7 @@ class ChatComposerDraftStoreTest {
     }
 
     @Test
-    fun preservesSelectionContextAndPendingAttachments() {
+    fun preservesSelectionContextAndPendingAttachments() = runBlocking {
         val attachment = Attachment(
             contentType = "image/jpeg",
             content = "base64-payload",
@@ -57,7 +57,7 @@ class ChatComposerDraftStoreTest {
     }
 
     @Test
-    fun updateUsesCurrentSessionDraftWithoutTouchingAnotherSession() {
+    fun updateUsesCurrentSessionDraftWithoutTouchingAnotherSession() = runBlocking {
         val first = key(session = "first")
         val second = key(session = "second")
         store.save(first, ChatComposerDraft(text = "one"))
@@ -71,7 +71,7 @@ class ChatComposerDraftStoreTest {
     }
 
     @Test
-    fun invalidSelectionIsClampedAndOrderedWhenSaved() {
+    fun invalidSelectionIsClampedAndOrderedWhenSaved() = runBlocking {
         store.save(
             key(),
             ChatComposerDraft(text = "hello", selectionStart = 99, selectionEnd = -4),
@@ -101,7 +101,7 @@ class ChatComposerDraftStoreTest {
     }
 
     @Test
-    fun removeSessionClearsEveryDraftSlotOnlyForExactNamespace() {
+    fun removeSessionClearsEveryDraftSlotOnlyForExactNamespace() = runBlocking {
         val primary = key()
         val alternate = primary.copy(draftId = "alternate")
         val otherProfile = primary.copy(profileId = "other")
