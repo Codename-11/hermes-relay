@@ -66,77 +66,21 @@ class MessageBubbleActionTest {
 
     @Test
     fun partialSelection_keepsOneTopologyAcrossStreamingAndFinalization() {
-        val initialLive = messageSelectionTopologyKey(
-            isPlainText = false,
-            isStreaming = true,
-            retainStreamingLayout = false,
-            markdownBody = "First",
-        )
-        val updatedLive = messageSelectionTopologyKey(
-            isPlainText = false,
-            isStreaming = true,
-            retainStreamingLayout = false,
-            markdownBody = "First paragraph\n\nSecond",
-        )
-        val retainedLive = messageSelectionTopologyKey(
-            isPlainText = false,
-            isStreaming = false,
-            retainStreamingLayout = true,
-            markdownBody = "First paragraph\n\nSecond",
-        )
-        val settledMarkdown = messageSelectionTopologyKey(
-            isPlainText = false,
-            isStreaming = false,
-            retainStreamingLayout = false,
-            markdownBody = "First paragraph\n\nSecond",
-        )
-        val revisedMarkdown = messageSelectionTopologyKey(
-            isPlainText = false,
-            isStreaming = false,
-            retainStreamingLayout = false,
-            markdownBody = "First paragraph\n\nSecond\n\nThird",
-        )
+        val initialLive = messageSelectionTopologyKey(isPlainText = false)
+        val updatedLive = messageSelectionTopologyKey(isPlainText = false)
+        val settledMarkdown = messageSelectionTopologyKey(isPlainText = false)
+        val revisedMarkdown = messageSelectionTopologyKey(isPlainText = false)
 
         assertEquals(initialLive, updatedLive)
-        assertEquals(initialLive, retainedLive)
         assertEquals(initialLive, settledMarkdown)
         assertEquals(settledMarkdown, revisedMarkdown)
     }
 
     @Test
     fun completedAssistantSyntax_usesStableStreamingMarkdownRenderer() {
-        val completedBodies = listOf(
-            "```kotlin\nval answer = 42\n```",
-            "- first\n- second",
-            "**bold** and *emphasis*",
-            "[Hermes](https://example.com)",
-        )
-
-        completedBodies.forEach { body ->
-            assertEquals(
-                MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null),
-                messageSelectionTopologyKey(
-                    isPlainText = false,
-                    isStreaming = false,
-                    retainStreamingLayout = false,
-                    markdownBody = body,
-                ),
-            )
-        }
-    }
-
-    @Test
-    fun interruptedPartialReply_keepsStableStreamingMarkdownRenderer() {
-        val partialFence = "```kotlin\nval partial ="
-
         assertEquals(
             MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null),
-            messageSelectionTopologyKey(
-                isPlainText = false,
-                isStreaming = false,
-                retainStreamingLayout = false,
-                markdownBody = partialFence,
-            ),
+            messageSelectionTopologyKey(isPlainText = false),
         )
     }
 }

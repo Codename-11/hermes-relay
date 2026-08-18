@@ -78,7 +78,7 @@ class MessageBubbleCompletionLayoutTest {
     }
 
     @Test
-    fun `completion does not resize a retained live tail`() {
+    fun `completion keeps the incremental renderer height stable`() {
         val streaming = mutableStateOf(true)
         val message = ChatMessage(
             id = "assistant-live",
@@ -87,12 +87,10 @@ class MessageBubbleCompletionLayoutTest {
             timestamp = 1_700_000_000_000L,
         )
 
-        compose.mainClock.autoAdvance = false
         compose.setContent {
             MaterialTheme {
                 MessageBubble(
                     message = message.copy(isStreaming = streaming.value),
-                    retainStreamingLayout = true,
                     modifier = Modifier.testTag("retained-live-tail"),
                 )
             }
@@ -102,7 +100,6 @@ class MessageBubbleCompletionLayoutTest {
             .fetchSemanticsNode().boundsInRoot.height
 
         compose.runOnIdle { streaming.value = false }
-        compose.mainClock.advanceTimeBy(1_000L)
         compose.waitForIdle()
         val completedHeight = compose.onNodeWithTag("retained-live-tail")
             .fetchSemanticsNode().boundsInRoot.height
@@ -111,9 +108,8 @@ class MessageBubbleCompletionLayoutTest {
     }
 
     @Test
-    fun `releasing a completed live tail renders markdown without navigation`() {
+    fun `streaming markdown remains rendered across completion`() {
         val streaming = mutableStateOf(true)
-        val retainStreamingLayout = mutableStateOf(true)
         val message = ChatMessage(
             id = "assistant-live",
             role = MessageRole.ASSISTANT,
@@ -125,16 +121,15 @@ class MessageBubbleCompletionLayoutTest {
             MaterialTheme {
                 MessageBubble(
                     message = message.copy(isStreaming = streaming.value),
-                    retainStreamingLayout = retainStreamingLayout.value,
                     modifier = Modifier.testTag("completion-tail"),
                 )
             }
         }
 
-        compose.onNodeWithText("**bold**").assertExists()
+        compose.waitForIdle()
+        compose.onNodeWithText("**bold**").assertDoesNotExist()
         compose.runOnIdle {
             streaming.value = false
-            retainStreamingLayout.value = false
         }
         compose.waitForIdle()
 
@@ -143,7 +138,7 @@ class MessageBubbleCompletionLayoutTest {
     }
 
     @Test
-    fun `completed markdown block renders while unfinished tail stays plain`() {
+    fun `stable and provisional inline syntax share one renderer`() {
         val content = mutableStateOf("**bold**\n\nunfinished *tail")
         val streaming = mutableStateOf(true)
         val message = ChatMessage(
@@ -170,11 +165,49 @@ class MessageBubbleCompletionLayoutTest {
 
         compose.runOnIdle {
             content.value = "**bold**\n\nunfinished *tail*"
-            streaming.value = false
         }
         compose.waitForIdle()
 
         compose.onNodeWithText("unfinished *tail*").assertDoesNotExist()
+        compose.runOnIdle { streaming.value = false }
+        compose.waitForIdle()
+        compose.onNodeWithText("unfinished *tail*").assertDoesNotExist()
         compose.onNodeWithTag("segmented-live-tail").assertExists()
+    }
+
+    @Test
+    fun `native streaming renderer keeps provisional structures formatted`() {
+        val content = mutableStateOf(
+            "- first\n- second\n\n" +
+                "| Name | Value |\n| --- | --- |\n| one | two |\n\n" +
+                "```kotlin\nval answer =",
+        )
+        val message = ChatMessage(
+            id = "assistant-native-stream",
+            role = MessageRole.ASSISTANT,
+            content = "",
+            isStreaming = true,
+            timestamp = 1_700_000_000_000L,
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                MessageBubble(
+                    message = message.copy(content = content.value),
+                    modifier = Modifier.testTag("native-streaming-markdown"),
+                )
+            }
+        }
+
+        compose.waitForIdle()
+        compose.onNodeWithText("first").assertExists()
+        compose.onNodeWithText("val answer =").assertExists()
+        compose.onNodeWithText(content.value).assertDoesNotExist()
+
+        compose.runOnIdle { content.value += " 42\n```" }
+        compose.waitForIdle()
+
+        compose.onNodeWithText(content.value).assertDoesNotExist()
+        compose.onNodeWithTag("native-streaming-markdown").assertExists()
     }
 }
