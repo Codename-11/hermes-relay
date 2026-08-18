@@ -60,11 +60,15 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
-    fun `same transcript late viewport or tail layout is corrected`() {
+    fun `late viewport correction never takes completion tail ownership`() {
         val previous = viewportSnapshot(
             tailSizePx = 400,
             viewportHeightPx = 1_000,
             visibleBottomDistancePx = 0,
+        )
+        val completionRemeasure = previous.copy(
+            tailSizePx = 460,
+            visibleBottomDistancePx = null,
         )
 
         assertEquals(
@@ -81,10 +85,10 @@ class ChatScrollSnapshotTest {
             ),
         )
         assertEquals(
-            true,
+            false,
             shouldCorrectConversationBottomAfterLayout(
                 previous = previous,
-                current = previous.copy(tailSizePx = 460, visibleBottomDistancePx = null),
+                current = completionRemeasure,
                 atExactBottom = false,
                 userScrolledAway = false,
                 userDragging = false,
@@ -93,6 +97,7 @@ class ChatScrollSnapshotTest {
                 viewportFollowAllowed = true,
             ),
         )
+        assertEquals(60, ownedBottomFollowScroll(previous, completionRemeasure))
     }
 
     @Test

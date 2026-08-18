@@ -388,8 +388,13 @@ internal fun shouldCorrectConversationBottomAfterLayout(
     ) {
         return false
     }
-    return old.tailSizePx != current.tailSizePx ||
-        old.viewportHeightPx != current.viewportHeightPx ||
+    // Tail-row remeasurement (including completion chrome and Markdown
+    // settlement) is already owned by requiredBottomFollowScroll. Sending it
+    // through this fallback as well performs a full scrollToItem after the
+    // measured ramp, visibly resetting the anchor for one frame.
+    if (old.tailSizePx != current.tailSizePx) return false
+
+    return old.viewportHeightPx != current.viewportHeightPx ||
         old.visibleBottomDistancePx != current.visibleBottomDistancePx
 }
 
