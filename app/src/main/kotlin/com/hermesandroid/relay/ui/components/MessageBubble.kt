@@ -102,13 +102,6 @@ fun MessageBubble(
     showThinking: Boolean = true,
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
-    /**
-     * Keeps the current live tail on its stable Text layout while a final
-     * streaming frame commits. The owning list releases it immediately after
-     * completion so the same row transitions to full Markdown with its bottom
-     * anchor preserved.
-     */
-    retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
     /**
      * Select this message as a structured composer quote. Null hides Quote.
@@ -649,15 +642,14 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Keep one plain Text node stable only while content is
-                        // incomplete (plus the final committed live frame).
-                        // Completion releases this flag and selects the full
-                        // Markdown tree on the same stable message row.
+                        // The renderer owns one incremental AST for the entire
+                        // visible lifetime of this row. Stable and provisional
+                        // blocks therefore use the same typography/components;
+                        // completion is data state, not a renderer swap.
                         if (markdownBody.isNotEmpty()) {
                             StreamingMarkdownContent(
                                 content = markdownBody,
                                 textColor = textColor,
-                                isStreaming = message.isStreaming || retainStreamingLayout,
                             )
                         }
                     }
@@ -673,9 +665,6 @@ fun MessageBubble(
                     key(
                         messageSelectionTopologyKey(
                             isPlainText = isUser || isSystem,
-                            isStreaming = message.isStreaming,
-                            retainStreamingLayout = retainStreamingLayout,
-                            markdownBody = markdownBody,
                         ),
                     ) {
                         SelectionContainer { messageTextContent() }
@@ -1031,9 +1020,6 @@ internal data class MessageSelectionTopologyKey(
 
 internal fun messageSelectionTopologyKey(
     isPlainText: Boolean,
-    isStreaming: Boolean,
-    retainStreamingLayout: Boolean,
-    markdownBody: String,
 ): MessageSelectionTopologyKey = when {
     isPlainText -> MessageSelectionTopologyKey(renderer = "plain", markdownBody = null)
     else -> MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null)
