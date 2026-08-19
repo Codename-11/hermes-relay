@@ -1271,7 +1271,7 @@ When the answer becomes clearer, this section becomes either an ADR in `docs/dec
   supported CUA range; restore a mandatory health gate only if the upstream
   probe is bounded and cannot leave UI Automation falsely busy.
 - **MediaProjection consent flow** — wired in MainActivity (2026-04-12), needs end-to-end test on a real device
-- **WorkManager upgrade for auto-disable timer** — currently a coroutine `Job + delay()` in `AutoDisableWorker.kt`; documented at top of file. Upgrade when androidx.work joins the classpath
+- **WorkManager upgrade for timed screen-access expiry notification** — authority already fails closed from persisted absolute expiry after restart; the prompt notification is currently a coroutine `Job + delay()` coordinated by `BridgeSafetyManager` / `AutoDisableWorker`. Upgrade only if background notification timing becomes important after androidx.work joins the classpath.
 - **Wave 3 voice-bridge multi-turn confirmation** — currently a 5s TTS countdown with cancel; conversational confirmation is the follow-up
 - **LLM client wiring for `android_navigate`** — `_default_vision_model` is stubbed; production swap to a real Anthropic/OpenAI vision client
 - **Real screenshots of each flavor's a11y permission dialog** — for `user-docs/guide/release-tracks.md`

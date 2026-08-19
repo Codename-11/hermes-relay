@@ -421,6 +421,54 @@ class BridgeCommandHandler(
         method: String,
         body: JsonObject,
     ) {
+        // Resolve path + method through the closed capability registry before
+        // any wake, confirmation, event read, executor, or run-tracker effect.
+        val registeredAuthority =
+            com.hermesandroid.relay.bridge.BridgeCommandRegistry.resolve(path, method)
+        val capabilityAuthorization = when {
+            registeredAuthority == null -> BridgeSafetyManager.CapabilityAuthorization(
+                allowed = false,
+                errorCode = "unknown_bridge_command",
+            )
+            !BuildFlavor.isSideload && registeredAuthority.grant !=
+                com.hermesandroid.relay.bridge.BridgeCapabilityGrant.EXEMPT ->
+                BridgeSafetyManager.CapabilityAuthorization(
+                    allowed = false,
+                    authority = registeredAuthority,
+                    errorCode = "device_control_sideload_only",
+                )
+            registeredAuthority.grant ==
+                com.hermesandroid.relay.bridge.BridgeCapabilityGrant.EXEMPT ->
+                BridgeSafetyManager.CapabilityAuthorization(true, registeredAuthority)
+            else -> safetyManager?.authorizeCapability(path, method)
+                ?: BridgeSafetyManager.CapabilityAuthorization(
+                    allowed = false,
+                    authority = registeredAuthority,
+                    errorCode = "bridge_policy_unavailable",
+                )
+        }
+        if (!capabilityAuthorization.allowed) {
+            return respond(
+                requestId,
+                403,
+                buildJsonObject {
+                    put(
+                        "error",
+                        if (capabilityAuthorization.errorCode == "device_control_sideload_only") {
+                            "Device Control is not included in the Google Play build."
+                        } else {
+                            "Bridge capability is not granted for this connection."
+                        },
+                    )
+                    put("error_code", capabilityAuthorization.errorCode ?: "bridge_capability_denied")
+                    capabilityAuthorization.authority?.capability?.let {
+                        put("capability", it.wireId)
+                    }
+                    put("required_action", "Review Bridge > Safety & capabilities on the phone")
+                },
+            )
+        }
+
         // === v0.4.1 polish: keep auto-return idle timer alive ===
         // Any non-polling bridge command during a run is evidence the
         // agent is still working — reset BridgeRunTracker's idle timer
@@ -474,44 +522,6 @@ class BridgeCommandHandler(
             )
             return
         }
-
-        // === PHASE3-event-stream: B1 android_events read-only polling ===
-        // /events is a read-only peek at the EventStore ring buffer. The
-        // buffer lives in our own process so there's no safety gate —
-        // the agent already opted into streaming via /events/stream
-        // which IS gated. This mirrors the /ping early-return path so
-        // polling works even when the service is transiently unbound.
-        if (path == "/events") {
-            val limitRaw = body["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 50
-            val limit = limitRaw.coerceIn(1, EventStore.MAX_ENTRIES)
-            val since = body["since"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-            val entries = EventStore.recent(limit = limit, since = since)
-            val arr: JsonArray = buildJsonArray {
-                for (e in entries) {
-                    add(
-                        buildJsonObject {
-                            put("timestamp", e.timestamp)
-                            put("event_type", e.eventType)
-                            e.packageName?.let { put("package_name", it) }
-                            e.className?.let { put("class_name", it) }
-                            e.text?.let { put("text", it) }
-                            e.contentDescription?.let { put("content_description", it) }
-                            put("source", e.source)
-                        }
-                    )
-                }
-            }
-            respond(
-                requestId, 200,
-                buildJsonObject {
-                    put("entries", arr)
-                    put("count", entries.size)
-                    put("streaming", EventStore.isStreaming)
-                }
-            )
-            return
-        }
-        // === END PHASE3-event-stream ===
 
         // /setup exists on the relay as a legacy bridge HTTP route, but
         // android_setup() in plugin/tools/android_tool.py is host-side
@@ -576,10 +586,7 @@ class BridgeCommandHandler(
                 }
             )
 
-        if (!service.isMasterEnabled() &&
-            path != "/current_app" &&
-            path != "/return_to_hermes"
-        ) {
+        if (!service.isMasterEnabled()) {
             // Crystal-clear error text + structured error_code. Bailey hit
             // 2026-04-15: when the phone was paired + a11y granted but
             // master toggle flipped off, the agent read the shorter
@@ -649,9 +656,13 @@ class BridgeCommandHandler(
             }
         }
 
-        // Reschedule the idle auto-disable timer on every accepted
-        // command. Safe to call even when no timer is currently armed.
-        safetyManager?.rescheduleAutoDisable()
+        // Permanent capabilities never keep screen control armed. Only an
+        // accepted timed inspection/control command refreshes the timer.
+        if (capabilityAuthorization.authority?.grant ==
+            com.hermesandroid.relay.bridge.BridgeCapabilityGrant.TIMED
+        ) {
+            safetyManager?.rescheduleAutoDisable()
+        }
         // === END PHASE3-safety-rails ===
 
         // === v0.4.1 unattended-access wake + keyguard dismiss ===
@@ -705,6 +716,30 @@ class BridgeCommandHandler(
         val executor = service.actionExecutor
 
         when (path) {
+            "/events" -> {
+                val limitRaw = body["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 50
+                val limit = limitRaw.coerceIn(1, EventStore.MAX_ENTRIES)
+                val since = body["since"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+                val entries = EventStore.recent(limit = limit, since = since)
+                val arr: JsonArray = buildJsonArray {
+                    for (e in entries) {
+                        add(buildJsonObject {
+                            put("timestamp", e.timestamp)
+                            put("event_type", e.eventType)
+                            e.packageName?.let { put("package_name", it) }
+                            e.className?.let { put("class_name", it) }
+                            e.text?.let { put("text", it) }
+                            e.contentDescription?.let { put("content_description", it) }
+                            put("source", e.source)
+                        })
+                    }
+                }
+                respond(requestId, 200, buildJsonObject {
+                    put("entries", arr)
+                    put("count", entries.size)
+                    put("streaming", EventStore.isStreaming)
+                })
+            }
             "/current_app" -> respond(
                 requestId, 200,
                 buildJsonObject {

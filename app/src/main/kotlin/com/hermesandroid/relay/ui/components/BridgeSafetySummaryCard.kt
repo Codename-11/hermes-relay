@@ -40,8 +40,8 @@ import com.hermesandroid.relay.data.DEFAULT_DESTRUCTIVE_VERBS
  *
  *  - Blocklist count ("12 apps blocked")
  *  - Destructive-verb count ("12 verbs need confirmation")
- *  - Auto-disable window ("Auto-off after 30 min idle")
- *  - Auto-disable countdown when a timer is active
+ *  - Timed screen-access window
+ *  - Timed screen-access countdown when active
  *
  * Tap → navigate to [BridgeSafetySettingsScreen].
  *

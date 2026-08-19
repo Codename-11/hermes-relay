@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
  *
  * 4. **`masterToggle`** write path — flipping the master switch persists via
  *    [BridgePreferencesRepository.setMasterEnabled]. accessibility's service reads the
- *    same DataStore key (`bridge_master_enabled`) and treats it as the
+ *    same DataStore key (`bridge_master_enabled_v2`) and treats it as the
  *    runtime disable switch — when false, the service should ignore all
  *    incoming `bridge.command` envelopes. bridge-ui does not wire the service lifecycle
  *    to this toggle; that's accessibility's call.
@@ -233,17 +233,16 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // Start/stop BridgeForegroundService based on the master toggle.
         // distinctUntilChanged prevents re-firing the startForegroundService
         // intent on every DataStore tick. Cancel the safety manager's
-        // auto-disable timer when the user flips the toggle off manually
-        // (otherwise we race a pending timer against the user).
+        // timed screen grants when the user flips the master off manually
+        // (otherwise stale authority could revive when master is re-enabled).
         viewModelScope.launch {
             masterToggle.collect { enabled ->
                 val ctx = getApplication<Application>()
                 if (enabled) {
                     runCatching { BridgeForegroundService.start(ctx) }
-                    BridgeSafetyManager.peek()?.rescheduleAutoDisable()
                 } else {
                     runCatching { BridgeForegroundService.stop(ctx) }
-                    BridgeSafetyManager.peek()?.cancelAutoDisable()
+                    BridgeSafetyManager.peek()?.revokeTimedCapabilities()
                     // Force the overlay chip off even if the user hasn't
                     // explicitly disabled it — no point showing "bridge
                     // active" when the toggle is off.

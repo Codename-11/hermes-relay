@@ -588,7 +588,7 @@
     <string name="bssc_safety">Safety</string>
     <string name="bssc_blocked_apps">Apps the agent can\'t touch</string>
     <string name="bssc_destructive_verbs">Words that always ask first</string>
-    <string name="bssc_auto_disable">Turns itself off when idle</string>
+    <string name="bssc_auto_disable">Timed screen access</string>
     <string name="bssc_guardrails_hint">These guardrails keep Hermes in bounds. Tap to adjust.</string>
     <string name="bssc_manage">Manage</string>
 
@@ -1110,7 +1110,7 @@
     <string name="bss_add_verb_cd">Add verb</string>
     <string name="bss_remove_cd">Remove</string>
     <string name="bss_auto_disable">Auto-disable after idle</string>
-    <string name="bss_auto_disable_desc">Master toggle flips off after this many minutes with no bridge commands. Rescheduled on every command.</string>
+    <string name="bss_auto_disable_desc">Timed screen access expires after this many idle minutes. Only screen inspection or control resets the timer.</string>
     <string name="bss_auto_disable_value">%1$d min</string>
     <string name="bss_status_overlay">Status overlay</string>
     <string name="bss_show_floating">Show floating indicator</string>
@@ -3594,8 +3594,8 @@
     <string name="whats_new_title">What\u0027s new</string>
     <string name="whats_new_subtitle">Latest release highlights</string>
     <!-- Localization guardrail additions for current dev surfaces -->
-    <string name="bridge_notification_auto_disabled_title">Bridge auto-disabled</string>
-    <string name="bridge_notification_auto_disabled_body">Paused after idle — tap to re-enable in the Bridge tab.</string>
+    <string name="bridge_notification_auto_disabled_title">Timed screen access expired</string>
+    <string name="bridge_notification_auto_disabled_body">Screen inspection and control are off after being idle. Other grants are unchanged.</string>
     <string name="bridge_notification_control_title">Hermes agent has device control</string>
     <string name="bridge_notification_control_body">Bridge is active — tap Disable to stop at any time.</string>
     <string name="gateway_keepalive_title">Hermes connection active</string>
@@ -4177,4 +4177,24 @@
     <string name="host_resource_memory_elevated">Host memory is running low.</string>
     <string name="host_resource_disk_critical">Host storage is critically low; messages and settings may fail to save.</string>
     <string name="host_resource_disk_elevated">Host storage is running low.</string>
+    <string name="bss_capabilities_title">Capability grants</string>
+    <string name="bss_capabilities_desc">Always/Never grants apply only to this Hermes connection. The master switch and Android permissions still override them.</string>
+    <string name="bss_capabilities_unavailable">Select and connect a Hermes connection before changing grants.</string>
+    <string name="bss_timed_capabilities_title">Timed screen access</string>
+    <string name="bss_timed_capabilities_desc">Screen inspection and control expire after %1$d minutes of inactivity. Harmless permanent grants do not extend this timer.</string>
+    <string name="bss_capability_always">Always, while the master switch is on</string>
+    <string name="bss_capability_never">Never</string>
+    <string name="bss_capability_timed_on">Timed access active</string>
+    <string name="bss_capability_timed_off">Timed access off</string>
+    <string name="bss_capability_device_info">Device and app info</string>
+    <string name="bss_capability_contacts">Read contacts</string>
+    <string name="bss_capability_location">Read location</string>
+    <string name="bss_capability_clipboard_read">Read clipboard</string>
+    <string name="bss_capability_clipboard_write">Write clipboard</string>
+    <string name="bss_capability_media">Control media playback</string>
+    <string name="bss_capability_communications">Send SMS and place calls</string>
+    <string name="bss_capability_sharing">Share media and compose MMS</string>
+    <string name="bss_capability_screen_inspection">Inspect screen and UI</string>
+    <string name="bss_capability_screen_control">Drive apps and navigation</string>
+    <string name="unattended_requires_timed_control">Requires timed Screen control — enable it in Safety &amp; capabilities first.</string>
 </resources>

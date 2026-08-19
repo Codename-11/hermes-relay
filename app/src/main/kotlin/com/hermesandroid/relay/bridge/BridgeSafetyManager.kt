@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetySettings
+import com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
@@ -25,8 +28,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Phase 3 — safety-rails `bridge-safety-rails`
  *
- * Central enforcement point for Tier 5 safety: per-app blocklist, destructive
- * verb confirmation, and idle-based auto-disable. Owned as a singleton-per-
+ * Central enforcement point for Tier 5 safety: connection-scoped capabilities,
+ * per-app blocklist, destructive confirmation, and timed screen access. Owned as a singleton-per-
  * process by [ConnectionViewModel] and injected into [BridgeCommandHandler].
  *
  * # Integration surface
@@ -47,9 +50,9 @@ import java.util.concurrent.atomic.AtomicLong
  *    reacts, which is exactly the UX we want (the server sees a slow
  *    response, not a denial race).
  *
- *  - [rescheduleAutoDisable] — every accepted command bumps the idle timer
- *    forward; after [BridgeSafetySettings.autoDisableMinutes] of silence
- *    the master toggle flips off and a one-shot notification fires.
+ *  - [rescheduleAutoDisable] — accepted timed screen commands bump the idle
+ *    expiry forward; after [BridgeSafetySettings.autoDisableMinutes] of
+ *    silence only timed screen authority is revoked and a notification fires.
  *    [cancelAutoDisable] cancels the pending timer (called when the master
  *    toggle flips off manually, so we don't race the timer against the
  *    user).
@@ -71,15 +74,14 @@ import java.util.concurrent.atomic.AtomicLong
  * The Android app does not depend on androidx.work. [AutoDisableWorker]
  * documents the canonical pattern, but the live path is a coroutine
  * `Job` owned by this manager, delayed by the configured minutes. This is
- * acceptable because we are the in-memory owner of the master-toggle flow
- * — no inter-process or cross-restart scheduling is needed. On process
- * death the master toggle is simply evaluated fresh from DataStore, and
- * any command not explicitly sent within the idle window never actually
- * happens because the app isn't running.
+ * acceptable because authorization stores an absolute expiry in DataStore.
+ * After process death or reconnect, the command boundary compares that expiry
+ * to wall clock and denies stale authority even if the notification job did not run.
  */
 class BridgeSafetyManager(
     context: Context,
     private val scope: CoroutineScope,
+    private val activeConnectionId: StateFlow<String?>,
 ) {
     companion object {
         private const val TAG = "BridgeSafetyMgr"
@@ -94,10 +96,14 @@ class BridgeSafetyManager(
          */
         fun peek(): BridgeSafetyManager? = INSTANCE
 
-        fun install(context: Context, scope: CoroutineScope): BridgeSafetyManager {
+        fun install(
+            context: Context,
+            scope: CoroutineScope,
+            activeConnectionId: StateFlow<String?>,
+        ): BridgeSafetyManager {
             val existing = INSTANCE
             if (existing != null) return existing
-            val created = BridgeSafetyManager(context.applicationContext, scope)
+            val created = BridgeSafetyManager(context.applicationContext, scope, activeConnectionId)
             INSTANCE = created
             return created
         }
@@ -105,6 +111,10 @@ class BridgeSafetyManager(
 
     private val appContext: Context = context.applicationContext
     private val prefsRepo = BridgeSafetyPreferencesRepository(appContext)
+    private val capabilityRepo = BridgeCapabilityPolicyRepository(appContext)
+    private val _activeCapabilityPolicy = MutableStateFlow(BridgeCapabilityPolicy())
+    val activeCapabilityPolicy: StateFlow<BridgeCapabilityPolicy> =
+        _activeCapabilityPolicy.asStateFlow()
 
     /** Latest settings snapshot — UI + checks read this via [settings]. */
     private val _settings = MutableStateFlow(BridgeSafetySettings())
@@ -140,12 +150,12 @@ class BridgeSafetyManager(
     private val pendingConfirmations = ConcurrentHashMap<Long, PendingConfirmation>()
     private val nextRequestId = AtomicLong(0L)
 
-    /** Coroutine job that fires auto-disable after idle. */
+    /** Coroutine job that prunes timed screen authority after idle. */
     @Volatile
     private var autoDisableJob: Job? = null
 
     /**
-     * Remaining time (epoch millis) for the current auto-disable job, or
+     * Remaining time (epoch millis) for current timed screen authority, or
      * null when idle. BridgeSafetySummaryCard reads this as a countdown.
      */
     private val _autoDisableAtMs = MutableStateFlow<Long?>(null)
@@ -167,6 +177,72 @@ class BridgeSafetyManager(
                 trustedHydrated = true
             }
         }
+        scope.launch {
+            activeConnectionId.collectLatest { connectionId ->
+                schedulePersistedExpiry(connectionId)
+                capabilityRepo.policy(connectionId).collect { policy ->
+                    _activeCapabilityPolicy.value = policy
+                }
+            }
+        }
+    }
+
+    data class CapabilityAuthorization(
+        val allowed: Boolean,
+        val authority: BridgeCommandAuthority? = null,
+        val errorCode: String? = null,
+    )
+
+    fun capabilityPolicy(connectionId: String?): Flow<BridgeCapabilityPolicy> =
+        capabilityRepo.policy(connectionId)
+
+    suspend fun authorizeCapability(
+        path: String,
+        method: String,
+        nowMs: Long = System.currentTimeMillis(),
+    ): CapabilityAuthorization {
+        val authority = BridgeCommandRegistry.resolve(path, method)
+            ?: return CapabilityAuthorization(false, errorCode = "unknown_bridge_command")
+        if (authority.grant == BridgeCapabilityGrant.EXEMPT) {
+            return CapabilityAuthorization(true, authority)
+        }
+        val connectionId = activeConnectionId.value
+            ?: return CapabilityAuthorization(false, authority, "bridge_policy_unbound")
+        val capability = authority.capability
+            ?: return CapabilityAuthorization(false, authority, "bridge_policy_invalid")
+        val policy = capabilityRepo.snapshot(connectionId)
+        return if (policy.allows(capability, nowMs)) {
+            CapabilityAuthorization(true, authority)
+        } else {
+            CapabilityAuthorization(
+                false,
+                authority,
+                if (capability.timed) "bridge_capability_expired" else "bridge_capability_denied",
+            )
+        }
+    }
+
+    suspend fun setPermanentCapability(
+        connectionId: String?,
+        capability: BridgeCapability,
+        allowed: Boolean,
+    ) {
+        capabilityRepo.setPermanent(connectionId, capability, allowed)
+    }
+
+    suspend fun setTimedCapability(
+        connectionId: String?,
+        capability: BridgeCapability,
+        allowed: Boolean,
+    ) {
+        if (!allowed) {
+            capabilityRepo.revoke(connectionId, capability)
+            schedulePersistedExpiry(connectionId)
+            return
+        }
+        val fireAt = System.currentTimeMillis() + currentSettings().autoDisableMinutes * 60_000L
+        capabilityRepo.grantTimed(connectionId, capability, fireAt)
+        schedulePersistedExpiry(connectionId)
     }
 
     // ── Blocklist ────────────────────────────────────────────────────────
@@ -307,26 +383,30 @@ class BridgeSafetyManager(
         pending.deferred.complete(allowed)
     }
 
-    // ── Auto-disable timer ───────────────────────────────────────────────
+    // ── Timed screen-access expiry ──────────────────────────────────────
 
     /**
-     * Cancel any pending timer and arm a fresh one. Called on every accepted
-     * bridge command — an actively-used bridge never auto-disables.
+     * Refresh active timed grants and arm their shared idle expiry. Permanent
+     * capability activity never calls this method.
      */
     fun rescheduleAutoDisable() {
+        val connectionId = activeConnectionId.value ?: return
         val minutes = _settings.value.autoDisableMinutes
-        val delayMs = minutes * 60_000L
-        val fireAt = System.currentTimeMillis() + delayMs
+        val fireAt = System.currentTimeMillis() + minutes * 60_000L
         autoDisableJob?.cancel()
-        _autoDisableAtMs.value = fireAt
-
         autoDisableJob = (scope + SupervisorJob()).launch {
             try {
+                val snapshot = capabilityRepo.snapshot(connectionId)
+                if (snapshot.timedExpiriesMs.isEmpty()) {
+                    _autoDisableAtMs.value = null
+                    return@launch
+                }
+                capabilityRepo.refreshActiveTimed(connectionId, fireAt)
+                _autoDisableAtMs.value = fireAt
+                val delayMs = (fireAt - System.currentTimeMillis()).coerceAtLeast(0L)
                 delay(delayMs)
-                Log.i(TAG, "Auto-disable fired after $minutes min of idle")
-                // Hand off to the canonical worker so both code paths look
-                // identical from a behavioral standpoint (notification +
-                // master-toggle flip).
+                Log.i(TAG, "Timed Bridge capabilities expired after $minutes min of idle")
+                capabilityRepo.revokeTimed(connectionId)
                 AutoDisableWorker(appContext).run()
             } catch (_: Throwable) {
                 // Cancellation is expected on reschedule — swallow quietly.
@@ -340,6 +420,34 @@ class BridgeSafetyManager(
         autoDisableJob?.cancel()
         autoDisableJob = null
         _autoDisableAtMs.value = null
+    }
+
+    fun revokeTimedCapabilities() {
+        val connectionId = activeConnectionId.value ?: return
+        cancelAutoDisable()
+        scope.launch { capabilityRepo.revokeTimed(connectionId) }
+    }
+
+    private suspend fun schedulePersistedExpiry(connectionId: String?) {
+        autoDisableJob?.cancel()
+        val policy = capabilityRepo.snapshot(connectionId)
+        val nextExpiry = policy.timedExpiriesMs.values.maxOrNull()
+        if (nextExpiry == null) {
+            _autoDisableAtMs.value = null
+            return
+        }
+        if (nextExpiry <= System.currentTimeMillis()) {
+            capabilityRepo.pruneExpired(connectionId, System.currentTimeMillis())
+            _autoDisableAtMs.value = null
+            return
+        }
+        _autoDisableAtMs.value = nextExpiry
+        autoDisableJob = (scope + SupervisorJob()).launch {
+            delay((nextExpiry - System.currentTimeMillis()).coerceAtLeast(0L))
+            capabilityRepo.pruneExpired(connectionId, System.currentTimeMillis())
+            AutoDisableWorker(appContext).run()
+            if (activeConnectionId.value == connectionId) _autoDisableAtMs.value = null
+        }
     }
 
     // ── Internals ────────────────────────────────────────────────────────

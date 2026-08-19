@@ -550,7 +550,7 @@
     <string name="bssc_safety">Sicherheit</string>
     <string name="bssc_blocked_apps">Apps, die der Agent nicht bedienen darf</string>
     <string name="bssc_destructive_verbs">Wörter, bei denen immer nachgefragt wird</string>
-    <string name="bssc_auto_disable">Schaltet sich bei Inaktivität aus</string>
+    <string name="bssc_auto_disable">Zeitgesteuerter Bildschirmzugriff</string>
     <string name="bssc_guardrails_hint">Diese Schutzmechanismen halten Hermes in den Grenzen. Zum Anpassen tippen.</string>
     <string name="bssc_manage">Verwalten</string>
 
@@ -995,7 +995,7 @@
     <string name="bss_add_verb_cd">Verb hinzufügen</string>
     <string name="bss_remove_cd">Entfernen</string>
     <string name="bss_auto_disable">Bei Inaktivität automatisch deaktivieren</string>
-    <string name="bss_auto_disable_desc">Der Hauptschalter wird nach so vielen Minuten ohne Bridge-Befehle ausgeschaltet. Der Timer startet bei jedem Befehl neu.</string>
+    <string name="bss_auto_disable_desc">Der zeitgesteuerte Bildschirmzugriff läuft nach dieser Leerlaufzeit ab. Nur Bildschirmprüfung oder -steuerung setzt den Timer zurück.</string>
     <string name="bss_auto_disable_value">%1$d Min.</string>
     <string name="bss_status_overlay">Status-Overlay</string>
     <string name="bss_show_floating">Schwebende Anzeige einblenden</string>
@@ -3318,8 +3318,8 @@
     <string name="whats_new_title">Neuigkeiten</string>
     <string name="whats_new_subtitle">Highlights der neuesten Version</string>
     <!-- Localization guardrail additions for current dev surfaces -->
-    <string name="bridge_notification_auto_disabled_title">Bridge automatisch deaktiviert</string>
-    <string name="bridge_notification_auto_disabled_body">Nach Inaktivität pausiert — zum erneuten Aktivieren im Bridge-Tab tippen.</string>
+    <string name="bridge_notification_auto_disabled_title">Zeitgesteuerter Bildschirmzugriff abgelaufen</string>
+    <string name="bridge_notification_auto_disabled_body">Bildschirmprüfung und -steuerung sind nach Inaktivität aus. Andere Berechtigungen bleiben unverändert.</string>
     <string name="bridge_notification_control_title">Hermes-Agent hat Gerätesteuerung</string>
     <string name="bridge_notification_control_body">Bridge ist aktiv — tippe jederzeit zum Beenden auf Deaktivieren.</string>
     <string name="gateway_keepalive_title">Hermes-Verbindung aktiv</string>
@@ -4171,4 +4171,24 @@
     <string name="host_resource_memory_elevated">Der Arbeitsspeicher des Hosts wird knapp.</string>
     <string name="host_resource_disk_critical">Der Speicherplatz des Hosts ist äußerst knapp; Nachrichten und Einstellungen können möglicherweise nicht gespeichert werden.</string>
     <string name="host_resource_disk_elevated">Der Speicherplatz des Hosts wird knapp.</string>
+    <string name="bss_capabilities_title">Funktionsberechtigungen</string>
+    <string name="bss_capabilities_desc">Immer/Nie gilt nur für diese Hermes-Verbindung. Hauptschalter und Android-Berechtigungen haben weiterhin Vorrang.</string>
+    <string name="bss_capabilities_unavailable">Wähle und verbinde zuerst eine Hermes-Verbindung.</string>
+    <string name="bss_timed_capabilities_title">Zeitgesteuerter Bildschirmzugriff</string>
+    <string name="bss_timed_capabilities_desc">Bildschirmprüfung und -steuerung laufen nach %1$d Minuten Inaktivität ab. Dauerhafte Berechtigungen verlängern diesen Timer nicht.</string>
+    <string name="bss_capability_always">Immer, solange der Hauptschalter aktiv ist</string>
+    <string name="bss_capability_never">Nie</string>
+    <string name="bss_capability_timed_on">Zeitgesteuerter Zugriff aktiv</string>
+    <string name="bss_capability_timed_off">Zeitgesteuerter Zugriff aus</string>
+    <string name="bss_capability_device_info">Geräte- und App-Infos</string>
+    <string name="bss_capability_contacts">Kontakte lesen</string>
+    <string name="bss_capability_location">Standort lesen</string>
+    <string name="bss_capability_clipboard_read">Zwischenablage lesen</string>
+    <string name="bss_capability_clipboard_write">Zwischenablage schreiben</string>
+    <string name="bss_capability_media">Medienwiedergabe steuern</string>
+    <string name="bss_capability_communications">SMS senden und Anrufe tätigen</string>
+    <string name="bss_capability_sharing">Medien teilen und MMS verfassen</string>
+    <string name="bss_capability_screen_inspection">Bildschirm und UI prüfen</string>
+    <string name="bss_capability_screen_control">Apps und Navigation steuern</string>
+    <string name="unattended_requires_timed_control">Erfordert zeitgesteuerte Bildschirmsteuerung — zuerst unter Sicherheit &amp; Funktionen aktivieren.</string>
 </resources>
