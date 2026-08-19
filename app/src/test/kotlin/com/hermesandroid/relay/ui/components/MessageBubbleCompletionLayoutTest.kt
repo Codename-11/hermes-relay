@@ -90,12 +90,18 @@ class MessageBubbleCompletionLayoutTest {
         compose.setContent {
             MaterialTheme {
                 MessageBubble(
-                    message = message.copy(isStreaming = streaming.value),
+                    message = message.copy(
+                        isStreaming = streaming.value,
+                        inputTokens = if (streaming.value) null else 120,
+                        outputTokens = if (streaming.value) null else 42,
+                    ),
+                    onSpeakMessage = {},
                     modifier = Modifier.testTag("retained-live-tail"),
                 )
             }
         }
         compose.waitForIdle()
+        compose.onNodeWithText("↑120 ↓42 tokens").assertDoesNotExist()
         val streamingHeight = compose.onNodeWithTag("retained-live-tail")
             .fetchSemanticsNode().boundsInRoot.height
 
@@ -104,6 +110,7 @@ class MessageBubbleCompletionLayoutTest {
         val completedHeight = compose.onNodeWithTag("retained-live-tail")
             .fetchSemanticsNode().boundsInRoot.height
 
+        compose.onNodeWithText("↑120 ↓42 tokens").assertExists()
         assertEquals(streamingHeight, completedHeight, 0.01f)
     }
 
