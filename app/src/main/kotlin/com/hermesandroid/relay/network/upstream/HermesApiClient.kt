@@ -6,6 +6,9 @@ import android.util.Log
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppAnalytics
 import com.hermesandroid.relay.network.shutdownOffMainThread
+import com.hermesandroid.relay.network.shared.InvalidCredentialException
+import com.hermesandroid.relay.network.shared.bearerAuthorization
+import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import com.hermesandroid.relay.network.upstream.models.CreateSessionRequest
 import com.hermesandroid.relay.network.upstream.models.HermesSseEvent
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -431,7 +434,7 @@ private class RetryingEventSource(
  */
 class HermesApiClient(
     baseUrl: String,
-    private val apiKey: String,
+    apiKey: String,
     httpClient: OkHttpClient? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
@@ -442,6 +445,9 @@ class HermesApiClient(
     @Volatile
     private var lastCapabilities: ServerCapabilities? = null
     private val baseUrl: String = baseUrl.trimEnd('/')
+    private val apiCredential = runCatching {
+        normalizeCredentialForHeader(apiKey, "API credential")
+    }
 
     companion object {
         private const val TAG = "HermesApiClient"
@@ -540,6 +546,8 @@ class HermesApiClient(
             HealthCheckResult.Unhealthy("Server not found — check the hostname")
         } catch (e: java.net.SocketTimeoutException) {
             HealthCheckResult.Unhealthy("Connection timed out — is the server running?")
+        } catch (e: InvalidCredentialException) {
+            HealthCheckResult.Unhealthy(e.message ?: "Invalid API credential")
         } catch (e: IOException) {
             val msg = e.message ?: ""
             when {
@@ -2023,9 +2031,8 @@ class HermesApiClient(
 
     private fun authRequest(url: String): Request.Builder {
         val builder = Request.Builder().url(url)
-        if (apiKey.isNotBlank()) {
-            builder.header("Authorization", "Bearer $apiKey")
-        }
+        val credential = apiCredential.getOrElse { throw it }
+        builder.bearerAuthorization(credential, "API credential")
         return builder
     }
 
@@ -2042,10 +2049,12 @@ class HermesApiClient(
      */
     private fun authRequestOrNull(url: String): Request.Builder? {
         val builder = buildApiRequestOrNull(url) ?: return null
-        if (apiKey.isNotBlank()) {
-            builder.header("Authorization", "Bearer $apiKey")
-        }
-        return builder
+        return runCatching {
+            builder.bearerAuthorization(
+                apiCredential.getOrElse { throw it },
+                "API credential",
+            )
+        }.getOrNull()
     }
 
     /**
@@ -2063,7 +2072,8 @@ class HermesApiClient(
 
     /** Human message for a base URL that fails to parse (#131). */
     private fun invalidBaseUrlMessage(): String =
-        "Invalid server address ($baseUrl) — edit the connection's API URL or re-pair."
+        apiCredential.exceptionOrNull()?.message
+            ?: "Invalid server address ($baseUrl) — edit the connection's API URL or re-pair."
 
     /**
      * Make attachment drops on the SSE fallback transports explicit

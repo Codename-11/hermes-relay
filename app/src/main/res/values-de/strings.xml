@@ -736,6 +736,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">Letzte Nachrichten als antippbare Chips über dem Eingabefeld anzeigen, um sie erneut zu senden. Standardmäßig aus.</string>
     <string name="chat_settings_keep_keyboard_open">Tastatur nach dem Senden geöffnet lassen</string>
     <string name="chat_settings_keep_keyboard_open_desc">Nach dem Senden im Eingabefeld bleiben. Ausschalten, um die Tastatur nach jeder gesendeten Nachricht zu schließen.</string>
+    <string name="chat_settings_large_pastes">Große Einfügungen in Anhänge umwandeln</string>
+    <string name="chat_settings_large_pastes_desc">Wandelt Einfügungen mit mindestens 5.000 Zeichen in überprüfbare Textanhänge um. Standardmäßig aktiviert.</string>
+    <string name="chat_large_paste_attached">Große Einfügung als Textanhang hinzugefügt</string>
+    <string name="chat_large_paste_too_large">Der eingefügte Text überschreitet das Anhangslimit von %1$d MB</string>
     <string name="chat_settings_physical_keyboard_enter">Eingabetaste der physischen Tastatur</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Wähle, ob die Eingabetaste sendet oder eine neue Zeile einfügt. Strg+Eingabetaste sendet immer.</string>
     <string name="chat_settings_insert_newline">Neue Zeile einfügen</string>
@@ -2187,6 +2191,7 @@
     <string name="active_section_api_key_not_configured">API-Schlüssel nicht konfiguriert</string>
     <string name="active_section_api_key_optional">API-Schlüssel für direkte API</string>
     <string name="active_section_api_key_stored_hint">Schlüssel ist sicher gespeichert.</string>
+    <string name="api_credential_single_line_error">API-Anmeldedaten müssen in einer einzigen Zeile stehen.</string>
     <string name="active_section_api_reachable_voice_review">API erreichbar — Sprachkonfiguration prüfen</string>
     <string name="active_section_api_relay_voice_reachable">API erreichbar — Relay-Sprache ist konfiguriert</string>
     <string name="active_section_api_server">API-Server</string>

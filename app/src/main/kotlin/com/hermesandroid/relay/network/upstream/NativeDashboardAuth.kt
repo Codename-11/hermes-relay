@@ -4,6 +4,8 @@ import android.content.Context
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.buildRawTokenStore
+import com.hermesandroid.relay.network.shared.bearerAuthorization
+import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import java.io.EOFException
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -75,11 +77,13 @@ class EncryptedNativeDashboardTokenStore(
 
     override fun load(): NativeDashboardTokens? =
         store.getString(TOKEN_KEY)?.let { raw ->
-            runCatching { json.decodeFromString<NativeDashboardTokens>(raw) }.getOrNull()
+            runCatching {
+                json.decodeFromString<NativeDashboardTokens>(raw).normalizedForStorage()
+            }.getOrNull()
         }
 
     override fun save(tokens: NativeDashboardTokens) {
-        store.putString(TOKEN_KEY, json.encodeToString(tokens))
+        store.putString(TOKEN_KEY, json.encodeToString(tokens.normalizedForStorage()))
     }
 
     override fun clear() {
@@ -450,7 +454,7 @@ class DashboardBearerAuth(
         val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
         val request = tokens?.let {
             chain.request().newBuilder()
-                .header("Authorization", "Bearer ${it.accessToken}")
+                .bearerAuthorization(it.accessToken, "Dashboard credential")
                 .build()
         } ?: chain.request()
         return chain.proceed(request)
@@ -464,9 +468,12 @@ class DashboardBearerAuth(
             forceRefresh = true,
             failedAccessToken = failedAccessToken,
         ) ?: return null
-        val next = "Bearer ${tokens.accessToken}"
+        val accessToken = normalizeCredentialForHeader(tokens.accessToken, "Dashboard credential")
+        val next = "Bearer $accessToken"
         if (next == previous) return null
-        return response.request.newBuilder().header("Authorization", next).build()
+        return response.request.newBuilder()
+            .bearerAuthorization(accessToken, "Dashboard credential")
+            .build()
     }
 
     private fun usableTokens(
@@ -495,6 +502,14 @@ class DashboardBearerAuth(
         return count
     }
 }
+
+private fun NativeDashboardTokens.normalizedForStorage(): NativeDashboardTokens = copy(
+    accessToken = normalizeCredentialForHeader(accessToken, "Dashboard credential")
+        .also { require(it.isNotEmpty()) { "Dashboard credential is empty" } },
+    refreshToken = if (refreshToken.isEmpty()) "" else {
+        normalizeCredentialForHeader(refreshToken, "Dashboard refresh credential")
+    },
+)
 
 internal class NativeDashboardAuthHttpException(
     val statusCode: Int,

@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.9.1
+# Hermes-Relay-Android v1.10.0
 
-**Release Date:** August 16, 2026
+**Release Date:** August 18, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.9.1-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.10.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,35 +12,35 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This patch aligns Agent Passport with current Hermes profile identity, makes
-shared avatar changes reliable from the phone, and hardens several Gateway
-operations around profile ownership, attachments, recovery, and model consent.
+This release makes Android chat more continuous: drafts survive restarts, large
+pastes become reviewable attachments, live replies render with incremental
+Markdown, and foreground reconnect or completion no longer disrupts the open
+conversation.
 
 ## Added
 
-- Create Hermes profiles with explicit shared, copied, or isolated
-  authentication choices and inspect partial setup outcomes.
-- Select upstream animated pets that follow the active Hermes profile across
-  supported clients, while keeping phone-only animated icons separate.
-- Create finite recurring schedules, review bounded reset evidence, and see
-  host resource or model-consent warnings before taking action.
+- Preserve text, quote/edit context, and pending attachments in the exact
+  connection, profile, and session draft across app restarts.
+- Convert large pastes into reviewable text attachments before sending while
+  retaining compatible text delivery on fallback transports.
+- Render paragraphs, lists, links, fenced code, and tables incrementally from
+  the first streamed token without replacing the message at completion.
 
 ## Fixed
 
-- Shared avatar images selected from Android now persist. The app accepts any
-  decodable image and safely converts it to Hermes' supported static format and
-  size contract when needed.
-- Named-profile sessions, draft writes, rewinds, and recovery fail closed when
-  Hermes cannot confirm the owning profile or durable history.
-- Attachment sends remain bounded and no longer fall through to text-only
-  delivery after an unsupported or interrupted upload.
-- Nous hosted sign-in follows the official native callback and provider
-  contract with clearer, non-sensitive failure guidance.
+- Reattach the visible Gateway session after background/foreground reconnect
+  and reconcile missed work without leaving the conversation.
+- Expose Return on the software keyboard while keeping the dedicated Send
+  action and physical-keyboard behavior distinct.
+- Reject malformed imported credentials before network-header construction or
+  encrypted-state replacement.
+- Keep intentional scrollback fixed and bottom-follow stable while Markdown,
+  voice actions, timestamps, and token metadata settle.
 
 ## Install / Verify
 
-- App version: **1.9.1** (versionCode **44**).
-- Standard Chat, sessions, Manage, profile identity, and Vanilla Hermes voice
-  continue to work against unmodified upstream Hermes.
-- The optional Relay plugin is not required for standard Android chat, shared
-  profile avatars, upstream pets, or hosted Dashboard authentication.
+- App version: **1.10.0** (versionCode **45**).
+- Standard Chat, sessions, Manage, profile identity, streaming Markdown, and
+  Vanilla Hermes voice continue to work against unmodified upstream Hermes.
+- The optional Relay plugin is not required for standard Android chat,
+  foreground session reattachment, or streaming Markdown.

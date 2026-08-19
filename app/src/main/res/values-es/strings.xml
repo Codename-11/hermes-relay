@@ -661,6 +661,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">Muestre sus mensajes recientes como chips que se pueden tocar encima del redactor para enviarlos nuevamente. Desactivado de forma predeterminada.</string>
     <string name="chat_settings_keep_keyboard_open">Mantener el teclado abierto al enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permanece en el compositor después del envío. Desactívelo para descartar el teclado después de cada mensaje enviado.</string>
+    <string name="chat_settings_large_pastes">Convertir pegados grandes en archivos adjuntos</string>
+    <string name="chat_settings_large_pastes_desc">Convierte pegados de 5.000 caracteres o más en archivos de texto revisables. Activado de forma predeterminada.</string>
+    <string name="chat_large_paste_attached">El pegado grande se añadió como archivo de texto</string>
+    <string name="chat_large_paste_too_large">El texto pegado supera el límite de archivos adjuntos de %1$d MB</string>
     <string name="chat_settings_physical_keyboard_enter">Tecla Intro del teclado físico</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Elige si Intro envía o inserta una línea nueva. Ctrl+Intro siempre envía.</string>
     <string name="chat_settings_insert_newline">Insertar línea nueva</string>
@@ -1996,6 +2000,7 @@
     <string name="active_section_api_key_not_configured">Clave API no configurada</string>
     <string name="active_section_api_key_optional">Clave API para API directa</string>
     <string name="active_section_api_key_stored_hint">La clave se almacena de forma segura.</string>
+    <string name="api_credential_single_line_error">Las credenciales de API deben estar en una sola línea.</string>
     <string name="active_section_api_reachable_voice_review">API accesible: revisar la configuración de voz</string>
     <string name="active_section_api_relay_voice_reachable">API accesible: la voz Relay está configurada</string>
     <string name="active_section_api_server">Servidor API</string>

@@ -15,9 +15,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +55,8 @@ import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownExtendedSpans
+import com.mikepenz.markdown.model.rememberStreamingMarkdownState
+import com.mikepenz.markdown.model.StreamingMarkdownState
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
@@ -66,6 +72,23 @@ fun MarkdownContent(
     textColor: Color,
     modifier: Modifier = Modifier
 ) {
+    ConfiguredMarkdownContent(
+        content = content,
+        textColor = textColor,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ConfiguredMarkdownContent(
+    textColor: Color,
+    modifier: Modifier = Modifier,
+    content: String? = null,
+    streamingState: StreamingMarkdownState? = null,
+) {
+    require((content == null) != (streamingState == null)) {
+        "Exactly one Markdown source must be provided"
+    }
     val isDarkTheme = LocalBrand.current.isDark
     val chatBodyStyle = MaterialTheme.typography.bodyMedium.copy(
         fontSize = 15.sp,
@@ -75,109 +98,108 @@ fun MarkdownContent(
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = isDarkTheme))
     }
-    Markdown(
-        content = content,
-        modifier = modifier,
-        // Code surfaces must contrast against the bubble (which is itself
-        // surfaceVariant for assistant turns) or code reads as invisible. The
-        // block uses the lowest container (a darker inset in dark themes, a
-        // clean white inset in light), inline code a subtle raised step.
-        colors = markdownColor(
-            text = textColor,
-            codeBackground = MaterialTheme.colorScheme.surfaceContainerLowest,
-            inlineCodeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
-        ),
-        // Chat-tuned type ramp. Left unset, the mikepenz M3 defaults map headings
-        // to DISPLAY roles (in this app's scale h1=displayLarge 57sp, h2=displayMedium
-        // ~45sp, h3=displaySmall 36sp) — a single `#` becomes a billboard inside the
-        // ~272dp bubble. Here every level derives from bodyLarge/bodyMedium (so the
-        // live font-picker still applies) and is capped so the largest heading is
-        // proportionate to the 15sp body, matching Discord / GitHub-mobile
-        // in-message headings.
-        typography = markdownTypography(
-            h1 = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = textColor,
-            ),
-            h2 = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, color = textColor,
-            ),
-            h3 = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, color = textColor,
-            ),
-            h4 = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = textColor,
-            ),
-            h5 = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = FontWeight.Bold, color = textColor,
-            ),
-            h6 = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
-                color = textColor.copy(alpha = 0.85f),
-            ),
-            // Prose, list items, and quotes share a 15sp/21sp reading rhythm.
-            // The library default 'text'/list role is bodyLarge (16sp), while
-            // bodyMedium was previously 14sp and unnecessarily small for long chat.
-            paragraph = chatBodyStyle,
-            text = chatBodyStyle,
-            bullet = chatBodyStyle,
-            ordered = chatBodyStyle,
-            list = chatBodyStyle,
-            quote = chatBodyStyle.copy(
-                fontStyle = FontStyle.Italic,
-                color = textColor.copy(alpha = 0.9f),
-            ),
-            // Inline + fenced code at 13sp (one step under body, not two): monospace
-            // + the tinted chip already signal "code" without also shrinking it, and
-            // the loose 0.4sp default tracking is reset to 0 for tighter token runs.
-            code = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 13.sp, letterSpacing = 0.sp,
-                fontFamily = FontFamily.Monospace,
-                color = textColor,
-            ),
-            inlineCode = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 13.sp, letterSpacing = 0.sp,
-                fontFamily = FontFamily.Monospace, color = textColor,
-            ),
-            // Links get an accent color + underline so they read as tappable on the
-            // muted assistant bubble (the default textLink is body-colored).
-            textLink = TextLinkStyles(
-                style = SpanStyle(
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium,
-                    textDecoration = TextDecoration.Underline,
-                ),
-            ),
-        ),
-        // Tables get a phone-friendly minimum measure. The stock renderer uses
-        // one-line cells; our table component below keeps the same AST/inline
-        // annotator path but permits wrapping and exposes horizontal overflow.
-        dimens = markdownDimens(
-            tableCellWidth = 110.dp,
-            tableCellPadding = 12.dp,
-        ),
-        components = markdownComponents(
-            codeBlock = {
-                SafeMarkdownHighlightedCodeBlock(
-                    content = it.content,
-                    node = it.node,
-                    highlightsBuilder = highlightsBuilder,
-                    showHeader = true
-                )
-            },
-            codeFence = {
-                SafeMarkdownHighlightedCodeFence(
-                    content = it.content,
-                    node = it.node,
-                    highlightsBuilder = highlightsBuilder,
-                    showHeader = true
-                )
-            },
-            table = { WideMarkdownTable(it) },
-        ),
-        extendedSpans = markdownExtendedSpans {
-            remember { ExtendedSpans(RoundedCornerSpanPainter()) }
-        }
+    // Code surfaces must contrast against the assistant bubble. Keeping these
+    // exact values shared between static and streaming renderers prevents a
+    // typography/color change when a live turn completes.
+    val colors = markdownColor(
+        text = textColor,
+        codeBackground = MaterialTheme.colorScheme.surfaceContainerLowest,
+        inlineCodeBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
     )
+    val typography = markdownTypography(
+        h1 = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = textColor,
+        ),
+        h2 = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, color = textColor,
+        ),
+        h3 = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+        ),
+        h4 = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+        ),
+        h5 = MaterialTheme.typography.bodyMedium.copy(
+            fontWeight = FontWeight.Bold, color = textColor,
+        ),
+        h6 = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
+            color = textColor.copy(alpha = 0.85f),
+        ),
+        paragraph = chatBodyStyle,
+        text = chatBodyStyle,
+        bullet = chatBodyStyle,
+        ordered = chatBodyStyle,
+        list = chatBodyStyle,
+        quote = chatBodyStyle.copy(
+            fontStyle = FontStyle.Italic,
+            color = textColor.copy(alpha = 0.9f),
+        ),
+        code = MaterialTheme.typography.bodySmall.copy(
+            fontSize = 13.sp,
+            letterSpacing = 0.sp,
+            fontFamily = FontFamily.Monospace,
+            color = textColor,
+        ),
+        inlineCode = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 13.sp,
+            letterSpacing = 0.sp,
+            fontFamily = FontFamily.Monospace,
+            color = textColor,
+        ),
+        textLink = TextLinkStyles(
+            style = SpanStyle(
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.Underline,
+            ),
+        ),
+    )
+    val dimens = markdownDimens(tableCellWidth = 110.dp, tableCellPadding = 12.dp)
+    val components = markdownComponents(
+        codeBlock = {
+            SafeMarkdownHighlightedCodeBlock(
+                content = it.content,
+                node = it.node,
+                highlightsBuilder = highlightsBuilder,
+                showHeader = true,
+            )
+        },
+        codeFence = {
+            SafeMarkdownHighlightedCodeFence(
+                content = it.content,
+                node = it.node,
+                highlightsBuilder = highlightsBuilder,
+                showHeader = true,
+            )
+        },
+        table = { WideMarkdownTable(it) },
+    )
+    val extendedSpans = markdownExtendedSpans {
+        remember { ExtendedSpans(RoundedCornerSpanPainter()) }
+    }
+
+    if (streamingState != null) {
+        Markdown(
+            streamingMarkdownState = streamingState,
+            modifier = modifier,
+            colors = colors,
+            typography = typography,
+            dimens = dimens,
+            components = components,
+            extendedSpans = extendedSpans,
+        )
+    } else {
+        Markdown(
+            content = checkNotNull(content),
+            modifier = modifier,
+            colors = colors,
+            typography = typography,
+            dimens = dimens,
+            components = components,
+            extendedSpans = extendedSpans,
+        )
+    }
 }
 
 /**
@@ -291,37 +313,61 @@ private fun WideMarkdownTable(model: MarkdownComponentModel) {
 fun StreamingMarkdownContent(
     content: String,
     textColor: Color,
-    isStreaming: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    if (isStreaming) {
-        // Keep one stable layout node for the entire live turn. Promoting each
-        // blank-terminated paragraph into Markdown replaced the Text subtree
-        // repeatedly; LazyColumn then exposed its fallback anchor for a frame,
-        // which looked like the whole chat reloaded. Updating this Text value
-        // only remeasures the growing bubble. Full Markdown is parsed once the
-        // owning row releases its stable live-tail layout.
-        Text(
-            // CommonMark ignores blank lines before the first block. The live
-            // Text renderer must do the same or a response whose transport
-            // prefix contains newlines appears to start several lines down.
-            // Preserve indentation on the first non-blank line so indented
-            // code and deliberately spaced prose are not altered.
-            text = content.withoutLeadingBlankLines(),
-            modifier = modifier,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
-                lineHeight = 21.sp,
-            ),
-            color = textColor,
-        )
-    } else {
-        MarkdownContent(
-            content = content,
+    var generation by remember { mutableIntStateOf(0) }
+    key(generation) {
+        NativeStreamingMarkdownGeneration(
+            content = content.withoutLeadingBlankLines(),
             textColor = textColor,
             modifier = modifier,
+            onResetRequired = { generation += 1 },
         )
     }
+}
+
+@Composable
+private fun NativeStreamingMarkdownGeneration(
+    content: String,
+    textColor: Color,
+    modifier: Modifier,
+    onResetRequired: () -> Unit,
+) {
+    val streamingState = rememberStreamingMarkdownState()
+    LaunchedEffect(content, streamingState) {
+        val plan = planStreamingMarkdownAppend(
+            renderedContent = streamingState.content.toString(),
+            nextContent = content,
+        )
+        if (plan.resetRequired) {
+            onResetRequired()
+        } else if (plan.delta.isNotEmpty()) {
+            streamingState.append(plan.delta)
+        }
+    }
+
+    ConfiguredMarkdownContent(
+        streamingState = streamingState,
+        textColor = textColor,
+        modifier = modifier,
+    )
+}
+
+internal data class StreamingMarkdownAppendPlan(
+    val resetRequired: Boolean,
+    val delta: String,
+)
+
+internal fun planStreamingMarkdownAppend(
+    renderedContent: String,
+    nextContent: String,
+): StreamingMarkdownAppendPlan = if (nextContent.startsWith(renderedContent)) {
+    StreamingMarkdownAppendPlan(
+        resetRequired = false,
+        delta = nextContent.substring(renderedContent.length),
+    )
+} else {
+    StreamingMarkdownAppendPlan(resetRequired = true, delta = "")
 }
 
 internal fun String.withoutLeadingBlankLines(): String {

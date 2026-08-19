@@ -1,7 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -35,7 +34,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ContentCopy
@@ -103,13 +101,6 @@ fun MessageBubble(
     showThinking: Boolean = true,
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
-    /**
-     * Keeps the current live tail on its stable Text layout while a final
-     * streaming frame commits. The owning list releases it immediately after
-     * completion so the same row transitions to full Markdown with its bottom
-     * anchor preserved.
-     */
-    retainStreamingLayout: Boolean = false,
     onCopyMessage: (String) -> Unit = {},
     /**
      * Select this message as a structured composer quote. Null hides Quote.
@@ -579,26 +570,6 @@ fun MessageBubble(
             color = backgroundColor,
             modifier = Modifier
                 .then(
-                    if (!isUser && !isSystem &&
-                        (message.isStreaming || retainStreamingLayout)
-                    ) {
-                        // The frame-paced text node is already measured at its
-                        // new size. Animate and clip the owning surface so a
-                        // newly wrapped line is revealed inside the expanding
-                        // bubble instead of drawing below the previous bounds
-                        // for one frame. TopStart keeps existing prose fixed.
-                        Modifier.animateContentSize(
-                            animationSpec = tween(
-                                durationMillis = 72,
-                                easing = LinearOutSlowInEasing,
-                            ),
-                            alignment = Alignment.TopStart,
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
-                .then(
                     if (!isUser && !isSystem && isDarkTheme) {
                         Modifier.leftEdgeGlow(
                             alpha = 0.12f,
@@ -670,37 +641,28 @@ fun MessageBubble(
                             color = textColor
                         )
                     } else {
-                        // Keep one plain Text node stable only while content is
-                        // incomplete (plus the final committed live frame).
-                        // Completion releases this flag and selects the full
-                        // Markdown tree on the same stable message row.
+                        // The renderer owns one incremental AST for the entire
+                        // visible lifetime of this row. Stable and provisional
+                        // blocks therefore use the same typography/components;
+                        // completion is data state, not a renderer swap.
                         if (markdownBody.isNotEmpty()) {
                             StreamingMarkdownContent(
                                 content = markdownBody,
                                 textColor = textColor,
-                                isStreaming = message.isStreaming || retainStreamingLayout,
                             )
                         }
                     }
                 }
-                // Compose's SelectionManager assumes that selectable IDs
-                // captured by a drag remain registered. Reset its owner when
-                // a live Text node becomes a Markdown tree, or settled
-                // Markdown content changes its node topology, so a handle
-                // cannot keep pointing at a removed selectable.
-                if (showSpeakAction || showStopSpeakingAction) {
-                    DisableSelection { messageTextContent() }
-                } else {
-                    key(
-                        messageSelectionTopologyKey(
-                            isPlainText = isUser || isSystem,
-                            isStreaming = message.isStreaming,
-                            retainStreamingLayout = retainStreamingLayout,
-                            markdownBody = markdownBody,
-                        ),
-                    ) {
-                        SelectionContainer { messageTextContent() }
-                    }
+                // Voice actions live outside the message body and must never
+                // replace its selection owner. Speak becomes available exactly
+                // at completion; branching on it here recreated the complete
+                // incremental Markdown state for one frame.
+                key(
+                    messageSelectionTopologyKey(
+                        isPlainText = isUser || isSystem,
+                    ),
+                ) {
+                    SelectionContainer { messageTextContent() }
                 }
                 if (onSessionReference != null && sessionReferences.isNotEmpty()) {
                     sessionReferences.forEach { reference ->
@@ -826,26 +788,39 @@ fun MessageBubble(
                         }
                 }
 
+                val hasTokenUsage = !isUser &&
+                    (message.inputTokens != null || message.outputTokens != null)
+
                 // Timestamp — only on the LAST bubble of a same-author run so a
                 // burst of fragments doesn't stack three near-touching time labels.
                 // Grouping breaks on a >5min gap (ChatScreen), so every pause still
                 // surfaces its own time. Alpha floored at 0.6 for 11sp contrast.
-                // Reserve the footer from the first streaming frame so
-                // completion is a color-only transition and cannot resize the
-                // row. Hide the reserved timestamp from accessibility until it
-                // becomes visible.
+                // This row is reserved from the first streaming frame. Completion
+                // can reveal both timestamp and token usage without adding a new
+                // footer line or changing the bubble's measured height.
                 if (isLastInGroup) {
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = timeFormat.format(Date(message.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = if (message.isStreaming) 0f else 0.6f),
-                        modifier = if (message.isStreaming) {
-                            Modifier.clearAndSetSemantics { }
-                        } else {
-                            Modifier
-                        },
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = timeFormat.format(Date(message.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = if (message.isStreaming) 0f else 0.6f),
+                            modifier = if (message.isStreaming) {
+                                Modifier.clearAndSetSemantics { }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        if (hasTokenUsage) {
+                            TokenDisplay(
+                                inputTokens = message.inputTokens,
+                                outputTokens = message.outputTokens,
+                            )
+                        }
+                    }
                 }
 
                 // Delivery status — only on agent-Thread reply bubbles (a user
@@ -866,12 +841,13 @@ fun MessageBubble(
                     )
                 }
 
-                // Token display (assistant messages only)
-                if (!isUser && (message.inputTokens != null || message.outputTokens != null)) {
+                // Non-tail historical fragments have no reserved timestamp row.
+                // Preserve their existing standalone token metadata layout.
+                if (!isLastInGroup && hasTokenUsage) {
                     Spacer(modifier = Modifier.height(2.dp))
                     TokenDisplay(
                         inputTokens = message.inputTokens,
-                        outputTokens = message.outputTokens
+                        outputTokens = message.outputTokens,
                     )
                 }
             }
@@ -1052,14 +1028,9 @@ internal data class MessageSelectionTopologyKey(
 
 internal fun messageSelectionTopologyKey(
     isPlainText: Boolean,
-    isStreaming: Boolean,
-    retainStreamingLayout: Boolean,
-    markdownBody: String,
 ): MessageSelectionTopologyKey = when {
     isPlainText -> MessageSelectionTopologyKey(renderer = "plain", markdownBody = null)
-    isStreaming || retainStreamingLayout ->
-        MessageSelectionTopologyKey(renderer = "live", markdownBody = null)
-    else -> MessageSelectionTopologyKey(renderer = "markdown", markdownBody = markdownBody)
+    else -> MessageSelectionTopologyKey(renderer = "streaming-markdown", markdownBody = null)
 }
 
 /**

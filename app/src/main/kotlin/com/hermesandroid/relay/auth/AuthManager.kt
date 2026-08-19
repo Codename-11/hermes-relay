@@ -14,6 +14,8 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
 import com.hermesandroid.relay.network.relay.models.Envelope
+import com.hermesandroid.relay.network.shared.InvalidCredentialException
+import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -217,20 +219,46 @@ class AuthManager(
             tokenStoreKey: String,
             secrets: ConnectionAuthSecrets,
         ) {
+            val normalized = normalizeStoredSecrets(secrets)
             withContext(Dispatchers.IO) {
                 val store = tokenStoreForBackup(context, tokenStoreKey)
-                writeOrRemove(store, KEY_SESSION_TOKEN, secrets.sessionToken)
-                writeOrRemove(store, KEY_REFRESH_TOKEN, secrets.refreshToken)
-                writeOrRemove(store, KEY_DEVICE_ID, secrets.deviceId)
-                writeOrRemove(store, KEY_API_KEY, secrets.apiKey)
+                writeOrRemove(store, KEY_SESSION_TOKEN, normalized.sessionToken)
+                writeOrRemove(store, KEY_REFRESH_TOKEN, normalized.refreshToken)
+                writeOrRemove(store, KEY_DEVICE_ID, normalized.deviceId)
+                writeOrRemove(store, KEY_API_KEY, normalized.apiKey)
                 writeOrRemove(
                     store,
                     KEY_PROFILE_API_KEYS,
-                    secrets.profileApiKeys.takeIf { it.isNotEmpty() }?.let(::encodeProfileApiKeys),
+                    normalized.profileApiKeys
+                        .takeIf { it.isNotEmpty() }
+                        ?.let(::encodeProfileApiKeys),
                 )
-                writeOrRemove(store, KEY_PAIRED_META, secrets.pairedSessionMetaJson)
+                writeOrRemove(store, KEY_PAIRED_META, normalized.pairedSessionMetaJson)
             }
         }
+
+        /** Validate a backup fully before any existing encrypted state is replaced. */
+        fun validateStoredSecrets(secrets: ConnectionAuthSecrets) {
+            normalizeStoredSecrets(secrets)
+        }
+
+        private fun normalizeStoredSecrets(secrets: ConnectionAuthSecrets): ConnectionAuthSecrets =
+            secrets.copy(
+                sessionToken = secrets.sessionToken?.let {
+                    normalizeCredentialForHeader(it, "Relay session credential")
+                }?.takeIf { it.isNotEmpty() },
+                refreshToken = secrets.refreshToken?.let {
+                    normalizeCredentialForHeader(it, "Relay refresh credential")
+                }?.takeIf { it.isNotEmpty() },
+                apiKey = secrets.apiKey?.let {
+                    normalizeCredentialForHeader(it, "API credential")
+                }?.takeIf { it.isNotEmpty() },
+                profileApiKeys = secrets.profileApiKeys
+                    .mapValues { (_, value) ->
+                        normalizeCredentialForHeader(value, "Profile API credential")
+                    }
+                    .filterValues { it.isNotEmpty() },
+            )
 
         private fun tokenStoreForBackup(
             context: Context,
@@ -607,6 +635,8 @@ class AuthManager(
      */
     private val _apiKeyPresent = MutableStateFlow(false)
     val apiKeyPresent: StateFlow<Boolean> = _apiKeyPresent.asStateFlow()
+    private val _apiKeyError = MutableStateFlow<String?>(null)
+    val apiKeyError: StateFlow<String?> = _apiKeyError.asStateFlow()
 
     init {
         // Register as system channel handler for auth messages
@@ -626,19 +656,40 @@ class AuthManager(
                 val s = store()
                 val existingToken = s.getString(KEY_SESSION_TOKEN)
                 if (existingToken != null) {
-                    _authState.value = AuthState.Paired(existingToken)
-                    _currentPairedSession.value = loadStoredMetadata(existingToken)
-                    Log.i(
-                        TAG,
-                        "init: hydrated existing session_token=${existingToken.take(8)}… " +
-                            "→ authState=Paired (stale-at-startup unless this is a real continuous session)"
-                    )
+                    runCatching {
+                        normalizeCredentialForHeader(existingToken, "Relay session credential")
+                            .also { require(it.isNotEmpty()) }
+                    }.onSuccess { normalized ->
+                        if (normalized != existingToken) s.putString(KEY_SESSION_TOKEN, normalized)
+                        _authState.value = AuthState.Paired(normalized)
+                        _currentPairedSession.value = loadStoredMetadata(normalized)
+                        Log.i(TAG, "init: hydrated existing session credential")
+                    }.onFailure {
+                        _authState.value = AuthState.Failed(
+                            "Saved Relay credential is malformed. Re-pair this connection.",
+                        )
+                        Log.w(TAG, "init: rejected malformed saved Relay credential")
+                    }
                 } else {
                     Log.i(TAG, "init: no stored session_token → authState stays Unpaired")
                 }
                 // Converge the plain api-key-present hint with the decrypted
                 // truth (also repairs a hint that predates legacy migration).
-                recordApiKeyHint(!s.getString(KEY_API_KEY).isNullOrBlank())
+                val storedApiKey = s.getString(KEY_API_KEY)
+                if (storedApiKey != null) {
+                    runCatching {
+                        normalizeCredentialForHeader(storedApiKey, "API credential")
+                            .also { require(it.isNotEmpty()) }
+                    }.onSuccess { normalized ->
+                        if (normalized != storedApiKey) s.putString(KEY_API_KEY, normalized)
+                        _apiKeyError.value = null
+                    }.onFailure {
+                        _apiKeyError.value =
+                            "Saved API credential is malformed. Replace or clear it."
+                        Log.w(TAG, "init: rejected malformed saved API credential")
+                    }
+                }
+                recordApiKeyHint(!storedApiKey.isNullOrBlank())
             }
         }
     }
@@ -815,10 +866,20 @@ class AuthManager(
             val deviceId = getDeviceId()
             val payload = when (currentState) {
                 is AuthState.Paired -> {
-                    val refreshToken = store().getString(KEY_REFRESH_TOKEN)
+                    val refreshToken = store().getString(KEY_REFRESH_TOKEN)?.let { raw ->
+                        runCatching {
+                            normalizeCredentialForHeader(raw, "Relay refresh credential")
+                        }.getOrElse {
+                            _authState.value = AuthState.Failed(
+                                "Saved Relay credential is malformed. Re-pair this connection.",
+                            )
+                            Log.w(TAG, "authenticate: rejected malformed refresh credential")
+                            return@launch
+                        }
+                    }
                     Log.i(
                         TAG,
-                        "authenticate: sending session_token (state=Paired, token=${currentState.token.take(8)}…, " +
+                        "authenticate: sending saved session credential (state=Paired, " +
                             "refresh=${!refreshToken.isNullOrBlank()})"
                     )
                     buildJsonObject {
@@ -1006,10 +1067,26 @@ class AuthManager(
 
     // --- API Key storage (for direct Hermes API Server auth) ---
 
-    suspend fun getApiKey(): String? = store().getString(KEY_API_KEY)
+    suspend fun getApiKey(): String? {
+        val raw = store().getString(KEY_API_KEY) ?: return null
+        return runCatching {
+            normalizeCredentialForHeader(raw, "API credential")
+                .takeIf { it.isNotEmpty() }
+        }.onSuccess {
+            _apiKeyError.value = null
+        }.onFailure {
+            _apiKeyError.value = "Saved API credential is malformed. Replace or clear it."
+            Log.w(TAG, "getApiKey: rejected malformed saved API credential")
+        }.getOrNull()
+    }
 
     suspend fun setApiKey(key: String) {
-        val trimmed = key.trim()
+        val trimmed = runCatching {
+            normalizeCredentialForHeader(key, "API credential")
+        }.getOrElse {
+            _apiKeyError.value = "API credentials must be a single line."
+            throw it
+        }
         val s = store()
         if (trimmed.isBlank()) {
             s.remove(KEY_API_KEY)
@@ -1018,11 +1095,13 @@ class AuthManager(
             s.putString(KEY_API_KEY, trimmed)
             recordApiKeyHint(true)
         }
+        _apiKeyError.value = null
     }
 
     suspend fun clearApiKey() {
         store().remove(KEY_API_KEY)
         recordApiKeyHint(false)
+        _apiKeyError.value = null
     }
 
     suspend fun getProfileApiKey(profileName: String): String? =
@@ -1034,7 +1113,7 @@ class AuthManager(
         profileApiKeysMutex.withLock {
             val tokenStore = store()
             val keys = decodeProfileApiKeys(tokenStore.getString(KEY_PROFILE_API_KEYS)).toMutableMap()
-            val normalizedKey = key.trim()
+            val normalizedKey = normalizeCredentialForHeader(key, "Profile API credential")
             if (normalizedKey.isBlank()) keys.remove(normalizedProfile)
             else keys[normalizedProfile] = normalizedKey
             if (keys.isEmpty()) tokenStore.remove(KEY_PROFILE_API_KEYS)
@@ -1053,7 +1132,10 @@ class AuthManager(
         scope.launch {
             try {
                 val payload = envelope.payload
-                val token = payload["session_token"]?.jsonPrimitive?.contentOrNull
+                val token = payload["session_token"]?.jsonPrimitive?.contentOrNull?.let { raw ->
+                    normalizeCredentialForHeader(raw, "Relay session credential")
+                        .takeIf { it.isNotEmpty() }
+                }
 
                 if (token == null) {
                     Log.w(
@@ -1070,13 +1152,14 @@ class AuthManager(
                     val refreshToken = payload["refresh_token"]
                         ?.jsonPrimitive
                         ?.contentOrNull
-                        ?.takeIf { it.isNotBlank() }
+                        ?.let { normalizeCredentialForHeader(it, "Relay refresh credential") }
+                        ?.takeIf { it.isNotEmpty() }
                     if (refreshToken != null) {
                         s.putString(KEY_REFRESH_TOKEN, refreshToken)
                         Log.i(TAG, "handleAuthOk: stored rotated refresh token")
                     }
                     _authState.value = AuthState.Paired(token)
-                    Log.i(TAG, "handleAuthOk: Paired(token=${token.take(8)}…)")
+                    Log.i(TAG, "handleAuthOk: paired with server-issued session credential")
                     // Per-connection signal for socket-scoped consumers (e.g.
                     // re-sending proactive.subscribe). Fires on every auth.ok.
                     _authOkEvents.tryEmit(Unit)
@@ -1169,6 +1252,11 @@ class AuthManager(
                 // handler is exactly why the broken `_sessionLabels` parser
                 // (stringifying object entries) sat undetected for so long.
                 Log.w(TAG, "auth.ok parse failed: ${e.message}", e)
+                if (e is InvalidCredentialException) {
+                    _authState.value = AuthState.Failed(
+                        "Relay returned a malformed credential. Re-pair this connection.",
+                    )
+                }
             }
         }
     }
@@ -1192,7 +1280,14 @@ class AuthManager(
             protocolVersion = current.protocolVersion,
             hostId = current.hostId,
             credentialKind = "route",
-            token = credential["token"]?.jsonPrimitive?.contentOrNull ?: return,
+            token = credential["token"]?.jsonPrimitive?.contentOrNull?.let {
+                runCatching {
+                    normalizeCredentialForHeader(it, "Hermes Reach credential")
+                }.getOrElse {
+                    Log.w(TAG, "Ignoring malformed Hermes Reach route credential")
+                    return
+                }
+            } ?: return,
             expiresAt = credential["expires_at"]?.jsonPrimitive?.longOrNull,
         )
         val validated = active.copy(broker = replacement).takeIf { it.hasHermesReach() } ?: return

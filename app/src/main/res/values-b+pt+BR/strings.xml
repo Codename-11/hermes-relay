@@ -694,6 +694,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">Mostre suas mensagens recentes como chips tocáveis acima do editor para enviá-las novamente. Desativado por padrão.</string>
     <string name="chat_settings_keep_keyboard_open">Manter o teclado aberto ao enviar</string>
     <string name="chat_settings_keep_keyboard_open_desc">Permaneça no editor após enviar. Desative para fechar o teclado depois de cada mensagem enviada.</string>
+    <string name="chat_settings_large_pastes">Converter colagens grandes em anexos</string>
+    <string name="chat_settings_large_pastes_desc">Transforma colagens com 5.000 caracteres ou mais em anexos de texto revisáveis. Ativado por padrão.</string>
+    <string name="chat_large_paste_attached">Colagem grande adicionada como anexo de texto</string>
+    <string name="chat_large_paste_too_large">O texto colado excede o limite de anexos de %1$d MB</string>
     <string name="chat_settings_physical_keyboard_enter">Tecla Enter do teclado físico</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Escolha se Enter envia ou insere uma nova linha. Ctrl+Enter sempre envia.</string>
     <string name="chat_settings_insert_newline">Inserir nova linha</string>
@@ -2091,6 +2095,7 @@
     <string name="active_section_api_key_not_configured">Chave da API não configurada</string>
     <string name="active_section_api_key_optional">Chave da API direta</string>
     <string name="active_section_api_key_stored_hint">A chave está armazenada com segurança.</string>
+    <string name="api_credential_single_line_error">As credenciais da API devem estar em uma única linha.</string>
     <string name="active_section_api_reachable_voice_review">API acessível — revise a configuração de voz</string>
     <string name="active_section_api_relay_voice_reachable">API acessível — a voz do Relay está configurada</string>
     <string name="active_section_api_server">Servidor API</string>

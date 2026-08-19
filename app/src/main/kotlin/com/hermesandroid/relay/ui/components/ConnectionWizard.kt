@@ -2249,6 +2249,11 @@ private fun StandardEntryStep(
     val apiError = apiUrlSchemeError(apiUrl, context)
     val tailscaleError = optionalHttpUrlError(tailscaleApiUrl, context)
     val dashboardError = optionalHttpUrlError(dashboardUrl, context)
+    val apiKeyError = if (apiKey.trim(' ', '\t').any { it < '!' || it > '~' }) {
+        stringResource(R.string.api_credential_single_line_error)
+    } else {
+        null
+    }
     var advancedExpanded by remember { mutableStateOf(false) }
     var scanBusy by remember { mutableStateOf(false) }
     var scanResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
@@ -2263,6 +2268,7 @@ private fun StandardEntryStep(
         apiError == null &&
         tailscaleError == null &&
         dashboardError == null &&
+        apiKeyError == null &&
         !isConnecting
     val defaultDashboardUrl = Connection.deriveDefaultDashboardUrl(apiUrl)
     val effectiveDashboardUrl = dashboardUrl
@@ -2407,8 +2413,9 @@ private fun StandardEntryStep(
             label = { Text(stringResource(R.string.cw_api_key_label)) },
             placeholder = { Text(stringResource(R.string.cw_api_key_placeholder)) },
             singleLine = true,
+            isError = apiKeyError != null,
             supportingText = {
-                Text(stringResource(R.string.cw_api_key_hint))
+                Text(apiKeyError ?: stringResource(R.string.cw_api_key_hint))
             },
             visualTransformation = if (apiKeyVisible) {
                 VisualTransformation.None

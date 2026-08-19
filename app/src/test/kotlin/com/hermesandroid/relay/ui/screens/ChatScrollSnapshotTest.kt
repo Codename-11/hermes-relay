@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatScrollSnapshotTest {
@@ -59,11 +60,15 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
-    fun `same transcript late viewport or tail layout is corrected`() {
+    fun `late viewport correction never takes completion tail ownership`() {
         val previous = viewportSnapshot(
             tailSizePx = 400,
             viewportHeightPx = 1_000,
             visibleBottomDistancePx = 0,
+        )
+        val completionRemeasure = previous.copy(
+            tailSizePx = 460,
+            visibleBottomDistancePx = null,
         )
 
         assertEquals(
@@ -80,10 +85,10 @@ class ChatScrollSnapshotTest {
             ),
         )
         assertEquals(
-            true,
+            false,
             shouldCorrectConversationBottomAfterLayout(
                 previous = previous,
-                current = previous.copy(tailSizePx = 460, visibleBottomDistancePx = null),
+                current = completionRemeasure,
                 atExactBottom = false,
                 userScrolledAway = false,
                 userDragging = false,
@@ -92,6 +97,7 @@ class ChatScrollSnapshotTest {
                 viewportFollowAllowed = true,
             ),
         )
+        assertEquals(60, ownedBottomFollowScroll(previous, completionRemeasure))
     }
 
     @Test
@@ -366,77 +372,109 @@ class ChatScrollSnapshotTest {
     }
 
     @Test
-    fun `stream start captures the live tail renderer`() {
+    fun `bounded follow ramps without transcript-distance velocity`() {
+        val shortSteps = followSteps(distance = 480, viewportHeight = 840)
+        val longSteps = followSteps(distance = 48_000, viewportHeight = 840)
+
+        assertTrue(shortSteps.take(3).zipWithNext().all { (a, b) -> b >= a })
+        assertTrue(shortSteps.takeLast(3).zipWithNext().all { (a, b) -> b <= a })
+        assertTrue(longSteps.max() <= 56)
+        assertEquals(shortSteps.max(), longSteps.max())
+        assertEquals(480, shortSteps.sum())
+        assertEquals(48_000, longSteps.sum())
+    }
+
+    @Test
+    fun `reduced motion consumes the measured delta without animation frames`() {
         assertEquals(
-            "assistant-live",
-            retainedLiveTailAfterTransition(
-                retainedUiKey = null,
-                streamStarted = true,
-                streamCompleted = false,
-                lastMessageUiKey = "assistant-live",
+            720,
+            boundedBottomFollowStep(
+                remainingPx = 720,
+                previousStepPx = 0,
+                viewportHeightPx = 840,
+                motionEnabled = false,
             ),
         )
     }
 
     @Test
-    fun `same-tail completion releases the live renderer for markdown`() {
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-live",
-                streamStarted = false,
-                streamCompleted = true,
-                lastMessageUiKey = "assistant-live",
+    fun `history refresh and resume preserve an already positioned session`() {
+        assertEquals(
+            false,
+            shouldInitiallyPositionConversation(
+                positionedSessionId = "session-a",
+                currentSessionId = "session-a",
+                isLoadingHistory = false,
+                hasMessages = true,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldInitiallyPositionConversation(
+                positionedSessionId = "session-a",
+                currentSessionId = "session-b",
+                isLoadingHistory = false,
+                hasMessages = true,
             ),
         )
     }
 
     @Test
-    fun `late completion survives server id adoption on the same ui row`() {
-        val live = snapshot().copy(
-            lastMessageId = "assistant-client-id",
-            lastContentLength = 40,
-            isStreaming = true,
-        )
-        val completed = live.copy(
-            lastMessageId = "assistant-server-id",
-            lastContentLength = 120,
-            isStreaming = false,
+    fun `only clear user actions rearm bottom follow`() {
+        val passiveEvents = listOf(
+            ChatFollowEvent.StreamStarted,
+            ChatFollowEvent.StreamUpdated,
+            ChatFollowEvent.QueuedTurnStarted,
+            ChatFollowEvent.TurnCompleted,
+            ChatFollowEvent.HistoryRefreshed,
+            ChatFollowEvent.AppResumed,
         )
 
-        assertEquals(true, completed.isCompletionAfter(live))
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-ui-key",
-                streamStarted = false,
-                streamCompleted = completed.isCompletionAfter(live),
-                lastMessageUiKey = completed.lastMessageUiKey,
-            ),
+        passiveEvents.forEach { event ->
+            assertEquals(true, reduceUserScrolledAway(current = true, event = event))
+        }
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.UserSend),
+        )
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.ReturnedToBottom),
+        )
+        assertEquals(
+            false,
+            reduceUserScrolledAway(current = true, event = ChatFollowEvent.JumpToLatest),
         )
     }
 
     @Test
-    fun `restored settled history does not invent a live completion transition`() {
-        assertEquals(false, snapshot().isCompletionAfter(previous = null))
+    fun `user movement cancels follow until explicitly rearmed`() {
+        val movedAway = reduceUserScrolledAway(
+            current = false,
+            event = ChatFollowEvent.UserMovedAway,
+        )
+        val stillAway = reduceUserScrolledAway(
+            current = movedAway,
+            event = ChatFollowEvent.StreamUpdated,
+        )
+
+        assertEquals(true, movedAway)
+        assertEquals(true, stillAway)
     }
 
     @Test
-    fun `new tail releases the retained renderer`() {
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = "assistant-live",
-                streamStarted = false,
-                streamCompleted = false,
-                lastMessageUiKey = "next-row",
-            ),
+    fun `settled markdown tail growth remains owned at the bottom`() {
+        val previous = viewportSnapshot(
+            tailSizePx = 420,
+            visibleBottomDistancePx = 0,
+            followTailGrowth = true,
         )
-        assertNull(
-            retainedLiveTailAfterTransition(
-                retainedUiKey = null,
-                streamStarted = false,
-                streamCompleted = false,
-                lastMessageUiKey = "next-row",
-            ),
+        val markdownPromotion = previous.copy(
+            tailSizePx = 510,
+            visibleBottomDistancePx = 90,
         )
+
+        assertEquals(90, ownedBottomFollowScroll(previous, markdownPromotion))
     }
 
     @Test
@@ -473,4 +511,22 @@ class ChatScrollSnapshotTest {
         followTailGrowth = followTailGrowth,
         followViewportResize = followViewportResize,
     )
+
+    private fun followSteps(distance: Int, viewportHeight: Int): List<Int> {
+        var remaining = distance
+        var previous = 0
+        return buildList {
+            while (remaining > 0) {
+                val step = boundedBottomFollowStep(
+                    remainingPx = remaining,
+                    previousStepPx = previous,
+                    viewportHeightPx = viewportHeight,
+                    motionEnabled = true,
+                )
+                add(step)
+                remaining -= step
+                previous = step
+            }
+        }
+    }
 }

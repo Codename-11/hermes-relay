@@ -704,6 +704,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">Показывать ваши недавние сообщения как нажимаемые чипы над композитором, чтобы отправить их снова. По умолчанию выключено.</string>
     <string name="chat_settings_keep_keyboard_open">Оставить клавиатуру открытой при отправке</string>
     <string name="chat_settings_keep_keyboard_open_desc">Оставаться в композиторе после отправки. Выключите, чтобы скрыть клавиатуру после каждого отправленного сообщения.</string>
+    <string name="chat_settings_large_pastes">Преобразовывать большие вставки во вложения</string>
+    <string name="chat_settings_large_pastes_desc">Преобразует вставки длиной от 5 000 символов в текстовые вложения для проверки. Включено по умолчанию.</string>
+    <string name="chat_large_paste_attached">Большая вставка добавлена как текстовое вложение</string>
+    <string name="chat_large_paste_too_large">Вставленный текст превышает лимит вложения %1$d МБ</string>
     <string name="chat_settings_physical_keyboard_enter">Клавиша Enter на физической клавиатуре</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Выберите, отправляет ли Enter сообщение или добавляет новую строку. Ctrl+Enter всегда отправляет.</string>
     <string name="chat_settings_insert_newline">Вставить новую строку</string>
@@ -2187,6 +2191,7 @@
     <string name="active_section_api_key_not_configured">Ключ API не настроен</string>
     <string name="active_section_api_key_optional">Ключ API для прямого API</string>
     <string name="active_section_api_key_stored_hint">Ключ хранится безопасно.</string>
+    <string name="api_credential_single_line_error">Учетные данные API должны быть указаны в одной строке.</string>
     <string name="active_section_api_reachable_voice_review">API доступен — проверьте настройку голоса</string>
     <string name="active_section_api_relay_voice_reachable">API доступен — голос Relay настроен</string>
     <string name="active_section_api_server">Сервер API</string>

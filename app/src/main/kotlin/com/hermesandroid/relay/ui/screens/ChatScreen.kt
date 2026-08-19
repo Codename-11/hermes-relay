@@ -130,6 +130,7 @@ import com.hermesandroid.relay.network.relay.RealtimeVoiceConfig
 import com.hermesandroid.relay.network.relay.VoiceOutputConfig
 import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import com.hermesandroid.relay.ui.components.resolveSessionModelUiState
+import com.hermesandroid.relay.ui.components.rememberAccessibleMotionState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -168,7 +169,9 @@ import com.hermesandroid.relay.util.AttachmentTooLargeException
 import com.hermesandroid.relay.util.readBase64Bounded
 import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.LARGE_PASTE_THRESHOLD_CHARS
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
+import com.hermesandroid.relay.data.largePasteAttachment
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.HermesCardAction
@@ -226,6 +229,7 @@ import com.hermesandroid.relay.ui.components.pet.PetInteractionLayer
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import java.io.File
+import java.util.UUID
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
@@ -274,7 +278,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -343,24 +350,6 @@ internal data class ChatScrollSnapshot(
     val isStreaming: Boolean
 )
 
-internal fun ChatScrollSnapshot.isCompletionAfter(previous: ChatScrollSnapshot?): Boolean =
-    previous?.isStreaming == true &&
-        !isStreaming &&
-        previous.messageCount == messageCount &&
-        previous.lastMessageUiKey == lastMessageUiKey
-
-internal fun retainedLiveTailAfterTransition(
-    retainedUiKey: String?,
-    streamStarted: Boolean,
-    streamCompleted: Boolean,
-    lastMessageUiKey: String?,
-): String? = when {
-    streamStarted -> lastMessageUiKey
-    streamCompleted && retainedUiKey == lastMessageUiKey -> null
-    retainedUiKey != null && retainedUiKey != lastMessageUiKey -> null
-    else -> retainedUiKey
-}
-
 private class ChatTailTransitionRef(
     var snapshot: ChatScrollSnapshot? = null,
 )
@@ -399,8 +388,13 @@ internal fun shouldCorrectConversationBottomAfterLayout(
     ) {
         return false
     }
-    return old.tailSizePx != current.tailSizePx ||
-        old.viewportHeightPx != current.viewportHeightPx ||
+    // Tail-row remeasurement (including completion chrome and Markdown
+    // settlement) is already owned by requiredBottomFollowScroll. Sending it
+    // through this fallback as well performs a full scrollToItem after the
+    // measured ramp, visibly resetting the anchor for one frame.
+    if (old.tailSizePx != current.tailSizePx) return false
+
+    return old.viewportHeightPx != current.viewportHeightPx ||
         old.visibleBottomDistancePx != current.visibleBottomDistancePx
 }
 
@@ -444,6 +438,72 @@ internal fun ownedBottomFollowScroll(
     // new-message auto-follow when smooth auto-scroll is disabled.
     if (!sameTranscript && !current.followTailGrowth) return 0
     return requiredBottomFollowScroll(previous, current)
+}
+
+/**
+ * One frame of the live bottom-follow ramp. The maximum step is derived from
+ * the viewport, never the transcript distance, so a long session cannot make
+ * token updates accelerate into a full-list race. The symmetric braking limit
+ * keeps the last few frames from stopping abruptly.
+ */
+internal fun boundedBottomFollowStep(
+    remainingPx: Int,
+    previousStepPx: Int,
+    viewportHeightPx: Int,
+    motionEnabled: Boolean,
+): Int {
+    if (remainingPx <= 0) return 0
+    if (!motionEnabled) return remainingPx
+
+    val maxStep = (viewportHeightPx / 14).coerceIn(12, 56)
+    val acceleration = (maxStep / 5).coerceAtLeast(3)
+    val accelerated = (previousStepPx + acceleration).coerceIn(acceleration, maxStep)
+    val brakingLimit = kotlin.math.sqrt(
+        2.0 * acceleration.toDouble() * remainingPx.toDouble(),
+    ).toInt().coerceAtLeast(acceleration)
+    return minOf(remainingPx, accelerated, brakingLimit)
+}
+
+internal fun shouldInitiallyPositionConversation(
+    positionedSessionId: String?,
+    currentSessionId: String?,
+    isLoadingHistory: Boolean,
+    hasMessages: Boolean,
+): Boolean = currentSessionId != null &&
+    positionedSessionId != currentSessionId &&
+    !isLoadingHistory &&
+    hasMessages
+
+internal enum class ChatFollowEvent {
+    UserSend,
+    UserMovedAway,
+    ReturnedToBottom,
+    JumpToLatest,
+    StreamStarted,
+    StreamUpdated,
+    QueuedTurnStarted,
+    TurnCompleted,
+    HistoryRefreshed,
+    AppResumed,
+}
+
+/** User intent is the only state transition; transport/layout events retain it. */
+internal fun reduceUserScrolledAway(
+    current: Boolean,
+    event: ChatFollowEvent,
+): Boolean = when (event) {
+    ChatFollowEvent.UserSend,
+    ChatFollowEvent.ReturnedToBottom,
+    ChatFollowEvent.JumpToLatest -> false
+
+    ChatFollowEvent.UserMovedAway -> true
+
+    ChatFollowEvent.StreamStarted,
+    ChatFollowEvent.StreamUpdated,
+    ChatFollowEvent.QueuedTurnStarted,
+    ChatFollowEvent.TurnCompleted,
+    ChatFollowEvent.HistoryRefreshed,
+    ChatFollowEvent.AppResumed -> current
 }
 
 internal fun shouldFollowImeAfterInsetChange(
@@ -882,6 +942,8 @@ fun ChatScreen(
         connectionViewModel.keepComposerFocusedOnSend.collectAsState()
     val physicalKeyboardEnterBehavior by
         connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
+    val convertLargePastesToAttachments by
+        connectionViewModel.convertLargePastesToAttachments.collectAsState()
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -922,6 +984,7 @@ fun ChatScreen(
     // sessions-SSE falls back to bounded persisted-history reconciliation.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
+        chatViewModel.setChatVisible(appForeground && chatReady)
         if (appForeground && chatReady) {
             chatViewModel.prewarmGateway()
         }
@@ -929,6 +992,9 @@ fun ChatScreen(
             chatViewModel.refreshModelOptions()
             chatViewModel.refreshReasoningSettings()
         }
+    }
+    DisposableEffect(chatViewModel) {
+        onDispose { chatViewModel.setChatVisible(false) }
     }
 
     // Cold-open recovery: the dashboard probe that flips gatewayAvailability to
@@ -959,6 +1025,7 @@ fun ChatScreen(
 
     // Animation settings
     val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
+    val accessibleMotion = rememberAccessibleMotionState()
     val animationBehindChat by connectionViewModel.animationBehindChat.collectAsState()
     val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
@@ -1025,11 +1092,13 @@ fun ChatScreen(
     val composerDraftKey = remember(
         activeConnection?.id,
         selectedProfile?.name,
+        openedSessionProfileName,
         currentSessionId,
     ) {
         ChatComposerDraftKey(
             connectionId = activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline",
-            profileId = selectedProfile?.name?.takeIf(String::isNotBlank)
+            profileId = (openedSessionProfileName ?: selectedProfile?.name)
+                ?.takeIf(String::isNotBlank)
                 ?: ChatComposerDraftKey.DEFAULT_PROFILE_ID,
             sessionId = currentSessionId?.takeIf(String::isNotBlank) ?: "new-session",
         )
@@ -1056,7 +1125,7 @@ fun ChatScreen(
         }
         restoringComposerDraft = true
         val restored = chatViewModel.composerDraftStore.snapshot(composerDraftKey)
-        inputText = restored.text.take(charLimit)
+        inputText = restored.text
         editingMessage = restored.context.editingMessageId?.let { messageId ->
             messages.firstOrNull { it.id == messageId }
         }
@@ -1076,6 +1145,7 @@ fun ChatScreen(
     ) {
         val key = activeComposerDraftKey ?: return@LaunchedEffect
         if (restoringComposerDraft) return@LaunchedEffect
+        delay(200)
         chatViewModel.composerDraftStore.save(
             key,
             ChatComposerDraft(
@@ -1158,6 +1228,7 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     PetInteractionLayer(
         owner = "chat-interaction-layer",
@@ -1196,12 +1267,46 @@ fun ChatScreen(
         onDispose { petCompanionCoordinator.clearSurface("chat") }
     }
     val scope = rememberCoroutineScope()
+    val latestComposerDraft by rememberUpdatedState {
+        activeComposerDraftKey?.let { key ->
+            key to ChatComposerDraft(
+                text = inputText,
+                selectionStart = inputText.length,
+                selectionEnd = inputText.length,
+                context = ChatComposerDraftContext(
+                    quotedMessageId = quotedMessage?.id,
+                    editingMessageId = editingMessage?.id,
+                ),
+                attachments = pendingAttachments,
+            )
+        }
+    }
+    DisposableEffect(lifecycleOwner, chatViewModel.composerDraftStore) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                latestComposerDraft()?.let { (key, draft) ->
+                    chatViewModel.persistComposerDraft(key, draft)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val copiedToClipboardMsg = stringResource(R.string.chat_copied_to_clipboard)
     val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
     val finishSuccessfulSend: () -> Unit = {
-        activeComposerDraftKey?.let(chatViewModel.composerDraftStore::remove)
+        // Sending is an explicit "follow my turn" action, including when it
+        // queues behind an active run. Automatic queued-turn handoff itself
+        // never re-arms follow after the reader has deliberately moved away.
+        userScrolledAwayState.value = reduceUserScrolledAway(
+            current = userScrolledAwayState.value,
+            event = ChatFollowEvent.UserSend,
+        )
+        activeComposerDraftKey?.let { key ->
+            chatViewModel.removeComposerDraft(key)
+        }
         quotedMessage = null
         if (closeDrawerOnSend && drawerState.isOpen) {
             scope.launch { drawerState.close() }
@@ -1509,10 +1614,9 @@ fun ChatScreen(
     // streaming auto-scroll effect respects this — it will not yank the
     // user back to the latest token while they are reading history.
     // Reset to false the moment the user returns to the bottom.
-    var userScrolledAway by remember(currentSessionId) { mutableStateOf(false) }
+    var userScrolledAway by userScrolledAwayState
     var isUserDragging by remember(currentSessionId) { mutableStateOf(false) }
     var programmaticBottomScroll by remember { mutableStateOf(false) }
-    var retainedLiveTailUiKey by remember(currentSessionId) { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val latestImeBottomPx by rememberUpdatedState(imeBottomPx)
@@ -1563,7 +1667,10 @@ fun ChatScreen(
                 // settlement must reach the real LazyColumn boundary.
                 slopPx = 0,
             )
-            userScrolledAway = false
+            userScrolledAway = reduceUserScrolledAway(
+                current = userScrolledAway,
+                event = ChatFollowEvent.JumpToLatest,
+            )
         } finally {
             programmaticBottomScroll = false
         }
@@ -1587,7 +1694,14 @@ fun ChatScreen(
                 }
                 is DragInteraction.Stop, is DragInteraction.Cancel -> {
                     isUserDragging = false
-                    userScrolledAway = !listState.isAtConversationBottom(atBottomSlopPx)
+                    userScrolledAway = reduceUserScrolledAway(
+                        current = userScrolledAway,
+                        event = if (listState.isAtConversationBottom(atBottomSlopPx)) {
+                            ChatFollowEvent.ReturnedToBottom
+                        } else {
+                            ChatFollowEvent.UserMovedAway
+                        },
+                    )
                 }
             }
         }
@@ -1624,7 +1738,12 @@ fun ChatScreen(
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
     LaunchedEffect(isAtBottom) {
-        if (isAtBottom) userScrolledAway = false
+        if (isAtBottom) {
+            userScrolledAway = reduceUserScrolledAway(
+                current = userScrolledAway,
+                event = ChatFollowEvent.ReturnedToBottom,
+            )
+        }
     }
 
     // IME insets arrive as an animation, not one layout. Wait until inset
@@ -1648,26 +1767,17 @@ fun ChatScreen(
         }
     }
 
-    // Scroll-to-bottom FAB visibility. The button means "you've scrolled up —
-    // tap to catch up", so it must NOT flash while we're auto-pinning to the
-    // bottom. Suppress it when:
-    //   • a programmatic scroll is in flight (we're actively settling), or
-    //   • we're streaming-and-following (smoothAutoScroll on, not scrolled
-    //     away) — a content burst can momentarily make the list scrollable-
-    //     forward for a frame before the re-pin, which would otherwise blink
-    //     the FAB on every token.
-    // Once the user genuinely scrolls up (userScrolledAway), the streaming
-    // suppression lifts and the button appears.
+    // The latest affordance reflects user intent, not a transient layout gap.
+    // Same-row Markdown promotion can briefly put the footer below the viewport
+    // before the sole follow owner consumes its measured delta; never flash the
+    // button during that settle. Dragging up or explicitly navigating to an
+    // earlier message sets userScrolledAway and makes the affordance available.
     val showScrollToBottom by remember {
         derivedStateOf {
-            val retainingVisibleTail = retainedLiveTailUiKey != null &&
-                messages.lastOrNull()?.uiKey == retainedLiveTailUiKey
             messages.isNotEmpty() &&
                 !isAtBottom &&
                 !programmaticBottomScroll &&
-                !((isStreaming || retainingVisibleTail) &&
-                    smoothAutoScroll &&
-                    !userScrolledAway)
+                userScrolledAway
         }
     }
 
@@ -1841,9 +1951,18 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(currentSessionId, isLoadingHistory) {
-        if (!isLoadingHistory && currentSessionId != null && messages.isNotEmpty()) {
+    var positionedSessionId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentSessionId, isLoadingHistory, messages.isNotEmpty()) {
+        if (
+            shouldInitiallyPositionConversation(
+                positionedSessionId = positionedSessionId,
+                currentSessionId = currentSessionId,
+                isLoadingHistory = isLoadingHistory,
+                hasMessages = messages.isNotEmpty(),
+            )
+        ) {
             scrollConversationToBottom(animated = false)
+            positionedSessionId = currentSessionId
         }
     }
 
@@ -1859,36 +1978,21 @@ fun ChatScreen(
     )
     val tailTransitionRef = remember(currentSessionId) { ChatTailTransitionRef() }
 
-    // A live tail owns one stable Text renderer while content is incomplete.
-    // Completion first commits that final live frame, then this SideEffect
-    // releases the retained renderer and anchors the same uiKey for the next
-    // remeasure, where the row deterministically becomes rich Markdown.
+    // Structural/new-row transitions request the stable footer during the same
+    // remeasure. Completion deliberately does not: Markdown tail promotion is
+    // a same-row size change owned only by the measured-delta follower below.
     SideEffect {
         val previous = tailTransitionRef.snapshot
         val streamStarted = tailTransition.isStreaming && previous?.isStreaming != true
-        val streamCompleted = tailTransition.isCompletionAfter(previous)
         val tailStructureChanged = tailTransition.lastMessageUiKey != null &&
             (previous == null ||
                 previous.messageCount != tailTransition.messageCount ||
                 previous.lastMessageUiKey != tailTransition.lastMessageUiKey)
 
-        if (streamStarted) {
-            // Sending a turn means "follow my new answer" even if the idle
-            // transcript had previously been left above the bottom. Do not
-            // clear isUserDragging: a real finger keeps priority until release.
-            userScrolledAway = false
-        }
-        retainedLiveTailUiKey = retainedLiveTailAfterTransition(
-            retainedUiKey = retainedLiveTailUiKey,
-            streamStarted = streamStarted,
-            streamCompleted = streamCompleted,
-            lastMessageUiKey = tailTransition.lastMessageUiKey,
-        )
-
         val shouldAnchor = smoothAutoScroll &&
             !isUserDragging &&
-            (!userScrolledAway || streamStarted) &&
-            (streamStarted || streamCompleted || tailStructureChanged)
+            !userScrolledAway &&
+            (streamStarted || tailStructureChanged)
         if (shouldAnchor) {
             listState.requestScrollToItem(tailTransition.messageCount + 1)
         }
@@ -1896,8 +2000,9 @@ fun ChatScreen(
         tailTransitionRef.snapshot = tailTransition
     }
 
-    // One owner follows every bottom-preserving viewport transition. Streaming
-    // growth advances by its measured delta, while any ordinary viewport loss
+    // One owner follows every bottom-preserving viewport transition. Tail
+    // growth, including Markdown promotion/finalization, advances by its single
+    // measured delta, while any ordinary viewport loss
     // (IME, late composer controls, status text, or top chrome hydration)
     // advances by the lost height. This matters on restore: model and effort
     // controls can finish resolving after history has already reached the
@@ -1927,9 +2032,7 @@ fun ChatScreen(
                 followTailGrowth = !voiceDockAnchorTransitionActive &&
                     !isUserDragging &&
                     smoothAutoScroll &&
-                    !userScrolledAway &&
-                    (tail?.isStreaming == true ||
-                        (retainedLiveTailUiKey != null && tail?.uiKey == retainedLiveTailUiKey)),
+                    !userScrolledAway,
                 followViewportResize = shouldFollowConversationViewportResize(
                     userScrolledAway = userScrolledAway,
                     userDragging = isUserDragging,
@@ -1955,8 +2058,46 @@ fun ChatScreen(
                 )
                 previousLayout = current
                 if (scrollPx > 0) {
-                    listState.scroll(MutatePriority.Default) {
-                        scrollBy(scrollPx.toFloat())
+                    val viewportHeight = current.viewportHeightPx.coerceAtLeast(1)
+                    try {
+                        if (scrollPx > viewportHeight) {
+                            // A large Markdown/table remeasure or restored turn can
+                            // exceed a viewport. Snap once to the stable footer;
+                            // never animate across the transcript at a velocity
+                            // proportional to its total distance.
+                            val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                            if (lastIndex >= 0) listState.scrollToItem(lastIndex)
+                        } else {
+                            listState.scroll(MutatePriority.Default) {
+                                var remaining = scrollPx
+                                var previousStep = 0
+                                while (
+                                    remaining > 0 &&
+                                    !isUserDragging &&
+                                    !userScrolledAway
+                                ) {
+                                    val step = boundedBottomFollowStep(
+                                        remainingPx = remaining,
+                                        previousStepPx = previousStep,
+                                        viewportHeightPx = viewportHeight,
+                                        motionEnabled = animationEnabled &&
+                                            accessibleMotion.osAnimations &&
+                                            !accessibleMotion.touchExploration,
+                                    )
+                                    val consumed = scrollBy(step.toFloat()).toInt()
+                                    if (consumed <= 0) break
+                                    remaining = (remaining - consumed).coerceAtLeast(0)
+                                    previousStep = step
+                                    if (remaining > 0) withFrameNanos { }
+                                }
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        // User-input mutations have higher priority and cancel
+                        // either follow path immediately. Preserve parent/effect
+                        // cancellation, but let a drag merely stop this request
+                        // rather than kill the long-lived follow owner.
+                        if (!currentCoroutineContext().isActive) throw cancelled
                     }
                 } else if (correctLateLayout) {
                     val lastIndex = listState.layoutInfo.totalItemsCount - 1
@@ -1965,6 +2106,8 @@ fun ChatScreen(
                         try {
                             listState.scrollToItem(lastIndex)
                             userScrolledAway = false
+                        } catch (cancelled: CancellationException) {
+                            if (!currentCoroutineContext().isActive) throw cancelled
                         } finally {
                             programmaticBottomScroll = false
                         }
@@ -1973,8 +2116,8 @@ fun ChatScreen(
             }
     }
 
-    // Completion settles the owned transcript after the final live frame. The
-    // SideEffect above separately anchors the same row's Markdown remeasure.
+    // Completion feedback is presentation-only. The measured-delta collector
+    // above is the sole scroll owner for the Markdown tail's final remeasure.
     var observedActiveStream by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
@@ -1982,16 +2125,6 @@ fun ChatScreen(
         } else if (observedActiveStream) {
             observedActiveStream = false
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            if (
-                shouldExactlySettleConversation(
-                    autoFollowEnabled = smoothAutoScroll,
-                    userScrolledAway = userScrolledAway,
-                    userDragging = isUserDragging,
-                    hasMessages = messages.isNotEmpty(),
-                )
-            ) {
-                scrollConversationToBottom(animated = false)
-            }
         }
     }
 
@@ -2162,7 +2295,17 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteSession = { sessionId ->
-                    chatViewModel.deleteSession(sessionId)
+                    val connectionId = activeConnection?.id
+                    val profileId = openedSessionProfileName ?: selectedProfile?.name
+                    chatViewModel.deleteSession(sessionId) {
+                        if (!connectionId.isNullOrBlank() && !profileId.isNullOrBlank()) {
+                            chatViewModel.removeComposerDraftSession(
+                                connectionId,
+                                profileId,
+                                sessionId,
+                            )
+                        }
+                    }
                 },
                 onRenameSession = { sessionId, title ->
                     chatViewModel.renameSession(sessionId, title)
@@ -2289,6 +2432,13 @@ fun ChatScreen(
                         if (connectionViewModel.deleteSession(profileName, sessionId)) {
                             allProfileSessions = allProfileSessions.filterNot {
                                 it.profile == profileName && it.session.sessionId == sessionId
+                            }
+                            activeConnection?.id?.let { connectionId ->
+                                chatViewModel.removeComposerDraftSession(
+                                    connectionId,
+                                    profileName,
+                                    sessionId,
+                                )
                             }
                         }
                     }
@@ -3135,9 +3285,6 @@ fun ChatScreen(
                         // LazyColumn retains the visible row and its scroll anchor.
                         items(messages.size, key = { messages[it].uiKey }) { index ->
                             val message = messages[index]
-                            val retainLiveLayout =
-                                index == messages.lastIndex &&
-                                    message.uiKey == retainedLiveTailUiKey
                             val processNotification = message.hermesProcessNotificationOrNull()
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
@@ -3235,7 +3382,6 @@ fun ChatScreen(
                                     showThinking = showThinking,
                                     isFirstInGroup = isFirstInGroup,
                                     isLastInGroup = isLastInGroup,
-                                    retainStreamingLayout = retainLiveLayout,
                                     recoveringAnswer = recoveringAnswer,
                                     imageGenerationStylePreference = imageGenerationStyle,
                                     imageGenerationRotationIndex =
@@ -3304,6 +3450,10 @@ fun ChatScreen(
                                     onNavigateToMessage = { messageId ->
                                         val targetIndex = messages.indexOfFirst { it.id == messageId }
                                         if (targetIndex >= 0) {
+                                            userScrolledAway = reduceUserScrolledAway(
+                                                current = userScrolledAway,
+                                                event = ChatFollowEvent.UserMovedAway,
+                                            )
                                             scope.launch { listState.animateScrollToItem(targetIndex + 1) }
                                         }
                                     },
@@ -3438,6 +3588,10 @@ fun ChatScreen(
                             onJumpToMessage = { uiKey ->
                                 val messageIndex = messages.indexOfFirst { it.uiKey == uiKey }
                                 if (messageIndex >= 0) {
+                                    userScrolledAway = reduceUserScrolledAway(
+                                        current = userScrolledAway,
+                                        event = ChatFollowEvent.UserMovedAway,
+                                    )
                                     scope.launch { listState.animateScrollToItem(messageIndex + 1) }
                                 }
                             },
@@ -3706,6 +3860,10 @@ fun ChatScreen(
                         onOpenOriginal = {
                             val index = messages.indexOfFirst { it.id == reference.messageId }
                             if (index >= 0) {
+                                userScrolledAway = reduceUserScrolledAway(
+                                    current = userScrolledAway,
+                                    event = ChatFollowEvent.UserMovedAway,
+                                )
                                 scope.launch { listState.animateScrollToItem(index + 1) }
                             }
                         },
@@ -3802,6 +3960,11 @@ fun ChatScreen(
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
             val stoppedMessage = stringResource(R.string.chat_stopped_snackbar)
             val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
+            val largePasteAttachedMessage = stringResource(R.string.chat_large_paste_attached)
+            val largePasteTooLargeMessage = stringResource(
+                R.string.chat_large_paste_too_large,
+                maxAttachmentMb,
+            )
             val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
                 (apiModelOptions +
                     agentProfiles.mapNotNull { profile ->
@@ -4068,6 +4231,52 @@ fun ChatScreen(
                 isDarkTheme = isDarkTheme,
                 physicalEnterSends = physicalKeyboardEnterBehavior ==
                     PhysicalKeyboardEnterBehavior.SendMessage,
+                submitEnabled = pendingAttachments.none {
+                    it.state == com.hermesandroid.relay.data.AttachmentState.LOADING
+                },
+                largePasteThreshold = LARGE_PASTE_THRESHOLD_CHARS
+                    .takeIf { convertLargePastesToAttachments },
+                onLargePaste = { pastedText ->
+                    val owner = activeComposerDraftKey ?: composerDraftKey
+                    val sizeBytes = pastedText.toByteArray(Charsets.UTF_8).size.toLong()
+                    val maxBytes = maxAttachmentMb.toLong() * 1024L * 1024L
+                    if (sizeBytes > maxBytes) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(largePasteTooLargeMessage)
+                        }
+                    } else {
+                        val composerId = UUID.randomUUID().toString()
+                        val placeholder = Attachment(
+                            contentType = "text/plain; charset=utf-8",
+                            content = "",
+                            fileName = "pasted-text.txt",
+                            fileSize = sizeBytes,
+                            state = com.hermesandroid.relay.data.AttachmentState.LOADING,
+                            isLargePaste = true,
+                            composerId = composerId,
+                            composerRawText = pastedText,
+                        )
+                        if (activeComposerDraftKey == owner) {
+                            chatViewModel.addAttachment(placeholder)
+                        }
+                        scope.launch {
+                            val attachment = withContext(Dispatchers.Default) {
+                                largePasteAttachment(pastedText, composerId)
+                            }
+                            if (activeComposerDraftKey == owner) {
+                                chatViewModel.replaceAttachment(composerId, attachment)
+                            } else {
+                                chatViewModel.composerDraftStore.update(owner) { draft ->
+                                    draft.copy(
+                                        attachments = draft.attachments
+                                            .filterNot { it.composerId == composerId } + attachment,
+                                    )
+                                }
+                            }
+                            snackbarHostState.showSnackbar(largePasteAttachedMessage)
+                        }
+                    }
+                },
                 modelControl = modelControl,
                 onModelOptionSelected = { option ->
                     if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
@@ -4260,6 +4469,10 @@ fun ChatScreen(
                 enabled = chatReady,
                 onSend = { text ->
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    userScrolledAwayState.value = reduceUserScrolledAway(
+                        current = userScrolledAwayState.value,
+                        event = ChatFollowEvent.UserSend,
+                    )
                     chatViewModel.sendMessage(text)
                 },
                 onExit = { ambientMode = false },

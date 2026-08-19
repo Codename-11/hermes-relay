@@ -73,6 +73,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import com.hermesandroid.relay.data.RelayEndpoint
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
@@ -300,6 +301,11 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
             } else {
                 decoded
             }
+        val normalizedKey = normalizeCredentialForHeader(
+            decodedWithAliases.key,
+            "API credential",
+        )
+        val decodedWithSafeCredential = decodedWithAliases.copy(key = normalizedKey)
 
         // TODO(security): verify `decoded.sig` against the server's HMAC
         // secret once the pairing protocol exposes a public verification
@@ -310,12 +316,12 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
         // Synthesize a single priority-0 candidate from the top-level fields
         // when the wire payload didn't carry an explicit `endpoints` array.
         // v3+ payloads with an explicit array pass through untouched.
-        if (decodedWithAliases.endpoints.isNullOrEmpty()) {
-            decodedWithAliases.copy(
-                endpoints = listOf(synthesizeLegacyEndpoint(decodedWithAliases)),
+        if (decodedWithSafeCredential.endpoints.isNullOrEmpty()) {
+            decodedWithSafeCredential.copy(
+                endpoints = listOf(synthesizeLegacyEndpoint(decodedWithSafeCredential)),
             )
         } else {
-            decodedWithAliases
+            decodedWithSafeCredential
         }
     } catch (_: Exception) {
         null
@@ -396,10 +402,13 @@ private fun payloadFromApiUrl(
         else -> return null
     }
     val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
+    val normalizedKey = runCatching {
+        normalizeCredentialForHeader(apiKey, "API credential")
+    }.getOrNull() ?: return null
     val payload = HermesPairingPayload(
         host = host,
         port = if (uri.port > 0) uri.port else 8642,
-        key = apiKey.trim(),
+        key = normalizedKey,
         tls = tls,
         dashboardUrl = dashboardUrl?.trim()?.takeIf { it.isNotBlank() },
         relay = null,

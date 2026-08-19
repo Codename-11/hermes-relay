@@ -444,6 +444,34 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    val convertLargePastesToAttachments by
+                        connectionViewModel.convertLargePastesToAttachments.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.chat_settings_large_pastes),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.chat_settings_large_pastes_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = convertLargePastesToAttachments,
+                            onCheckedChange = {
+                                connectionViewModel.setConvertLargePastesToAttachments(it)
+                            },
+                        )
+                    }
+
+                    HorizontalDivider()
+
                     val physicalKeyboardEnterBehavior by
                         connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

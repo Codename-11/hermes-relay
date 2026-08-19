@@ -736,6 +736,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">在输入栏上方显示最近消息为可点击的标签以便重发。默认关闭。</string>
     <string name="chat_settings_keep_keyboard_open">发送时保持键盘打开</string>
     <string name="chat_settings_keep_keyboard_open_desc">发送后留在输入栏。关闭则在每条消息发送后收起键盘。</string>
+    <string name="chat_settings_large_pastes">将大型粘贴内容转换为附件</string>
+    <string name="chat_settings_large_pastes_desc">将 5,000 个或更多字符的粘贴内容转换为可检查的文本附件。默认开启。</string>
+    <string name="chat_large_paste_attached">大型粘贴内容已添加为文本附件</string>
+    <string name="chat_large_paste_too_large">粘贴的文本超过 %1$d MB 附件限制</string>
     <string name="chat_settings_physical_keyboard_enter">实体键盘 Enter 键</string>
     <string name="chat_settings_physical_keyboard_enter_desc">选择按 Enter 是发送消息还是插入新行。Ctrl+Enter 始终发送。</string>
     <string name="chat_settings_insert_newline">插入新行</string>
@@ -2184,6 +2188,7 @@
     <string name="active_section_api_key_not_configured">API 密钥未配置</string>
     <string name="active_section_api_key_optional">直接 API 的 API 密钥</string>
     <string name="active_section_api_key_stored_hint">密钥已安全存储。</string>
+    <string name="api_credential_single_line_error">API 凭据必须为单行内容。</string>
     <string name="active_section_api_reachable_voice_review">API 可达——请检查语音配置</string>
     <string name="active_section_api_relay_voice_reachable">API 可达——Relay 语音已配置</string>
     <string name="active_section_api_server">API 服务器</string>

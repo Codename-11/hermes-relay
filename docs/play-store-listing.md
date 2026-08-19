@@ -89,13 +89,13 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.9.1 - Profile identity that sticks
+v1.10.0 - Chat that stays put
 
-* Change shared avatars without oversized or native images disappearing.
-* Select upstream animated pets that follow the Hermes profile.
-* Keep phone-only animated icons and local overrides separate.
-* Create profiles with explicit authentication choices.
-* Harden attachment, recovery, ownership, and hosted sign-in behavior.
+* Render Markdown while replies stream without a final rebuild or scroll jump.
+* Resume the open Hermes session after returning from another app.
+* Restore composer drafts and pending attachments after app restarts.
+* Turn large pastes into reviewable text attachments.
+* Use Return on the software keyboard while the dedicated button sends.
 ```
 
 ## Category

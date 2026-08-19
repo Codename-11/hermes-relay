@@ -736,6 +736,10 @@
     <string name="chat_settings_recent_prompt_chips_desc">最近のメッセージをコンポーザーの上にタップ可能なチップとして表示し、再送信します。デフォルトではオフです。</string>
     <string name="chat_settings_keep_keyboard_open">送信時にキーボードを開いたままにする</string>
     <string name="chat_settings_keep_keyboard_open_desc">送信後はコンポーザー内に留まります。メッセージを送信するたびにキーボードを閉じるには、オフにします。</string>
+    <string name="chat_settings_large_pastes">大きな貼り付けを添付ファイルに変換</string>
+    <string name="chat_settings_large_pastes_desc">5,000 文字以上の貼り付けを確認可能なテキスト添付ファイルに変換します。デフォルトでオンです。</string>
+    <string name="chat_large_paste_attached">大きな貼り付けをテキスト添付ファイルとして追加しました</string>
+    <string name="chat_large_paste_too_large">貼り付けたテキストが %1$d MB の添付ファイル上限を超えています</string>
     <string name="chat_settings_physical_keyboard_enter">物理キーボードの Enter キー</string>
     <string name="chat_settings_physical_keyboard_enter_desc">Enter で送信するか改行するかを選択します。Ctrl+Enter は常に送信します。</string>
     <string name="chat_settings_insert_newline">改行を挿入</string>
@@ -2200,6 +2204,7 @@
     <string name="active_section_api_key_not_configured">API キーが構成されていません</string>
     <string name="active_section_api_key_optional">直接 API の API キー</string>
     <string name="active_section_api_key_stored_hint">鍵は安全に保管されます。</string>
+    <string name="api_credential_single_line_error">API 認証情報は 1 行で入力してください。</string>
     <string name="active_section_api_reachable_voice_review">API に到達可能 — 音声設定を確認してください</string>
     <string name="active_section_api_relay_voice_reachable">API 到達可能 — Relay 音声が設定されています</string>
     <string name="active_section_api_server">API サーバー</string>

@@ -1645,7 +1645,7 @@ class ChatHandler {
                 is MediaMarkerHit.RelayToken -> {
                     val dedupeKey = "$messageId:relay:${hit.token}"
                     if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker (relay, reload): token=${hit.token}")
+                        Log.d(TAG, "Media marker accepted from reloaded Relay history")
                         onMediaAttachmentRequested(messageId, hit.token)
                     }
                 }
@@ -2511,7 +2511,7 @@ class ChatHandler {
                 is MediaMarkerHit.RelayToken -> {
                     val dedupeKey = "$messageId:relay:${hit.token}"
                     if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker (relay): token=${hit.token}")
+                        Log.d(TAG, "Media marker accepted from Relay stream")
                         onMediaAttachmentRequested(messageId, hit.token)
                     }
                 }
