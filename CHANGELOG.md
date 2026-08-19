@@ -6,14 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-18
+
 ### Added
 
 - **Android preserves composer drafts across app restarts.** Text, quote/edit context, and pending attachments remain scoped to their exact connection, profile, and session in bounded app-private no-backup storage, and successful sends remove the saved draft.
 - **Android can turn large pastes into reviewable text attachments.** The default-on Chat setting converts inserts of at least 5,000 characters into a compact attachment while preserving surrounding text; Gateway uploads the file through upstream Hermes and fallback transports retain the pasted content as text.
+- **Android renders Markdown incrementally while replies stream.** The native streaming parser retains stable message, selection, and AST identities from the first token through completion, including provisional paragraphs, lists, links, fenced code, and tables.
 
 ### Fixed
 
 - **The Android software keyboard exposes Return in the multiline composer.** The dedicated composer button sends, while physical Enter, Shift+Enter, and caret-arrow behavior remain unchanged. (#367)
+- **Open chats reattach after Android returns to the foreground.** Gateway reconnect restores the visible session subscription and reconciles missed work without requiring the user to leave and reopen the conversation. (#365)
+- **Imported credentials fail closed before network or secure-state mutation.** Control characters and malformed values are rejected before header construction or encrypted-state replacement without logging credential material.
+- **Streaming follow remains stable through completion.** Deliberate scrollback stays untouched, bottom-follow uses one bounded owner, and Markdown, voice actions, timestamps, and token metadata settle without rebuilding the bubble or resetting its scroll anchor. (#341)
 
 ## [1.9.1] - 2026-08-16
 

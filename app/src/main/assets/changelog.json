@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.10.0",
+   "title": "Chat that stays put",
+   "date": "2026-08-18",
+   "sections": [
+    {
+     "header": "Watch replies take shape",
+     "bullets": [
+      "Render paragraphs, lists, links, fenced code, and tables incrementally without replacing the message at completion.",
+      "Keep bottom-follow smooth while intentional scrollback remains exactly where you left it."
+     ]
+    },
+    {
+     "header": "Pick up where you left off",
+     "bullets": [
+      "Resume the visible Hermes session automatically after returning from another app.",
+      "Restore composer text, quote or edit context, and pending attachments in the correct conversation after an app restart."
+     ]
+    },
+    {
+     "header": "Review before sending",
+     "bullets": [
+      "Turn large pastes into compact text attachments while preserving compatible fallback delivery.",
+      "Use Return on the software keyboard while the dedicated composer button remains the Send action."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.9.1",
    "title": "Profile identity that sticks",
    "date": "2026-08-16",

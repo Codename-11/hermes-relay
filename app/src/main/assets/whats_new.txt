@@ -1,7 +1,8 @@
-v1.9.1 - Profile identity that sticks
+v1.10.0 - Chat that stays put
 
-* Change shared avatars from your phone without oversized or native image formats disappearing.
-* Select upstream animated pets that follow the Hermes profile across supported clients.
-* Keep phone-only animated icons and local avatar overrides clearly separate.
-* Create profiles with explicit authentication choices and safer ownership checks.
-* Get stricter attachment, recovery, rewind, model-consent, and hosted sign-in behavior.
+* See Markdown take shape while replies stream, without a final message rebuild.
+* Keep the bottom smoothly followed—or scroll back without being pulled away.
+* Return from another app and resume the open Hermes session automatically.
+* Keep composer drafts and pending attachments across app restarts.
+* Turn large pastes into reviewable text attachments before sending.
+* Use Return on the software keyboard while the dedicated button sends.
