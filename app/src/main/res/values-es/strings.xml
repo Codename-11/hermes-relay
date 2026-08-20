@@ -3939,7 +3939,8 @@
     <string name="bridge_access_screen_unlimited">La inspección o el control siguen activos hasta desactivarlos</string>
     <string name="bridge_access_until_off_short">Hasta apagar</string>
     <string name="bridge_access_unattended_unlimited">Siempre disponible hasta desactivar el acceso a pantalla</string>
-    <string name="bridge_timed_lifetime_title">Límite de inactividad</string>
+    <string name="bridge_timed_lifetime_title">Cómo finaliza el acceso</string>
+    <string name="bridge_timed_scope_title">Qué puede hacer Hermes</string>
     <string name="bridge_timed_until_off">Hasta desactivarlo</string>
     <string name="bridge_timed_idle_explainer">Sin límite fijo de sesión. Los comandos activos reinician el temporizador de inactividad de %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Sin límite de inactividad. El acceso continúa tras inactividad y reconexión hasta finalizarlo, desactivar el interruptor maestro o cambiar la política. Ideal para un dispositivo dedicado.</string>

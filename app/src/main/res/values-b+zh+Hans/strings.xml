@@ -4179,7 +4179,8 @@
     <string name="bridge_access_screen_unlimited">检查或控制将保持有效，直到关闭</string>
     <string name="bridge_access_until_off_short">直到关闭</string>
     <string name="bridge_access_unattended_unlimited">屏幕访问关闭前始终可用</string>
-    <string name="bridge_timed_lifetime_title">空闲限制</string>
+    <string name="bridge_timed_lifetime_title">访问如何结束</string>
+    <string name="bridge_timed_scope_title">Hermes 可以执行的操作</string>
     <string name="bridge_timed_until_off">直到关闭</string>
     <string name="bridge_timed_idle_explainer">没有固定会话上限。活动屏幕命令会刷新 %1$s 空闲计时器。</string>
     <string name="bridge_timed_unlimited_warning">无空闲超时。屏幕访问在空闲和重新连接后仍保持，直到结束访问、关闭主开关或更改策略。适合专用设备。</string>

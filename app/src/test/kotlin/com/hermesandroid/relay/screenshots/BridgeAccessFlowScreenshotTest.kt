@@ -17,6 +17,7 @@ import com.hermesandroid.relay.ui.components.BridgeAccessSetupSheet
 import com.hermesandroid.relay.ui.components.BridgeAgentAccessCard
 import com.hermesandroid.relay.ui.components.BridgeAndroidAccessSummaryCard
 import com.hermesandroid.relay.ui.components.BridgeTimedAccessSheet
+import com.hermesandroid.relay.ui.components.UnattendedAccessRow
 import com.hermesandroid.relay.ui.components.bridgeAndroidAccessSummary
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.BridgePermissionStatus
@@ -54,11 +55,20 @@ class BridgeAccessFlowScreenshotTest {
                 ) {
                     BridgeAgentAccessCard(
                         policy = policy,
-                        unattendedEnabled = false,
                         nowMs = 100L,
                         onSetUp = {},
                         onManage = {},
                         onAllowScreen = {},
+                    )
+                    UnattendedAccessRow(
+                        enabled = false,
+                        warningSeen = false,
+                        credentialLockDetected = false,
+                        onToggle = {},
+                        onWarningSeen = {},
+                        masterEnabled = true,
+                        screenControlAvailable = true,
+                        screenAccessUnlimited = false,
                     )
                     BridgeAndroidAccessSummaryCard(
                         summary = bridgeAndroidAccessSummary(

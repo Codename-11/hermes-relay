@@ -4258,7 +4258,8 @@
     <string name="bridge_timed_inspection_desc">Accessibility tree, UI events, and screenshots</string>
     <string name="bridge_timed_control_desc">Tap, type, swipe, open apps, and navigation</string>
     <string name="bridge_timed_ends_title">Ends after inactivity</string>
-    <string name="bridge_timed_lifetime_title">Idle limit</string>
+    <string name="bridge_timed_lifetime_title">How access ends</string>
+    <string name="bridge_timed_scope_title">What Hermes can do</string>
     <string name="bridge_timed_until_off">Until turned off</string>
     <string name="bridge_timed_idle_explainer">No fixed session limit. Active screen commands refresh the %1$s idle timer.</string>
     <string name="bridge_timed_unlimited_warning">No idle timeout. Screen access remains available through inactivity and reconnect until you end it, disable Master, or change policy. Best for a dedicated device.</string>

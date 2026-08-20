@@ -4094,7 +4094,8 @@
     <string name="bridge_access_screen_unlimited">Inspeção ou controle permanece ativo até ser desligado</string>
     <string name="bridge_access_until_off_short">Até desligar</string>
     <string name="bridge_access_unattended_unlimited">Sempre disponível até desligar o acesso à tela</string>
-    <string name="bridge_timed_lifetime_title">Limite de inatividade</string>
+    <string name="bridge_timed_lifetime_title">Como o acesso termina</string>
+    <string name="bridge_timed_scope_title">O que o Hermes pode fazer</string>
     <string name="bridge_timed_until_off">Até ser desligado</string>
     <string name="bridge_timed_idle_explainer">Sem limite fixo de sessão. Comandos ativos reiniciam o temporizador de %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Sem limite de inatividade. O acesso continua após inatividade e reconexão até ser encerrado, a chave mestra ser desligada ou a política mudar. Ideal para um dispositivo dedicado.</string>

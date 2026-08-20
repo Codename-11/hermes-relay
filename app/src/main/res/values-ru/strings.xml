@@ -3981,7 +3981,8 @@
     <string name="bridge_access_screen_unlimited">Просмотр или управление активно до отключения</string>
     <string name="bridge_access_until_off_short">До отключения</string>
     <string name="bridge_access_unattended_unlimited">Всегда доступно, пока не отключен доступ к экрану</string>
-    <string name="bridge_timed_lifetime_title">Лимит бездействия</string>
+    <string name="bridge_timed_lifetime_title">Как завершается доступ</string>
+    <string name="bridge_timed_scope_title">Что может делать Hermes</string>
     <string name="bridge_timed_until_off">До отключения</string>
     <string name="bridge_timed_idle_explainer">Фиксированного лимита сессии нет. Активные команды обновляют таймер бездействия %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Без тайм-аута. Доступ сохраняется при бездействии и переподключении, пока не завершен, не выключен главный переключатель или не изменена политика. Для выделенного устройства.</string>
