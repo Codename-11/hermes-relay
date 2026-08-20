@@ -112,6 +112,13 @@
     <string name="chat_share_conversation">Compartir conversación</string>
     <string name="chat_retry">Reintentar</string>
     <string name="chat_dismiss">Descartar</string>
+    <string name="chat_failure_title">Hermes no pudo completar esta respuesta</string>
+    <string name="chat_failure_details">Detalles</string>
+    <string name="chat_failure_details_title">Error de respuesta</string>
+    <string name="chat_failure_details_guidance">Hermes informó de este error. La aplicación no cambiará automáticamente de ruta ni de modelo.</string>
+    <string name="chat_failure_copy_details">Copiar detalles</string>
+    <string name="chat_failure_route_gateway">Gateway</string>
+    <string name="chat_failure_route_api">API alternativa</string>
     <string name="chat_open_settings">Abrir configuración</string>
     <string name="chat_connect_hermes">Conectar Hermes</string>
     <string name="chat_try_demo">Pruebe la demostración</string>

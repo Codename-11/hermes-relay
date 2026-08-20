@@ -31,6 +31,7 @@ class GatewayEventMapperTest {
         val moaReferences = mutableListOf<GatewayMoaReference>()
         val interactions = mutableListOf<GatewayAsk>()
         val interactionExpiries = mutableListOf<GatewayAskExpiry>()
+        val failures = mutableListOf<GatewayTurnFailure>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
         val statusClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
@@ -66,6 +67,7 @@ class GatewayEventMapperTest {
             onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
+            onFailure = { failures += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
             onStatusClear = { statusClears += it },
         )
@@ -305,6 +307,7 @@ class GatewayEventMapperTest {
 
         assertEquals(listOf("partial answer"), r.textDeltas)
         assertEquals(listOf("error" to "provider failed"), r.statusUpdates)
+        assertEquals(listOf(GatewayTurnFailure("provider failed", recoverable = true)), r.failures)
         assertEquals(1, r.completes)
         assertTrue(mapper.turnEnded)
     }
@@ -321,6 +324,7 @@ class GatewayEventMapperTest {
 
         assertEquals(listOf("Error: agent build failed"), r.textDeltas)
         assertEquals(listOf("error" to "agent build failed"), r.statusUpdates)
+        assertEquals(listOf(GatewayTurnFailure("agent build failed", recoverable = true)), r.failures)
         assertEquals(1, r.completes)
     }
 

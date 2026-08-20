@@ -187,6 +187,11 @@ import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatFailureDetailsDialog
+import com.hermesandroid.relay.ui.components.ChatFailurePanel
+import com.hermesandroid.relay.viewmodel.ChatFailureRoute
+import com.hermesandroid.relay.viewmodel.ChatFailureNotice
+import com.hermesandroid.relay.viewmodel.scopedChatFailure
 import com.hermesandroid.relay.ui.components.ConversationVoiceDock
 import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
@@ -848,6 +853,21 @@ fun ChatScreen(
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
     val sessionArchivingSupported by chatViewModel.sessionArchivingSupported.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val structuredChatFailure by chatViewModel.chatFailure.collectAsState()
+    val visibleChatFailure = scopedChatFailure(
+        structuredChatFailure,
+        currentSessionId,
+    ) ?: error?.let { rawError ->
+            ChatFailureNotice(
+                sessionId = currentSessionId,
+                turnId = "transport-error",
+                rawError = rawError,
+                route = null,
+            )
+        }
+    var showChatFailureDetails by rememberSaveable(visibleChatFailure?.turnId) {
+        mutableStateOf(false)
+    }
     val pendingAsk by chatViewModel.pendingAsk.collectAsState()
     val sessionActivityStates = remember(
         backgroundSessionActivityStates,
@@ -2934,32 +2954,6 @@ fun ChatScreen(
             // are reached from Settings (Settings → Hermes management / Bridge);
             // Terminal + Settings remain quick icons in the top app bar above.
 
-            // Error banner with retry
-            AnimatedVisibility(visible = error != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = error ?: "",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    TextButton(onClick = { chatViewModel.retryLastMessage() }) {
-                        Text(stringResource(R.string.chat_retry))
-                    }
-                    TextButton(onClick = { chatViewModel.clearError() }) {
-                        Text(stringResource(R.string.chat_dismiss))
-                    }
-                }
-            }
-
             // Loading history indicator — only when there's nothing already on
             // screen. During a profile/session switch the previous transcript is
             // held visible while the new history loads (see
@@ -4133,6 +4127,48 @@ fun ChatScreen(
                 )
             } else {
                 null
+            }
+
+            visibleChatFailure?.let { failure ->
+                val failureRouteLabel = when (failure.route) {
+                    ChatFailureRoute.GATEWAY ->
+                        stringResource(R.string.chat_failure_route_gateway)
+                    ChatFailureRoute.API_FALLBACK ->
+                        stringResource(R.string.chat_failure_route_api)
+                    null -> ""
+                }
+                ChatFailurePanel(
+                    failure = failure,
+                    routeLabel = failureRouteLabel,
+                    onDetails = { showChatFailureDetails = true },
+                    onRetry = { chatViewModel.retryLastMessage() },
+                    onDismiss = chatViewModel::dismissChatFailure,
+                )
+                if (showChatFailureDetails) {
+                    ChatFailureDetailsDialog(
+                        failure = failure,
+                        routeLabel = failureRouteLabel,
+                        onCopy = {
+                            val details = buildString {
+                                append(failureRouteLabel)
+                                failure.provider?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                failure.model?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                append("\n\n")
+                                append(failure.rawError)
+                            }
+                            scope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(ClipData.newPlainText("Hermes response failure", details)),
+                                )
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(R.string.chat_copied_to_clipboard),
+                                    duration = SnackbarDuration.Short,
+                                )
+                            }
+                        },
+                        onDismiss = { showChatFailureDetails = false },
+                    )
+                }
             }
 
             ChatInputBar(

@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-20 — Android stored-session resume failures stay visible
+
+Android now treats a failed Gateway `session.resume` as authoritative for the
+selected stored conversation. The client no longer creates a replacement
+session and submits the continuation after a resume rejection or profile-scope
+mismatch, preventing a context-free turn from silently selecting different
+runtime state.
+
+Gateway terminal failures and pre-submit transport failures now share a
+session-scoped panel immediately above the composer. The panel keeps the failed
+transcript row intact, shows only confirmed route/model/provider identity,
+offers explicit Details, Retry, and Dismiss actions, and records bounded,
+redacted evidence in the existing Diagnostics review/share flow. No route or
+model is changed automatically.
+
 ## 2026-08-18 — Android 1.10.0 chat continuity and streaming Markdown
 
 Hermes-Relay Android 1.10.0 is published from the immutable

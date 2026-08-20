@@ -186,6 +186,50 @@ data class ContextWindowUsage(
         get() = if (maxTokens > 0) (usedTokens.toFloat() / maxTokens).coerceIn(0f, 1f) else 0f
 }
 
+enum class ChatFailureRoute { GATEWAY, API_FALLBACK }
+
+/** Turn-scoped failure presentation derived from transport-owned signals. */
+data class ChatFailureNotice(
+    val sessionId: String?,
+    val turnId: String,
+    val rawError: String,
+    val route: ChatFailureRoute?,
+    val model: String? = null,
+    val provider: String? = null,
+    val recoverable: Boolean = true,
+)
+
+internal fun scopedChatFailure(
+    failure: ChatFailureNotice?,
+    currentSessionId: String?,
+): ChatFailureNotice? = failure?.takeIf { it.sessionId == currentSessionId }
+
+internal fun recordChatFailureDiagnostic(
+    failure: ChatFailureNotice,
+    liveSessionId: String? = null,
+) {
+    val detail = buildString {
+        failure.model?.takeIf { it.isNotBlank() }?.let { append("model=$it; ") }
+        failure.provider?.takeIf { it.isNotBlank() }?.let { append("provider=$it; ") }
+        failure.sessionId?.takeIf { it.isNotBlank() }?.let { append("stored_session=$it; ") }
+        liveSessionId?.takeIf { it.isNotBlank() }?.let { append("live_session=$it; ") }
+        append("error=${failure.rawError}")
+    }
+    DiagnosticsLog.record(
+        category = DiagnosticCategory.Session,
+        severity = DiagnosticSeverity.Error,
+        title = "Hermes chat response failed",
+        detail = detail,
+        operation = "chat response",
+        endpointRole = when (failure.route) {
+            ChatFailureRoute.GATEWAY -> "gateway"
+            ChatFailureRoute.API_FALLBACK -> "api fallback"
+            null -> "chat"
+        },
+        suggestion = "Compare the same stored session in another Hermes client.",
+    )
+}
+
 /**
  * A successful Sessions SSE turn still needs the server-authoritative transcript
  * because that transport does not stream every persisted message boundary.
@@ -500,6 +544,12 @@ class ChatViewModel : ViewModel() {
 
     private fun emitError(t: Throwable?, context: String?) {
         val human = classifyError(t, context = context, ctx = appContext)
+        // ChatHandler.error now owns an in-layout recovery panel at the
+        // composer edge. Keep classification/diagnostics, but never stack an
+        // app-wide snackbar over the same failure.
+        if (context == "send_message" && chatHandler?.error?.value != null) {
+            return
+        }
         // Cold-start / reconnect bootstrap (session-list load, session create)
         // runs without the user asking and on every reconnect. A "can't reach
         // the server" failure there is non-actionable noise — the themed
@@ -1839,6 +1889,7 @@ class ChatViewModel : ViewModel() {
         }
         gatewayClient = client
         if (changed) {
+            dismissChatFailure()
             resetApprovalModeState()
             _messageReactionsSupported.value = true
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
@@ -3101,6 +3152,8 @@ class ChatViewModel : ViewModel() {
     private val _emptyError = MutableStateFlow<String?>(null)
     private val _emptySessionId = MutableStateFlow<String?>(null)
     private val _emptyTurnStatus = MutableStateFlow<String?>(null)
+    private val _chatFailure = MutableStateFlow<ChatFailureNotice?>(null)
+    val chatFailure: StateFlow<ChatFailureNotice?> = _chatFailure.asStateFlow()
 
     // Delegated to ChatHandler
     val messages: StateFlow<List<ChatMessage>>
@@ -3138,6 +3191,19 @@ class ChatViewModel : ViewModel() {
 
     val currentSessionId: StateFlow<String?>
         get() = chatHandler?.currentSessionId ?: _emptySessionId
+
+    fun dismissChatFailure() {
+        _chatFailure.value = null
+        chatHandler?.clearError()
+    }
+
+    private fun publishChatFailure(
+        failure: ChatFailureNotice,
+        liveSessionId: String? = null,
+    ) {
+        _chatFailure.value = failure
+        recordChatFailureDiagnostic(failure, liveSessionId)
+    }
 
     /**
      * Inject an agent-initiated ("proactive") message into the active session
@@ -3550,6 +3616,7 @@ class ChatViewModel : ViewModel() {
         persistLastSession: Boolean = true,
     ) {
         val handler = chatHandler ?: return
+        dismissChatFailure()
         val isInitialContextBinding = activeProfileContextKey == null
         handler.activeAgentName = currentAgentDisplayName()
         if (
@@ -4081,6 +4148,7 @@ class ChatViewModel : ViewModel() {
 
     fun switchSession(sessionId: String) {
         val handler = chatHandler ?: return
+        dismissChatFailure()
         clearOpenedSessionOwner()
         if (streamingEndpoint != "gateway" && apiClient == null) return
         pendingThread = null
@@ -4360,6 +4428,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
         if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
+
+        // A new user action owns the recovery surface. The failed transcript
+        // row remains in history; only the composer-attached notice retires.
+        dismissChatFailure()
 
         // Server slash commands (gateway transport only) execute via
         // slash.exec / command.dispatch instead of becoming a prompt.
@@ -7626,6 +7698,8 @@ class ChatViewModel : ViewModel() {
             if (turnErrored) {
                 finalizeFailedTurnSideEffects(handler, currentMessageId)
             } else {
+                _chatFailure.value = null
+                handler.clearError()
                 finalizeTurnSideEffects(handler, currentMessageId)
                 AppAnalytics.onStreamComplete(lastInputTokens, lastOutputTokens)
             }
@@ -7785,17 +7859,34 @@ class ChatViewModel : ViewModel() {
                     startCheckpointHistoryRecovery(handler, checkpoint, errorMsg)
                 } else {
                     AppAnalytics.onStreamError()
+                    handler.markError(currentMessageId)
                     handler.onStreamError(errorMsg)
-                    emitError(Exception(errorMsg), context = "send_message")
+                    publishChatFailure(
+                        ChatFailureNotice(
+                            sessionId = errorSessionId,
+                            turnId = currentMessageId,
+                            rawError = errorMsg,
+                            route = ChatFailureRoute.GATEWAY,
+                        ),
+                    )
                     clearTurnCheckpoint()
                 }
             } else {
                 AppAnalytics.onStreamError()
+                handler.markError(currentMessageId)
                 handler.onStreamError(errorMsg)
-                // Keep the in-place error banner AND push to the global
-                // snackbar — classifier wraps the string into a throwable
-                // so context-specific copy kicks in for send_message.
-                emitError(Exception(errorMsg), context = "send_message")
+                publishChatFailure(
+                    ChatFailureNotice(
+                        sessionId = errorSessionId,
+                        turnId = currentMessageId,
+                        rawError = errorMsg,
+                        route = if (dispatchedSseEndpoint == null && activeStreamIsGateway) {
+                            ChatFailureRoute.GATEWAY
+                        } else {
+                            ChatFailureRoute.API_FALLBACK
+                        },
+                    ),
+                )
                 // Recover the server-authoritative transcript on a gateway/
                 // sessions error: a turn can fail on the CLIENT (mid-turn route
                 // switch, watchdog timeout) AFTER the server already finished it
@@ -7832,7 +7923,18 @@ class ChatViewModel : ViewModel() {
             handler.updateDeliveryStatus(userMessageId, MessageDeliveryStatus.FAILED)
             AppAnalytics.onStreamError()
             handler.onStreamError(errorMsg)
-            emitError(error, context = "send_message")
+            publishChatFailure(
+                ChatFailureNotice(
+                    sessionId = handler.currentSessionId.value,
+                    turnId = currentMessageId,
+                    rawError = errorMsg,
+                    route = if (streamingEndpoint == "gateway") {
+                        ChatFailureRoute.GATEWAY
+                    } else {
+                        ChatFailureRoute.API_FALLBACK
+                    },
+                ),
+            )
             activeStream = null
             removeQueuedMessagesForOwner(userMessageId)
             _steerableTurn.value = false
@@ -8169,6 +8271,31 @@ class ChatViewModel : ViewModel() {
                         onInteractionExpired = { expiry ->
                             expirePendingAsk(expiry)
                         },
+                        onResumeFailure = { reason ->
+                            _steerableTurn.value = false
+                            onPreflightErrorCb(Exception(reason))
+                        },
+                        onFailure = { failure ->
+                            val confirmedModel = gateway.serverModel.value
+                                ?.takeIf { it.isNotBlank() }
+                                ?: modelOverride
+                            val confirmedProvider = gateway.serverProvider.value
+                                ?.takeIf { it.isNotBlank() }
+                                ?: providerOverride
+                            val storedSession = handler.currentSessionId.value
+                            publishChatFailure(
+                                ChatFailureNotice(
+                                    sessionId = storedSession,
+                                    turnId = currentMessageId,
+                                    rawError = failure.error,
+                                    route = ChatFailureRoute.GATEWAY,
+                                    model = confirmedModel,
+                                    provider = confirmedProvider,
+                                    recoverable = failure.recoverable,
+                                ),
+                                liveSessionId = storedSession?.let(gateway::currentLiveSessionId),
+                            )
+                        },
                         onStatusUpdate = { kind, text ->
                             handler.setTurnStatus(text, kind)
                             // The server prefixes terminal failures with ❌ —
@@ -8319,7 +8446,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun clearError() {
-        chatHandler?.clearError()
+        dismissChatFailure()
     }
 
     fun retryLastMessage() {
