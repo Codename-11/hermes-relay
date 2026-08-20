@@ -64,6 +64,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -196,6 +197,13 @@ fun ChatInputBar(
         ChatInputTrailing.STEER,
         ChatInputTrailing.QUEUE,
     )
+
+    // Enter only means "send" when a physical keyboard is attached (see
+    // the key handler below). Read the configuration here, in the composable
+    // scope, and capture it for the non-composable onPreviewKeyEvent lambda.
+    val keyboardAttached =
+        LocalConfiguration.current.keyboard !=
+            android.content.res.Configuration.KEYBOARD_NOKEYS
 
     // Keep the last caption around so the AnimatedVisibility exit doesn't
     // flash an empty line while collapsing.
@@ -375,10 +383,18 @@ fun ChatInputBar(
                                 val native = event.nativeKeyEvent
                                 val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                                     native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                // Enter only means "send" when a physical keyboard is
+                                // attached. IME-dispatched Enter (commitText or a
+                                // synthesized KEYCODE_ENTER) must always fall through
+                                // so the soft keyboard's return key inserts a newline
+                                // instead of sending (issue #367). Key events alone
+                                // cannot distinguish physical vs IME origin — deviceId
+                                // is 0 or -1 depending on the IME — so gate on the
+                                // hardware keyboard configuration (read above).
                                 val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
                                 if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
                                     false
-                                } else if (isSubmitShortcut || (physicalEnterSends && !native.isShiftPressed)) {
+                                } else if (isSubmitShortcut || (keyboardAttached && physicalEnterSends && !native.isShiftPressed)) {
                                     if (canSubmit) onSend()
                                     true
                                 } else {
