@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.PowerManager
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -249,6 +250,33 @@ class UnattendedAccessManagerTest {
         UnattendedAccessManager.acquireForAction()
         // Should not throw.
         UnattendedAccessManager.release()
+    }
+
+    @Test
+    fun releaseAfterAction_releasesAtEndOfSingleCommand() {
+        every { wakeLock.isHeld } returns true
+        UnattendedAccessManager.initialize(context)
+        UnattendedAccessManager.setEnabled(true)
+
+        UnattendedAccessManager.acquireForAction()
+        UnattendedAccessManager.releaseAfterAction()
+
+        verify(exactly = 1) { wakeLock.release() }
+    }
+
+    @Test
+    fun releaseAfterAction_keepsConcurrentCommandHeldUntilLastRelease() {
+        every { wakeLock.isHeld } returns true
+        UnattendedAccessManager.initialize(context)
+        UnattendedAccessManager.setEnabled(true)
+
+        UnattendedAccessManager.acquireForAction()
+        UnattendedAccessManager.acquireForAction()
+        UnattendedAccessManager.releaseAfterAction()
+        verify(exactly = 0) { wakeLock.release() }
+
+        UnattendedAccessManager.releaseAfterAction()
+        verify(exactly = 1) { wakeLock.release() }
     }
 
     // --- WakeOutcome enum semantics ---

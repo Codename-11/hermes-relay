@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android screen-on idle no longer continuously redraws the ASCII sphere.** Idle holds a stable frame while thinking, streaming, and voice states retain full-rate motion; inactive voice waveforms and closed session drawers also stop their frame loops.
+- **Android capture and audio effects release power-sensitive resources at their actual lifecycle boundaries.** Screen capture detaches the MediaProjection surface after each requested frame, unattended bridge wake locks release when the command finishes, and barge-in AEC/noise suppression attach to the microphone capture session instead of the playback session.
+- **Experimental wake-word listening reuses its PCM normalization buffer.** Continuous opt-in listening no longer allocates a new float frame for every sherpa inference call.
+
 ## [1.10.0] - 2026-08-18
 
 ### Added

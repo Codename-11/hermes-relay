@@ -52,17 +52,11 @@ import kotlin.math.max
  *
  * We configure [AudioRecord] with [MediaRecorder.AudioSource.VOICE_COMMUNICATION]
  * so the platform's voice-call AEC pipeline is in play, and additionally try
- * to attach [AcousticEchoCanceler] + [NoiseSuppressor] keyed to the ExoPlayer
- * audio session id so TTS audio is cancelled from the mic stream specifically.
+ * to attach [AcousticEchoCanceler] + [NoiseSuppressor] to the capture
+ * [AudioRecord] session. Android audio preprocessors belong to the capture
+ * path; a playback session is not a valid attachment target for AEC/NS.
  * Without AEC, the device's own speaker output would trip the VAD the moment
  * TTS started and we'd interrupt ourselves.
- *
- * The ExoPlayer audio session id is not stable at the moment we want to start
- * listening — Media3 allocates the underlying AudioTrack lazily on first
- * playback, and callers may hit [start] before that's happened (e.g. the very
- * first sentence of a turn). We poll [audioSessionIdProvider] for up to 1 s
- * before giving up on AEC and proceeding with the mic-hardware AEC alone.
- * See the `AEC_SESSION_POLL_*` constants below.
  *
  * ### Graceful degradation
  *
@@ -93,8 +87,8 @@ import kotlin.math.max
 class BargeInListener internal constructor(
     private val audioSource: AudioFrameSource,
     private val vadEngine: VadEngine,
-    private val audioSessionIdProvider: () -> Int,
     private val readerDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val nowMsProvider: () -> Long = System::currentTimeMillis,
 ) {
 
     companion object {
@@ -108,12 +102,6 @@ class BargeInListener internal constructor(
          *  brief delay (GC pause, dispatcher contention). */
         private const val AUDIO_BUFFER_FRAMES = 4
 
-        /** ExoPlayer may return `0` for its audio session id until its
-         *  AudioTrack is first allocated (on playback start). Poll the
-         *  provider briefly before giving up on AEC and proceeding without. */
-        private const val AEC_SESSION_POLL_INTERVAL_MS = 50L
-        private const val AEC_SESSION_POLL_TIMEOUT_MS = 1_000L
-
         /**
          * Factory for the production path. Builds an [AudioRecordSource] from
          * a `Context` and wires it to the listener. The returned listener has
@@ -122,11 +110,9 @@ class BargeInListener internal constructor(
         fun create(
             context: Context,
             vadEngine: VadEngine,
-            audioSessionIdProvider: () -> Int,
         ): BargeInListener = BargeInListener(
             audioSource = AudioRecordSource(context.applicationContext),
             vadEngine = vadEngine,
-            audioSessionIdProvider = audioSessionIdProvider,
         )
     }
 
@@ -239,9 +225,8 @@ class BargeInListener internal constructor(
                     return@launch
                 }
                 Log.i(TAG, "Barge-in AudioRecord reader started")
-                // Do not block generation-phase listening while waiting for an
-                // AudioTrack session that does not exist until playback. The
-                // effects attach races harmlessly beside the reader.
+                // Effects attach beside the reader so capture can begin even
+                // on devices that reject or omit the optional preprocessors.
                 effectsJob = launch { maybeAttachEffects() }
 
                 while (isActive) {
@@ -282,7 +267,7 @@ class BargeInListener internal constructor(
                     val gated = rmsGate.observe(
                         frame = frameBuffer,
                         rawSpeech = result.probability > 0f,
-                        nowMs = System.currentTimeMillis(),
+                        nowMs = nowMsProvider(),
                         playbackGraceMs = playbackGraceMs,
                         confirmedSpeech = result.isSpeech,
                         playbackActiveOverride = playbackActiveProvider?.invoke(),
@@ -368,14 +353,12 @@ class BargeInListener internal constructor(
     }
 
     private suspend fun maybeAttachEffects() {
-        val sessionId = awaitNonZeroSessionId()
+        val sessionId = audioSource.audioSessionId
         if (sessionId == 0) {
             Log.i(
                 TAG,
-                "AEC not attached — ExoPlayer audio session id was still 0 " +
-                    "after ${AEC_SESSION_POLL_TIMEOUT_MS}ms poll; continuing " +
-                    "without effects (mic-hardware AEC from VOICE_COMMUNICATION " +
-                    "still in play)",
+                "AEC not attached — AudioRecord capture session id is 0; " +
+                    "continuing without optional effects",
             )
             return
         }
@@ -411,20 +394,6 @@ class BargeInListener internal constructor(
         }
     }
 
-    private suspend fun awaitNonZeroSessionId(): Int {
-        val immediate = audioSessionIdProvider()
-        if (immediate != 0) return immediate
-
-        var waited = 0L
-        while (waited < AEC_SESSION_POLL_TIMEOUT_MS) {
-            delay(AEC_SESSION_POLL_INTERVAL_MS)
-            waited += AEC_SESSION_POLL_INTERVAL_MS
-            val id = audioSessionIdProvider()
-            if (id != 0) return id
-        }
-        return 0
-    }
-
     private fun releaseEffects() {
         aec?.let {
             runCatching { it.enabled = false }
@@ -445,6 +414,9 @@ class BargeInListener internal constructor(
      * reader coroutine.
      */
     internal interface AudioFrameSource {
+        /** Capture-session id used by Android audio preprocessors. */
+        val audioSessionId: Int
+
         /**
          * Allocate underlying native resources. Returns true on success.
          * Returning false from here short-circuits the listener without any
@@ -480,6 +452,9 @@ class BargeInListener internal constructor(
     @Suppress("unused", "UNUSED_PARAMETER")
     private class AudioRecordSource(context: Context) : AudioFrameSource {
         private var record: AudioRecord? = null
+
+        override val audioSessionId: Int
+            get() = record?.audioSessionId ?: 0
 
         @SuppressLint("MissingPermission")
         override fun initialize(): Boolean {
