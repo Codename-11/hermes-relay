@@ -4011,4 +4011,18 @@
     <string name="host_resource_memory_elevated">A memória do servidor está baixa.</string>
     <string name="host_resource_disk_critical">O armazenamento do servidor está criticamente baixo; mensagens e configurações podem não ser salvas.</string>
     <string name="host_resource_disk_elevated">O armazenamento do servidor está baixo.</string>
+    <string name="open_code_quota_title">Assinatura do OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Uso nas suas janelas de 5 horas, semanal e mensal</string>
+    <string name="open_code_quota_refresh">Atualizar uso</string>
+    <string name="open_code_quota_loading">Buscando uso…</string>
+    <string name="open_code_quota_unconfigured">Relay não configurado — configure uma conexão para ver o uso da assinatura.</string>
+    <string name="open_code_quota_unpaired">Aguardando pareamento com o relay.</string>
+    <string name="open_code_quota_not_configured">Cota do OpenCode Go indisponível neste host.</string>
+    <string name="open_code_quota_error">Não foi possível carregar o uso</string>
+    <string name="open_code_quota_retry">Tentar novamente</string>
+    <string name="open_code_quota_resets">É redefinido em %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s de $%2$s</string>
+    <string name="open_code_quota_rolling">Contínuo · 5h</string>
+    <string name="open_code_quota_weekly">Semanal</string>
+    <string name="open_code_quota_monthly">Mensal</string>
 </resources>

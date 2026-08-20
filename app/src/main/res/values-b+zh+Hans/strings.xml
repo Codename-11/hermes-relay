@@ -4096,4 +4096,18 @@
     <string name="host_resource_memory_elevated">主机内存不足。</string>
     <string name="host_resource_disk_critical">主机存储空间严重不足，消息和设置可能无法保存。</string>
     <string name="host_resource_disk_elevated">主机存储空间不足。</string>
+    <string name="open_code_quota_title">OpenCode Go 订阅</string>
+    <string name="open_code_quota_subtitle">5小示、每周和每月窗口的使用情况</string>
+    <string name="open_code_quota_refresh">刷新使用情况</string>
+    <string name="open_code_quota_loading">正在获取使用情况…</string>
+    <string name="open_code_quota_unconfigured">Relay 未配置 — 设置连接以查看订阅使用情况。</string>
+    <string name="open_code_quota_unpaired">正在等待与 Relay 配对。</string>
+    <string name="open_code_quota_not_configured">此主机上无法使用 OpenCode Go 配额。</string>
+    <string name="open_code_quota_error">无法加载使用情况</string>
+    <string name="open_code_quota_retry">重试</string>
+    <string name="open_code_quota_resets">%1$s后重置</string>
+    <string name="open_code_quota_used_of">$%1$s / $%2$s</string>
+    <string name="open_code_quota_rolling">滚动 · 5小时</string>
+    <string name="open_code_quota_weekly">每周</string>
+    <string name="open_code_quota_monthly">每月</string>
 </resources>

@@ -4169,4 +4169,18 @@
     <string name="host_resource_memory_elevated">ホストのメモリが不足しています。</string>
     <string name="host_resource_disk_critical">ホストのストレージが極端に不足しています。メッセージや設定を保存できない可能性があります。</string>
     <string name="host_resource_disk_elevated">ホストのストレージが不足しています。</string>
+    <string name="open_code_quota_title">OpenCode Go サブスクリプション</string>
+    <string name="open_code_quota_subtitle">5時間・週間・月間の各ウィンドウでの使用量</string>
+    <string name="open_code_quota_refresh">使用量を更新</string>
+    <string name="open_code_quota_loading">使用量を取得中…</string>
+    <string name="open_code_quota_unconfigured">リレーが設定されていません — 接続を設定するとサブスクリプションの使用量を確認できます。</string>
+    <string name="open_code_quota_unpaired">リレーとのペアリングを待機中。</string>
+    <string name="open_code_quota_not_configured">このホストでは OpenCode Go のクォータを利用できません。</string>
+    <string name="open_code_quota_error">使用量を読み込めませんでした</string>
+    <string name="open_code_quota_retry">リトライ</string>
+    <string name="open_code_quota_resets">%1$s後にリセット</string>
+    <string name="open_code_quota_used_of">$%1$s / $%2$s</string>
+    <string name="open_code_quota_rolling">ローリング · 5h</string>
+    <string name="open_code_quota_weekly">週間</string>
+    <string name="open_code_quota_monthly">月間</string>
 </resources>
