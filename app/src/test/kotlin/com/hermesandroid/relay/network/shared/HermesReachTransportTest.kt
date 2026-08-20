@@ -97,7 +97,7 @@ class HermesReachTransportTest {
             ),
         )
         assertTrue(candidate.hasHermesReach())
-        assertEquals("Hermes Reach", candidate.displayLabel())
+        assertEquals("Hermes Reach · Experimental", candidate.displayLabel())
         assertEquals("wss://broker.example/v1/connect", candidate.hermesReachRouteOrNull()?.tunnelUrlOrNull())
     }
 

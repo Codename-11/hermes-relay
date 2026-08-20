@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.network.relay
 
 import android.content.Context
+import com.hermesandroid.relay.R
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +62,8 @@ class RelayVoiceClientRoutingTest {
             .callTimeout(5, TimeUnit.SECONDS)
             .build()
         context = mockk(relaxed = true)
+        every { context.getString(R.string.voice_diag_reconnected) } returns "Voice reconnected"
+        every { context.getString(R.string.voice_diag_resume_rejected) } returns "Resume rejected"
     }
 
     @After
