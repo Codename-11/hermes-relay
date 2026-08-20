@@ -3535,8 +3535,15 @@ transfer authority to a destination install; restored connections must be
 re-authorized. `bridge.status` adds only capability IDs and expiry timestamps; older
 Relays cache and pass through the additive payload without interpreting it.
 
-**UX rationale.** Safety & capabilities shows two compact groups: durable
-Always/Never grants and timed screen access. This follows Android's guidance to
+**UX rationale.** The main Bridge page is a cockpit, not the complete editor:
+it keeps permanent/timed/unattended state directly below Master, guides first
+setup through a preset or Custom, and summarizes only the Android prerequisites
+required by selected capabilities. Expanding Android access preserves the full
+permission matrix and Test/Settings actions; Safety preserves all granular
+toggles, blocklists, confirmation vocabulary/timeouts, overlay setting, trusted
+actions, and audit history. Temporary screen access has an explicit duration,
+End now, and expiry feedback; ending it clears unattended while permanent
+grants remain available. This follows Android's guidance to
 [request access in context and degrade gracefully](https://developer.android.com/training/permissions/requesting),
 [minimize permission scope](https://developer.android.com/privacy-and-security/minimize-permission-requests),
 and require fresh consent for each

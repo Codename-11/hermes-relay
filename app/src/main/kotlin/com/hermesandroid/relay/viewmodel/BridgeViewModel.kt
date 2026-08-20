@@ -333,6 +333,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setTimedAccessMinutes(minutes: Int) {
+        viewModelScope.launch {
+            safetyPrefsRepo.setAutoDisableMinutes(minutes)
+        }
+    }
+
     /**
      * Latch the "user has seen the warning" sentinel so the scary
      * dialog never appears again after the first dismissal. Called

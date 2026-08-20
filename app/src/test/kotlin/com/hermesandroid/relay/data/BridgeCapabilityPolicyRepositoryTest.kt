@@ -7,6 +7,7 @@ import com.hermesandroid.relay.bridge.BridgeCapability
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -68,6 +69,25 @@ class BridgeCapabilityPolicyRepositoryTest {
     }
 
     @Test
+    fun batchReplacementIsAtomicAndDoesNotCrossConnections() = runTest {
+        val repo = BridgeCapabilityPolicyRepository(context)
+        repo.replacePermanent(
+            "home",
+            setOf(BridgeCapability.DEVICE_INFO, BridgeCapability.CLIPBOARD_READ),
+        )
+        repo.replaceTimed(
+            "home",
+            setOf(BridgeCapability.SCREEN_INSPECTION, BridgeCapability.SCREEN_CONTROL),
+            expiresAtMs = 5_000L,
+        )
+
+        val home = repo.snapshot("home")
+        assertTrue(BridgeCapability.DEVICE_INFO in home.permanentGrants)
+        assertEquals(2, home.timedExpiriesMs.size)
+        assertFalse(repo.snapshot("work").hasAnyGrantForTest(0L))
+    }
+
+    @Test
     fun restoredDataCannotCrossTheNoBackupInstallFence() = runTest {
         val originalInstall = BridgeCapabilityPolicyRepository(context)
         originalInstall.setPermanent("home", BridgeCapability.CONTACTS_READ, true)
@@ -81,3 +101,7 @@ class BridgeCapabilityPolicyRepositoryTest {
         assertFalse(restoredInstall.snapshot("home").allows(BridgeCapability.CONTACTS_READ, 0L))
     }
 }
+
+private fun com.hermesandroid.relay.bridge.BridgeCapabilityPolicy.hasAnyGrantForTest(
+    nowMs: Long,
+): Boolean = permanentGrants.isNotEmpty() || timedExpiriesMs.values.any { it > nowMs }
