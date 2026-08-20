@@ -53,6 +53,14 @@ class BridgeCapabilityPolicyRepository(private val context: Context) {
         }
     }
 
+    suspend fun replacePermanent(
+        connectionId: String?,
+        capabilities: Set<BridgeCapability>,
+    ) {
+        require(capabilities.none { it.timed }) { "Timed capabilities require an expiry" }
+        update(connectionId) { current -> current.copy(permanentGrants = capabilities) }
+    }
+
     suspend fun grantTimed(
         connectionId: String?,
         capability: BridgeCapability,
@@ -81,6 +89,17 @@ class BridgeCapabilityPolicyRepository(private val context: Context) {
 
     suspend fun revokeTimed(connectionId: String?) {
         update(connectionId) { it.copy(timedExpiriesMs = emptyMap()) }
+    }
+
+    suspend fun replaceTimed(
+        connectionId: String?,
+        capabilities: Set<BridgeCapability>,
+        expiresAtMs: Long,
+    ) {
+        require(capabilities.all { it.timed }) { "Permanent capabilities cannot be timed" }
+        update(connectionId) { current ->
+            current.copy(timedExpiriesMs = capabilities.associateWith { expiresAtMs })
+        }
     }
 
     suspend fun refreshActiveTimed(connectionId: String?, expiresAtMs: Long) {

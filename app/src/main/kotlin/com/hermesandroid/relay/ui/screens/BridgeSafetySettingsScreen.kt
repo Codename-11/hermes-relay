@@ -393,9 +393,9 @@ internal fun CapabilityGrantCards(
     onPermanentChanged: (BridgeCapability, Boolean) -> Unit,
     onTimedChanged: (BridgeCapability, Boolean) -> Unit,
 ) {
-    SectionCard(title = stringResource(R.string.bss_capabilities_title)) {
+    SectionCard(title = stringResource(R.string.bridge_access_read_group)) {
         Text(
-            text = stringResource(R.string.bss_capabilities_desc),
+            text = stringResource(R.string.bridge_access_read_group_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -408,7 +408,38 @@ internal fun CapabilityGrantCards(
             )
         }
         Spacer(Modifier.size(8.dp))
-        BridgeCapability.entries.filterNot { it.timed }.forEach { capability ->
+        listOf(
+            BridgeCapability.DEVICE_INFO,
+            BridgeCapability.CONTACTS_READ,
+            BridgeCapability.LOCATION_READ,
+            BridgeCapability.CLIPBOARD_READ,
+        ).forEach { capability ->
+            val allowed = capability in policy.permanentGrants
+            CapabilityRow(
+                capability = capability,
+                checked = allowed,
+                stateLabel = stringResource(
+                    if (allowed) R.string.bss_capability_always else R.string.bss_capability_never,
+                ),
+                enabled = enabled,
+                onCheckedChange = { onPermanentChanged(capability, it) },
+            )
+        }
+    }
+
+    SectionCard(title = stringResource(R.string.bridge_access_actions_group)) {
+        Text(
+            text = stringResource(R.string.bridge_access_actions_group_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(8.dp))
+        listOf(
+            BridgeCapability.CLIPBOARD_WRITE,
+            BridgeCapability.MEDIA_CONTROL,
+            BridgeCapability.COMMUNICATIONS,
+            BridgeCapability.OUTBOUND_SHARING,
+        ).forEach { capability ->
             val allowed = capability in policy.permanentGrants
             CapabilityRow(
                 capability = capability,
