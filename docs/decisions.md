@@ -2349,6 +2349,9 @@ couple Standard voice to non-standard server behavior.
   `Thinking`, `Speaking`, and final audio drain on Standard and Realtime paths.
   A turn epoch fences callbacks, and teardown completes before replacement
   capture or another listener can acquire the microphone.
+- Optional AEC and noise suppression attach to the listener's `AudioRecord`
+  capture session, matching Android's preprocessing contract. Playback session
+  IDs are not effect attachment targets.
 - Quiet-room RMS calibration occurs before output and freezes at playback
   start. The gate follows upstream's 90th-percentile ambient floor, 3× default
   multiplier, generation/playback minimums, 4,000 RMS ceiling, 500 ms grace,
@@ -2385,7 +2388,8 @@ couple Standard voice to non-standard server behavior.
   intentionally not claimed.
 - sherpa owns temporal confirmation through `numTrailingBlanks`. Android treats
   each non-empty keyword result as a completed event, resets the native stream
-  immediately, and does not require the same completed result to recur. Voice
+  immediately, reuses its equal-sized normalization buffer, and does not
+  require the same completed result to recur. Voice
   settings can arm a bounded real-microphone test; test detections report
   success without entering voice or acquiring a second microphone owner.
 

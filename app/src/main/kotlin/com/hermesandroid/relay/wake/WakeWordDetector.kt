@@ -68,12 +68,16 @@ class SherpaWakeWordDetector(
         ),
     )
     private val stream: OnlineStream = spotter.createStream()
+    private var normalizedSamples = FloatArray(0)
     private var closed = false
 
     override fun accept(samples: ShortArray, count: Int): Boolean {
         if (closed || count <= 0) return false
-        val normalized = FloatArray(count) { index -> samples[index] / 32768.0f }
-        stream.acceptWaveform(normalized, sampleRate = 16_000)
+        if (normalizedSamples.size != count) normalizedSamples = FloatArray(count)
+        for (index in 0 until count) {
+            normalizedSamples[index] = samples[index] / 32768.0f
+        }
+        stream.acceptWaveform(normalizedSamples, sampleRate = 16_000)
         var detected = false
         while (spotter.isReady(stream)) {
             spotter.decode(stream)

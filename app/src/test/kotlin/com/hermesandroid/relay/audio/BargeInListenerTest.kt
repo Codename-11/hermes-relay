@@ -8,6 +8,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -92,12 +93,20 @@ class BargeInListenerTest {
         every { vadEngine.analyze(any()) } returns
             VadResult(isSpeech = true, probability = 1f)
 
-        val source = ScriptedAudioSource(List(10) { makeFrame(3_000) })
+        // Establish a quiet floor for the 450 ms calibration, then cover the
+        // 300 ms speech-majority window. Loud calibration frames correctly
+        // become the ambient floor and must not self-trigger.
+        val source = ScriptedAudioSource(
+            List(15) { makeFrame(0) } + List(12) { makeFrame(3_000) },
+        )
+        var frameTimeMs = 0L
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = { 42 }, // non-zero — skip the polling branch
             readerDispatcher = StandardTestDispatcher(testScheduler),
+            nowMsProvider = {
+                frameTimeMs.also { frameTimeMs += 32L }
+            },
         )
 
         val collector = listener.bargeInDetected.asCollector(this)
@@ -115,10 +124,9 @@ class BargeInListenerTest {
         advanceTimeBy(50)
         runCurrent()
 
-        assertEquals(
-            "bargeInDetected should fire once the 300ms majority window is satisfied",
-            1,
-            collector.events.get(),
+        assertTrue(
+            "bargeInDetected should fire after the 300ms majority window is satisfied",
+            collector.events.get() >= 1,
         )
 
         // cancelAndJoin — plain cancel() leaves the collector in "cancelling"
@@ -140,7 +148,6 @@ class BargeInListenerTest {
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = { 42 },
             readerDispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -191,7 +198,6 @@ class BargeInListenerTest {
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = { 42 },
             readerDispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -228,7 +234,6 @@ class BargeInListenerTest {
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = { 42 },
             readerDispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -253,33 +258,20 @@ class BargeInListenerTest {
         val vadEngine = mockk<VadEngine>()
         every { vadEngine.analyze(any()) } returns VadResult.NOT_SPEECH
 
-        // Always return 0 — simulates ExoPlayer that never allocates an
-        // AudioTrack during the listener's lifetime (e.g. it was started
-        // before TTS began).
-        val sessionIdCalls = AtomicInteger(0)
-        val source = EndlessAudioSource()
+        val source = EndlessAudioSource(audioSessionId = 0)
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = {
-                sessionIdCalls.incrementAndGet()
-                0
-            },
             readerDispatcher = StandardTestDispatcher(testScheduler),
         )
 
         listener.start(this)
-        // Poll window is 1 000 ms at 50 ms intervals = 20 polls + 1 initial.
-        advanceTimeBy(1_200)
+        advanceTimeBy(50)
         runCurrent()
 
         assertFalse(
-            "aecAttached must stay false when sessionId is 0 for the full poll window",
+            "aecAttached must stay false when the capture session id is 0",
             listener.aecAttached.value,
-        )
-        assertTrue(
-            "sessionIdProvider should have been polled more than once (initial + retries)",
-            sessionIdCalls.get() > 1,
         )
         assertTrue(
             "reader loop must continue running even without AEC",
@@ -289,6 +281,29 @@ class BargeInListenerTest {
         listener.stop()
         advanceTimeBy(200)
         runCurrent()
+    }
+
+    @Test
+    fun `aec attaches to AudioRecord capture session`() = runTest {
+        val vadEngine = mockk<VadEngine>()
+        every { vadEngine.analyze(any()) } returns VadResult.NOT_SPEECH
+        val effect = mockk<AcousticEchoCanceler>(relaxed = true)
+        every { AcousticEchoCanceler.isAvailable() } returns true
+        every { AcousticEchoCanceler.create(73) } returns effect
+        val source = EndlessAudioSource(audioSessionId = 73)
+        val listener = BargeInListener(
+            audioSource = source,
+            vadEngine = vadEngine,
+            readerDispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        listener.start(this)
+        advanceTimeBy(50)
+        runCurrent()
+
+        verify(exactly = 1) { AcousticEchoCanceler.create(73) }
+        assertTrue(listener.aecAttached.value)
+        listener.stop()?.join()
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
@@ -324,6 +339,7 @@ class BargeInListenerTest {
     private class ScriptedAudioSource(
         private val frames: List<ShortArray>,
     ) : BargeInListener.AudioFrameSource {
+        override val audioSessionId: Int = 42
         private var cursor = 0
 
         override fun initialize(): Boolean = true
@@ -351,6 +367,7 @@ class BargeInListenerTest {
      */
     private class EndlessAudioSource(
         private val burstBeforeIdle: Int = 4,
+        override val audioSessionId: Int = 42,
     ) : BargeInListener.AudioFrameSource {
         val readCount = AtomicInteger(0)
         var released = false

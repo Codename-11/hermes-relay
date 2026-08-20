@@ -258,6 +258,7 @@ class BridgeCommandHandler(
 
     private val pendingActivities =
         java.util.concurrent.ConcurrentHashMap<String, PendingActivity>()
+    private val unattendedWakeRequests = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     // === END v0.4.1 polish ===
 
     private val json = Json {
@@ -302,6 +303,8 @@ class BridgeCommandHandler(
                         put("error", t.message ?: "unknown executor error")
                     }
                 )
+            } finally {
+                releaseUnattendedWake(requestId)
             }
         }
     }
@@ -396,6 +399,8 @@ class BridgeCommandHandler(
                 errorCode = "dispatch_exception",
                 resultJson = null,
             )
+        } finally {
+            releaseUnattendedWake(requestId)
         }
 
         val resultJson = sink.get()
@@ -673,6 +678,9 @@ class BridgeCommandHandler(
         if (!isReadOnlyRoute) {
             val outcome = runCatching { UnattendedAccessManager.acquireForAction() }
                 .getOrDefault(UnattendedAccessManager.WakeOutcome.Disabled)
+            if (outcome != UnattendedAccessManager.WakeOutcome.Disabled) {
+                unattendedWakeRequests += requestId
+            }
             if (outcome == UnattendedAccessManager.WakeOutcome.KeyguardBlocked) {
                 respond(
                     requestId, 423,
@@ -2416,6 +2424,12 @@ class BridgeCommandHandler(
             return
         }
         multiplexer.send(envelope)
+    }
+
+    private fun releaseUnattendedWake(requestId: String) {
+        if (unattendedWakeRequests.remove(requestId)) {
+            UnattendedAccessManager.releaseAfterAction()
+        }
     }
 }
 

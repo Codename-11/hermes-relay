@@ -6,6 +6,32 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify Android power fixes across the reported device matrix
+
+Issue #377's static estimates are not device measurements. The code now keeps
+the idle Sphere static, gates inactive waveform/drawer animation, detaches the
+MediaProjection surface between requested frames, binds AEC/NS to the capture
+session, releases unattended wake locks at command completion, and reuses the
+wake-word normalization buffer. Complete the remaining physical proof before
+assigning battery percentages or declaring the report closed:
+
+- Re-run the reported Android 13 / Pixel 4 XL workload with screen-on and
+  screen-off intervals separated, and with experimental wake listening both
+  disabled and explicitly enabled. Capture scoped CPU/thread/network/wakelock
+  evidence plus Battery Historian or Perfetto without resetting batterystats
+  unless the device owner approves the reset.
+- On Android 14+ and a foldable/rotation path, request two screenshots around a
+  geometry change and verify the existing VirtualDisplay resizes, its surface
+  is detached between requests, and the projection token is not reused.
+- On at least one device with platform AEC, run Standard and Realtime barge-in
+  through playback and confirm the effect is enabled on the AudioRecord session,
+  the microphone remains single-owner, interruption still works, and teardown
+  leaves no audio effect or capture session active.
+- Compare Wi-Fi and cellular separately. Treat radio-tail claims as unproven
+  until packet timing and mobile-radio active time reproduce them on hardware.
+
+---
+
 ## Certify the official Desktop Relay plugin
 
 The unified `plugin/desktop/plugin.js` implementation is covered by source-level

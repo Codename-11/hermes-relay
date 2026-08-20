@@ -190,17 +190,23 @@ fun VoiceWaveform(
     // Three phase accumulators driven by a single per-frame ticker. Phase
     // velocity scales with the current amplitude so the wave visibly surges
     // when the user speaks instead of running on its own fixed clock.
-    val phases = rememberAmplitudeDrivenPhases(phaseDurationsMs, displayAmplitude)
     val waitingForOutputAudio = state == VoiceState.Speaking && !outputAudioActive
     val processing = state == VoiceState.Transcribing ||
         state == VoiceState.Thinking ||
         waitingForOutputAudio
+    val waveformMotionActive = compactBars || state == VoiceState.Listening ||
+        (state == VoiceState.Speaking && outputAudioActive)
+    val phases = rememberAmplitudeDrivenPhases(
+        phaseDurationsMs,
+        displayAmplitude,
+        active = waveformMotionActive,
+    )
     val waveformUnfold by animateFloatAsState(
         targetValue = if (processing) 0f else 1f,
         animationSpec = tween(durationMillis = 360),
         label = "waveformUnfold",
     )
-    val spinnerPhase = rememberProcessingSpinnerPhase(processing)
+    val spinnerPhase = rememberProcessingSpinnerPhase(active = processing)
 
     val canvasModifier = if (compactBars) {
         modifier.height(height)
@@ -361,10 +367,12 @@ fun VoiceWaveform(
 private fun rememberAmplitudeDrivenPhases(
     baseDurationsMs: IntArray,
     amplitude: Float,
+    active: Boolean,
 ): FloatArray {
     val ampRef = rememberUpdatedState(amplitude)
     var phases by remember { mutableStateOf(FloatArray(baseDurationsMs.size)) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         val twoPi = (2f * PI).toFloat()
         // Precompute base angular velocities (rad/s) so we don't divide on
         // every frame. Each wave's full cycle at silence = durationMs.
@@ -400,9 +408,9 @@ private fun rememberAmplitudeDrivenPhases(
 
 @Composable
 private fun rememberProcessingSpinnerPhase(active: Boolean): Float {
-    val activeRef = rememberUpdatedState(active)
     var phase by remember { mutableStateOf(0f) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         var prevNanos = 0L
         while (true) {
             withFrameNanos { nanos ->
@@ -412,9 +420,7 @@ private fun rememberProcessingSpinnerPhase(active: Boolean): Float {
                 }
                 val dtSec = (nanos - prevNanos) / 1_000_000_000f
                 prevNanos = nanos
-                if (activeRef.value) {
-                    phase = (phase + dtSec * 220f) % 360f
-                }
+                phase = (phase + dtSec * 220f) % 360f
             }
         }
     }
