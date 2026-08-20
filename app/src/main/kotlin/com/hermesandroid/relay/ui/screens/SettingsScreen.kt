@@ -101,6 +101,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
+import com.hermesandroid.relay.ui.components.OpenCodeQuotaCard
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
@@ -449,6 +450,17 @@ fun SettingsScreen(
                 connectionViewModel = connectionViewModel,
                 isDarkTheme = isDarkTheme,
                 modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
+            )
+
+            // ── OpenCode Go subscription usage ──────────────────────────
+            // Inline card that proxies the OpenCode Go quota (5h / weekly /
+            // monthly) through the relay host. The API key stays on the Mac;
+            // the phone just renders what the relay returns. Fetches on
+            // composition + on refresh tap, degrades gracefully when the relay
+            // isn't configured or paired yet.
+            OpenCodeQuotaCard(
+                relayHttpClient = connectionViewModel.relayHttpClient,
+                modifier = Modifier.settingsPetSurface("settings-card:opencode-quota"),
             )
 
             // (The "Active Connection quick-look card" that used to live

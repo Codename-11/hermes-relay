@@ -3898,4 +3898,18 @@
     <string name="host_resource_memory_elevated">Память хоста заканчивается.</string>
     <string name="host_resource_disk_critical">Хранилище хоста почти заполнено; сообщения и настройки могут не сохраниться.</string>
     <string name="host_resource_disk_elevated">Хранилище хоста заканчивается.</string>
+    <string name="open_code_quota_title">Подписка OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Использование в окнах: 5 часов, недельный и месячный</string>
+    <string name="open_code_quota_refresh">Обновить использование</string>
+    <string name="open_code_quota_loading">Загрузка использования…</string>
+    <string name="open_code_quota_unconfigured">Relay не настроен — настройте подключение, чтобы видеть использование подписки.</string>
+    <string name="open_code_quota_unpaired">Ожидание сопряжения с relay.</string>
+    <string name="open_code_quota_not_configured">Квота OpenCode Go недоступна на этом хосте.</string>
+    <string name="open_code_quota_error">Не удалось загрузить использование</string>
+    <string name="open_code_quota_retry">Повторить</string>
+    <string name="open_code_quota_resets">Сброс через %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s из $%2$s</string>
+    <string name="open_code_quota_rolling">Скользящее · 5ч</string>
+    <string name="open_code_quota_weekly">Недельный</string>
+    <string name="open_code_quota_monthly">Месячный</string>
 </resources>

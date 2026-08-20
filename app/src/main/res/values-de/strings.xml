@@ -4171,4 +4171,18 @@
     <string name="host_resource_memory_elevated">Der Arbeitsspeicher des Hosts wird knapp.</string>
     <string name="host_resource_disk_critical">Der Speicherplatz des Hosts ist äußerst knapp; Nachrichten und Einstellungen können möglicherweise nicht gespeichert werden.</string>
     <string name="host_resource_disk_elevated">Der Speicherplatz des Hosts wird knapp.</string>
+    <string name="open_code_quota_title">OpenCode-Go-Abo</string>
+    <string name="open_code_quota_subtitle">Verbrauch über Ihre 5-Stunden-, Wochen- und Monatsfenster</string>
+    <string name="open_code_quota_refresh">Verbrauch aktualisieren</string>
+    <string name="open_code_quota_loading">Verbrauch wird abgerufen…</string>
+    <string name="open_code_quota_unconfigured">Relay nicht konfiguriert – richten Sie eine Verbindung ein, um den Abo-Verbrauch zu sehen.</string>
+    <string name="open_code_quota_unpaired">Warten auf Kopplung mit dem Relay.</string>
+    <string name="open_code_quota_not_configured">OpenCode-Go-Kontingent auf diesem Host nicht verfügbar.</string>
+    <string name="open_code_quota_error">Verbrauch konnte nicht geladen werden</string>
+    <string name="open_code_quota_retry">Erneut versuchen</string>
+    <string name="open_code_quota_resets">Setzt zurück in %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s von $%2$s</string>
+    <string name="open_code_quota_rolling">Rollierend · 5h</string>
+    <string name="open_code_quota_weekly">Wöchentlich</string>
+    <string name="open_code_quota_monthly">Monatlich</string>
 </resources>

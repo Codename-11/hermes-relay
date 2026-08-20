@@ -3856,4 +3856,18 @@
     <string name="host_resource_memory_elevated">La memoria del servidor se está agotando.</string>
     <string name="host_resource_disk_critical">El almacenamiento del servidor está casi agotado; puede que los mensajes y ajustes no se guarden.</string>
     <string name="host_resource_disk_elevated">El almacenamiento del servidor se está agotando.</string>
+    <string name="open_code_quota_title">Suscripción a OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Uso en tus ventanas de 5 horas, semanal y mensual</string>
+    <string name="open_code_quota_refresh">Actualizar uso</string>
+    <string name="open_code_quota_loading">Obteniendo uso…</string>
+    <string name="open_code_quota_unconfigured">Relay no configurado — configura una conexión para ver el uso de la suscripción.</string>
+    <string name="open_code_quota_unpaired">Esperando para emparejarse con el relay.</string>
+    <string name="open_code_quota_not_configured">Cuota de OpenCode Go no disponible en este host.</string>
+    <string name="open_code_quota_error">No se pudo cargar el uso</string>
+    <string name="open_code_quota_retry">Reintentar</string>
+    <string name="open_code_quota_resets">Se restablece en %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s de $%2$s</string>
+    <string name="open_code_quota_rolling">Rotatorio · 5h</string>
+    <string name="open_code_quota_weekly">Semanal</string>
+    <string name="open_code_quota_monthly">Mensual</string>
 </resources>
