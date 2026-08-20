@@ -10,7 +10,8 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasImeAction
-import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -33,9 +34,10 @@ import org.robolectric.annotation.GraphicsMode
 class ChatInputBarTest {
 
     @get:Rule
-    val compose = createComposeRule()
+    val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test
+    @Config(qualifiers = "w360dp-h720dp-xhdpi-qwerty")
     fun `hardware enter submits through the composer action`() {
         var sent = 0
         setComposer(value = "Hello") { sent++ }
@@ -64,6 +66,7 @@ class ChatInputBarTest {
     }
 
     @Test
+    @Config(qualifiers = "w360dp-h720dp-xhdpi-qwerty")
     fun `plain enter inserts newline when configured while ctrl enter submits`() {
         var value = "Hello"
         var sent = 0
@@ -88,6 +91,7 @@ class ChatInputBarTest {
     }
 
     @Test
+    @Config(qualifiers = "w360dp-h720dp-xhdpi-qwerty")
     fun `hardware submit preserves steer action`() {
         var submitted = 0
         setComposer(value = "Correct this", trailing = ChatInputTrailing.STEER) { submitted++ }
@@ -109,6 +113,7 @@ class ChatInputBarTest {
     }
 
     @Test
+    @Config(qualifiers = "w360dp-h720dp-xhdpi-qwerty")
     fun `hardware submit preserves queue action`() {
         var submitted = 0
         setComposer(value = "Follow up", trailing = ChatInputTrailing.QUEUE) { submitted++ }
@@ -153,6 +158,44 @@ class ChatInputBarTest {
 
         compose.runOnIdle {
             assertEquals("Hello\nWorld", value)
+            assertEquals(0, sent)
+        }
+    }
+
+    @Test
+    fun `ime synthesized enter key inserts newline instead of submitting`() {
+        var value = "Hello"
+        var sent = 0
+        setComposer(value = value, onValueChange = { value = it }) { sent++ }
+
+        // Some IMEs dispatch the return key as a synthesized KEYCODE_ENTER
+        // key event instead of committing "\n" directly. With no physical
+        // keyboard attached the send path must not fire, otherwise the soft
+        // keyboard's return key sends the message (issue #367). Inject the
+        // event at the view root exactly like the IME's InputConnection
+        // key-event path does.
+        val imeDown = android.view.KeyEvent(
+            -1, 0,
+            android.view.KeyEvent.ACTION_DOWN,
+            android.view.KeyEvent.KEYCODE_ENTER,
+            0, 0,
+        )
+        val imeUp = android.view.KeyEvent(
+            -1, 0,
+            android.view.KeyEvent.ACTION_UP,
+            android.view.KeyEvent.KEYCODE_ENTER,
+            0, 0,
+        )
+
+        input().performClick()
+        compose.runOnIdle {
+            val root = compose.activity.findViewById<android.view.View>(android.R.id.content)
+            root.dispatchKeyEvent(imeDown)
+            root.dispatchKeyEvent(imeUp)
+        }
+
+        compose.runOnIdle {
+            assertEquals("Hello\n", value)
             assertEquals(0, sent)
         }
     }
