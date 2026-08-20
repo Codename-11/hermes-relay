@@ -71,6 +71,7 @@ fun UnattendedAccessRow(
     // observable change, which reads as a broken control.
     masterEnabled: Boolean = true,
     screenControlAvailable: Boolean = true,
+    screenAccessUnlimited: Boolean = false,
 ) {
     var showWarning by remember { mutableStateOf(false) }
     var pendingEnableAfterWarning by remember { mutableStateOf(false) }
@@ -131,7 +132,13 @@ fun UnattendedAccessRow(
             }
 
             Text(
-                text = stringResource(R.string.unattended_description),
+                text = stringResource(
+                    if (screenAccessUnlimited) {
+                        R.string.unattended_description_unlimited
+                    } else {
+                        R.string.unattended_description
+                    },
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

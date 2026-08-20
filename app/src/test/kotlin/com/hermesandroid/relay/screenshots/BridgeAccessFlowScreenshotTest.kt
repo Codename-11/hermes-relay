@@ -101,12 +101,14 @@ class BridgeAccessFlowScreenshotTest {
                     inspectEnabled = true,
                     controlEnabled = true,
                     durationMinutes = 30,
+                    unlimited = false,
                     accessibilityReady = true,
                     overlayReady = false,
                     currentlyActive = false,
                     onInspectChanged = {},
                     onControlChanged = {},
                     onDurationChanged = {},
+                    onUnlimitedChanged = {},
                     onOpenAccessibility = {},
                     onOpenOverlay = {},
                     onDismiss = {},
@@ -116,5 +118,32 @@ class BridgeAccessFlowScreenshotTest {
             }
         }
         compose.onRoot().captureRoboImage("build/visual-qa/bridge-timed-access-sheet.png")
+    }
+
+    @Test
+    fun unlimitedAccessSheetExplainsDedicatedDeviceRisk() {
+        compose.setContent {
+            HermesRelayTheme(themePreference = "dark") {
+                BridgeTimedAccessSheet(
+                    inspectEnabled = true,
+                    controlEnabled = true,
+                    durationMinutes = 30,
+                    unlimited = true,
+                    accessibilityReady = true,
+                    overlayReady = true,
+                    currentlyActive = false,
+                    onInspectChanged = {},
+                    onControlChanged = {},
+                    onDurationChanged = {},
+                    onUnlimitedChanged = {},
+                    onOpenAccessibility = {},
+                    onOpenOverlay = {},
+                    onDismiss = {},
+                    onAllow = {},
+                    onEndNow = {},
+                )
+            }
+        }
+        compose.onRoot().captureRoboImage("build/visual-qa/bridge-unlimited-access-sheet.png")
     }
 }

@@ -57,7 +57,10 @@ fun BridgeAgentAccessCard(
     val hasGrant = policy.hasAnyGrant(nowMs)
     val preset = policy.displayPreset()
     val timed = policy.activeTimedCapabilities(nowMs)
-    val nextExpiry = policy.timedExpiriesMs.filterValues { it > nowMs }.values.maxOrNull()
+    val screenUnlimited = timed.any(policy::isUnlimited)
+    val nextExpiry = policy.timedExpiriesMs.filterValues {
+        it > nowMs && it != BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+    }.values.maxOrNull()
     val screenActive = timed.isNotEmpty()
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -114,12 +117,20 @@ fun BridgeAgentAccessCard(
                 AccessSummaryRow(
                     title = stringResource(R.string.bridge_access_screen),
                     subtitle = if (screenActive) {
-                        stringResource(R.string.bridge_access_screen_active)
+                        if (screenUnlimited) {
+                            stringResource(R.string.bridge_access_screen_unlimited)
+                        } else {
+                            stringResource(R.string.bridge_access_screen_active)
+                        }
                     } else {
                         stringResource(R.string.bridge_access_screen_off)
                     },
-                    trailing = nextExpiry?.let { formatRemaining(it - nowMs) }
-                        ?: stringResource(R.string.bridge_access_allow_duration),
+                    trailing = if (screenUnlimited) {
+                        stringResource(R.string.bridge_access_until_off_short)
+                    } else {
+                        nextExpiry?.let { formatRemaining(it - nowMs) }
+                            ?: stringResource(R.string.bridge_access_allow_duration)
+                    },
                     onClick = onAllowScreen,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
@@ -127,7 +138,11 @@ fun BridgeAgentAccessCard(
                     title = stringResource(R.string.unattended_title),
                     subtitle = if (screenActive) {
                         if (unattendedEnabled) {
-                            stringResource(R.string.bridge_access_unattended_on)
+                            if (screenUnlimited) {
+                                stringResource(R.string.bridge_access_unattended_unlimited)
+                            } else {
+                                stringResource(R.string.bridge_access_unattended_on)
+                            }
                         } else {
                             stringResource(R.string.bridge_access_unattended_available)
                         }
@@ -326,12 +341,14 @@ fun BridgeTimedAccessSheet(
     inspectEnabled: Boolean,
     controlEnabled: Boolean,
     durationMinutes: Int,
+    unlimited: Boolean,
     accessibilityReady: Boolean,
     overlayReady: Boolean,
     currentlyActive: Boolean,
     onInspectChanged: (Boolean) -> Unit,
     onControlChanged: (Boolean) -> Unit,
     onDurationChanged: (Int) -> Unit,
+    onUnlimitedChanged: (Boolean) -> Unit,
     onOpenAccessibility: () -> Unit,
     onOpenOverlay: () -> Unit,
     onDismiss: () -> Unit,
@@ -373,19 +390,40 @@ fun BridgeTimedAccessSheet(
                     onCheckedChange = onControlChanged,
                 )
                 Text(
-                    stringResource(R.string.bridge_timed_ends_title),
+                    stringResource(R.string.bridge_timed_lifetime_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(5, 30, 120).forEach { minutes ->
                         FilterChip(
-                            selected = durationMinutes == minutes,
-                            onClick = { onDurationChanged(minutes) },
+                            selected = !unlimited && durationMinutes == minutes,
+                            onClick = {
+                                onUnlimitedChanged(false)
+                                onDurationChanged(minutes)
+                            },
                             label = { Text(formatDuration(minutes)) },
                         )
                     }
                 }
+                FilterChip(
+                    selected = unlimited,
+                    onClick = { onUnlimitedChanged(true) },
+                    label = { Text(stringResource(R.string.bridge_timed_until_off)) },
+                )
+                Text(
+                    text = if (unlimited) {
+                        stringResource(R.string.bridge_timed_unlimited_warning)
+                    } else {
+                        stringResource(R.string.bridge_timed_idle_explainer, formatDuration(durationMinutes))
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (unlimited) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(
                         modifier = Modifier.padding(14.dp),

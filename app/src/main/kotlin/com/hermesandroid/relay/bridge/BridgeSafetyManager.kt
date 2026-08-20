@@ -259,8 +259,13 @@ class BridgeSafetyManager(
         connectionId: String?,
         capabilities: Set<BridgeCapability>,
         durationMinutes: Int,
+        unlimited: Boolean = false,
     ) {
-        val fireAt = System.currentTimeMillis() + durationMinutes * 60_000L
+        val fireAt = if (unlimited) {
+            BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+        } else {
+            System.currentTimeMillis() + durationMinutes * 60_000L
+        }
         capabilityRepo.replaceTimed(connectionId, capabilities, fireAt)
         if (BridgeCapability.SCREEN_CONTROL !in capabilities) {
             prefsRepo.setUnattendedAccessEnabled(false)
@@ -420,7 +425,11 @@ class BridgeSafetyManager(
         autoDisableJob = (scope + SupervisorJob()).launch {
             try {
                 val snapshot = capabilityRepo.snapshot(connectionId)
-                if (snapshot.timedExpiriesMs.isEmpty()) {
+                val nowMs = System.currentTimeMillis()
+                val finite = snapshot.timedExpiriesMs.filterValues {
+                    it != BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS && it > nowMs
+                }
+                if (finite.isEmpty()) {
                     _autoDisableAtMs.value = null
                     return@launch
                 }
@@ -429,8 +438,8 @@ class BridgeSafetyManager(
                 val delayMs = (fireAt - System.currentTimeMillis()).coerceAtLeast(0L)
                 delay(delayMs)
                 Log.i(TAG, "Timed Bridge capabilities expired after $minutes min of idle")
-                capabilityRepo.revokeTimed(connectionId)
-                prefsRepo.setUnattendedAccessEnabled(false)
+                capabilityRepo.pruneExpired(connectionId, System.currentTimeMillis())
+                clearUnattendedIfControlEnded(connectionId)
                 AutoDisableWorker(appContext).run()
             } catch (_: Throwable) {
                 // Cancellation is expected on reschedule — swallow quietly.
@@ -458,13 +467,16 @@ class BridgeSafetyManager(
     private suspend fun schedulePersistedExpiry(connectionId: String?) {
         autoDisableJob?.cancel()
         val policy = capabilityRepo.snapshot(connectionId)
-        val nextExpiry = policy.timedExpiriesMs.values.maxOrNull()
+        val nextExpiry = policy.timedExpiriesMs.values
+            .filter { it != BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS }
+            .maxOrNull()
         if (nextExpiry == null) {
             _autoDisableAtMs.value = null
             return
         }
         if (nextExpiry <= System.currentTimeMillis()) {
             capabilityRepo.pruneExpired(connectionId, System.currentTimeMillis())
+            clearUnattendedIfControlEnded(connectionId)
             _autoDisableAtMs.value = null
             return
         }
@@ -472,9 +484,16 @@ class BridgeSafetyManager(
         autoDisableJob = (scope + SupervisorJob()).launch {
             delay((nextExpiry - System.currentTimeMillis()).coerceAtLeast(0L))
             capabilityRepo.pruneExpired(connectionId, System.currentTimeMillis())
-            prefsRepo.setUnattendedAccessEnabled(false)
+            clearUnattendedIfControlEnded(connectionId)
             AutoDisableWorker(appContext).run()
             if (activeConnectionId.value == connectionId) _autoDisableAtMs.value = null
+        }
+    }
+
+    private suspend fun clearUnattendedIfControlEnded(connectionId: String?) {
+        val policy = capabilityRepo.snapshot(connectionId)
+        if (!policy.allows(BridgeCapability.SCREEN_CONTROL, System.currentTimeMillis())) {
+            prefsRepo.setUnattendedAccessEnabled(false)
         }
     }
 

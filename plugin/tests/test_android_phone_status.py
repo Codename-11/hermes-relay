@@ -69,6 +69,7 @@ def _sample_status() -> dict:
             "schema_version": 1,
             "permanent": ["clipboard_read", "contacts_read"],
             "timed": {"screen_inspection": 1787180400000},
+            "unlimited": ["screen_control"],
         },
     }
 
@@ -337,6 +338,7 @@ class TestStatusCliFetch(unittest.TestCase):
         self.assertIn("Capability grants", text)
         self.assertIn("contacts_read", text)
         self.assertIn("screen_inspection", text)
+        self.assertIn("screen_control", text)
         self.assertIn("Timed screen", text)
 
     def test_render_status_block_marks_bridge_core_as_no_device_control(self) -> None:

@@ -4195,7 +4195,7 @@
     <string name="bss_capability_sharing">メディア共有と MMS 作成</string>
     <string name="bss_capability_screen_inspection">画面と UI を検査</string>
     <string name="bss_capability_screen_control">アプリとナビゲーションを操作</string>
-    <string name="unattended_requires_timed_control">時間制限付き画面操作が必要です。先に「安全性と機能」で有効にしてください。</string>
+    <string name="unattended_requires_timed_control">画面操作が必要です。先に「エージェントのアクセス」で許可してください。</string>
     <string name="bridge_access_title">エージェントのアクセス</string>
     <string name="bridge_access_not_set_up">未設定</string>
     <string name="bridge_access_summary_desc">この Hermes 接続で使用できる機能を選びます。</string>
@@ -4238,7 +4238,7 @@
     <string name="bridge_android_selected_needs">選択したアクセスに必要</string>
     <string name="bridge_android_selected_needs_desc">次の Android 権限が不足しています。無効な機能は含まれません。</string>
     <string name="bridge_android_open_settings">開く</string>
-    <string name="bridge_timed_title">一時的な画面アクセスを許可</string>
+    <string name="bridge_timed_title">画面アクセスを許可</string>
     <string name="bridge_timed_desc">Hermes ができることと利用時間を選びます。</string>
     <string name="bridge_timed_inspection_desc">アクセシビリティツリー、UI イベント、スクリーンショット</string>
     <string name="bridge_timed_control_desc">タップ、入力、スワイプ、アプリ起動、ナビゲーション</string>
@@ -4248,4 +4248,12 @@
     <string name="bridge_timed_allow">アクセスを許可</string>
     <string name="bridge_timed_end_now">今すぐ終了</string>
     <string name="bridge_timed_ended_snackbar">画面アクセスが終了しました。永続的な許可は引き続き利用できます。</string>
+    <string name="unattended_description_unlimited">アイドル制限なしで端末を利用可能にします。画面アクセスの終了、マスタースイッチの無効化、またはここでオフにするまで有効です。</string>
+    <string name="bridge_access_screen_unlimited">検査または操作はオフにするまで有効です</string>
+    <string name="bridge_access_until_off_short">オフまで</string>
+    <string name="bridge_access_unattended_unlimited">画面アクセスをオフにするまで常時利用可能</string>
+    <string name="bridge_timed_lifetime_title">アイドル制限</string>
+    <string name="bridge_timed_until_off">オフにするまで</string>
+    <string name="bridge_timed_idle_explainer">固定のセッション上限はありません。画面操作中は %1$s のアイドルタイマーが更新されます。</string>
+    <string name="bridge_timed_unlimited_warning">アイドルタイムアウトはありません。終了、マスター無効化、またはポリシー変更まで、非操作時や再接続後も画面アクセスが続きます。専用端末向けです。</string>
 </resources>

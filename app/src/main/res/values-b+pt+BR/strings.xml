@@ -4037,7 +4037,7 @@
     <string name="bss_capability_sharing">Compartilhar mídia e compor MMS</string>
     <string name="bss_capability_screen_inspection">Inspecionar tela e interface</string>
     <string name="bss_capability_screen_control">Controlar apps e navegação</string>
-    <string name="unattended_requires_timed_control">Exige controle temporário da tela — ative primeiro em Segurança e recursos.</string>
+    <string name="unattended_requires_timed_control">Exige controle da tela — permita primeiro em Acesso do agente.</string>
     <string name="bridge_access_title">Acesso do agente</string>
     <string name="bridge_access_not_set_up">Não configurado</string>
     <string name="bridge_access_summary_desc">Escolha o que o Hermes pode usar nesta conexão.</string>
@@ -4080,7 +4080,7 @@
     <string name="bridge_android_selected_needs">Necessário para o acesso selecionado</string>
     <string name="bridge_android_selected_needs_desc">Estas permissões Android ainda estão ausentes. Recursos desativados não estão incluídos.</string>
     <string name="bridge_android_open_settings">Abrir</string>
-    <string name="bridge_timed_title">Permitir acesso temporário à tela</string>
+    <string name="bridge_timed_title">Permitir acesso à tela</string>
     <string name="bridge_timed_desc">Escolha o que o Hermes pode fazer e por quanto tempo ficará disponível.</string>
     <string name="bridge_timed_inspection_desc">Árvore de acessibilidade, eventos da interface e capturas</string>
     <string name="bridge_timed_control_desc">Tocar, digitar, deslizar, abrir apps e navegar</string>
@@ -4090,4 +4090,12 @@
     <string name="bridge_timed_allow">Permitir acesso</string>
     <string name="bridge_timed_end_now">Encerrar agora</string>
     <string name="bridge_timed_ended_snackbar">O acesso à tela terminou. As permissões permanentes continuam disponíveis.</string>
+    <string name="unattended_description_unlimited">Mantém este dispositivo disponível sem limite de inatividade. Continua ativo até encerrar o acesso à tela, desligar a chave mestra ou desativar aqui.</string>
+    <string name="bridge_access_screen_unlimited">Inspeção ou controle permanece ativo até ser desligado</string>
+    <string name="bridge_access_until_off_short">Até desligar</string>
+    <string name="bridge_access_unattended_unlimited">Sempre disponível até desligar o acesso à tela</string>
+    <string name="bridge_timed_lifetime_title">Limite de inatividade</string>
+    <string name="bridge_timed_until_off">Até ser desligado</string>
+    <string name="bridge_timed_idle_explainer">Sem limite fixo de sessão. Comandos ativos reiniciam o temporizador de %1$s.</string>
+    <string name="bridge_timed_unlimited_warning">Sem limite de inatividade. O acesso continua após inatividade e reconexão até ser encerrado, a chave mestra ser desligada ou a política mudar. Ideal para um dispositivo dedicado.</string>
 </resources>

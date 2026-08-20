@@ -3924,7 +3924,7 @@
     <string name="bss_capability_sharing">Отправка медиа и создание MMS</string>
     <string name="bss_capability_screen_inspection">Просмотр экрана и интерфейса</string>
     <string name="bss_capability_screen_control">Управление приложениями и навигацией</string>
-    <string name="unattended_requires_timed_control">Требуется временное управление экраном — сначала включите его в разделе безопасности и возможностей.</string>
+    <string name="unattended_requires_timed_control">Требуется управление экраном — сначала разрешите его в разделе доступа агента.</string>
     <string name="bridge_access_title">Доступ агента</string>
     <string name="bridge_access_not_set_up">Не настроено</string>
     <string name="bridge_access_summary_desc">Выберите, что Hermes может использовать в этом подключении.</string>
@@ -3967,7 +3967,7 @@
     <string name="bridge_android_selected_needs">Требуется для выбранного доступа</string>
     <string name="bridge_android_selected_needs_desc">Эти разрешения Android еще отсутствуют. Отключенные возможности не учитываются.</string>
     <string name="bridge_android_open_settings">Открыть</string>
-    <string name="bridge_timed_title">Разрешить временный доступ к экрану</string>
+    <string name="bridge_timed_title">Разрешить доступ к экрану</string>
     <string name="bridge_timed_desc">Выберите действия Hermes и время доступности.</string>
     <string name="bridge_timed_inspection_desc">Дерево специальных возможностей, события интерфейса и снимки</string>
     <string name="bridge_timed_control_desc">Нажатия, ввод, прокрутка, открытие приложений и навигация</string>
@@ -3977,4 +3977,12 @@
     <string name="bridge_timed_allow">Разрешить доступ</string>
     <string name="bridge_timed_end_now">Завершить сейчас</string>
     <string name="bridge_timed_ended_snackbar">Доступ к экрану завершен. Постоянные разрешения остаются доступными.</string>
+    <string name="unattended_description_unlimited">Оставляет устройство доступным без тайм-аута бездействия. Доступ действует, пока не завершен доступ к экрану, не выключен главный переключатель или этот режим.</string>
+    <string name="bridge_access_screen_unlimited">Просмотр или управление активно до отключения</string>
+    <string name="bridge_access_until_off_short">До отключения</string>
+    <string name="bridge_access_unattended_unlimited">Всегда доступно, пока не отключен доступ к экрану</string>
+    <string name="bridge_timed_lifetime_title">Лимит бездействия</string>
+    <string name="bridge_timed_until_off">До отключения</string>
+    <string name="bridge_timed_idle_explainer">Фиксированного лимита сессии нет. Активные команды обновляют таймер бездействия %1$s.</string>
+    <string name="bridge_timed_unlimited_warning">Без тайм-аута. Доступ сохраняется при бездействии и переподключении, пока не завершен, не выключен главный переключатель или не изменена политика. Для выделенного устройства.</string>
 </resources>

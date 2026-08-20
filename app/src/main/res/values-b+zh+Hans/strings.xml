@@ -4122,7 +4122,7 @@
     <string name="bss_capability_sharing">共享媒体和编写彩信</string>
     <string name="bss_capability_screen_inspection">检查屏幕和界面</string>
     <string name="bss_capability_screen_control">控制应用和导航</string>
-    <string name="unattended_requires_timed_control">需要限时屏幕控制，请先在“安全与功能”中启用。</string>
+    <string name="unattended_requires_timed_control">需要屏幕控制，请先在“代理访问”中允许。</string>
     <string name="bridge_access_title">代理访问</string>
     <string name="bridge_access_not_set_up">未设置</string>
     <string name="bridge_access_summary_desc">选择 Hermes 可在此连接中使用的功能。</string>
@@ -4165,7 +4165,7 @@
     <string name="bridge_android_selected_needs">所选访问所需</string>
     <string name="bridge_android_selected_needs_desc">仍缺少这些 Android 权限。未启用的功能不包括在内。</string>
     <string name="bridge_android_open_settings">打开</string>
-    <string name="bridge_timed_title">允许临时屏幕访问</string>
+    <string name="bridge_timed_title">允许屏幕访问</string>
     <string name="bridge_timed_desc">选择 Hermes 可以执行的操作及其可用时长。</string>
     <string name="bridge_timed_inspection_desc">无障碍树、界面事件和屏幕截图</string>
     <string name="bridge_timed_control_desc">点按、输入、滑动、打开应用和导航</string>
@@ -4175,4 +4175,12 @@
     <string name="bridge_timed_allow">允许访问</string>
     <string name="bridge_timed_end_now">立即结束</string>
     <string name="bridge_timed_ended_snackbar">屏幕访问已结束。永久授权仍然可用。</string>
+    <string name="unattended_description_unlimited">设备无空闲超时，始终保持可用。直到结束屏幕访问、关闭主开关或在此关闭为止。</string>
+    <string name="bridge_access_screen_unlimited">检查或控制将保持有效，直到关闭</string>
+    <string name="bridge_access_until_off_short">直到关闭</string>
+    <string name="bridge_access_unattended_unlimited">屏幕访问关闭前始终可用</string>
+    <string name="bridge_timed_lifetime_title">空闲限制</string>
+    <string name="bridge_timed_until_off">直到关闭</string>
+    <string name="bridge_timed_idle_explainer">没有固定会话上限。活动屏幕命令会刷新 %1$s 空闲计时器。</string>
+    <string name="bridge_timed_unlimited_warning">无空闲超时。屏幕访问在空闲和重新连接后仍保持，直到结束访问、关闭主开关或更改策略。适合专用设备。</string>
 </resources>

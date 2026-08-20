@@ -3882,7 +3882,7 @@
     <string name="bss_capability_sharing">Compartir archivos y redactar MMS</string>
     <string name="bss_capability_screen_inspection">Inspeccionar pantalla e interfaz</string>
     <string name="bss_capability_screen_control">Controlar apps y navegación</string>
-    <string name="unattended_requires_timed_control">Requiere Control de pantalla temporizado; actívalo primero en Seguridad y capacidades.</string>
+    <string name="unattended_requires_timed_control">Requiere control de pantalla; permítelo primero en Acceso del agente.</string>
     <string name="bridge_access_title">Acceso del agente</string>
     <string name="bridge_access_not_set_up">Sin configurar</string>
     <string name="bridge_access_summary_desc">Elige qué puede usar Hermes en esta conexión.</string>
@@ -3925,7 +3925,7 @@
     <string name="bridge_android_selected_needs">Necesario para el acceso seleccionado</string>
     <string name="bridge_android_selected_needs_desc">Aún faltan estos permisos de Android. No se incluyen capacidades desactivadas.</string>
     <string name="bridge_android_open_settings">Abrir</string>
-    <string name="bridge_timed_title">Permitir acceso temporal a la pantalla</string>
+    <string name="bridge_timed_title">Permitir acceso a la pantalla</string>
     <string name="bridge_timed_desc">Elige qué puede hacer Hermes y cuánto tiempo seguirá disponible.</string>
     <string name="bridge_timed_inspection_desc">Árbol de accesibilidad, eventos de interfaz y capturas</string>
     <string name="bridge_timed_control_desc">Tocar, escribir, deslizar, abrir apps y navegar</string>
@@ -3935,4 +3935,12 @@
     <string name="bridge_timed_allow">Permitir acceso</string>
     <string name="bridge_timed_end_now">Finalizar ahora</string>
     <string name="bridge_timed_ended_snackbar">El acceso a pantalla terminó. Los permisos permanentes siguen disponibles.</string>
+    <string name="unattended_description_unlimited">Mantiene este dispositivo disponible sin límite de inactividad. Sigue activo hasta finalizar el acceso a pantalla, desactivar el interruptor maestro o apagarlo aquí.</string>
+    <string name="bridge_access_screen_unlimited">La inspección o el control siguen activos hasta desactivarlos</string>
+    <string name="bridge_access_until_off_short">Hasta apagar</string>
+    <string name="bridge_access_unattended_unlimited">Siempre disponible hasta desactivar el acceso a pantalla</string>
+    <string name="bridge_timed_lifetime_title">Límite de inactividad</string>
+    <string name="bridge_timed_until_off">Hasta desactivarlo</string>
+    <string name="bridge_timed_idle_explainer">Sin límite fijo de sesión. Los comandos activos reinician el temporizador de inactividad de %1$s.</string>
+    <string name="bridge_timed_unlimited_warning">Sin límite de inactividad. El acceso continúa tras inactividad y reconexión hasta finalizarlo, desactivar el interruptor maestro o cambiar la política. Ideal para un dispositivo dedicado.</string>
 </resources>
