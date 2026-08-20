@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
@@ -153,6 +154,44 @@ class ChatInputBarTest {
 
         compose.runOnIdle {
             assertEquals("Hello\nWorld", value)
+            assertEquals(0, sent)
+        }
+    }
+
+    @Test
+    fun `ime synthesized enter key inserts newline instead of submitting`() {
+        var value = "Hello"
+        var sent = 0
+        setComposer(value = value, onValueChange = { value = it }) { sent++ }
+
+        // Some IMEs dispatch the return key as a synthesized KEYCODE_ENTER
+        // key event (deviceId -1) instead of committing "\n" directly. The
+        // send path must only apply to physical keyboard keys, otherwise the
+        // soft keyboard's return key sends the message (issue #367).
+        val imeDown = KeyEvent(
+            nativeKeyEvent = android.view.KeyEvent(
+                -1, 0,
+                android.view.KeyEvent.ACTION_DOWN,
+                android.view.KeyEvent.KEYCODE_ENTER,
+                0, 0,
+            )
+        )
+        val imeUp = KeyEvent(
+            nativeKeyEvent = android.view.KeyEvent(
+                -1, 0,
+                android.view.KeyEvent.ACTION_UP,
+                android.view.KeyEvent.KEYCODE_ENTER,
+                0, 0,
+            )
+        )
+
+        input().performClick().performKeyInput {
+            sendKeyEvent(imeDown)
+            sendKeyEvent(imeUp)
+        }
+
+        compose.runOnIdle {
+            assertEquals("Hello\n", value)
             assertEquals(0, sent)
         }
     }

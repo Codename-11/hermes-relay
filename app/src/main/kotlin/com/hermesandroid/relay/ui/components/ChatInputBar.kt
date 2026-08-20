@@ -375,8 +375,13 @@ fun ChatInputBar(
                                 val native = event.nativeKeyEvent
                                 val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                                     native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                // IME-dispatched key events are synthesized with
+                                // deviceId -1. Only physical keys should trigger the
+                                // send path so the software keyboard's return key can
+                                // insert a newline instead (see issue #367).
+                                val isPhysicalKey = native.deviceId != -1
                                 val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
-                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
+                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter || !isPhysicalKey) {
                                     false
                                 } else if (isSubmitShortcut || (physicalEnterSends && !native.isShiftPressed)) {
                                     if (canSubmit) onSend()
