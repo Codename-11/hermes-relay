@@ -704,6 +704,7 @@ class GatewayChatClientTest {
         val thinkingDeltas = ConcurrentLinkedQueue<String>()
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
+        val resumeFailures = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
         val interactionExpiries = ConcurrentLinkedQueue<GatewayAskExpiry>()
         val toolStarts = ConcurrentLinkedQueue<Pair<String, String>>()
@@ -736,6 +737,7 @@ class GatewayChatClientTest {
             onMoaReference = { moaReferences += it },
             onInteractionRequest = { interactions += it },
             onInteractionExpired = { interactionExpiries += it },
+            onResumeFailure = { resumeFailures += it; completeLatch.countDown() },
             onStatusUpdate = { _, _ -> },
             onStatusClear = { },
         )
@@ -1532,16 +1534,34 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `failed resume falls back to fresh create`() {
+    fun `failed resume is visible and never forks a fresh session`() {
         harness.resumeFails = true
         val r = Recorder()
         client.sendTurn("api_123_dead", "hi", "hi", r.callbacks) { r.preflightFailures += it }
         harness.awaitRpc("session.resume")
-        harness.awaitRpc("session.create")
-        harness.awaitRpc("prompt.submit")
-        val deadline = System.currentTimeMillis() + 5_000
-        while (r.sessionIds.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
-        assertEquals(listOf("20260612_120000_abc123"), r.sessionIds.toList())
+        waitUntil { r.resumeFailures.isNotEmpty() }
+        assertEquals(listOf("session.resume refused"), r.resumeFailures.toList())
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `profile-mismatched resume is visible and never submits the continuation`() {
+        client.sessionProfileProvider = { "mizu" }
+        harness.sessionProfileOverride = "default"
+        val r = Recorder()
+
+        client.sendTurn("stored-mizu", "continue", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitRpc("session.resume")
+        waitUntil { r.resumeFailures.isNotEmpty() }
+        assertTrue(r.resumeFailures.single().contains("profile", ignoreCase = true))
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+        assertTrue(r.preflightFailures.isEmpty())
     }
 
     @Test
@@ -2678,6 +2698,40 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `session info without provider clears prior session identity`() {
+        val recorder = Recorder()
+        client.sendTurn("stored-1", "hi", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject {
+                    put("model", "deepseek-v3")
+                    put("provider", "opencode")
+                },
+                "live-resumed",
+            ),
+        )
+        waitUntil { client.serverProvider.value == "opencode" }
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("model", "agnes-2") },
+                "live-resumed",
+            ),
+        )
+
+        waitUntil { client.serverModel.value == "agnes-2" }
+        assertNull(client.serverProvider.value)
+        assertNull(client.serverModelIdentity.value)
+    }
+
+    @Test
     fun `approval mode get and set use profile config without session yolo scope`() {
         harness.approvalMode = "smart"
 
@@ -3101,7 +3155,7 @@ class GatewayChatClientTest {
 
         harness.awaitRpc("session.resume")
         assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
-        assertEquals(listOf(message), r.errors.toList())
+        assertEquals(listOf(message), r.resumeFailures.toList())
         assertTrue(r.preflightFailures.isEmpty())
         assertEquals(0, harness.rpcLog.count { it.first == "session.create" })
         assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })

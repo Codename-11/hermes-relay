@@ -260,6 +260,13 @@ class GatewayEventMapper(
                 }
                 callbacks.onUsage(parseGatewayUsage(payload?.get("usage") as? JsonObject))
                 if (failed) {
+                    callbacks.onFailure(
+                        GatewayTurnFailure(
+                            error = error?.takeIf { it.isNotBlank() }
+                                ?: text.orEmpty().ifBlank { "Turn failed" },
+                            recoverable = payload.boolean("recoverable") == true,
+                        ),
+                    )
                     callbacks.onStatusUpdate(
                         ERROR_STATUS_KIND,
                         error?.takeIf { it.isNotBlank() } ?: text.orEmpty().ifBlank { "Turn failed" },

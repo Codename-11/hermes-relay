@@ -135,6 +135,13 @@
     <string name="chat_share_conversation">分享对话</string>
     <string name="chat_retry">重试</string>
     <string name="chat_dismiss">关闭</string>
+    <string name="chat_failure_title">Hermes 无法完成此回复</string>
+    <string name="chat_failure_details">详情</string>
+    <string name="chat_failure_details_title">回复失败</string>
+    <string name="chat_failure_details_guidance">Hermes 报告了此错误。应用不会自动切换路由或模型。</string>
+    <string name="chat_failure_copy_details">复制详情</string>
+    <string name="chat_failure_route_gateway">网关</string>
+    <string name="chat_failure_route_api">API 回退</string>
     <string name="chat_open_settings">打开设置</string>
     <string name="chat_connect_hermes">连接 Hermes</string>
     <string name="chat_try_demo">体验演示</string>

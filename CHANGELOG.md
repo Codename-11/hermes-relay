@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android keeps failed session resumes visible and in context.** Continuing a stored Gateway session no longer falls through to a fresh session when Hermes rejects or mis-scopes the resume. Failed turns remain error-marked and now expose a composer-adjacent recovery panel with route-aware details, explicit retry/dismiss actions, and sanitized Diagnostics evidence instead of a generic toast or silent transport/model switch.
+
 ## [1.10.0] - 2026-08-18
 
 ### Added

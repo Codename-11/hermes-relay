@@ -129,6 +129,13 @@
     <string name="chat_share_conversation">Поделиться беседой</string>
     <string name="chat_retry">Повторить</string>
     <string name="chat_dismiss">Отменить</string>
+    <string name="chat_failure_title">Hermes не смог завершить ответ</string>
+    <string name="chat_failure_details">Подробности</string>
+    <string name="chat_failure_details_title">Ошибка ответа</string>
+    <string name="chat_failure_details_guidance">Hermes сообщил об этой ошибке. Приложение не будет автоматически менять маршрут или модель.</string>
+    <string name="chat_failure_copy_details">Копировать подробности</string>
+    <string name="chat_failure_route_gateway">Gateway</string>
+    <string name="chat_failure_route_api">Резервный API</string>
     <string name="chat_open_settings">Открыть настройки</string>
     <string name="chat_connect_hermes">Подключить Гермес</string>
     <string name="chat_try_demo">Попробовать демо</string>

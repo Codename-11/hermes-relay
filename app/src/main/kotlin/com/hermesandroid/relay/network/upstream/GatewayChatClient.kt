@@ -703,7 +703,9 @@ class GatewayChatClient(
                 if (!turn.cancelled) {
                     turn.disarmWatchdog()
                     turn.tracer.done("resume-rejected")
-                    turn.callbacks.onError(e.message ?: "Hermes could not resume this session")
+                    turn.callbacks.onResumeFailure(
+                        e.message ?: "Hermes could not resume this session",
+                    )
                 }
             } catch (e: GatewayAttachmentPreflightException) {
                 if (activeTurn === turn) activeTurn = null
@@ -2477,20 +2479,29 @@ class GatewayChatClient(
         }
         val model = info.stringField("model")?.takeIf { it.isNotBlank() }
         val provider = info.stringField("provider")?.takeIf { it.isNotBlank() }
-        model?.let { _serverModel.value = it }
-        provider?.let { _serverProvider.value = it }
-        if (model != null && provider != null) {
-            _serverModelIdentity.value = GatewayModelIdentity(model = model, provider = provider)
+        if (info.containsKey("model")) {
+            // session.info/session.resume is an identity snapshot. An absent
+            // provider must clear the prior session's provider instead of
+            // making a resumed turn look coherently bound to stale state.
+            _serverModel.value = model
+            _serverProvider.value = provider
+            _serverModelIdentity.value = if (model != null && provider != null) {
+                GatewayModelIdentity(model = model, provider = provider)
+            } else {
+                null
+            }
         }
         // reasoning effort: ignore "" (reasoning disabled) so it can't clobber
         // the chip; display mode is config.get-only, not here.
         val reasoningEffort = info.stringField("reasoning_effort")?.takeIf { it.isNotBlank() }
         reasoningEffort?.let { _serverReasoningEffort.value = it }
-        if (model != null && provider != null && reasoningEffort != null) {
-            _serverReasoningIdentity.value = GatewayReasoningIdentity(
+        if (info.containsKey("model")) {
+            _serverReasoningIdentity.value = if (
+                model != null && provider != null && reasoningEffort != null
+            ) GatewayReasoningIdentity(
                 identity = GatewayModelIdentity(model = model, provider = provider),
                 effort = reasoningEffort,
-            )
+            ) else null
         }
         // credential_warning: present only when the provider key is missing/
         // invalid. ABSENT means healthy — clear to null so it self-resolves.
@@ -2643,14 +2654,15 @@ class GatewayChatClient(
             )
             val result = resumed.getOrNull()
             val resumeError = resumed.exceptionOrNull()
-            if ((resumeError as? GatewayRpcException)?.code == 4130) {
-                throw GatewayAuthoritativeResumeException(
-                    resumeError.message ?: "Session transcript exceeds the configured resume limit",
-                )
-            }
             val live = result?.stringField("session_id")
             if (live != null) {
-                requireConfirmedSessionProfile(result, requestedProfile)
+                try {
+                    requireConfirmedSessionProfile(result, requestedProfile)
+                } catch (error: GatewayPreflightException) {
+                    throw GatewayAuthoritativeResumeException(
+                        error.message ?: "Hermes resumed this session in a different profile",
+                    )
+                }
                 liveSessionId = live
                 storedSessionId = requestedStoredId
                 liveSessionProfile = requestedProfile
@@ -2658,10 +2670,8 @@ class GatewayChatClient(
                 applySessionResultInfo(result)
                 return
             }
-            Log.w(
-                TAG,
-                "session.resume failed for $requestedStoredId — creating fresh " +
-                    "(${resumed.exceptionOrNull()?.message})",
+            throw GatewayAuthoritativeResumeException(
+                resumeError?.message ?: "Hermes could not resume this session",
             )
         }
 
@@ -3790,6 +3800,8 @@ class GatewayChatClient(
         onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
         onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
         onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
+        onResumeFailure = { v -> callbackDispatcher { callbacks.onResumeFailure(v) } },
+        onFailure = { v -> callbackDispatcher { callbacks.onFailure(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update

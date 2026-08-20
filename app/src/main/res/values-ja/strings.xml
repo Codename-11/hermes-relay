@@ -135,6 +135,13 @@
     <string name="chat_share_conversation">会話を共有する</string>
     <string name="chat_retry">リトライ</string>
     <string name="chat_dismiss">却下する</string>
+    <string name="chat_failure_title">Hermes はこの応答を完了できませんでした</string>
+    <string name="chat_failure_details">詳細</string>
+    <string name="chat_failure_details_title">応答エラー</string>
+    <string name="chat_failure_details_guidance">Hermes からこのエラーが報告されました。アプリがルートやモデルを自動的に切り替えることはありません。</string>
+    <string name="chat_failure_copy_details">詳細をコピー</string>
+    <string name="chat_failure_route_gateway">ゲートウェイ</string>
+    <string name="chat_failure_route_api">API フォールバック</string>
     <string name="chat_open_settings">設定を開く</string>
     <string name="chat_connect_hermes">Hermesを接続してください</string>
     <string name="chat_try_demo">デモを試してみる</string>
