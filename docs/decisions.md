@@ -3541,9 +3541,11 @@ re-authorized. `bridge.status` adds only capability IDs and expiry timestamps; o
 Relays cache and pass through the additive payload without interpreting it.
 
 **UX rationale.** The main Bridge page is a cockpit, not the complete editor:
-it keeps permanent/timed/unattended state directly below Master, guides first
-setup through a preset or Custom, and summarizes only the Android prerequisites
-required by selected capabilities. Expanding Android access preserves the full
+it keeps permanent and screen-access policy directly below Master, followed by
+one authoritative Unattended Access card rather than a duplicate summary and
+switch. It guides first setup through a preset or Custom and summarizes only
+the Android prerequisites required by selected capabilities. Expanding Android
+access preserves the full
 permission matrix and Test/Settings actions; Safety preserves all granular
 toggles, blocklists, confirmation vocabulary/timeouts, overlay setting, trusted
 actions, and audit history. Screen access distinguishes renewable idle limits

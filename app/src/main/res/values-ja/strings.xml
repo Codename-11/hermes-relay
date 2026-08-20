@@ -4252,7 +4252,8 @@
     <string name="bridge_access_screen_unlimited">検査または操作はオフにするまで有効です</string>
     <string name="bridge_access_until_off_short">オフまで</string>
     <string name="bridge_access_unattended_unlimited">画面アクセスをオフにするまで常時利用可能</string>
-    <string name="bridge_timed_lifetime_title">アイドル制限</string>
+    <string name="bridge_timed_lifetime_title">アクセスの終了方法</string>
+    <string name="bridge_timed_scope_title">Hermes ができること</string>
     <string name="bridge_timed_until_off">オフにするまで</string>
     <string name="bridge_timed_idle_explainer">固定のセッション上限はありません。画面操作中は %1$s のアイドルタイマーが更新されます。</string>
     <string name="bridge_timed_unlimited_warning">アイドルタイムアウトはありません。終了、マスター無効化、またはポリシー変更まで、非操作時や再接続後も画面アクセスが続きます。専用端末向けです。</string>

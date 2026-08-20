@@ -4254,7 +4254,8 @@
     <string name="bridge_access_screen_unlimited">Prüfung oder Steuerung bleibt bis zum Ausschalten aktiv</string>
     <string name="bridge_access_until_off_short">Bis Aus</string>
     <string name="bridge_access_unattended_unlimited">Immer verfügbar, bis Bildschirmzugriff ausgeschaltet wird</string>
-    <string name="bridge_timed_lifetime_title">Leerlauflimit</string>
+    <string name="bridge_timed_lifetime_title">So endet der Zugriff</string>
+    <string name="bridge_timed_scope_title">Was Hermes tun darf</string>
     <string name="bridge_timed_until_off">Bis zum Ausschalten</string>
     <string name="bridge_timed_idle_explainer">Kein festes Sitzungslimit. Aktive Bildschirmbefehle erneuern den Leerlauf-Timer von %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Kein Leerlaufzeitlimit. Bildschirmzugriff bleibt bei Inaktivität und Wiederverbindung aktiv, bis er beendet, der Hauptschalter deaktiviert oder die Richtlinie geändert wird. Für ein dediziertes Gerät.</string>

@@ -100,10 +100,11 @@ import kotlinx.coroutines.launch
  * is a summary-first cockpit with complete drill-downs:
  *
  *   1. [BridgeMasterToggle]        — global kill switch + live device status
- *   2. [BridgeAgentAccessCard]     — permanent/timed/unattended policy posture
- *   3. Android readiness summary   — selected requirements + expandable full matrix
- *   4. Advanced safety/unattended  — complete power-user controls
- *   5. [BridgeActivityLog]         — scrollable recent-command history
+ *   2. [BridgeAgentAccessCard]     — permanent and screen-access policy posture
+ *   3. Unattended access           — single authoritative sideload control
+ *   4. Android readiness summary   — selected requirements + expandable full matrix
+ *   5. Advanced safety controls    — complete power-user controls
+ *   6. [BridgeActivityLog]         — scrollable recent-command history
  *
  * State comes from [BridgeViewModel] which in turn reads from the
  * [com.hermesandroid.relay.data.BridgePreferencesRepository] DataStore for
@@ -475,14 +476,29 @@ fun BridgeScreen(
             // Detailed toggles remain one tap away on the full safety screen.
             BridgeAgentAccessCard(
                 policy = activeCapabilityPolicy,
-                unattendedEnabled = unattendedEnabled,
                 nowMs = nowMs,
                 onSetUp = { showSetupSheet = true },
                 onManage = onNavigateToBridgeSafety,
                 onAllowScreen = { openTimedSheet() },
             )
 
-            // 3. Android permission state is summarized against the selected
+            // 3. One authoritative unattended control, kept beside the
+            // access policy it extends. Do not duplicate this state inside
+            // Agent access or Advanced: one switch owns one mode.
+            if (BuildFlavor.isSideload) {
+                UnattendedAccessRow(
+                    enabled = unattendedEnabled,
+                    warningSeen = unattendedWarningSeen,
+                    credentialLockDetected = credentialLockDetected,
+                    onToggle = { viewModel.setUnattendedAccessEnabled(it) },
+                    onWarningSeen = { viewModel.markUnattendedWarningSeen() },
+                    masterEnabled = masterToggle,
+                    screenControlAvailable = screenControlAvailable,
+                    screenAccessUnlimited = screenControlUnlimited,
+                )
+            }
+
+            // 4. Android permission state is summarized against the selected
             // policy. Expanding preserves the complete existing matrix and
             // every Settings/Test action—no power-user surface is removed.
             BridgeAndroidAccessSummaryCard(
@@ -535,32 +551,13 @@ fun BridgeScreen(
                 )
             }
 
-            // 4. Advanced section — unattended access + safety. Sideload
-            //    only — these features don't exist on googlePlay (no wake
-            //    lock, no destructive-verb routes).
+            // 5. Advanced safety controls. Sideload only — these features
+            //    don't exist on googlePlay (no destructive-verb routes).
             if (BuildFlavor.isSideload) {
                 AdvancedSectionHeader()
 
-                // 4. Unattended access — a SUB-FEATURE of the master
-                //    toggle. Gated: Switch is non-interactive when the
-                //    master toggle is off so users can't flip it and
-                //    observe nothing happening (the acquire path
-                //    short-circuits when master is off anyway).
-                UnattendedAccessRow(
-                    enabled = unattendedEnabled,
-                    warningSeen = unattendedWarningSeen,
-                    credentialLockDetected = credentialLockDetected,
-                    onToggle = { viewModel.setUnattendedAccessEnabled(it) },
-                    onWarningSeen = { viewModel.markUnattendedWarningSeen() },
-                    masterEnabled = masterToggle,
-                    screenControlAvailable = screenControlAvailable,
-                    screenAccessUnlimited = screenControlUnlimited,
-                )
-
-                // 5. Safety summary — auto-disable, destructive verbs,
-                //    blocklist. Belongs adjacent to unattended because
-                //    they share the "advanced / opt-in / sideload-only"
-                //    mental model.
+                // Safety summary — auto-disable, destructive verbs,
+                // blocklist, and the complete granular editor.
                 BridgeSafetySummaryCard(
                     settings = safetySettings,
                     autoDisableAtMs = autoDisableAtMs,

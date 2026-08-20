@@ -47,7 +47,6 @@ import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
 @Composable
 fun BridgeAgentAccessCard(
     policy: BridgeCapabilityPolicy,
-    unattendedEnabled: Boolean,
     nowMs: Long,
     onSetUp: () -> Unit,
     onManage: () -> Unit,
@@ -132,29 +131,6 @@ fun BridgeAgentAccessCard(
                             ?: stringResource(R.string.bridge_access_allow_duration)
                     },
                     onClick = onAllowScreen,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                AccessSummaryRow(
-                    title = stringResource(R.string.unattended_title),
-                    subtitle = if (screenActive) {
-                        if (unattendedEnabled) {
-                            if (screenUnlimited) {
-                                stringResource(R.string.bridge_access_unattended_unlimited)
-                            } else {
-                                stringResource(R.string.bridge_access_unattended_on)
-                            }
-                        } else {
-                            stringResource(R.string.bridge_access_unattended_available)
-                        }
-                    } else {
-                        stringResource(R.string.bridge_access_unattended_needs_screen)
-                    },
-                    trailing = if (unattendedEnabled && screenActive) {
-                        stringResource(R.string.bmt_on)
-                    } else {
-                        stringResource(R.string.bmt_off)
-                    },
-                    onClick = onManage,
                 )
             }
         }
@@ -359,7 +335,7 @@ fun BridgeTimedAccessSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(680.dp)
+                .height(740.dp)
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 8.dp),
         ) {
@@ -377,18 +353,6 @@ fun BridgeTimedAccessSheet(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TimedChoice(
-                    title = stringResource(R.string.bss_capability_screen_inspection),
-                    description = stringResource(R.string.bridge_timed_inspection_desc),
-                    checked = inspectEnabled,
-                    onCheckedChange = onInspectChanged,
-                )
-                TimedChoice(
-                    title = stringResource(R.string.bss_capability_screen_control),
-                    description = stringResource(R.string.bridge_timed_control_desc),
-                    checked = controlEnabled,
-                    onCheckedChange = onControlChanged,
-                )
                 Text(
                     stringResource(R.string.bridge_timed_lifetime_title),
                     style = MaterialTheme.typography.titleMedium,
@@ -402,7 +366,7 @@ fun BridgeTimedAccessSheet(
                                 onUnlimitedChanged(false)
                                 onDurationChanged(minutes)
                             },
-                            label = { Text(formatDuration(minutes)) },
+                            label = { Text(formatIdleDuration(minutes)) },
                         )
                     }
                 }
@@ -423,6 +387,23 @@ fun BridgeTimedAccessSheet(
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
+                )
+                Text(
+                    stringResource(R.string.bridge_timed_scope_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                TimedChoice(
+                    title = stringResource(R.string.bss_capability_screen_inspection),
+                    description = stringResource(R.string.bridge_timed_inspection_desc),
+                    checked = inspectEnabled,
+                    onCheckedChange = onInspectChanged,
+                )
+                TimedChoice(
+                    title = stringResource(R.string.bss_capability_screen_control),
+                    description = stringResource(R.string.bridge_timed_control_desc),
+                    checked = controlEnabled,
+                    onCheckedChange = onControlChanged,
                 )
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(
@@ -632,6 +613,9 @@ private fun formatRemaining(remainingMs: Long): String {
 
 private fun formatDuration(minutes: Int): String =
     if (minutes == 120) "2 hr" else "$minutes min"
+
+private fun formatIdleDuration(minutes: Int): String =
+    if (minutes == 120) "2 hr idle" else "$minutes min idle"
 
 private fun BridgeAndroidRequirement.labelResource(): Int = when (this) {
     BridgeAndroidRequirement.ACCESSIBILITY -> R.string.bpc_accessibility
