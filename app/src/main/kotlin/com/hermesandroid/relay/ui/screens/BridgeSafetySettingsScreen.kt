@@ -454,13 +454,21 @@ internal fun CapabilityGrantCards(
     }
 
     SectionCard(title = stringResource(R.string.bss_timed_capabilities_title)) {
+        val now = System.currentTimeMillis()
+        val activeScreenCapabilities = BridgeCapability.entries
+            .filter { it.timed && policy.allows(it, now) }
+        val hasUnlimited = activeScreenCapabilities.any(policy::isUnlimited)
         Text(
-            text = stringResource(R.string.bss_timed_capabilities_desc, timerMinutes),
+            text = when {
+                hasUnlimited -> stringResource(R.string.bss_screen_access_unlimited_desc)
+                activeScreenCapabilities.isNotEmpty() ->
+                    stringResource(R.string.bss_timed_capabilities_desc, timerMinutes)
+                else -> stringResource(R.string.bss_screen_access_off_desc, timerMinutes)
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.size(8.dp))
-        val now = System.currentTimeMillis()
         BridgeCapability.entries.filter { it.timed }.forEach { capability ->
             val active = (policy.expiryFor(capability) ?: 0L) > now
             CapabilityRow(

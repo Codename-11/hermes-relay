@@ -4188,8 +4188,10 @@
     <string name="bss_capabilities_title">Capability grants</string>
     <string name="bss_capabilities_desc">Always/Never grants apply only to this Hermes connection. The master switch and Android permissions still override them.</string>
     <string name="bss_capabilities_unavailable">Select and connect a Hermes connection before changing grants.</string>
-    <string name="bss_timed_capabilities_title">Timed screen access</string>
+    <string name="bss_timed_capabilities_title">Screen access</string>
     <string name="bss_timed_capabilities_desc">Screen inspection and control expire after %1$d minutes of inactivity. Harmless permanent grants do not extend this timer.</string>
+    <string name="bss_screen_access_off_desc">Screen access is off. New finite access uses a %1$d-minute idle limit by default.</string>
+    <string name="bss_screen_access_unlimited_desc">At least one screen capability stays active until explicitly turned off.</string>
     <string name="bss_capability_always">Always, while the master switch is on</string>
     <string name="bss_capability_never">Never</string>
     <string name="bss_capability_timed_on">Timed access active</string>
