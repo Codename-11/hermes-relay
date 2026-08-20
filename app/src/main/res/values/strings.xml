@@ -2376,7 +2376,8 @@
     <string name="unattended_requires_master">Requires Agent Control — enable the master switch above first.</string>
     <string name="unattended_on">On — agent may wake the screen and act while you\'re away.</string>
     <string name="unattended_off">Off — bridge actions only land when the screen is already on.</string>
-    <string name="unattended_description">Acquires a screen-bright wake lock on each incoming bridge command and asks the system to dismiss the keyguard. Hard-bounded by the bridge auto-disable timer.</string>
+    <string name="unattended_description">Keeps the screen available for incoming commands. Active screen commands refresh the idle timer; inactivity ends Screen access and turns Unattended off.</string>
+    <string name="unattended_description_unlimited">Keeps this device available without an idle timeout. Unattended stays on until you end Screen access, disable Master, or turn it off here.</string>
     <string name="unattended_keyguard_detected">Keyguard detected</string>
     <string name="unattended_keyguard_body">The screen will wake but stop at the lock screen. Android won\'t let third-party apps dismiss PIN / pattern / biometric locks. Set your lock to None or Swipe in Settings > Security to let the agent reach apps.</string>
     <string name="unattended_dialog_title">Enable Unattended Access?</string>
@@ -2387,7 +2388,7 @@
     <string name="unattended_dialog_limitation_lock_detected">Your device currently has a PIN, pattern, or biometric lock set. Android does not let third-party apps dismiss these — the screen will wake, but stop at the lock screen. To let the agent reach apps, change your lock to None or Swipe in Settings > Security.</string>
     <string name="unattended_dialog_limitation_no_lock">If you later set a PIN, pattern, or biometric lock, Android will not let Hermes dismiss it. The screen will wake, but stop at the lock screen, and the bridge will report a \'keyguard_blocked\' error to the agent.</string>
     <string name="unattended_dialog_how_to_disable">How to disable:</string>
-    <string name="unattended_dialog_how_to_disable_body">• Flip this same toggle off at any time.\n• The bridge auto-disable timer (default 30 minutes of idle) will turn unattended access off along with the master bridge toggle.\n• Disconnecting from the relay also drops the wake lock immediately.</string>
+    <string name="unattended_dialog_how_to_disable_body">• Flip this same toggle off at any time.\n• With an idle limit, active screen commands refresh the timer; inactivity ends Screen access and turns Unattended off.\n• With Until turned off, use End now or disable Master to revoke access.\n• Disconnecting from the relay drops the current wake lock immediately.</string>
     <string name="unattended_dialog_confirm">I understand — enable</string>
     <string name="unattended_dialog_cancel">Cancel</string>
 
@@ -4203,7 +4204,7 @@
     <string name="bss_capability_sharing">Share media and compose MMS</string>
     <string name="bss_capability_screen_inspection">Inspect screen and UI</string>
     <string name="bss_capability_screen_control">Drive apps and navigation</string>
-    <string name="unattended_requires_timed_control">Requires timed Screen control — enable it in Safety &amp; capabilities first.</string>
+    <string name="unattended_requires_timed_control">Requires Screen control — allow it from Agent access first.</string>
     <!-- Bridge capability cockpit and guided access flow -->
     <string name="bridge_access_title">Agent access</string>
     <string name="bridge_access_not_set_up">Not set up</string>
@@ -4213,9 +4214,12 @@
     <string name="bridge_access_enabled_count">%1$d of %2$d capabilities enabled</string>
     <string name="bridge_access_screen">Screen access</string>
     <string name="bridge_access_screen_active">Inspection or control is temporarily active</string>
+    <string name="bridge_access_screen_unlimited">Inspection or control stays active until turned off</string>
+    <string name="bridge_access_until_off_short">Until off</string>
     <string name="bridge_access_screen_off">Inspection and control are off</string>
     <string name="bridge_access_allow_duration">Allow…</string>
     <string name="bridge_access_unattended_on">Can wake the screen during this timed session</string>
+    <string name="bridge_access_unattended_unlimited">Always available until Screen access is turned off</string>
     <string name="bridge_access_unattended_available">Available while Screen access is active</string>
     <string name="bridge_access_unattended_needs_screen">Needs temporary Screen access</string>
     <string name="bridge_access_preset_read_only">Read only</string>
@@ -4247,11 +4251,15 @@
     <string name="bridge_android_selected_needs">Required for selected access</string>
     <string name="bridge_android_selected_needs_desc">These Android permissions are still missing. Disabled capabilities are not included.</string>
     <string name="bridge_android_open_settings">Open</string>
-    <string name="bridge_timed_title">Allow temporary screen access</string>
+    <string name="bridge_timed_title">Allow screen access</string>
     <string name="bridge_timed_desc">Choose what Hermes can do and how long it stays available.</string>
     <string name="bridge_timed_inspection_desc">Accessibility tree, UI events, and screenshots</string>
     <string name="bridge_timed_control_desc">Tap, type, swipe, open apps, and navigation</string>
     <string name="bridge_timed_ends_title">Ends after inactivity</string>
+    <string name="bridge_timed_lifetime_title">Idle limit</string>
+    <string name="bridge_timed_until_off">Until turned off</string>
+    <string name="bridge_timed_idle_explainer">No fixed session limit. Active screen commands refresh the %1$s idle timer.</string>
+    <string name="bridge_timed_unlimited_warning">No idle timeout. Screen access remains available through inactivity and reconnect until you end it, disable Master, or change policy. Best for a dedicated device.</string>
     <string name="bridge_timed_prerequisites">Prerequisites for screen access</string>
     <string name="bridge_timed_capture_note">Screen capture consent is requested when the first screenshot is used.</string>
     <string name="bridge_timed_allow">Allow access</string>

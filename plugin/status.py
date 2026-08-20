@@ -237,6 +237,7 @@ def render_status_block(data: dict, palette: _Palette) -> str:
     if isinstance(capabilities, dict) and capabilities:
         permanent = capabilities.get("permanent") or []
         timed = capabilities.get("timed") or {}
+        unlimited = capabilities.get("unlimited") or []
         lines.append("")
         lines.append("  " + palette.label("Capability grants"))
         lines.append(
@@ -246,6 +247,10 @@ def render_status_block(data: dict, palette: _Palette) -> str:
         lines.append(
             "    Timed:   "
             + (", ".join(sorted(str(item) for item in timed)) if isinstance(timed, dict) and timed else "none")
+        )
+        lines.append(
+            "    Until off: "
+            + (", ".join(str(item) for item in unlimited) if unlimited else "none")
         )
 
     # Safety

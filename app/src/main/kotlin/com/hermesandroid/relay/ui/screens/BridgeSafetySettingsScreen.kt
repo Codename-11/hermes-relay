@@ -466,9 +466,12 @@ internal fun CapabilityGrantCards(
             CapabilityRow(
                 capability = capability,
                 checked = active,
-                stateLabel = stringResource(
-                    if (active) R.string.bss_capability_timed_on else R.string.bss_capability_timed_off,
-                ),
+                stateLabel = when {
+                    policy.isUnlimited(capability) ->
+                        stringResource(R.string.bridge_timed_until_off)
+                    active -> stringResource(R.string.bss_capability_timed_on)
+                    else -> stringResource(R.string.bss_capability_timed_off)
+                },
                 enabled = enabled,
                 onCheckedChange = { onTimedChanged(capability, it) },
             )

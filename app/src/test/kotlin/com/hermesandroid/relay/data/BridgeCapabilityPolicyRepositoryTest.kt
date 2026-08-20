@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.test.core.app.ApplicationProvider
 import com.hermesandroid.relay.bridge.BridgeCapability
+import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertFalse
@@ -85,6 +86,40 @@ class BridgeCapabilityPolicyRepositoryTest {
         assertTrue(BridgeCapability.DEVICE_INFO in home.permanentGrants)
         assertEquals(2, home.timedExpiriesMs.size)
         assertFalse(repo.snapshot("work").hasAnyGrantForTest(0L))
+    }
+
+    @Test
+    fun idleRefreshPreservesUnlimitedGrants() = runTest {
+        val repo = BridgeCapabilityPolicyRepository(context)
+        repo.replaceTimed(
+            "home",
+            setOf(BridgeCapability.SCREEN_CONTROL),
+            BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS,
+        )
+
+        repo.refreshActiveTimed("home", expiresAtMs = 30_000L)
+
+        val policy = repo.snapshot("home")
+        assertEquals(
+            BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS,
+            policy.timedExpiriesMs[BridgeCapability.SCREEN_CONTROL],
+        )
+    }
+
+    @Test
+    fun idleRefreshDoesNotReviveExpiredSiblingGrant() = runTest {
+        val repo = BridgeCapabilityPolicyRepository(context)
+        repo.replaceTimed(
+            "home",
+            setOf(BridgeCapability.SCREEN_INSPECTION),
+            expiresAtMs = 1L,
+        )
+
+        repo.refreshActiveTimed("home", expiresAtMs = Long.MAX_VALUE - 1)
+
+        assertFalse(
+            repo.snapshot("home").allows(BridgeCapability.SCREEN_INSPECTION, System.currentTimeMillis()),
+        )
     }
 
     @Test

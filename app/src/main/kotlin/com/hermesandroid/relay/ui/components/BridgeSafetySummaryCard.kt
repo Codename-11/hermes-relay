@@ -53,6 +53,7 @@ import com.hermesandroid.relay.data.DEFAULT_DESTRUCTIVE_VERBS
 fun BridgeSafetySummaryCard(
     settings: BridgeSafetySettings,
     autoDisableAtMs: Long? = null,
+    screenAccessUnlimited: Boolean = false,
     onManage: () -> Unit,
 ) {
     // Tick a local clock every second when a countdown is active so the
@@ -115,7 +116,9 @@ fun BridgeSafetySummaryCard(
             )
             SafetySummaryRow(
                 label = stringResource(R.string.bssc_auto_disable),
-                value = if (autoDisableAtMs != null) {
+                value = if (screenAccessUnlimited) {
+                    stringResource(R.string.bridge_access_until_off_short)
+                } else if (autoDisableAtMs != null) {
                     val remainMs = (autoDisableAtMs - nowMs).coerceAtLeast(0L)
                     val remainMin = (remainMs / 60_000L).toInt()
                     val remainSec = ((remainMs % 60_000L) / 1000L).toInt()

@@ -95,6 +95,8 @@ data class BridgeCapabilityPolicy(
 ) {
     companion object {
         const val CURRENT_SCHEMA_VERSION = 1
+        /** Explicit sentinel for a user-selected "Until turned off" lease. */
+        const val NEVER_EXPIRES_AT_MS: Long = Long.MAX_VALUE
     }
 
     fun allows(capability: BridgeCapability, nowMs: Long): Boolean =
@@ -105,4 +107,7 @@ data class BridgeCapabilityPolicy(
         }
 
     fun expiryFor(capability: BridgeCapability): Long? = timedExpiriesMs[capability]
+
+    fun isUnlimited(capability: BridgeCapability): Boolean =
+        timedExpiriesMs[capability] == NEVER_EXPIRES_AT_MS
 }

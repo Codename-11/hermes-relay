@@ -3507,8 +3507,8 @@ Connection ID, and removing a connection removes its policy.
 | Media control | Always/Never | play/pause/toggle/next/previous |
 | Communications | Always/Never + per-action confirmation | call, send SMS |
 | Outbound sharing | Always/Never + per-action confirmation | share media, compose MMS |
-| Screen/UI inspection | Timed only | tree, nodes, hashes/diffs, events, screenshot |
-| Screen/device control | Timed only | tap/type/gesture, keys, app navigation, raw intents/broadcasts |
+| Screen/UI inspection | Explicit lease | tree, nodes, hashes/diffs, events, screenshot |
+| Screen/device control | Explicit lease | tap/type/gesture, keys, app navigation, raw intents/broadcasts |
 
 `ping`, host-only `setup`, and bounded `wait` are operational primitives rather
 than data authority. `android_navigate` and `android_macro` receive no composite
@@ -3518,9 +3518,14 @@ There is no read-SMS Bridge command in the audited inventory; adding one later
 requires an explicit registry entry, capability decision, Android permission
 review, status/docs update, and tests rather than inheriting Communications.
 
-Timed grants store absolute expiries and share the existing 5–120 minute idle
-window. Only accepted timed commands extend them. Restart, reconnect, master
-disable, manual revoke, and expiry cannot revive them. Calls, SMS, sharing, and
+Screen leases offer 5 minutes, 30 minutes, or 2 hours of **idle** time. Active
+screen commands refresh that timer, so there is no fixed wall-clock session
+limit. A separately warned **Until turned off** choice has no idle expiry and
+is intended for a dedicated/dummy device. It survives inactivity and reconnect
+but still ends on End now, Master off, connection removal, or policy change.
+Status reports this under `capabilities.unlimited`, not a fake expiry. Restart,
+reconnect, master disable, manual revoke, and finite expiry cannot revive
+revoked authority. Calls, SMS, sharing, and
 MMS retain their on-device confirmation even when their capability is Always.
 Android runtime permissions and MediaProjection consent are checked separately
 at use time; the grant UI never claims to grant those OS authorities.
@@ -3541,9 +3546,10 @@ setup through a preset or Custom, and summarizes only the Android prerequisites
 required by selected capabilities. Expanding Android access preserves the full
 permission matrix and Test/Settings actions; Safety preserves all granular
 toggles, blocklists, confirmation vocabulary/timeouts, overlay setting, trusted
-actions, and audit history. Temporary screen access has an explicit duration,
-End now, and expiry feedback; ending it clears unattended while permanent
-grants remain available. This follows Android's guidance to
+actions, and audit history. Screen access distinguishes renewable idle limits
+from Until turned off, includes End now, and explains the dedicated-device
+risk. Ending it clears unattended while permanent grants remain available.
+This follows Android's guidance to
 [request access in context and degrade gracefully](https://developer.android.com/training/permissions/requesting),
 [minimize permission scope](https://developer.android.com/privacy-and-security/minimize-permission-requests),
 and require fresh consent for each

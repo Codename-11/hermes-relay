@@ -105,7 +105,14 @@ class BridgeCapabilityPolicyRepository(private val context: Context) {
     suspend fun refreshActiveTimed(connectionId: String?, expiresAtMs: Long) {
         update(connectionId) { current ->
             current.copy(
-                timedExpiriesMs = current.timedExpiriesMs.keys.associateWith { expiresAtMs },
+                timedExpiriesMs = current.timedExpiriesMs.mapNotNull { (capability, currentExpiry) ->
+                    when {
+                        currentExpiry == BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS ->
+                            capability to currentExpiry
+                        currentExpiry > System.currentTimeMillis() -> capability to expiresAtMs
+                        else -> null
+                    }
+                }.toMap(),
             )
         }
     }

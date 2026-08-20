@@ -66,4 +66,16 @@ class BridgeCapabilitiesTest {
         assertFalse(policy.allows(BridgeCapability.SCREEN_CONTROL, now + 1))
         assertFalse(policy.allows(BridgeCapability.SCREEN_INSPECTION, now))
     }
+
+    @Test
+    fun unlimitedScreenAuthorityRemainsActiveUntilExplicitlyRevoked() {
+        val policy = BridgeCapabilityPolicy(
+            timedExpiriesMs = mapOf(
+                BridgeCapability.SCREEN_CONTROL to BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS,
+            ),
+        )
+        assertTrue(policy.allows(BridgeCapability.SCREEN_CONTROL, Long.MAX_VALUE - 1))
+        assertTrue(policy.isUnlimited(BridgeCapability.SCREEN_CONTROL))
+        assertFalse(policy.isUnlimited(BridgeCapability.SCREEN_INSPECTION))
+    }
 }

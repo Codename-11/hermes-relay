@@ -4197,7 +4197,7 @@
     <string name="bss_capability_sharing">Medien teilen und MMS verfassen</string>
     <string name="bss_capability_screen_inspection">Bildschirm und UI prüfen</string>
     <string name="bss_capability_screen_control">Apps und Navigation steuern</string>
-    <string name="unattended_requires_timed_control">Erfordert zeitgesteuerte Bildschirmsteuerung — zuerst unter Sicherheit &amp; Funktionen aktivieren.</string>
+    <string name="unattended_requires_timed_control">Erfordert Bildschirmsteuerung — zuerst unter Agentenzugriff erlauben.</string>
     <string name="bridge_access_title">Agentenzugriff</string>
     <string name="bridge_access_not_set_up">Nicht eingerichtet</string>
     <string name="bridge_access_summary_desc">Lege fest, was Hermes in dieser Verbindung verwenden darf.</string>
@@ -4240,7 +4240,7 @@
     <string name="bridge_android_selected_needs">Für den gewählten Zugriff erforderlich</string>
     <string name="bridge_android_selected_needs_desc">Diese Android-Berechtigungen fehlen noch. Deaktivierte Funktionen sind nicht enthalten.</string>
     <string name="bridge_android_open_settings">Öffnen</string>
-    <string name="bridge_timed_title">Temporären Bildschirmzugriff erlauben</string>
+    <string name="bridge_timed_title">Bildschirmzugriff erlauben</string>
     <string name="bridge_timed_desc">Wähle, was Hermes tun darf und wie lange es verfügbar bleibt.</string>
     <string name="bridge_timed_inspection_desc">Bedienungshilfen-Baum, UI-Ereignisse und Screenshots</string>
     <string name="bridge_timed_control_desc">Tippen, schreiben, wischen, Apps öffnen und navigieren</string>
@@ -4250,4 +4250,12 @@
     <string name="bridge_timed_allow">Zugriff erlauben</string>
     <string name="bridge_timed_end_now">Jetzt beenden</string>
     <string name="bridge_timed_ended_snackbar">Bildschirmzugriff beendet. Dauerhafte Berechtigungen bleiben verfügbar.</string>
+    <string name="unattended_description_unlimited">Hält dieses Gerät ohne Leerlaufzeitlimit verfügbar. Bleibt aktiv, bis Bildschirmzugriff oder Hauptschalter beendet oder diese Option ausgeschaltet wird.</string>
+    <string name="bridge_access_screen_unlimited">Prüfung oder Steuerung bleibt bis zum Ausschalten aktiv</string>
+    <string name="bridge_access_until_off_short">Bis Aus</string>
+    <string name="bridge_access_unattended_unlimited">Immer verfügbar, bis Bildschirmzugriff ausgeschaltet wird</string>
+    <string name="bridge_timed_lifetime_title">Leerlauflimit</string>
+    <string name="bridge_timed_until_off">Bis zum Ausschalten</string>
+    <string name="bridge_timed_idle_explainer">Kein festes Sitzungslimit. Aktive Bildschirmbefehle erneuern den Leerlauf-Timer von %1$s.</string>
+    <string name="bridge_timed_unlimited_warning">Kein Leerlaufzeitlimit. Bildschirmzugriff bleibt bei Inaktivität und Wiederverbindung aktiv, bis er beendet, der Hauptschalter deaktiviert oder die Richtlinie geändert wird. Für ein dediziertes Gerät.</string>
 </resources>

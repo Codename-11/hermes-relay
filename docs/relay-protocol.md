@@ -229,12 +229,15 @@ authorization. Current clients add a `capabilities` object to `bridge.status`:
   "capabilities": {
     "schema_version": 1,
     "permanent": ["contacts_read", "clipboard_read"],
-    "timed": {"screen_inspection": 1787180400000}
+    "timed": {"screen_inspection": 1787180400000},
+    "unlimited": ["screen_control"]
   }
 }
 ```
 
-The lists contain stable capability IDs and epoch-millisecond expiries only;
+`timed` contains epoch-millisecond expiries for renewable idle leases;
+`unlimited` contains explicitly selected Until-turned-off screen leases. The
+lists contain stable capability IDs only;
 they contain no command arguments, contact data, clipboard content, or screen
 content. Relay caches this additive status for diagnostics but does not turn it
 into authority. The phone's closed `(method, path)` registry is authoritative,

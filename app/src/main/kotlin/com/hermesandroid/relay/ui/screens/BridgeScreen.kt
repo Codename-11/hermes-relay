@@ -223,6 +223,9 @@ fun BridgeScreen(
         com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
         System.currentTimeMillis(),
     )
+    val screenAccessUnlimited = activeCapabilityPolicy.isUnlimited(
+        com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+    )
     val overlayRequired = screenControlAvailable ||
         com.hermesandroid.relay.bridge.BridgeCapability.COMMUNICATIONS in
         activeCapabilityPolicy.permanentGrants ||
@@ -249,6 +252,7 @@ fun BridgeScreen(
     var timedInspect by remember { mutableStateOf(true) }
     var timedControl by remember { mutableStateOf(true) }
     var timedMinutes by remember { mutableStateOf(safetySettings.autoDisableMinutes) }
+    var timedUnlimited by remember { mutableStateOf(false) }
     val timedCurrentlyActive = activeCapabilityPolicy.activeTimedCapabilities(nowMs).isNotEmpty()
     fun openTimedSheet() {
         val current = activeCapabilityPolicy.activeTimedCapabilities(nowMs)
@@ -257,6 +261,7 @@ fun BridgeScreen(
         timedControl = if (current.isEmpty()) true else
             com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL in current
         timedMinutes = safetySettings.autoDisableMinutes
+        timedUnlimited = current.any(activeCapabilityPolicy::isUnlimited)
         showTimedSheet = true
     }
     // === END PHASE3-safety-rails ===
@@ -543,6 +548,7 @@ fun BridgeScreen(
                     onWarningSeen = { viewModel.markUnattendedWarningSeen() },
                     masterEnabled = masterToggle,
                     screenControlAvailable = screenControlAvailable,
+                    screenAccessUnlimited = screenAccessUnlimited,
                 )
 
                 // 5. Safety summary — auto-disable, destructive verbs,
@@ -552,6 +558,7 @@ fun BridgeScreen(
                 BridgeSafetySummaryCard(
                     settings = safetySettings,
                     autoDisableAtMs = autoDisableAtMs,
+                    screenAccessUnlimited = screenAccessUnlimited,
                     onManage = onNavigateToBridgeSafety,
                 )
 
@@ -613,12 +620,14 @@ fun BridgeScreen(
             inspectEnabled = timedInspect,
             controlEnabled = timedControl,
             durationMinutes = timedMinutes,
+            unlimited = timedUnlimited,
             accessibilityReady = permissionStatus.accessibilityServiceEnabled,
             overlayReady = permissionStatus.overlayPermitted,
             currentlyActive = timedCurrentlyActive,
             onInspectChanged = { timedInspect = it },
             onControlChanged = { timedControl = it },
             onDurationChanged = { timedMinutes = it },
+            onUnlimitedChanged = { timedUnlimited = it },
             onOpenAccessibility = {
                 runCatching {
                     context.startActivity(
@@ -654,6 +663,7 @@ fun BridgeScreen(
                         activeConnectionId,
                         capabilities,
                         timedMinutes,
+                        unlimited = timedUnlimited,
                     )
                     showTimedSheet = false
                 }

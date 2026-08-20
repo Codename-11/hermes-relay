@@ -293,10 +293,22 @@ class BridgeStatusReporter(
                     })
                     put("timed", buildJsonObject {
                         capabilityPolicy?.timedExpiriesMs
+                            ?.filterValues {
+                                it != com.hermesandroid.relay.bridge.BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+                            }
                             ?.toSortedMap(compareBy { it.wireId })
                             ?.forEach { (capability, expiry) ->
                                 put(capability.wireId, expiry)
                             }
+                    })
+                    put("unlimited", buildJsonArray {
+                        capabilityPolicy?.timedExpiriesMs
+                            ?.filterValues {
+                                it == com.hermesandroid.relay.bridge.BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+                            }
+                            ?.keys
+                            ?.sortedBy { it.wireId }
+                            ?.forEach { add(it.wireId) }
                     })
                 })
 
