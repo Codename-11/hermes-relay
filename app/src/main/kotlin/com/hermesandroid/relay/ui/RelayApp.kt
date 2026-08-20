@@ -1387,12 +1387,22 @@ fun RelayApp() {
         }
         val masterEnabled by masterEnabledFlow.collectAsState(initial = false)
         val unattendedEnabled by unattendedEnabledFlow.collectAsState(initial = false)
+        val activeBridgePolicy by (connectionViewModel.bridgeSafety?.activeCapabilityPolicy
+            ?: remember { kotlinx.coroutines.flow.MutableStateFlow(
+                com.hermesandroid.relay.bridge.BridgeCapabilityPolicy(),
+            ) })
+            .collectAsState()
+        val timedScreenControlActive = activeBridgePolicy.allows(
+            com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+            System.currentTimeMillis(),
+        )
         // Sideload-only: googlePlay has no wake lock and the unattended
         // flag never gets written there — gating here is defence in depth
         // and makes the check cheap via R8 in release builds.
         val showUnattendedBanner = BuildFlavor.isSideload &&
             masterEnabled &&
             unattendedEnabled &&
+            timedScreenControlActive &&
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
@@ -1628,7 +1638,7 @@ fun RelayApp() {
                         ?: AgentDisplay.displayModelName(serverModelName)
                         ?: stringResource(R.string.status_model_pending)
                     val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
-                        if (unattendedEnabled) stringResource(R.string.status_safety_unattended)
+                        if (unattendedEnabled && timedScreenControlActive) stringResource(R.string.status_safety_unattended)
                         else stringResource(R.string.status_safety_on)
                     } else {
                         stringResource(R.string.status_profile_format, profileLabel)
@@ -2316,6 +2326,7 @@ fun RelayApp() {
                 composable(Screen.BridgeSafetySettings.route) {
                     if (BuildFlavor.isSideload) {
                         BridgeSafetySettingsScreen(
+                            connectionId = activeConnectionId,
                             onBack = { navController.popBackStack() }
                         )
                     } else {

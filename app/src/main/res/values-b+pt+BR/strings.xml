@@ -519,7 +519,7 @@
     <string name="bssc_safety">Segurança</string>
     <string name="bssc_blocked_apps">Apps nos quais o agente não pode tocar</string>
     <string name="bssc_destructive_verbs">Palavras que sempre exigem confirmação</string>
-    <string name="bssc_auto_disable">Desliga automaticamente quando ocioso</string>
+    <string name="bssc_auto_disable">Acesso temporário à tela</string>
     <string name="bssc_guardrails_hint">Estas proteções mantêm o Hermes dentro dos limites. Toque para ajustar.</string>
     <string name="bssc_manage">Gerenciar</string>
     <!-- BridgeActivityLog -->
@@ -943,7 +943,7 @@
     <string name="bss_add_verb_cd">Adicionar verbo</string>
     <string name="bss_remove_cd">Remover</string>
     <string name="bss_auto_disable">Desativar automaticamente após ociosidade</string>
-    <string name="bss_auto_disable_desc">A chave mestra é desligada após esta quantidade de minutos sem comandos do Bridge. Reprogramada a cada comando.</string>
+    <string name="bss_auto_disable_desc">O acesso temporário à tela expira após estes minutos ocioso. Somente inspeção ou controle da tela reinicia o temporizador.</string>
     <string name="bss_auto_disable_value">%1$d min</string>
     <string name="bss_status_overlay">Sobreposição de status</string>
     <string name="bss_show_floating">Mostrar indicador flutuante</string>
@@ -3147,8 +3147,8 @@
     <string name="whats_new_title">Novidades</string>
     <string name="whats_new_subtitle">Destaques da versão mais recente</string>
     <!-- Localization guardrail additions for current dev surfaces -->
-    <string name="bridge_notification_auto_disabled_title">Bridge desativado automaticamente</string>
-    <string name="bridge_notification_auto_disabled_body">Pausado após ficar ocioso — toque para reativar na aba Bridge.</string>
+    <string name="bridge_notification_auto_disabled_title">Acesso temporário à tela expirou</string>
+    <string name="bridge_notification_auto_disabled_body">Inspeção e controle da tela foram desativados após ociosidade. As outras permissões não mudaram.</string>
     <string name="bridge_notification_control_title">O agente Hermes controla o dispositivo</string>
     <string name="bridge_notification_control_body">O Bridge está ativo — toque em Desativar para interromper a qualquer momento.</string>
     <string name="gateway_keepalive_title">Conexão com o Hermes ativa</string>
@@ -4011,4 +4011,24 @@
     <string name="host_resource_memory_elevated">A memória do servidor está baixa.</string>
     <string name="host_resource_disk_critical">O armazenamento do servidor está criticamente baixo; mensagens e configurações podem não ser salvas.</string>
     <string name="host_resource_disk_elevated">O armazenamento do servidor está baixo.</string>
+    <string name="bss_capabilities_title">Permissões de recursos</string>
+    <string name="bss_capabilities_desc">Sempre/Nunca vale apenas para esta conexão Hermes. A chave mestra e as permissões do Android continuam prevalecendo.</string>
+    <string name="bss_capabilities_unavailable">Selecione e conecte uma conexão Hermes antes de alterar permissões.</string>
+    <string name="bss_timed_capabilities_title">Acesso temporário à tela</string>
+    <string name="bss_timed_capabilities_desc">Inspeção e controle da tela expiram após %1$d minutos ocioso. Permissões permanentes não prolongam o temporizador.</string>
+    <string name="bss_capability_always">Sempre, enquanto a chave mestra estiver ligada</string>
+    <string name="bss_capability_never">Nunca</string>
+    <string name="bss_capability_timed_on">Acesso temporário ativo</string>
+    <string name="bss_capability_timed_off">Acesso temporário desativado</string>
+    <string name="bss_capability_device_info">Informações do dispositivo e apps</string>
+    <string name="bss_capability_contacts">Ler contatos</string>
+    <string name="bss_capability_location">Ler localização</string>
+    <string name="bss_capability_clipboard_read">Ler área de transferência</string>
+    <string name="bss_capability_clipboard_write">Gravar na área de transferência</string>
+    <string name="bss_capability_media">Controlar reprodução de mídia</string>
+    <string name="bss_capability_communications">Enviar SMS e fazer chamadas</string>
+    <string name="bss_capability_sharing">Compartilhar mídia e compor MMS</string>
+    <string name="bss_capability_screen_inspection">Inspecionar tela e interface</string>
+    <string name="bss_capability_screen_control">Controlar apps e navegação</string>
+    <string name="unattended_requires_timed_control">Exige controle temporário da tela — ative primeiro em Segurança e recursos.</string>
 </resources>

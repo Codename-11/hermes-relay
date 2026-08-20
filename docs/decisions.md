@@ -728,7 +728,8 @@ notes remain here as implementation history.
 | Per-connection | Global |
 |---|---|
 | API baseUrl + bearer | Theme, dev-mode toggles |
-| Sessions, messages, search | Bridge safety prefs (blocklist, destructive verbs, auto-disable) |
+| Sessions, messages, search | Bridge safety vocabulary (blocklist, destructive verbs, timer duration) |
+| Bridge capability policy (ADR 63) | Status-overlay presentation |
 | Personalities (`/api/config`) | Feature flags / DataStore overrides |
 | Skills, memory | Notification companion enabled/disabled |
 | Relay WSS endpoint + cert pin (shared by host) | Keystore itself (one keystore, many entries) |
@@ -736,7 +737,11 @@ notes remain here as implementation history.
 | Bridge command target | |
 | Last-active session ID | |
 
-**Trade-off — Bridge safety prefs are global:** a blocklist entry added for server A also applies when connected to server B. Accepted for v1 because the safety model is phone-wide (one user, one device, same risk appetite). If users report the shared blocklist biting, split per-connection later — the store shape allows it without breaking compatibility.
+**Amended by ADR 63 — Bridge capability grants are per-connection.** The
+blocklist, destructive vocabulary, confirmation timeout, and timed-window
+duration remain phone-wide safety preferences. Actual Always/Never/Timed
+authority is keyed by Connection ID, so server A cannot inherit grants made for
+server B.
 
 **Trade-off — "both agents in one channel" (Discord-style) deferred:** a unified chat view showing interleaved messages from two connections is possible but semantically fraught: sessions, memory, and tool calls don't merge on the server side, so the unified view would be purely client-side theater. Deferred until there's a concrete use case; v1 users switch contexts with one tap and carry on.
 
@@ -3469,3 +3474,73 @@ and large structured pastes remain visible before send without making the
 default path depend on Relay. Draft content stays local, is excluded from cloud
 backup, is cleared on uninstall, and remains subject to the app's attachment
 size limit.
+
+## ADR 63 — Android Bridge authority is connection-scoped, grouped, and fail-closed
+
+**Context.** The original Bridge safety contract had one persisted master
+switch and one idle timer. Every command refreshed that timer, so a harmless
+contacts or clipboard read kept screen-driving authority armed, while timer
+expiry disabled harmless reads too. Command aliases, method-split clipboard
+operations, raw intents, and Python-side composite tools also made a flat list
+of UI command toggles easy to drift away from the actual executor surface.
+
+**Threat model.** A valid Relay session or agent tool call may be mistaken,
+prompt-injected, replayed after reconnect, routed to the wrong configured
+Hermes connection, or upgraded while either endpoint runs an older version.
+Android OS permission, AccessibilityService, MediaProjection, overlay
+confirmation, target-package blocklist, and Relay channel grants are necessary
+independent gates; none is evidence that the user granted a Bridge capability.
+
+**Decision.** Android owns a closed `(HTTP method, path) -> capability` registry
+at the first command boundary. Unknown routes and wrong methods return 403
+before event reads, wake locks, confirmations, or executor calls. The master
+switch overrides every capability. Policy is persisted by stable Android
+Connection ID, and removing a connection removes its policy.
+
+| Capability | Lifetime | Routes |
+|---|---|---|
+| Device/app info | Always/Never | current app, launcher apps (including `/apps` alias) |
+| Contacts | Always/Never | contact search |
+| Location | Always/Never | last-known location |
+| Clipboard read | Always/Never | `GET /clipboard` |
+| Clipboard write | Always/Never | `POST /clipboard` |
+| Media control | Always/Never | play/pause/toggle/next/previous |
+| Communications | Always/Never + per-action confirmation | call, send SMS |
+| Outbound sharing | Always/Never + per-action confirmation | share media, compose MMS |
+| Screen/UI inspection | Timed only | tree, nodes, hashes/diffs, events, screenshot |
+| Screen/device control | Timed only | tap/type/gesture, keys, app navigation, raw intents/broadcasts |
+
+`ping`, host-only `setup`, and bounded `wait` are operational primitives rather
+than data authority. `android_navigate` and `android_macro` receive no composite
+grant; each primitive route is checked. Notification history and shell remain
+separate Notification Companion and terminal-channel contracts.
+There is no read-SMS Bridge command in the audited inventory; adding one later
+requires an explicit registry entry, capability decision, Android permission
+review, status/docs update, and tests rather than inheriting Communications.
+
+Timed grants store absolute expiries and share the existing 5–120 minute idle
+window. Only accepted timed commands extend them. Restart, reconnect, master
+disable, manual revoke, and expiry cannot revive them. Calls, SMS, sharing, and
+MMS retain their on-device confirmation even when their capability is Always.
+Android runtime permissions and MediaProjection consent are checked separately
+at use time; the grant UI never claims to grant those OS authorities.
+
+**Migration and compatibility.** Missing, malformed, or future policy schemas
+mean no grants. Existing installs migrate with the master off and every
+capability denied. The master moves to a v2 DataStore key while writes pin the
+legacy key false, so downgrading to an APK that does not understand granular
+policy fails closed. Capability policy is bound to a random install ID stored
+under Android's no-backup directory, so a cloud or exported restore cannot
+transfer authority to a destination install; restored connections must be
+re-authorized. `bridge.status` adds only capability IDs and expiry timestamps; older
+Relays cache and pass through the additive payload without interpreting it.
+
+**UX rationale.** Safety & capabilities shows two compact groups: durable
+Always/Never grants and timed screen access. This follows Android's guidance to
+[request access in context and degrade gracefully](https://developer.android.com/training/permissions/requesting),
+[minimize permission scope](https://developer.android.com/privacy-and-security/minimize-permission-requests),
+and require fresh consent for each
+[MediaProjection session](https://developer.android.com/media/grow/media-projection).
+It also mirrors MCP authorization's
+[least-privilege scope selection](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+without presenting Android app policy as OAuth scope.

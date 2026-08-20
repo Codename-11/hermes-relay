@@ -540,7 +540,7 @@
     <string name="bssc_safety">Безопасность</string>
     <string name="bssc_blocked_apps">Приложения, к которым агент не может получить доступ</string>
     <string name="bssc_destructive_verbs">Слова, которые всегда спрашивают сначала</string>
-    <string name="bssc_auto_disable">Отключается само при бездействии</string>
+    <string name="bssc_auto_disable">Временный доступ к экрану</string>
     <string name="bssc_guardrails_hint">Эти ограничения удерживают Гермеса в рамках. Нажмите, чтобы отрегулировать.</string>
     <string name="bssc_manage">Управление</string>
     <string name="bal_activity_log">Журнал активности</string>
@@ -1012,7 +1012,7 @@
     <string name="bss_add_verb_cd">Добавить глагол</string>
     <string name="bss_remove_cd">Удалить</string>
     <string name="bss_auto_disable">Автоотключение после бездействия</string>
-    <string name="bss_auto_disable_desc">Главный переключатель отключается после этого количества минут без команд моста. Перезапланировывается при каждой команде.</string>
+    <string name="bss_auto_disable_desc">Временный доступ к экрану истекает после указанного периода бездействия. Таймер сбрасывают только просмотр или управление экраном.</string>
     <string name="bss_auto_disable_value">%1$d мин</string>
     <string name="bss_status_overlay">Индикатор состояния</string>
     <string name="bss_show_floating">Показать плавающий индикатор</string>
@@ -3174,8 +3174,8 @@
     <string name="whats_new_no_notes">Примечания к выпуску недоступны</string>
     <string name="whats_new_title">Что нового</string>
     <string name="whats_new_subtitle">Последние обновления</string>
-    <string name="bridge_notification_auto_disabled_title">Автоматическое отключение моста</string>
-    <string name="bridge_notification_auto_disabled_body">Приостановлено после бездействия — нажмите, чтобы снова включить на вкладке «Мост».</string>
+    <string name="bridge_notification_auto_disabled_title">Временный доступ к экрану истек</string>
+    <string name="bridge_notification_auto_disabled_body">Просмотр и управление экраном отключены после бездействия. Другие разрешения не изменены.</string>
     <string name="bridge_notification_control_title">Агент Гермес имеет управление устройством</string>
     <string name="bridge_notification_control_body">Мост активен — нажмите «Отключить», чтобы остановить в любое время.</string>
     <string name="gateway_keepalive_title">Подключение Гермеса активно</string>
@@ -3898,4 +3898,24 @@
     <string name="host_resource_memory_elevated">Память хоста заканчивается.</string>
     <string name="host_resource_disk_critical">Хранилище хоста почти заполнено; сообщения и настройки могут не сохраниться.</string>
     <string name="host_resource_disk_elevated">Хранилище хоста заканчивается.</string>
+    <string name="bss_capabilities_title">Разрешения возможностей</string>
+    <string name="bss_capabilities_desc">Всегда/Никогда действует только для этого подключения Hermes. Главный переключатель и разрешения Android имеют приоритет.</string>
+    <string name="bss_capabilities_unavailable">Выберите и подключите Hermes перед изменением разрешений.</string>
+    <string name="bss_timed_capabilities_title">Временный доступ к экрану</string>
+    <string name="bss_timed_capabilities_desc">Просмотр и управление экраном истекают через %1$d мин. бездействия. Постоянные разрешения не продлевают таймер.</string>
+    <string name="bss_capability_always">Всегда, пока включен главный переключатель</string>
+    <string name="bss_capability_never">Никогда</string>
+    <string name="bss_capability_timed_on">Временный доступ активен</string>
+    <string name="bss_capability_timed_off">Временный доступ выключен</string>
+    <string name="bss_capability_device_info">Сведения об устройстве и приложениях</string>
+    <string name="bss_capability_contacts">Чтение контактов</string>
+    <string name="bss_capability_location">Чтение местоположения</string>
+    <string name="bss_capability_clipboard_read">Чтение буфера обмена</string>
+    <string name="bss_capability_clipboard_write">Запись в буфер обмена</string>
+    <string name="bss_capability_media">Управление воспроизведением</string>
+    <string name="bss_capability_communications">Отправка SMS и звонки</string>
+    <string name="bss_capability_sharing">Отправка медиа и создание MMS</string>
+    <string name="bss_capability_screen_inspection">Просмотр экрана и интерфейса</string>
+    <string name="bss_capability_screen_control">Управление приложениями и навигацией</string>
+    <string name="unattended_requires_timed_control">Требуется временное управление экраном — сначала включите его в разделе безопасности и возможностей.</string>
 </resources>
