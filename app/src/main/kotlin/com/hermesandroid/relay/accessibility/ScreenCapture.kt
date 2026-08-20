@@ -152,12 +152,14 @@ class ScreenCapture(
     // 13 and below but breaks the second /screenshot request on 14+.
     //
     // Fix: keep the VirtualDisplay + ImageReader + HandlerThread alive
-    // across captures, keyed by the MediaProjection instance. Rebuild only
-    // when the projection reference changes (fresh consent grant) or the
-    // dimensions change (orientation flip). The ImageReader's
-    // setOnImageAvailableListener drains the buffer continuously; each
-    // captureAndUpload() installs a one-shot [pendingCapture] callback
-    // that fires on the next frame.
+    // across captures, keyed by the MediaProjection instance. The reader
+    // surface is attached only while a request is waiting, then detached so
+    // SurfaceFlinger is not continuously mirroring into a drain-and-drop loop.
+    // Rebuild only when the projection reference changes (fresh consent
+    // grant). Orientation/size changes resize the existing VirtualDisplay and
+    // replace its detached ImageReader, preserving Android 14's single-create
+    // contract. Each captureAndUpload() installs a one-shot [pendingCapture]
+    // callback that fires on the next attached frame.
     //
     // Thread model:
     //  - `captureMutex` serializes concurrent captureAndUpload() calls
@@ -273,6 +275,7 @@ class ScreenCapture(
      */
     fun releaseCache() {
         synchronized(cacheLock) {
+            runCatching { cachedDisplay?.setSurface(null) }
             runCatching { cachedDisplay?.release() }
             runCatching { cachedReader?.close() }
             runCatching { cachedThread?.quitSafely() }
@@ -326,6 +329,7 @@ class ScreenCapture(
         }
 
         return try {
+            attachCaptureSurface()
             val timeoutMs = captureTimeoutMs()
             kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -336,6 +340,24 @@ class ScreenCapture(
         } catch (t: Throwable) {
             pendingCaptureRef.compareAndSet(deferred, null)
             throw t
+        } finally {
+            detachCaptureSurface()
+        }
+    }
+
+    private fun attachCaptureSurface() {
+        synchronized(cacheLock) {
+            val display = cachedDisplay ?: throw IOException("capture display unavailable")
+            val surface = cachedReader?.surface ?: throw IOException("capture surface unavailable")
+            display.setSurface(surface)
+            Log.d(TAG, "screen capture surface attached for pending frame")
+        }
+    }
+
+    private fun detachCaptureSurface() {
+        synchronized(cacheLock) {
+            runCatching { cachedDisplay?.setSurface(null) }
+                .onFailure { Log.v(TAG, "screen capture surface detach failed: ${it.message}") }
         }
     }
 
@@ -350,11 +372,12 @@ class ScreenCapture(
 
     /**
      * Build (or reuse) the cached VirtualDisplay + ImageReader + HandlerThread
-     * for this projection. Rebuilds when:
+     * for this projection. Rebuilds the display when:
      *
      *  - The projection reference has changed (new consent grant landed)
-     *  - The captured dimensions don't match the current display (orientation
-     *    flipped, foldable opened/closed, display switched)
+     *
+     * Geometry changes resize that existing display and replace its detached
+     * consumer surface, as required for Android 14's one-display-per-token rule.
      *
      * Must be called while [captureMutex] is held so the cached fields
      * aren't racing another capture.
@@ -368,52 +391,41 @@ class ScreenCapture(
         synchronized(cacheLock) {
             val projectionChanged = cachedProjection !== projection
             val dimensionsChanged = width != cachedWidth || height != cachedHeight
-            if (!projectionChanged && !dimensionsChanged && cachedDisplay != null && cachedReader != null) {
+            val densityChanged = densityDpi != cachedDensity
+            if (!projectionChanged && !dimensionsChanged && !densityChanged &&
+                cachedDisplay != null && cachedReader != null
+            ) {
+                return
+            }
+
+            // Android 14 permits only one createVirtualDisplay() call per
+            // MediaProjection. Resize the existing display and replace only
+            // its detached consumer surface when the device geometry changes.
+            if (!projectionChanged && cachedDisplay != null && cachedThread != null) {
+                val display = cachedDisplay ?: return
+                val thread = cachedThread ?: return
+                val handler = cachedHandler ?: Handler(thread.looper)
+                display.setSurface(null)
+                runCatching { cachedReader?.close() }
+                display.resize(width, height, densityDpi)
+                cachedReader = createImageReader(width, height, handler)
+                cachedHandler = handler
+                cachedWidth = width
+                cachedHeight = height
+                cachedDensity = densityDpi
+                Log.i(TAG, "screen capture pipeline resized ${width}x$height dpi=$densityDpi")
                 return
             }
 
             // Tear down any stale cache before building fresh.
+            runCatching { cachedDisplay?.setSurface(null) }
             runCatching { cachedDisplay?.release() }
             runCatching { cachedReader?.close() }
             runCatching { cachedThread?.quitSafely() }
 
             val thread = HandlerThread("HermesScreenCapture").apply { start() }
             val handler = Handler(thread.looper)
-            val reader = ImageReader.newInstance(
-                width, height, PixelFormat.RGBA_8888, MAX_IMAGES
-            )
-
-            // Persistent listener — fires on every frame the VirtualDisplay
-            // produces. If there's a pending capture request, we encode
-            // the frame and complete it; otherwise we just drain the image
-            // so the ImageReader buffer stays clear.
-            reader.setOnImageAvailableListener({ r ->
-                val waiter = pendingCaptureRef.get()
-                if (waiter == null || !waiter.isActive) {
-                    // Drain-and-drop — nobody's asking for a screenshot
-                    // right now but frames are still arriving.
-                    runCatching { r.acquireLatestImage() }.getOrNull()?.close()
-                    return@setOnImageAvailableListener
-                }
-                var image: Image? = null
-                try {
-                    image = r.acquireLatestImage()
-                        ?: return@setOnImageAvailableListener
-                    val png = imageToPngBytes(image, width, height)
-                    // Only complete the EXACT deferred we latched onto,
-                    // so a stale listener firing after supersession doesn't
-                    // resolve a new request.
-                    if (pendingCaptureRef.compareAndSet(waiter, null)) {
-                        waiter.complete(png)
-                    }
-                } catch (t: Throwable) {
-                    if (pendingCaptureRef.compareAndSet(waiter, null)) {
-                        waiter.completeExceptionally(t)
-                    }
-                } finally {
-                    runCatching { image?.close() }
-                }
-            }, handler)
+            val reader = createImageReader(width, height, handler)
 
             val display = try {
                 projection.createVirtualDisplay(
@@ -422,7 +434,7 @@ class ScreenCapture(
                     height,
                     densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    reader.surface,
+                    null,
                     null,
                     handler,
                 )
@@ -459,6 +471,38 @@ class ScreenCapture(
             cachedDensity = densityDpi
             Log.i(TAG, "screen capture pipeline built ${width}x$height dpi=$densityDpi")
         }
+    }
+
+    private fun createImageReader(width: Int, height: Int, handler: Handler): ImageReader {
+        val reader = ImageReader.newInstance(
+            width, height, PixelFormat.RGBA_8888, MAX_IMAGES,
+        )
+        // The listener receives frames only while captureFrame() has attached
+        // this reader's surface. The empty-waiter branch drains a frame already
+        // queued at the detach boundary.
+        reader.setOnImageAvailableListener({ source ->
+            val waiter = pendingCaptureRef.get()
+            if (waiter == null || !waiter.isActive) {
+                runCatching { source.acquireLatestImage() }.getOrNull()?.close()
+                return@setOnImageAvailableListener
+            }
+            var image: Image? = null
+            try {
+                image = source.acquireLatestImage()
+                    ?: return@setOnImageAvailableListener
+                val png = imageToPngBytes(image, width, height)
+                if (pendingCaptureRef.compareAndSet(waiter, null)) {
+                    waiter.complete(png)
+                }
+            } catch (t: Throwable) {
+                if (pendingCaptureRef.compareAndSet(waiter, null)) {
+                    waiter.completeExceptionally(t)
+                }
+            } finally {
+                runCatching { image?.close() }
+            }
+        }, handler)
+        return reader
     }
 
     /**

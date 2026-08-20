@@ -142,8 +142,8 @@ internal class HermesRuntimeBinder(
             voiceHandoffReporter = connection::recordVoiceHandoff,
             bargeInPreferences = BargeInPreferencesRepository(application),
             vadEngineFactory = { VadEngine(application) },
-            bargeInListenerFactory = { vad, audioSessionIdProvider ->
-                BargeInListener.create(application, vad, audioSessionIdProvider)
+            bargeInListenerFactory = { vad ->
+                BargeInListener.create(application, vad)
             },
         )
 

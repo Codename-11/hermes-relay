@@ -961,7 +961,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private var bargeInPreferences: BargeInPreferencesRepository? = null
     private var vadEngineFactory: (() -> VadEngine)? = null
-    private var bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null
+    private var bargeInListenerFactory: ((VadEngine) -> BargeInListener)? = null
     private var bargeInPreferencesJob: Job? = null
 
     /**
@@ -1090,7 +1090,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // must be complete; we log and disable barge-in if not. ===
         bargeInPreferences: BargeInPreferencesRepository? = null,
         vadEngineFactory: (() -> VadEngine)? = null,
-        bargeInListenerFactory: ((VadEngine, () -> Int) -> BargeInListener)? = null,
+        bargeInListenerFactory: ((VadEngine) -> BargeInListener)? = null,
         // === 2026-04-17 fix: persist interactionMode across app restarts ===
         // Optional so pre-fix call sites keep compiling. When non-null, the
         // VM subscribes to the settings flow and mirrors `interactionMode`
@@ -3405,9 +3405,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     responseText = "",
                 )
             }
-            beginBargeInTurnIfEnabled(
-                audioSessionIdProvider = { realtimePcmPlayer?.audioSessionId ?: 0 },
-            )
+            beginBargeInTurnIfEnabled()
         }
 
         // Per-turn event state is hoisted to fields so one session-lived callback
@@ -4171,9 +4169,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
-        beginBargeInTurnIfEnabled(
-            audioSessionIdProvider = { realtimePcmPlayer?.audioSessionId ?: 0 },
-        )
+        beginBargeInTurnIfEnabled()
         val deliveryResult = CompletableDeferred<Result<Unit>>()
         val queued = channel.trySend(
             RealtimeTurnInput(
@@ -5082,9 +5078,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val firstAudioChunk = bargeInStarted.compareAndSet(false, true)
         if (firstAudioChunk) {
             if (bargeInListener == null) {
-                startBargeInListenerIfEnabled(
-                    audioSessionIdProvider = { pcmPlayer.audioSessionId },
-                )
+                startBargeInListenerIfEnabled()
             }
             // Freeze quiet-room calibration before the first PCM write can
             // reach AudioTrack and leak speaker output into the noise floor.
@@ -5584,32 +5578,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * listener's internal poll loop can watch it flip from 0 to non-zero
      * as playback begins.
      */
-    private fun beginBargeInTurnIfEnabled(
-        audioSessionIdProvider: (() -> Int)? = null,
-    ) {
+    private fun beginBargeInTurnIfEnabled() {
         val previousReader = stopBargeInListener()
         val epoch = bargeInTurnEpoch.incrementAndGet()
         activeBargeInTurnEpoch = epoch
         if (previousReader == null) {
-            startBargeInListenerIfEnabled(
-                audioSessionIdProvider = audioSessionIdProvider,
-                epoch = epoch,
-            )
+            startBargeInListenerIfEnabled(epoch = epoch)
         } else {
             viewModelScope.launch {
                 previousReader.join()
                 if (activeBargeInTurnEpoch == epoch) {
-                    startBargeInListenerIfEnabled(
-                        audioSessionIdProvider = audioSessionIdProvider,
-                        epoch = epoch,
-                    )
+                    startBargeInListenerIfEnabled(epoch = epoch)
                 }
             }
         }
     }
 
     private fun startBargeInListenerIfEnabled(
-        audioSessionIdProvider: (() -> Int)? = null,
         epoch: Long = bargeInTurnEpoch.incrementAndGet(),
     ) {
         // Already running → no-op. One listener spans generation and playback,
@@ -5634,17 +5619,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val sessionProvider: () -> Int = if (audioSessionIdProvider != null) {
-            audioSessionIdProvider
-        } else {
-            val p = player
-            if (p == null) {
-                Log.i(TAG, "Barge-in listener skipped; legacy player not ready")
-                return
-            }
-            fun(): Int { return p.audioSessionId }
-        }
-
         val vad = try {
             vadFactory().also { it.setSensitivity(prefs.sensitivity) }
         } catch (t: Throwable) {
@@ -5654,7 +5628,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInVadEngine = vad
 
         val listener = try {
-            factory(vad, sessionProvider)
+            factory(vad)
         } catch (t: Throwable) {
             Log.w(TAG, "BargeInListener construction failed; skipping barge-in: ${t.message}")
             try { vad.close() } catch (_: Throwable) { /* ignore */ }
@@ -5682,8 +5656,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(
             TAG,
             "Starting barge-in listener; sensitivity=${prefs.sensitivity} " +
-                "source=${if (audioSessionIdProvider != null) "realtime_pcm" else "legacy_player"} " +
-                "session=${sessionProvider()}",
+                "effects=capture_session",
         )
         try {
             listener.start(viewModelScope)

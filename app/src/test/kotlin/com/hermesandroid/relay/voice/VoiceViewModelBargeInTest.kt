@@ -156,7 +156,7 @@ class VoiceViewModelBargeInTest {
             localBridgeDispatcher = null,
             bargeInPreferences = prefsRepo,
             vadEngineFactory = { vadEngine },
-            bargeInListenerFactory = { _, _ -> bargeInListener },
+            bargeInListenerFactory = { _ -> bargeInListener },
         )
         return vm
     }
