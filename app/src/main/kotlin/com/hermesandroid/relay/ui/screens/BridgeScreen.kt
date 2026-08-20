@@ -61,6 +61,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 // === PHASE3-safety-rails: safety summary card ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.data.BridgeSafetySettings
+import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
 import com.hermesandroid.relay.ui.components.BridgeSafetySummaryCard
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -197,6 +198,13 @@ fun BridgeScreen(
     val trustedVerbs by (safetyManager?.trustedDestructiveVerbs
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet()) })
         .collectAsState()
+    val activeCapabilityPolicy by (safetyManager?.activeCapabilityPolicy
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(BridgeCapabilityPolicy()) })
+        .collectAsState()
+    val screenControlAvailable = activeCapabilityPolicy.allows(
+        com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+        System.currentTimeMillis(),
+    )
     // === END PHASE3-safety-rails ===
 
     // Re-run permission + system-status probes whenever the screen resumes.
@@ -456,6 +464,7 @@ fun BridgeScreen(
                     onToggle = { viewModel.setUnattendedAccessEnabled(it) },
                     onWarningSeen = { viewModel.markUnattendedWarningSeen() },
                     masterEnabled = masterToggle,
+                    screenControlAvailable = screenControlAvailable,
                 )
 
                 // 5. Safety summary — auto-disable, destructive verbs,

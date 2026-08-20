@@ -557,7 +557,7 @@
     <string name="bssc_safety">安全</string>
     <string name="bssc_blocked_apps">代理无法触碰的应用</string>
     <string name="bssc_destructive_verbs">始终需要确认的词语</string>
-    <string name="bssc_auto_disable">空闲时自动关闭</string>
+    <string name="bssc_auto_disable">限时屏幕访问</string>
     <string name="bssc_guardrails_hint">这些护栏确保 Hermes 在边界内运行。点击调整。</string>
     <string name="bssc_manage">管理</string>
 
@@ -999,7 +999,7 @@
     <string name="bss_add_verb_cd">添加动词</string>
     <string name="bss_remove_cd">移除</string>
     <string name="bss_auto_disable">空闲后自动禁用</string>
-    <string name="bss_auto_disable_desc">主开关在无 Bridge 命令的此分钟数后关闭。每条命令都会重新计时。</string>
+    <string name="bss_auto_disable_desc">限时屏幕访问会在空闲达到此分钟数后到期。只有屏幕检查或控制会重置计时器。</string>
     <string name="bss_auto_disable_value">%1$d 分钟</string>
     <string name="bss_status_overlay">状态悬浮窗</string>
     <string name="bss_show_floating">显示浮动指示器</string>
@@ -3257,8 +3257,8 @@
     <string name="whats_new_title">更新内容</string>
     <string name="whats_new_subtitle">最新版本亮点</string>
     <!-- Localization guardrail additions for current dev surfaces -->
-    <string name="bridge_notification_auto_disabled_title">Bridge 已自动停用</string>
-    <string name="bridge_notification_auto_disabled_body">空闲后已暂停——点按可在 Bridge 页面重新启用。</string>
+    <string name="bridge_notification_auto_disabled_title">限时屏幕访问已到期</string>
+    <string name="bridge_notification_auto_disabled_body">空闲后，屏幕检查和控制已关闭。其他授权保持不变。</string>
     <string name="bridge_notification_control_title">Hermes 代理正在控制设备</string>
     <string name="bridge_notification_control_body">Bridge 正在运行——可随时点按“停用”停止。</string>
     <string name="gateway_keepalive_title">Hermes 连接已启用</string>
@@ -4103,4 +4103,24 @@
     <string name="host_resource_memory_elevated">主机内存不足。</string>
     <string name="host_resource_disk_critical">主机存储空间严重不足，消息和设置可能无法保存。</string>
     <string name="host_resource_disk_elevated">主机存储空间不足。</string>
+    <string name="bss_capabilities_title">功能授权</string>
+    <string name="bss_capabilities_desc">始终/从不仅适用于此 Hermes 连接。主开关和 Android 权限仍具有优先权。</string>
+    <string name="bss_capabilities_unavailable">请先选择并连接 Hermes 连接，然后再更改授权。</string>
+    <string name="bss_timed_capabilities_title">限时屏幕访问</string>
+    <string name="bss_timed_capabilities_desc">屏幕检查和控制在空闲 %1$d 分钟后到期。永久授权不会延长此计时器。</string>
+    <string name="bss_capability_always">主开关开启时始终允许</string>
+    <string name="bss_capability_never">从不</string>
+    <string name="bss_capability_timed_on">限时访问已启用</string>
+    <string name="bss_capability_timed_off">限时访问已关闭</string>
+    <string name="bss_capability_device_info">设备和应用信息</string>
+    <string name="bss_capability_contacts">读取联系人</string>
+    <string name="bss_capability_location">读取位置</string>
+    <string name="bss_capability_clipboard_read">读取剪贴板</string>
+    <string name="bss_capability_clipboard_write">写入剪贴板</string>
+    <string name="bss_capability_media">控制媒体播放</string>
+    <string name="bss_capability_communications">发送短信和拨打电话</string>
+    <string name="bss_capability_sharing">共享媒体和编写彩信</string>
+    <string name="bss_capability_screen_inspection">检查屏幕和界面</string>
+    <string name="bss_capability_screen_control">控制应用和导航</string>
+    <string name="unattended_requires_timed_control">需要限时屏幕控制，请先在“安全与功能”中启用。</string>
 </resources>

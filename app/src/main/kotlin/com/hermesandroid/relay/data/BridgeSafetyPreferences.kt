@@ -29,10 +29,9 @@ import kotlinx.serialization.json.Json
  *    appear in `/tap_text` or `/type` payloads. Seeded with a set of verbs
  *    that carry irreversible or high-stakes consequences. Editable.
  *
- *  - [autoDisableMinutes] — idle timeout after which the master toggle
- *    auto-flips to false. Rescheduled on every command so an active agent
- *    never triggers it; a runaway agent that stops sending commands for
- *    this long loses bridge access automatically.
+ *  - [autoDisableMinutes] — idle timeout for timed screen inspection and
+ *    control grants. Only accepted timed commands refresh it; permanent
+ *    read/action grants neither expire nor keep screen authority alive.
  *
  *  - [statusOverlayEnabled] — opt-in floating-dot indicator (like the
  *    screen-recording red dot) that's visible while bridge is active.

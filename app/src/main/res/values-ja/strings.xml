@@ -557,7 +557,7 @@
     <string name="bssc_safety">安全性</string>
     <string name="bssc_blocked_apps">エージェントがアクセスできないアプリ</string>
     <string name="bssc_destructive_verbs">いつも最初に尋ねられる言葉</string>
-    <string name="bssc_auto_disable">アイドル時は自動的にオフになります</string>
+    <string name="bssc_auto_disable">時間制限付き画面アクセス</string>
     <string name="bssc_guardrails_hint">これらのガードレールは Hermes を境界内に保ちます。タップして調整します。</string>
     <string name="bssc_manage">管理</string>
 
@@ -1015,7 +1015,7 @@
     <string name="bss_add_verb_cd">動詞を追加</string>
     <string name="bss_remove_cd">削除</string>
     <string name="bss_auto_disable">アイドル後に自動無効化</string>
-    <string name="bss_auto_disable_desc">Bridge コマンドがない状態でこの時間が経過すると、マスター トグルがオフになります。コマンドごとにスケジュールが変更されます。</string>
+    <string name="bss_auto_disable_desc">画面アクセスは、このアイドル時間の後に期限切れになります。画面の検査または操作だけがタイマーをリセットします。</string>
     <string name="bss_auto_disable_value">%1$d分</string>
     <string name="bss_status_overlay">ステータスオーバーレイ</string>
     <string name="bss_show_floating">フローティングインジケーターを表示</string>
@@ -3335,8 +3335,8 @@
     <string name="whats_new_title">新機能</string>
     <string name="whats_new_subtitle">最新リリースのハイライト</string>
     <!-- Localization guardrail additions for current dev surfaces -->
-    <string name="bridge_notification_auto_disabled_title">Bridge 自動無効化</string>
-    <string name="bridge_notification_auto_disabled_body">アイドル後に一時停止 — タップして、Bridge タブで再度有効にします。</string>
+    <string name="bridge_notification_auto_disabled_title">時間制限付き画面アクセスの期限切れ</string>
+    <string name="bridge_notification_auto_disabled_body">操作がなかったため、画面の検査と操作をオフにしました。他の許可は変更されません。</string>
     <string name="bridge_notification_control_title">Hermes エージェントはデバイスを制御できます</string>
     <string name="bridge_notification_control_body">Bridge はアクティブです。[無効にする] をタップすると、いつでも停止できます。</string>
     <string name="gateway_keepalive_title">Hermes 接続がアクティブです</string>
@@ -4176,4 +4176,24 @@
     <string name="host_resource_memory_elevated">ホストのメモリが不足しています。</string>
     <string name="host_resource_disk_critical">ホストのストレージが極端に不足しています。メッセージや設定を保存できない可能性があります。</string>
     <string name="host_resource_disk_elevated">ホストのストレージが不足しています。</string>
+    <string name="bss_capabilities_title">機能の許可</string>
+    <string name="bss_capabilities_desc">常時/拒否の設定は、この Hermes 接続だけに適用されます。マスタースイッチと Android の権限が常に優先されます。</string>
+    <string name="bss_capabilities_unavailable">許可を変更する前に Hermes 接続を選択して接続してください。</string>
+    <string name="bss_timed_capabilities_title">時間制限付き画面アクセス</string>
+    <string name="bss_timed_capabilities_desc">画面の検査と操作は、%1$d 分間操作がないと期限切れになります。永続的な許可ではタイマーは延長されません。</string>
+    <string name="bss_capability_always">マスタースイッチがオンの間は常時</string>
+    <string name="bss_capability_never">拒否</string>
+    <string name="bss_capability_timed_on">時間制限付きアクセスは有効</string>
+    <string name="bss_capability_timed_off">時間制限付きアクセスはオフ</string>
+    <string name="bss_capability_device_info">端末とアプリの情報</string>
+    <string name="bss_capability_contacts">連絡先を読む</string>
+    <string name="bss_capability_location">位置情報を読む</string>
+    <string name="bss_capability_clipboard_read">クリップボードを読む</string>
+    <string name="bss_capability_clipboard_write">クリップボードに書き込む</string>
+    <string name="bss_capability_media">メディア再生を操作</string>
+    <string name="bss_capability_communications">SMS 送信と通話</string>
+    <string name="bss_capability_sharing">メディア共有と MMS 作成</string>
+    <string name="bss_capability_screen_inspection">画面と UI を検査</string>
+    <string name="bss_capability_screen_control">アプリとナビゲーションを操作</string>
+    <string name="unattended_requires_timed_control">時間制限付き画面操作が必要です。先に「安全性と機能」で有効にしてください。</string>
 </resources>

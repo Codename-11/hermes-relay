@@ -61,7 +61,8 @@ def android_phone_status() -> str:
     full JSON contract. Key fields: ``phone_connected`` (bool),
     ``last_seen_seconds_ago`` (int), ``device`` (name/battery/screen/
     current_app), ``bridge`` (permission flags), ``safety`` (blocklist
-    counts + auto-disable timer).
+    counts + timed-access timer), and ``capabilities`` (granted permanent
+    capability IDs plus timed capability expiry timestamps).
     """
     url = f"{_relay_url()}/bridge/status"
     req = urllib.request.Request(url, method="GET")
@@ -155,7 +156,9 @@ _SCHEMAS = {
             "permissions have been granted (accessibility, screen "
             "capture, overlay, notification listener), the current "
             "safety-rail configuration (blocklist size, destructive-"
-            "verb count, auto-disable idle timer), and the unattended-"
+            "verb count, timed screen-access idle timer), granular Bridge "
+            "capabilities (`permanent` IDs and `timed` expiry timestamps), "
+            "and the unattended-"
             "access state (supported, enabled, credential_lock_detected). "
             "Call this BEFORE attempting bridge operations like tapping, "
             "typing, or screenshots so you know whether the phone is "

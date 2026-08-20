@@ -2381,6 +2381,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (BuildFlavor.isSideload) com.hermesandroid.relay.bridge.BridgeSafetyManager.install(
             context = application,
             scope = viewModelScope,
+            activeConnectionId = connectionStore.activeConnectionId,
         ).also {
             com.hermesandroid.relay.bridge.BridgeStatusOverlay.install(application)
         } else null
@@ -3496,6 +3497,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
         profileController.profileIconStore.clearConnection(connectionId)
+        com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository(getApplication())
+            .clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(

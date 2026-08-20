@@ -242,11 +242,9 @@ object UnattendedAccessManager {
      * returns [WakeOutcome.Success] / [SuccessNoKeyguardChange] /
      * [KeyguardBlocked] depending on the dismiss attempt outcome.
      *
-     * The wake lock auto-releases via the platform's 30s timeout — we
-     * don't release explicitly per call because the bridge command may
-     * take several gestures to complete and we want one continuous
-     * wake-up, not a stutter. [release] is provided for the master
-     * toggle off path.
+     * The caller must pair each successful acquire with [releaseAfterAction].
+     * The platform's 30s timeout remains a crash/stall backstop, not the normal
+     * lifetime. Nested or concurrent commands share the ref-counted lock.
      *
      * # Compatibility shim
      *
@@ -298,6 +296,22 @@ object UnattendedAccessManager {
         // present, and waiting for the dismiss callback would add
         // noticeable latency to every command.
         return requestDismiss()
+    }
+
+    /** Release one command's ownership without disturbing concurrent actions. */
+    fun releaseAfterAction() {
+        synchronized(countLock) {
+            if (lockCount <= 0) return
+            lockCount -= 1
+            if (lockCount == 0) {
+                val lock = wakeLock ?: return
+                try {
+                    if (lock.isHeld) lock.release()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "wakeLock.release threw: ${t.message}")
+                }
+            }
+        }
     }
 
     /**

@@ -65,6 +65,11 @@ def _sample_status() -> dict:
             "auto_disable_minutes": 30,
             "auto_disable_at_ms": None,
         },
+        "capabilities": {
+            "schema_version": 1,
+            "permanent": ["clipboard_read", "contacts_read"],
+            "timed": {"screen_inspection": 1787180400000},
+        },
     }
 
 
@@ -329,6 +334,10 @@ class TestStatusCliFetch(unittest.TestCase):
         self.assertIn("Destructive verbs", text)
         self.assertIn("Device control", text)
         self.assertIn("Accessibility", text)
+        self.assertIn("Capability grants", text)
+        self.assertIn("contacts_read", text)
+        self.assertIn("screen_inspection", text)
+        self.assertIn("Timed screen", text)
 
     def test_render_status_block_marks_bridge_core_as_no_device_control(self) -> None:
         sample = _sample_status()
