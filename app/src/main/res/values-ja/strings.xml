@@ -4259,4 +4259,18 @@
     <string name="bridge_timed_unlimited_warning">アイドルタイムアウトはありません。終了、マスター無効化、またはポリシー変更まで、非操作時や再接続後も画面アクセスが続きます。専用端末向けです。</string>
     <string name="bss_screen_access_off_desc">画面アクセスはオフです。新しい有限アクセスの既定アイドル制限は %1$d 分です。</string>
     <string name="bss_screen_access_unlimited_desc">少なくとも 1 つの画面機能が明示的にオフにするまで有効です。</string>
+    <string name="open_code_quota_title">OpenCode Go サブスクリプション</string>
+    <string name="open_code_quota_subtitle">5時間・週間・月間の各ウィンドウでの使用量</string>
+    <string name="open_code_quota_refresh">使用量を更新</string>
+    <string name="open_code_quota_loading">使用量を取得中…</string>
+    <string name="open_code_quota_unconfigured">リレーが設定されていません — 接続を設定するとサブスクリプションの使用量を確認できます。</string>
+    <string name="open_code_quota_unpaired">リレーとのペアリングを待機中。</string>
+    <string name="open_code_quota_not_configured">このホストでは OpenCode Go のクォータを利用できません。</string>
+    <string name="open_code_quota_error">使用量を読み込めませんでした</string>
+    <string name="open_code_quota_retry">リトライ</string>
+    <string name="open_code_quota_resets">%1$s後にリセット</string>
+    <string name="open_code_quota_used_of">$%1$s / $%2$s</string>
+    <string name="open_code_quota_rolling">ローリング · 5h</string>
+    <string name="open_code_quota_weekly">週間</string>
+    <string name="open_code_quota_monthly">月間</string>
 </resources>

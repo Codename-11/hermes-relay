@@ -4268,4 +4268,18 @@
     <string name="bridge_timed_allow">Allow access</string>
     <string name="bridge_timed_end_now">End now</string>
     <string name="bridge_timed_ended_snackbar">Screen access ended. Permanent grants are still available.</string>
+    <string name="open_code_quota_title">OpenCode Go subscription</string>
+    <string name="open_code_quota_subtitle">Usage across your 5-hour, weekly, and monthly windows</string>
+    <string name="open_code_quota_refresh">Refresh usage</string>
+    <string name="open_code_quota_loading">Fetching usage…</string>
+    <string name="open_code_quota_unconfigured">Relay not configured — set up a connection to see subscription usage.</string>
+    <string name="open_code_quota_unpaired">Waiting to pair with the relay.</string>
+    <string name="open_code_quota_not_configured">OpenCode Go quota not available on this host.</string>
+    <string name="open_code_quota_error">Couldn\'t load usage</string>
+    <string name="open_code_quota_retry">Retry</string>
+    <string name="open_code_quota_resets">Resets in %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s of $%2$s</string>
+    <string name="open_code_quota_rolling">Rolling · 5h</string>
+    <string name="open_code_quota_weekly">Weekly</string>
+    <string name="open_code_quota_monthly">Monthly</string>
 </resources>

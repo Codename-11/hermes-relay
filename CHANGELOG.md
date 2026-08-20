@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android shows OpenCode Go subscription usage in Settings.** A new inline card proxies the provider's 5-hour / weekly / monthly quota through the Relay host (`GET /usage/opencode`) and renders each window as a progress bar with dollars used, the window cap, a resets-in countdown, and a refresh control. The provider API key stays in `~/.hermes/.env` on the host and never reaches the device; the card fails soft when the Relay is unconfigured or unpaired.
+
 ## [1.11.0] - 2026-08-20
 
 ### Added
@@ -24,7 +28,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android screen-on idle no longer continuously redraws the ASCII sphere.** Idle holds a stable frame while thinking, streaming, and voice states retain full-rate motion; inactive voice waveforms and closed session drawers also stop their frame loops.
 - **Android capture and audio effects release power-sensitive resources at their actual lifecycle boundaries.** Screen capture attaches its MediaProjection surface only for a requested frame, unattended Bridge wake locks release when the command finishes, and barge-in AEC/noise suppression attach to the microphone capture session instead of playback.
 - **Experimental wake-word listening reuses its PCM normalization buffer.** Continuous opt-in listening no longer allocates a new float frame for every inference call.
-
 ## [1.10.0] - 2026-08-18
 
 ### Added

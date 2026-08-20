@@ -3988,4 +3988,18 @@
     <string name="bridge_timed_unlimited_warning">Без тайм-аута. Доступ сохраняется при бездействии и переподключении, пока не завершен, не выключен главный переключатель или не изменена политика. Для выделенного устройства.</string>
     <string name="bss_screen_access_off_desc">Доступ к экрану выключен. Новый ограниченный доступ по умолчанию использует %1$d минут бездействия.</string>
     <string name="bss_screen_access_unlimited_desc">Хотя бы одна экранная возможность активна до явного отключения.</string>
+    <string name="open_code_quota_title">Подписка OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Использование в окнах: 5 часов, недельный и месячный</string>
+    <string name="open_code_quota_refresh">Обновить использование</string>
+    <string name="open_code_quota_loading">Загрузка использования…</string>
+    <string name="open_code_quota_unconfigured">Relay не настроен — настройте подключение, чтобы видеть использование подписки.</string>
+    <string name="open_code_quota_unpaired">Ожидание сопряжения с relay.</string>
+    <string name="open_code_quota_not_configured">Квота OpenCode Go недоступна на этом хосте.</string>
+    <string name="open_code_quota_error">Не удалось загрузить использование</string>
+    <string name="open_code_quota_retry">Повторить</string>
+    <string name="open_code_quota_resets">Сброс через %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s из $%2$s</string>
+    <string name="open_code_quota_rolling">Скользящее · 5ч</string>
+    <string name="open_code_quota_weekly">Недельный</string>
+    <string name="open_code_quota_monthly">Месячный</string>
 </resources>

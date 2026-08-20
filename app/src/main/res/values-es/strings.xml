@@ -3946,4 +3946,18 @@
     <string name="bridge_timed_unlimited_warning">Sin límite de inactividad. El acceso continúa tras inactividad y reconexión hasta finalizarlo, desactivar el interruptor maestro o cambiar la política. Ideal para un dispositivo dedicado.</string>
     <string name="bss_screen_access_off_desc">El acceso a pantalla está desactivado. El acceso finito nuevo usa %1$d minutos de inactividad por defecto.</string>
     <string name="bss_screen_access_unlimited_desc">Al menos una capacidad de pantalla permanece activa hasta desactivarla explícitamente.</string>
+    <string name="open_code_quota_title">Suscripción a OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Uso en tus ventanas de 5 horas, semanal y mensual</string>
+    <string name="open_code_quota_refresh">Actualizar uso</string>
+    <string name="open_code_quota_loading">Obteniendo uso…</string>
+    <string name="open_code_quota_unconfigured">Relay no configurado — configura una conexión para ver el uso de la suscripción.</string>
+    <string name="open_code_quota_unpaired">Esperando para emparejarse con el relay.</string>
+    <string name="open_code_quota_not_configured">Cuota de OpenCode Go no disponible en este host.</string>
+    <string name="open_code_quota_error">No se pudo cargar el uso</string>
+    <string name="open_code_quota_retry">Reintentar</string>
+    <string name="open_code_quota_resets">Se restablece en %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s de $%2$s</string>
+    <string name="open_code_quota_rolling">Rotatorio · 5h</string>
+    <string name="open_code_quota_weekly">Semanal</string>
+    <string name="open_code_quota_monthly">Mensual</string>
 </resources>

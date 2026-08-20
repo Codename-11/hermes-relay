@@ -4101,4 +4101,18 @@
     <string name="bridge_timed_unlimited_warning">Sem limite de inatividade. O acesso continua após inatividade e reconexão até ser encerrado, a chave mestra ser desligada ou a política mudar. Ideal para um dispositivo dedicado.</string>
     <string name="bss_screen_access_off_desc">O acesso à tela está desligado. Novo acesso finito usa %1$d minutos ocioso por padrão.</string>
     <string name="bss_screen_access_unlimited_desc">Pelo menos um recurso de tela permanece ativo até ser desligado explicitamente.</string>
+    <string name="open_code_quota_title">Assinatura do OpenCode Go</string>
+    <string name="open_code_quota_subtitle">Uso nas suas janelas de 5 horas, semanal e mensal</string>
+    <string name="open_code_quota_refresh">Atualizar uso</string>
+    <string name="open_code_quota_loading">Buscando uso…</string>
+    <string name="open_code_quota_unconfigured">Relay não configurado — configure uma conexão para ver o uso da assinatura.</string>
+    <string name="open_code_quota_unpaired">Aguardando pareamento com o relay.</string>
+    <string name="open_code_quota_not_configured">Cota do OpenCode Go indisponível neste host.</string>
+    <string name="open_code_quota_error">Não foi possível carregar o uso</string>
+    <string name="open_code_quota_retry">Tentar novamente</string>
+    <string name="open_code_quota_resets">É redefinido em %1$s</string>
+    <string name="open_code_quota_used_of">$%1$s de $%2$s</string>
+    <string name="open_code_quota_rolling">Contínuo · 5h</string>
+    <string name="open_code_quota_weekly">Semanal</string>
+    <string name="open_code_quota_monthly">Mensal</string>
 </resources>
