@@ -63,6 +63,9 @@ for (const htmlPath of htmlFiles) {
       } catch {
         failures.push(`${htmlPath}: invalid external URL ${reference}`);
       }
+      if (/^https:\/\/hermes-relay\.dev\/docs\/guide\/remote-access\/(?:#|$)/.test(reference)) {
+        failures.push(`${htmlPath}: remote-access docs links must not use the unsupported trailing-slash route ${reference}`);
+      }
       continue;
     }
 
