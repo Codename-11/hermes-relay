@@ -4021,7 +4021,7 @@
     <string name="bss_capabilities_title">Permissões de recursos</string>
     <string name="bss_capabilities_desc">Sempre/Nunca vale apenas para esta conexão Hermes. A chave mestra e as permissões do Android continuam prevalecendo.</string>
     <string name="bss_capabilities_unavailable">Selecione e conecte uma conexão Hermes antes de alterar permissões.</string>
-    <string name="bss_timed_capabilities_title">Acesso temporário à tela</string>
+    <string name="bss_timed_capabilities_title">Acesso à tela</string>
     <string name="bss_timed_capabilities_desc">Inspeção e controle da tela expiram após %1$d minutos ocioso. Permissões permanentes não prolongam o temporizador.</string>
     <string name="bss_capability_always">Sempre, enquanto a chave mestra estiver ligada</string>
     <string name="bss_capability_never">Nunca</string>
@@ -4098,4 +4098,6 @@
     <string name="bridge_timed_until_off">Até ser desligado</string>
     <string name="bridge_timed_idle_explainer">Sem limite fixo de sessão. Comandos ativos reiniciam o temporizador de %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Sem limite de inatividade. O acesso continua após inatividade e reconexão até ser encerrado, a chave mestra ser desligada ou a política mudar. Ideal para um dispositivo dedicado.</string>
+    <string name="bss_screen_access_off_desc">O acesso à tela está desligado. Novo acesso finito usa %1$d minutos ocioso por padrão.</string>
+    <string name="bss_screen_access_unlimited_desc">Pelo menos um recurso de tela permanece ativo até ser desligado explicitamente.</string>
 </resources>

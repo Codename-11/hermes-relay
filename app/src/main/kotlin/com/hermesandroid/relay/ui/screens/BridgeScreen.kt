@@ -223,9 +223,15 @@ fun BridgeScreen(
         com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
         System.currentTimeMillis(),
     )
-    val screenAccessUnlimited = activeCapabilityPolicy.isUnlimited(
+    val screenControlUnlimited = activeCapabilityPolicy.isUnlimited(
         com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
     )
+    val screenAccessActive = activeCapabilityPolicy.activeTimedCapabilities(
+        System.currentTimeMillis(),
+    ).isNotEmpty()
+    val anyScreenAccessUnlimited = activeCapabilityPolicy.activeTimedCapabilities(
+        System.currentTimeMillis(),
+    ).any(activeCapabilityPolicy::isUnlimited)
     val overlayRequired = screenControlAvailable ||
         com.hermesandroid.relay.bridge.BridgeCapability.COMMUNICATIONS in
         activeCapabilityPolicy.permanentGrants ||
@@ -548,7 +554,7 @@ fun BridgeScreen(
                     onWarningSeen = { viewModel.markUnattendedWarningSeen() },
                     masterEnabled = masterToggle,
                     screenControlAvailable = screenControlAvailable,
-                    screenAccessUnlimited = screenAccessUnlimited,
+                    screenAccessUnlimited = screenControlUnlimited,
                 )
 
                 // 5. Safety summary — auto-disable, destructive verbs,
@@ -558,7 +564,8 @@ fun BridgeScreen(
                 BridgeSafetySummaryCard(
                     settings = safetySettings,
                     autoDisableAtMs = autoDisableAtMs,
-                    screenAccessUnlimited = screenAccessUnlimited,
+                    screenAccessActive = screenAccessActive,
+                    screenAccessUnlimited = anyScreenAccessUnlimited,
                     onManage = onNavigateToBridgeSafety,
                 )
 

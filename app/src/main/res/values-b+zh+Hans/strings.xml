@@ -4106,7 +4106,7 @@
     <string name="bss_capabilities_title">功能授权</string>
     <string name="bss_capabilities_desc">始终/从不仅适用于此 Hermes 连接。主开关和 Android 权限仍具有优先权。</string>
     <string name="bss_capabilities_unavailable">请先选择并连接 Hermes 连接，然后再更改授权。</string>
-    <string name="bss_timed_capabilities_title">限时屏幕访问</string>
+    <string name="bss_timed_capabilities_title">屏幕访问</string>
     <string name="bss_timed_capabilities_desc">屏幕检查和控制在空闲 %1$d 分钟后到期。永久授权不会延长此计时器。</string>
     <string name="bss_capability_always">主开关开启时始终允许</string>
     <string name="bss_capability_never">从不</string>
@@ -4183,4 +4183,6 @@
     <string name="bridge_timed_until_off">直到关闭</string>
     <string name="bridge_timed_idle_explainer">没有固定会话上限。活动屏幕命令会刷新 %1$s 空闲计时器。</string>
     <string name="bridge_timed_unlimited_warning">无空闲超时。屏幕访问在空闲和重新连接后仍保持，直到结束访问、关闭主开关或更改策略。适合专用设备。</string>
+    <string name="bss_screen_access_off_desc">屏幕访问已关闭。新的有限访问默认使用 %1$d 分钟空闲限制。</string>
+    <string name="bss_screen_access_unlimited_desc">至少一项屏幕功能会保持有效，直到明确关闭。</string>
 </resources>

@@ -3866,7 +3866,7 @@
     <string name="bss_capabilities_title">Permisos de capacidades</string>
     <string name="bss_capabilities_desc">Siempre/Nunca solo se aplica a esta conexión de Hermes. El interruptor maestro y los permisos de Android siguen teniendo prioridad.</string>
     <string name="bss_capabilities_unavailable">Selecciona y conecta una conexión de Hermes antes de cambiar permisos.</string>
-    <string name="bss_timed_capabilities_title">Acceso de pantalla temporizado</string>
+    <string name="bss_timed_capabilities_title">Acceso a la pantalla</string>
     <string name="bss_timed_capabilities_desc">La inspección y el control de pantalla vencen tras %1$d minutos de inactividad. Los permisos permanentes no amplían este tiempo.</string>
     <string name="bss_capability_always">Siempre, mientras el interruptor maestro esté activo</string>
     <string name="bss_capability_never">Nunca</string>
@@ -3943,4 +3943,6 @@
     <string name="bridge_timed_until_off">Hasta desactivarlo</string>
     <string name="bridge_timed_idle_explainer">Sin límite fijo de sesión. Los comandos activos reinician el temporizador de inactividad de %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Sin límite de inactividad. El acceso continúa tras inactividad y reconexión hasta finalizarlo, desactivar el interruptor maestro o cambiar la política. Ideal para un dispositivo dedicado.</string>
+    <string name="bss_screen_access_off_desc">El acceso a pantalla está desactivado. El acceso finito nuevo usa %1$d minutos de inactividad por defecto.</string>
+    <string name="bss_screen_access_unlimited_desc">Al menos una capacidad de pantalla permanece activa hasta desactivarla explícitamente.</string>
 </resources>

@@ -4179,7 +4179,7 @@
     <string name="bss_capabilities_title">機能の許可</string>
     <string name="bss_capabilities_desc">常時/拒否の設定は、この Hermes 接続だけに適用されます。マスタースイッチと Android の権限が常に優先されます。</string>
     <string name="bss_capabilities_unavailable">許可を変更する前に Hermes 接続を選択して接続してください。</string>
-    <string name="bss_timed_capabilities_title">時間制限付き画面アクセス</string>
+    <string name="bss_timed_capabilities_title">画面アクセス</string>
     <string name="bss_timed_capabilities_desc">画面の検査と操作は、%1$d 分間操作がないと期限切れになります。永続的な許可ではタイマーは延長されません。</string>
     <string name="bss_capability_always">マスタースイッチがオンの間は常時</string>
     <string name="bss_capability_never">拒否</string>
@@ -4256,4 +4256,6 @@
     <string name="bridge_timed_until_off">オフにするまで</string>
     <string name="bridge_timed_idle_explainer">固定のセッション上限はありません。画面操作中は %1$s のアイドルタイマーが更新されます。</string>
     <string name="bridge_timed_unlimited_warning">アイドルタイムアウトはありません。終了、マスター無効化、またはポリシー変更まで、非操作時や再接続後も画面アクセスが続きます。専用端末向けです。</string>
+    <string name="bss_screen_access_off_desc">画面アクセスはオフです。新しい有限アクセスの既定アイドル制限は %1$d 分です。</string>
+    <string name="bss_screen_access_unlimited_desc">少なくとも 1 つの画面機能が明示的にオフにするまで有効です。</string>
 </resources>

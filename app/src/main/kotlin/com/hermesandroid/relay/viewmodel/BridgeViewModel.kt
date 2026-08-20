@@ -230,13 +230,18 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // === END PHASE3-bridge-ui-followup ===
 
         // === PHASE3-safety-rails: foreground service lifecycle ===
-        // Start/stop BridgeForegroundService based on the master toggle.
-        // distinctUntilChanged prevents re-firing the startForegroundService
-        // intent on every DataStore tick. Cancel the safety manager's
+        // Start/stop BridgeForegroundService from the persisted settings Flow,
+        // not masterToggle's synthetic initial=false StateFlow value. Using the
+        // synthetic value here could revoke an unlimited lease during startup
+        // before DataStore reported that Master was actually persisted ON.
+        // distinctUntilChanged prevents duplicate service work. Cancel the safety manager's
         // timed screen grants when the user flips the master off manually
         // (otherwise stale authority could revive when master is re-enabled).
         viewModelScope.launch {
-            masterToggle.collect { enabled ->
+            prefsRepo.settings
+                .map { it.masterEnabled }
+                .distinctUntilChanged()
+                .collect { enabled ->
                 val ctx = getApplication<Application>()
                 if (enabled) {
                     runCatching { BridgeForegroundService.start(ctx) }
@@ -251,13 +256,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     // drop it on toggle-off so the row goes back to red
                     // and the next bridge enable prompts for fresh consent.
                     MediaProjectionHolder.revoke()
-                    // v0.4.1: drop the unattended-access wake lock immediately
-                    // when the master toggle drops. The unattended toggle
-                    // itself may still be persisted ON in DataStore — that's
-                    // intentional, the user's "I want unattended when bridge
-                    // is on" preference shouldn't be cleared by every bridge
-                    // toggle cycle — but the wake lock is meaningless
-                    // without an active bridge.
+                    // Drop the unattended wake lock immediately. The safety
+                    // manager also clears the persisted unattended preference,
+                    // so re-enabling Master cannot silently revive it.
                     UnattendedAccessManager.release()
                 }
             }

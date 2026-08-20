@@ -3908,7 +3908,7 @@
     <string name="bss_capabilities_title">Разрешения возможностей</string>
     <string name="bss_capabilities_desc">Всегда/Никогда действует только для этого подключения Hermes. Главный переключатель и разрешения Android имеют приоритет.</string>
     <string name="bss_capabilities_unavailable">Выберите и подключите Hermes перед изменением разрешений.</string>
-    <string name="bss_timed_capabilities_title">Временный доступ к экрану</string>
+    <string name="bss_timed_capabilities_title">Доступ к экрану</string>
     <string name="bss_timed_capabilities_desc">Просмотр и управление экраном истекают через %1$d мин. бездействия. Постоянные разрешения не продлевают таймер.</string>
     <string name="bss_capability_always">Всегда, пока включен главный переключатель</string>
     <string name="bss_capability_never">Никогда</string>
@@ -3985,4 +3985,6 @@
     <string name="bridge_timed_until_off">До отключения</string>
     <string name="bridge_timed_idle_explainer">Фиксированного лимита сессии нет. Активные команды обновляют таймер бездействия %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Без тайм-аута. Доступ сохраняется при бездействии и переподключении, пока не завершен, не выключен главный переключатель или не изменена политика. Для выделенного устройства.</string>
+    <string name="bss_screen_access_off_desc">Доступ к экрану выключен. Новый ограниченный доступ по умолчанию использует %1$d минут бездействия.</string>
+    <string name="bss_screen_access_unlimited_desc">Хотя бы одна экранная возможность активна до явного отключения.</string>
 </resources>

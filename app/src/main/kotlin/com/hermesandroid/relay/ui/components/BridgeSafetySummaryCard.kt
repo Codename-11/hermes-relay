@@ -53,6 +53,7 @@ import com.hermesandroid.relay.data.DEFAULT_DESTRUCTIVE_VERBS
 fun BridgeSafetySummaryCard(
     settings: BridgeSafetySettings,
     autoDisableAtMs: Long? = null,
+    screenAccessActive: Boolean = false,
     screenAccessUnlimited: Boolean = false,
     onManage: () -> Unit,
 ) {
@@ -115,16 +116,18 @@ fun BridgeSafetySummaryCard(
                 value = "${settings.destructiveVerbs.size}",
             )
             SafetySummaryRow(
-                label = stringResource(R.string.bssc_auto_disable),
+                label = stringResource(R.string.bridge_access_screen),
                 value = if (screenAccessUnlimited) {
                     stringResource(R.string.bridge_access_until_off_short)
+                } else if (!screenAccessActive) {
+                    stringResource(R.string.bmt_off)
                 } else if (autoDisableAtMs != null) {
                     val remainMs = (autoDisableAtMs - nowMs).coerceAtLeast(0L)
                     val remainMin = (remainMs / 60_000L).toInt()
                     val remainSec = ((remainMs % 60_000L) / 1000L).toInt()
                     "in ${remainMin}:${remainSec.toString().padStart(2, '0')}"
                 } else {
-                    "${settings.autoDisableMinutes} min"
+                    stringResource(R.string.bridge_access_screen_active)
                 },
             )
 
@@ -186,6 +189,7 @@ private fun BridgeSafetySummaryCardPreview_Countdown() {
                     destructiveVerbs = DEFAULT_DESTRUCTIVE_VERBS,
                 ),
                 autoDisableAtMs = System.currentTimeMillis() + 12 * 60_000L + 34_000L,
+                screenAccessActive = true,
                 onManage = {},
             )
         }

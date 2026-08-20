@@ -4181,7 +4181,7 @@
     <string name="bss_capabilities_title">Funktionsberechtigungen</string>
     <string name="bss_capabilities_desc">Immer/Nie gilt nur für diese Hermes-Verbindung. Hauptschalter und Android-Berechtigungen haben weiterhin Vorrang.</string>
     <string name="bss_capabilities_unavailable">Wähle und verbinde zuerst eine Hermes-Verbindung.</string>
-    <string name="bss_timed_capabilities_title">Zeitgesteuerter Bildschirmzugriff</string>
+    <string name="bss_timed_capabilities_title">Bildschirmzugriff</string>
     <string name="bss_timed_capabilities_desc">Bildschirmprüfung und -steuerung laufen nach %1$d Minuten Inaktivität ab. Dauerhafte Berechtigungen verlängern diesen Timer nicht.</string>
     <string name="bss_capability_always">Immer, solange der Hauptschalter aktiv ist</string>
     <string name="bss_capability_never">Nie</string>
@@ -4258,4 +4258,6 @@
     <string name="bridge_timed_until_off">Bis zum Ausschalten</string>
     <string name="bridge_timed_idle_explainer">Kein festes Sitzungslimit. Aktive Bildschirmbefehle erneuern den Leerlauf-Timer von %1$s.</string>
     <string name="bridge_timed_unlimited_warning">Kein Leerlaufzeitlimit. Bildschirmzugriff bleibt bei Inaktivität und Wiederverbindung aktiv, bis er beendet, der Hauptschalter deaktiviert oder die Richtlinie geändert wird. Für ein dediziertes Gerät.</string>
+    <string name="bss_screen_access_off_desc">Bildschirmzugriff ist aus. Neuer begrenzter Zugriff verwendet standardmäßig %1$d Minuten Leerlauf.</string>
+    <string name="bss_screen_access_unlimited_desc">Mindestens eine Bildschirmfunktion bleibt bis zum ausdrücklichen Ausschalten aktiv.</string>
 </resources>
