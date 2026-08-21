@@ -1,0 +1,228 @@
+name: Build Review Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_kind:
+        description: Source to review
+        required: true
+        type: choice
+        default: pull_request
+        options:
+          - pull_request
+          - exact_sha
+      source:
+        description: Pull request number or exact 40-character commit SHA
+        required: true
+        type: string
+      retention_days:
+        description: Artifact retention
+        required: true
+        type: choice
+        default: "14"
+        options:
+          - "7"
+          - "14"
+          - "30"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: review-bundle-${{ inputs.source_kind }}-${{ inputs.source }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve exact source
+    runs-on: ubuntu-latest
+    outputs:
+      repository: ${{ steps.source.outputs.repository }}
+      sha: ${{ steps.source.outputs.sha }}
+      short_sha: ${{ steps.source.outputs.short_sha }}
+      label: ${{ steps.source.outputs.label }}
+      artifact_slug: ${{ steps.source.outputs.artifact_slug }}
+    steps:
+      - name: Resolve pull request or exact SHA
+        id: source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const kind = process.env.SOURCE_KIND;
+            const source = process.env.SOURCE.trim();
+            let repository = `${context.repo.owner}/${context.repo.repo}`;
+            let sha;
+            let label;
+            let slug;
+
+            if (kind === "pull_request") {
+              if (!/^\d+$/.test(source)) {
+                core.setFailed("pull_request source must be a numeric PR number");
+                return;
+              }
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(source),
+              });
+              if (!pr.data.head.repo) {
+                core.setFailed("the PR head repository is no longer available");
+                return;
+              }
+              repository = pr.data.head.repo.full_name;
+              sha = pr.data.head.sha;
+              label = `PR #${source}`;
+              slug = `pr-${source}`;
+            } else {
+              if (!/^[0-9a-fA-F]{40}$/.test(source)) {
+                core.setFailed("exact_sha source must be a full 40-character commit SHA");
+                return;
+              }
+              sha = source.toLowerCase();
+              label = `Review ${sha.slice(0, 12)}`;
+              slug = `sha-${sha.slice(0, 12)}`;
+            }
+
+            core.setOutput("repository", repository);
+            core.setOutput("sha", sha);
+            core.setOutput("short_sha", sha.slice(0, 12));
+            core.setOutput("label", label);
+            core.setOutput("artifact_slug", slug);
+        env:
+          SOURCE_KIND: ${{ inputs.source_kind }}
+          SOURCE: ${{ inputs.source }}
+
+  build:
+    name: Build matched Android + Relay bundle
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact review source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.resolve.outputs.repository }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable source
+        env:
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Build side-by-side candidate APK
+        env:
+          SOURCE_LABEL: ${{ needs.resolve.outputs.label }}
+          SOURCE_REF: ${{ inputs.source_kind }}:${{ inputs.source }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          ./gradlew :app:assembleSideloadCandidate \
+            -Pcandidate.kind=review \
+            -Pcandidate.label="$SOURCE_LABEL" \
+            -Pcandidate.sourceRef="$SOURCE_REF" \
+            -Pcandidate.sourceSha="$SOURCE_SHA" \
+            --console=plain
+
+      - name: Build Relay packages
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Verify candidate application identity
+        run: |
+          apk="$(find app/build/outputs/apk/sideload/candidate -name '*.apk' -print -quit)"
+          test -n "$apk"
+          aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          test -x "$aapt"
+          "$aapt" dump badging "$apk" | grep -F "package: name='com.axiomlabs.hermesrelay.sideload.candidate'"
+          "$aapt" dump badging "$apk" | grep -F "application-label:'Hermes Candidate'"
+
+      - name: Assemble review bundle
+        env:
+          SOURCE_KIND: ${{ inputs.source_kind }}
+          SOURCE_VALUE: ${{ inputs.source }}
+          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+          SOURCE_LABEL: ${{ needs.resolve.outputs.label }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+        run: |
+          mkdir -p review-bundle/android review-bundle/relay
+          cp app/build/outputs/apk/sideload/candidate/*.apk review-bundle/android/
+          cp dist/*.whl dist/*.tar.gz review-bundle/relay/
+          git archive \
+            --format=tar.gz \
+            --output="review-bundle/relay/hermes-relay-source-${SHORT_SHA}.tar.gz" \
+            HEAD plugin pyproject.toml relay_server
+          cp docs/review-candidates.md review-bundle/INSTALL.md
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          manifest = {
+              "schema_version": 1,
+              "kind": "review",
+              "label": os.environ["SOURCE_LABEL"],
+              "source": {
+                  "kind": os.environ["SOURCE_KIND"],
+                  "value": os.environ["SOURCE_VALUE"],
+                  "repository": os.environ["SOURCE_REPOSITORY"],
+                  "sha": os.environ["SOURCE_SHA"],
+              },
+              "android": {
+                  "application_id": "com.axiomlabs.hermesrelay.sideload.candidate",
+                  "stable_install_affected": False,
+              },
+              "relay": {
+                  "side_by_side_in_same_hermes_process": False,
+                  "staging_or_snapshot_rollback_required": True,
+              },
+              "generated_at": datetime.now(timezone.utc).isoformat(),
+          }
+          Path("review-bundle/REVIEW_MANIFEST.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          cd review-bundle
+          find android relay -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+
+      - name: Upload matched review bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: hermes-relay-review-${{ needs.resolve.outputs.artifact_slug }}-${{ needs.resolve.outputs.short_sha }}
+          path: review-bundle/
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(inputs.retention_days) }}
+
+      - name: Review summary
+        env:
+          SOURCE_LABEL: ${{ needs.resolve.outputs.label }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          echo "## Hermes-Relay review bundle" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source: **$SOURCE_LABEL**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`$SOURCE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android package: \`com.axiomlabs.hermesrelay.sideload.candidate\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stable Android installs are not replaced." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Relay review requires a staging Hermes instance or an explicit snapshot/rollback window." >> "$GITHUB_STEP_SUMMARY"

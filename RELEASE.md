@@ -177,10 +177,11 @@ then tagging `main`. Feature completion means merged and verified on `dev`; it
 does not mean released.
 
 **Staging is an environment, not a branch.** Deploy an exact tested `dev` SHA or
-an immutable release-candidate tag to staging. Record that source in the Forge
-release issue/session. Never deploy a moving branch name as the source of record
-and never create a staging branch. Production deploys only immutable
-`android-v*`, `server-v*`, or `desktop-v*` tags cut from `main`.
+an immutable prerelease tag (`-alpha`, `-beta`, or `-rc.N`) cut from a
+release-prepared `dev` commit. Record that source in the Forge release
+issue/session. Never deploy a moving branch name as the source of record and
+never create a staging branch. Stable production tags are cut only from the new
+`main` tip after the approved `dev` → `main` release merge.
 
 ### Normal contribution and release flow
 
@@ -418,10 +419,17 @@ it sit alongside in `[Unreleased]`, and ship them together. A release
 is a statement to users that "this is a thing worth updating to," so
 the threshold is intent-driven, not event-driven.
 
-If you want to dogfood accumulated `main` state without declaring GA,
-tag a **pre-release** (`android-vX.Y.Z-rc.N`). Users can opt in via
-`hermes-relay-update --branch rc/vX.Y.Z-rc.N` without being auto-pushed
-the unstable build.
+If you want to dogfood a frozen `dev` release candidate without declaring GA,
+tag the exact release-prepared `dev` commit with a **prerelease** tag such as
+`android-vX.Y.Z-rc.N` or `server-vX.Y.Z-rc.N`. Android prereleases publish the
+side-by-side Candidate app and never upload to Play. Server prereleases publish
+opt-in packages for staging and do not automatically replace production.
+See [Review builds and release candidates](docs/review-candidates.md).
+
+For one-PR review, do not bump versions or create a tag. Run **Build Review
+Bundle** for the PR number or exact SHA. It produces one short-lived matched
+Android + Relay artifact; the Candidate app uses a separate application ID and
+the Relay package requires an explicit staging or snapshot/rollback install.
 
 ## Release train ownership
 
@@ -828,19 +836,20 @@ plugin changes from forcing an Android app `versionCode` bump.
 
 On every push of a tag matching `android-v*`, `.github/workflows/release-android.yml`:
 
-1. Verifies the stable tag resolves to a commit contained in `main` and that the
-   tag matches `appVersionName` in
+1. Verifies a stable tag resolves to a commit contained in `main`, or a
+   prerelease tag resolves to a commit contained in `dev`, and that the tag matches `appVersionName` in
    `gradle/libs.versions.toml` (mismatches fail the workflow).
 2. Runs the Android debug build and the stable sideload pairing/connection
    regression slice with explicit timeouts.
 3. Decodes `HERMES_KEYSTORE_BASE64` into `$RUNNER_TEMP/release.keystore`
    and exports `HERMES_KEYSTORE_PATH` (skipped if the secret is unset).
-4. Builds all four flavored release artifacts
+4. For stable releases, builds all four flavored release artifacts
    (`./gradlew bundleRelease assembleRelease`); only the sideload APK and
-   googlePlay AAB are attached (see §Release assets).
+   googlePlay AAB are attached. For prereleases, builds only the side-by-side
+   `sideloadCandidate` APK.
 5. Generates `SHA256SUMS.txt` covering the two attached files.
-6. Promotes the exact preflighted Production draft to `completed`; a missing
-   credential or rejected Play edit fails before public GitHub publication.
+6. For stable releases only, promotes the exact preflighted Production draft to
+   `completed`; prereleases never upload to Play.
 7. Creates a GitHub Release named `Hermes-Relay-Android v<version>` with `RELEASE_NOTES.md` as
    the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
    containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.
@@ -849,8 +858,8 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
 On every push of a tag matching `server-v*`,
 `.github/workflows/release-plugin.yml`:
 
-1. Verifies the tag commit is contained in `main`, validates the tag against
-   all server/plugin-owned version metadata checked by
+1. Verifies a stable tag commit is contained in `main`, or a prerelease tag is
+   contained in `dev`, then validates the tag against all server/plugin-owned version metadata checked by
    `scripts/check-plugin-version-sync.py`, and requires the matching release
    heading in `CHANGELOG.md`.
 2. Runs plugin syntax checks and the focused route/auth/session test slice.
@@ -864,9 +873,10 @@ On every push of a tag matching `desktop-v*`,
 Windows tray installer. Its GitHub Release body comes from `CLI_RELEASE_NOTES.md`
 (rewritten per release — the CLI counterpart of `RELEASE_NOTES.md`); the workflow
 substitutes `__VERSION__` (bare, e.g. `0.3.0`) and `__TAG__` (full, e.g.
-`desktop-v0.3.0`) so the install/pin commands stay accurate. It rejects tags
-whose commit is not contained in `main`, whose version differs from
-`desktop/package.json`, or whose version has no `CHANGELOG.md` release heading.
+`desktop-v0.3.0`) so the install/pin commands stay accurate. It requires stable
+tags to be contained in `main` and prerelease tags to be contained in `dev`,
+with a version matching `desktop/package.json` and a corresponding
+`CHANGELOG.md` release heading.
 Fill its Summary and
 Added/Changed/Fixed groups at CLI release-prep and apply the §2 public scrub.
 Dashboard-only changes are covered by
