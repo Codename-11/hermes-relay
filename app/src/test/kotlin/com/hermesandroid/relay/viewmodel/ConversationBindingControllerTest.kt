@@ -13,76 +13,76 @@ class ConversationBindingControllerTest {
 
     @Test
     fun explicitSessionOwnsProfileAndRejectsLifecycleReconciliation() {
-        val lucy = Profile("lucy", "gpt-5.6-sol", "Lucy")
+        val alpha = Profile("alpha", "model-a", "Alpha")
         assertTrue(
             controller.openExplicit(
-                contextKey = "connection::lucy",
-                profileName = lucy.name,
-                sessionId = "lucy-session",
-                displayProfile = lucy,
+                contextKey = "connection::alpha",
+                profileName = alpha.name,
+                sessionId = "alpha-session",
+                displayProfile = alpha,
                 lockedProfileToken = null,
             ),
         )
 
         assertFalse(
             controller.reconcileGlobal(
-                contextKey = "connection::victor",
-                profileName = "victor",
-                sessionId = "victor-session",
+                contextKey = "connection::beta",
+                profileName = "beta",
+                sessionId = "beta-session",
             ),
         )
-        assertEquals("lucy", controller.state.value.profileName)
-        assertEquals("lucy-session", controller.state.value.sessionId)
+        assertEquals("alpha", controller.state.value.profileName)
+        assertEquals("alpha-session", controller.state.value.sessionId)
     }
 
     @Test
     fun selectingAnotherOwnerAtomicallyReplacesTheBinding() {
-        val lucy = Profile("lucy", "gpt-5.6-sol", "Lucy")
-        val victor = Profile("victor", "gpt-5.6-sol", "Victor")
-        controller.openExplicit("c::lucy", lucy.name, "l1", lucy, null)
-        controller.openExplicit("c::victor", victor.name, "v1", victor, null)
+        val alpha = Profile("alpha", "model-a", "Alpha")
+        val beta = Profile("beta", "model-b", "Beta")
+        controller.openExplicit("c::alpha", alpha.name, "a1", alpha, null)
+        controller.openExplicit("c::beta", beta.name, "b1", beta, null)
 
         val state = controller.state.value
-        assertEquals("c::victor", state.contextKey)
-        assertEquals("victor", state.profileName)
-        assertEquals("v1", state.sessionId)
-        assertEquals(victor, state.displayProfile)
+        assertEquals("c::beta", state.contextKey)
+        assertEquals("beta", state.profileName)
+        assertEquals("b1", state.sessionId)
+        assertEquals(beta, state.displayProfile)
     }
 
     @Test
     fun siblingSessionKeepsTheCurrentOwner() {
-        controller.openExplicit("c::lucy", "lucy", "l1", null, null)
-        controller.switchSession("l2")
+        controller.openExplicit("c::alpha", "alpha", "a1", null, null)
+        controller.switchSession("a2")
 
-        assertEquals("lucy", controller.state.value.profileName)
-        assertEquals("l2", controller.state.value.sessionId)
+        assertEquals("alpha", controller.state.value.profileName)
+        assertEquals("a2", controller.state.value.sessionId)
     }
 
     @Test
     fun profileLockRejectsOtherOwnersAndAllowsTheLockedOwner() {
-        val locked = AgentDisplay.profileSessionKey("victor")
-        assertFalse(controller.openExplicit("c::lucy", "lucy", "l1", null, locked))
+        val locked = AgentDisplay.profileSessionKey("beta")
+        assertFalse(controller.openExplicit("c::alpha", "alpha", "a1", null, locked))
         assertNull(controller.state.value.contextKey)
-        assertTrue(controller.openExplicit("c::victor", "victor", "v1", null, locked))
+        assertTrue(controller.openExplicit("c::beta", "beta", "b1", null, locked))
     }
 
     @Test
     fun releasingExplicitOwnerAllowsGlobalReconciliation() {
-        controller.openExplicit("c::lucy", "lucy", "l1", null, null)
+        controller.openExplicit("c::alpha", "alpha", "a1", null, null)
         controller.releaseExplicitOwner()
 
-        assertTrue(controller.reconcileGlobal("c::victor", "victor", "v1"))
+        assertTrue(controller.reconcileGlobal("c::beta", "beta", "b1"))
         assertEquals(ConversationBindingOrigin.GlobalSelection, controller.state.value.origin)
-        assertEquals("victor", controller.state.value.profileName)
+        assertEquals("beta", controller.state.value.profileName)
     }
 
     @Test
     fun matchingPersistedSelectionConvergesExplicitBindingToGlobalState() {
-        controller.openExplicit("c::lucy", "lucy", "l1", null, null)
+        controller.openExplicit("c::alpha", "alpha", "a1", null, null)
 
-        assertTrue(controller.reconcileGlobal("c::lucy", "lucy", "l1"))
+        assertTrue(controller.reconcileGlobal("c::alpha", "alpha", "a1"))
         assertFalse(controller.state.value.hasExplicitOwner)
-        assertEquals("lucy", controller.state.value.profileName)
-        assertEquals("l1", controller.state.value.sessionId)
+        assertEquals("alpha", controller.state.value.profileName)
+        assertEquals("a1", controller.state.value.sessionId)
     }
 }

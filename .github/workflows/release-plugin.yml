@@ -27,8 +27,8 @@ jobs:
       - name: Verify Server version sync and changelog
         run: |
           python scripts/check-plugin-version-sync.py --expect "$TAG_VERSION"
-          if ! grep -Fq "## [$TAG_VERSION]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no release heading for $TAG_VERSION"
+          if ! grep -Eq "^## \[Server ${TAG_VERSION}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no Server release heading for $TAG_VERSION"
             exit 1
           fi
         env:
@@ -87,7 +87,9 @@ jobs:
           python -m pytest \
             plugin/tests/test_relay_security.py \
             plugin/tests/test_voice_routes.py \
-            plugin/tests/test_session_grants.py
+            plugin/tests/test_session_grants.py \
+            plugin/tests/test_proactive_channel.py \
+            plugin/tests/test_android_phone_status.py
 
   package:
     name: Build and publish Plugin package

@@ -199,9 +199,9 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun allProfilesSwitchBetweenDifferentOwnersReplacesVisibleIdentity() {
-        val global = Profile(name = "victor", model = "gpt-5.6-sol", description = "Victor")
-        val lucy = Profile(name = "lucy", model = "gpt-5.6-sol", description = "Lucy")
-        var selected = global
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        var selected = beta
         viewModel.setSelectedProfileProvider { selected }
         viewModel.setSessionProfileNameProvider { selected.name }
         viewModel.setProfileSelectionHandler { profile ->
@@ -210,47 +210,47 @@ class ChatViewModelGatewayInboundTurnTest {
         }
 
         viewModel.openProfileSession(
-            profileName = lucy.name,
-            profile = lucy,
-            contextKey = AgentDisplay.profileContextKey("connection-a", lucy.name),
-            sessionId = "lucy-session",
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
         )
-        assertEquals(lucy, selected)
-        assertEquals(lucy.name, viewModel.conversationBinding.value.profileName)
-        assertEquals("Lucy", handler.activeAgentName)
+        assertEquals(alpha, selected)
+        assertEquals(alpha.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("Alpha", handler.activeAgentName)
 
         viewModel.openProfileSession(
-            profileName = global.name,
-            profile = global,
-            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
-            sessionId = "victor-session",
+            profileName = beta.name,
+            profile = beta,
+            contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            sessionId = "beta-session",
         )
 
-        assertEquals(global, selected)
-        assertEquals(global.name, viewModel.conversationBinding.value.profileName)
-        assertEquals(global.name, gatewayClient.sessionProfileProvider())
-        assertEquals("Victor", handler.activeAgentName)
-        assertEquals("victor-session", handler.currentSessionId.value)
+        assertEquals(beta, selected)
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
+        assertEquals(beta.name, gatewayClient.sessionProfileProvider())
+        assertEquals("Beta", handler.activeAgentName)
+        assertEquals("beta-session", handler.currentSessionId.value)
     }
 
     @Test
     fun profileLockRejectsCrossProfileOpenBeforeSelectionOrChatStateChanges() {
-        val victor = Profile(name = "victor", model = "gpt-5.6-sol", description = "Victor")
-        val lucy = Profile(name = "lucy", model = "gpt-5.6-sol", description = "Lucy")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
         var selectionCalls = 0
-        viewModel.setSelectedProfileProvider { victor }
-        viewModel.setSessionProfileNameProvider { victor.name }
-        viewModel.setLockedProfileNameProvider { victor.name }
+        viewModel.setSelectedProfileProvider { beta }
+        viewModel.setSessionProfileNameProvider { beta.name }
+        viewModel.setLockedProfileNameProvider { beta.name }
         viewModel.setProfileSelectionHandler {
             selectionCalls += 1
             true
         }
 
         val opened = viewModel.openProfileSession(
-            profileName = lucy.name,
-            profile = lucy,
-            contextKey = AgentDisplay.profileContextKey("connection-a", lucy.name),
-            sessionId = "lucy-session",
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
         )
 
         assertFalse(opened)
