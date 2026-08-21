@@ -9,6 +9,7 @@ import com.hermesandroid.relay.data.ProfileSoulUpdateResponse
 import com.hermesandroid.relay.data.ProfileMemoryUpdateResponse
 import com.hermesandroid.relay.data.LegacyProfileInspectorClient
 import com.hermesandroid.relay.data.RelaySkillToggleResult
+import com.hermesandroid.relay.data.RelayEndpointContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -51,6 +52,9 @@ class RelayProfileInspectorClient(
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
 ) : LegacyProfileInspectorClient {
+
+    private fun relayHttpBaseOrNull(url: String): String? =
+        RelayEndpointContract.parseOrNull(url)?.httpBaseUrl
 
     companion object {
         private const val TAG = "RelayProfileInspector"
@@ -191,10 +195,8 @@ class RelayProfileInspectorClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val encodedName = URLEncoder.encode(profileName, "UTF-8").replace("+", "%20")
 
@@ -289,10 +291,8 @@ class RelayProfileInspectorClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = try {
             "$httpBase/api/skills/toggle".toHttpUrl()
@@ -355,10 +355,8 @@ class RelayProfileInspectorClient(
         if (relayUrl.isEmpty()) return@withContext false
         val sessionToken = sessionTokenProvider() ?: return@withContext false
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext false
 
         val url = try {
             "$httpBase/api/skills/toggle".toHttpUrl()
@@ -445,10 +443,8 @@ class RelayProfileInspectorClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         // Percent-encode the profile name for splicing into the path —
         // profile names are typically ASCII identifiers but nothing

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.RelayEndpointContract
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -548,20 +549,13 @@ class EndpointResolver(
     private fun relayProbeTarget(candidate: EndpointCandidate): ProbeTarget? {
         candidate.relay?.url
             ?.trim()
-            ?.trimEnd('/')
             ?.takeIf { it.isNotBlank() }
             ?.let { relayUrl ->
-                val httpBase = when {
-                    relayUrl.startsWith("ws://", ignoreCase = true) ->
-                        "http://${relayUrl.substringAfter("://")}"
-                    relayUrl.startsWith("wss://", ignoreCase = true) ->
-                        "https://${relayUrl.substringAfter("://")}"
-                    else -> return null
-                }
+                val endpoints = RelayEndpointContract.parseOrNull(relayUrl) ?: return null
                 return ProbeTarget(
-                    baseUrl = relayUrl,
-                    requestUrl = "$httpBase/health",
-                    path = "/health",
+                    baseUrl = endpoints.webSocketUrl,
+                    requestUrl = endpoints.healthUrl,
+                    path = endpoints.healthUrl.toHttpUrlOrNull()?.encodedPath ?: return null,
                 )
             }
 

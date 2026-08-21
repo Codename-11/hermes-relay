@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import com.hermesandroid.relay.data.RelayEndpointContract
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
@@ -555,10 +556,8 @@ class ScreenCapture(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = RelayEndpointContract.parseOrNull(relayUrl)?.httpBaseUrl
+            ?: return Result.failure(IOException("Invalid relay URL"))
 
         val url = "$httpBase/media/upload"
         val body = MultipartBody.Builder()

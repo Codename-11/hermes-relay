@@ -45,12 +45,13 @@ object ConnectionValidation {
         kind = "API server URL",
     )
 
-    /** Relay URL must be ws:// or wss:// with a host. */
-    fun validateRelayUrl(raw: String): String? = validateUrl(
-        raw = raw,
-        allowedSchemes = setOf("ws", "wss"),
-        kind = "relay URL",
-    )
+    /** Relay URL may identify its base, WebSocket route, or health route. */
+    fun validateRelayUrl(raw: String): String? {
+        if (raw.isBlank()) return "relay URL can't be blank"
+        return runCatching { RelayEndpointContract.parse(raw) }
+            .exceptionOrNull()
+            ?.message
+    }
 
     /** Dashboard/Gateway URL must be HTTP(S) when configured. */
     fun validateDashboardUrl(raw: String): String? = validateOptionalUrl(
@@ -67,11 +68,8 @@ object ConnectionValidation {
     )
 
     /** A blank Relay URL means Relay-only power features are not configured. */
-    fun validateOptionalRelayUrl(raw: String): String? = validateOptionalUrl(
-        raw = raw,
-        allowedSchemes = setOf("ws", "wss"),
-        kind = "relay URL",
-    )
+    fun validateOptionalRelayUrl(raw: String): String? =
+        if (raw.isBlank()) null else validateRelayUrl(raw)
 
     /**
      * Validate the independently optional connection surfaces. A connection
@@ -114,7 +112,7 @@ object ConnectionValidation {
             val legacyExactMatch =
                 (apiServerUrl.isNotBlank() || relayUrl.isNotBlank()) &&
                     urlsEqual(c.apiServerUrl, apiServerUrl) &&
-                    urlsEqual(c.relayUrl, relayUrl)
+                    relayUrlsEqual(c.relayUrl, relayUrl)
             val candidateDashboard = dashboardUrl
                 ?.takeIf { it.isNotBlank() }
                 ?: Connection.deriveDefaultDashboardUrl(apiServerUrl)
@@ -132,6 +130,12 @@ object ConnectionValidation {
 
     private fun urlsEqual(first: String, second: String): Boolean =
         first.trim().trimEnd('/').equals(second.trim().trimEnd('/'), ignoreCase = true)
+
+    private fun relayUrlsEqual(first: String, second: String): Boolean {
+        val left = RelayEndpointContract.parseOrNull(first)?.webSocketUrl ?: return urlsEqual(first, second)
+        val right = RelayEndpointContract.parseOrNull(second)?.webSocketUrl ?: return urlsEqual(first, second)
+        return left.equals(right, ignoreCase = true)
+    }
 
     private fun validateUrl(raw: String, allowedSchemes: Set<String>, kind: String): String? {
         val trimmed = raw.trim()
