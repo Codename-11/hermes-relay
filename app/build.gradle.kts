@@ -1,5 +1,8 @@
 import java.util.Properties
 
+fun String.asBuildConfigString(): String =
+    "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -9,6 +12,10 @@ plugins {
 
 val supportedHermesDevAbis = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 val hermesDevAbi = providers.gradleProperty("hermes.devAbi").orNull
+val candidateKind = providers.gradleProperty("candidate.kind").orElse("review").get()
+val candidateLabel = providers.gradleProperty("candidate.label").orElse("Local review").get()
+val candidateSourceRef = providers.gradleProperty("candidate.sourceRef").orElse("local").get()
+val candidateSourceSha = providers.gradleProperty("candidate.sourceSha").orElse("unknown").get()
 hermesDevAbi?.let { requestedAbi ->
     require(requestedAbi in supportedHermesDevAbis) {
         "Unsupported hermes.devAbi '$requestedAbi'. Expected one of: " +
@@ -65,6 +72,11 @@ android {
 
         // Feature flags — DEV_MODE enables all experimental features in debug builds
         buildConfigField("boolean", "DEV_MODE", "false")
+        buildConfigField("boolean", "CANDIDATE_BUILD", "false")
+        buildConfigField("String", "CANDIDATE_KIND", "".asBuildConfigString())
+        buildConfigField("String", "CANDIDATE_LABEL", "".asBuildConfigString())
+        buildConfigField("String", "CANDIDATE_SOURCE_REF", "".asBuildConfigString())
+        buildConfigField("String", "CANDIDATE_SOURCE_SHA", "".asBuildConfigString())
     }
 
     signingConfigs {
@@ -160,6 +172,18 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+        }
+        create("candidate") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".candidate"
+            versionNameSuffix = "-candidate"
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
+            buildConfigField("boolean", "CANDIDATE_BUILD", "true")
+            buildConfigField("String", "CANDIDATE_KIND", candidateKind.asBuildConfigString())
+            buildConfigField("String", "CANDIDATE_LABEL", candidateLabel.asBuildConfigString())
+            buildConfigField("String", "CANDIDATE_SOURCE_REF", candidateSourceRef.asBuildConfigString())
+            buildConfigField("String", "CANDIDATE_SOURCE_SHA", candidateSourceSha.asBuildConfigString())
         }
     }
 

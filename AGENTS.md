@@ -22,7 +22,8 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 |---|---|
 | Integration branch | `dev`; normal feature, fix, docs, and chore PRs target `dev` |
 | Release branch | `main`; release history and hotfix integration only |
-| Tag source | The new `main` tip after an approved `dev` → `main` release PR, or after an approved hotfix PR to `main` |
+| Production tag source | The new `main` tip after an approved `dev` → `main` release PR, or after an approved hotfix PR to `main` |
+| Candidate tag source | An exact release-prepared and tested `dev` SHA; prerelease suffix required (`-alpha`, `-beta`, or `-rc.N`) |
 | Staging source | An exact tested `dev` SHA or release-candidate tag; staging is an environment, never a branch |
 | Production source | Immutable `android-v*`, `server-v*`, or `desktop-v*` tags, selected by surface |
 | Hotfix base | The immutable production tag for the affected surface |

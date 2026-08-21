@@ -75,6 +75,7 @@ import androidx.navigation.navArgument
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.CandidateBuildBanner
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.MessageBannerHost
@@ -125,6 +126,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
@@ -1406,6 +1408,9 @@ fun RelayApp() {
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
+        val showCandidateBanner = CandidateBuild.isCandidate &&
+            !voiceUiState.voiceMode &&
+            !showStartupSphere
         // Persistent Demo-mode strip — visible on every demo surface so the
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
@@ -1594,7 +1599,8 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure || connectionChipVisible ||
+                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure ||
+                        connectionChipVisible ||
                         showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
@@ -2845,6 +2851,13 @@ fun RelayApp() {
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars),
         ) {
+            AnimatedVisibility(
+                visible = showCandidateBanner,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                CandidateBuildBanner()
+            }
             AnimatedVisibility(
                 visible = availableUpdateStatus != null && !suppressGlobalChrome &&
                     !showStartupSphere && !voiceUiState.voiceMode,
