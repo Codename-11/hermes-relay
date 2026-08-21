@@ -89,9 +89,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.11.0 - More reliable chat
+v1.12.0 - Themes and identity that stay put
 
-Keep stored-session failures visible with route-aware retry details. Use Return for multiline prompts across more software keyboards. Preserve Stopped status when cancelling answer recovery. Reduce idle redraws and release capture and audio resources sooner.
+Create and save custom themes with full palette and shape controls. Shapes now apply consistently throughout the app. All Profiles sessions switch to their owning agent and survive language changes with the correct header, icon, and transcript. Gateway chats recover when a terminal frame is missed, persistent connection notifications relocalize without reconnecting, and Relay URLs normalize correctly from base, /ws, or /health forms.
 ```
 ## Category
 
