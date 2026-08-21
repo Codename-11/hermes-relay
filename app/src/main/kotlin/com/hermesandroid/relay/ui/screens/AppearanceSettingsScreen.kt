@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Tune
@@ -99,6 +100,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AppLanguage
+import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.MAX_PET_SIZE_SCALE
 import com.hermesandroid.relay.data.MIN_PET_SIZE_SCALE
 import com.hermesandroid.relay.ui.components.LocalAvailableSphereSkins
@@ -131,6 +133,8 @@ import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.ui.theme.contrastRatio
 import com.hermesandroid.relay.ui.theme.toColorScheme
+import com.hermesandroid.relay.ui.theme.toAppTheme
+import com.hermesandroid.relay.ui.theme.toBrandPalette
 import com.hermesandroid.relay.ui.theme.withAccent
 import com.hermesandroid.relay.ui.theme.appearanceComposerShape
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -168,16 +172,20 @@ fun AppearanceSettingsScreen(
     onBack: () -> Unit,
     onBrowsePetdex: () -> Unit = {},
     onCreatePet: () -> Unit = {},
+    onOpenCustomTheme: () -> Unit = {},
     initialCustomizerExpanded: Boolean = false,
 ) {
     val theme by connectionViewModel.theme.collectAsState()
     val appThemeId by connectionViewModel.appTheme.collectAsState()
-    val selectedTheme = AppThemes.byId(appThemeId)
+    val activeCustomTheme by connectionViewModel.activeCustomTheme.collectAsState()
+    val customThemes by connectionViewModel.customThemes.collectAsState()
+    val selectedTheme = activeCustomTheme?.toAppTheme() ?: AppThemes.byId(appThemeId)
     val isDarkTheme = LocalBrand.current.isDark
     val appliedAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appliedShape by connectionViewModel.appearanceShape.collectAsState()
     var customizeExpanded by remember { mutableStateOf(initialCustomizerExpanded) }
-    val previewPalette = selectedTheme.paletteFor(isDarkTheme).withAccent(appliedAccent)
+    val previewPalette = activeCustomTheme?.toBrandPalette()
+        ?: selectedTheme.paletteFor(isDarkTheme).withAccent(appliedAccent)
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
@@ -292,10 +300,28 @@ fun AppearanceSettingsScreen(
                 AppThemes.ALL.forEach { appTheme ->
                     ThemeSwatchChip(
                         appTheme = appTheme,
-                        selected = appTheme.id == selectedTheme.id,
+                        selected = activeCustomTheme == null && appTheme.id == selectedTheme.id,
                         onClick = { connectionViewModel.setAppTheme(appTheme.id) },
                     )
                 }
+                val customSwatch = activeCustomTheme?.toAppTheme() ?: AppTheme(
+                    id = CustomThemePreset.APP_THEME_PREFIX,
+                    label = stringResource(R.string.custom_theme_title),
+                    description = stringResource(R.string.custom_theme_entry_summary),
+                    mode = ThemeMode.BOTH,
+                    darkPalette = LocalBrand.current,
+                    lightPalette = LocalBrand.current,
+                    swatch = listOf(
+                        LocalBrand.current.background,
+                        LocalBrand.current.electric,
+                        LocalBrand.current.ink,
+                    ),
+                )
+                ThemeSwatchChip(
+                    appTheme = customSwatch,
+                    selected = activeCustomTheme != null,
+                    onClick = onOpenCustomTheme,
+                )
             }
 
             AppearanceModeControl(
@@ -305,19 +331,49 @@ fun AppearanceSettingsScreen(
                 onThemeModeSelected = connectionViewModel::setTheme,
             )
 
-            AccentCustomizer(
-                selectedTheme = selectedTheme,
-                expanded = customizeExpanded,
-                selectedAccent = appliedAccent,
-                selectedShape = appliedShape,
-                onToggle = { customizeExpanded = !customizeExpanded },
-                onAccentSelected = connectionViewModel::setAppearanceAccent,
-                onShapeSelected = connectionViewModel::setAppearanceShape,
-                onReset = {
-                    connectionViewModel.setAppearanceAccent(null)
-                    connectionViewModel.setAppearanceShape(AppearanceShape.DEFAULT.id)
-                },
-            )
+            if (activeCustomTheme == null) {
+                AccentCustomizer(
+                    selectedTheme = selectedTheme,
+                    expanded = customizeExpanded,
+                    selectedAccent = appliedAccent,
+                    selectedShape = appliedShape,
+                    onToggle = { customizeExpanded = !customizeExpanded },
+                    onAccentSelected = connectionViewModel::setAppearanceAccent,
+                    onShapeSelected = connectionViewModel::setAppearanceShape,
+                    onReset = {
+                        connectionViewModel.setAppearanceAccent(null)
+                        connectionViewModel.setAppearanceShape(AppearanceShape.DEFAULT.id)
+                    },
+                )
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenCustomTheme),
+                    shape = appearanceRoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant,
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Tune, null, tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text(activeCustomTheme?.name.orEmpty(), style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                stringResource(R.string.custom_theme_saved_count, customThemes.size),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
+                    }
+                }
+            }
 
             // Language section — AppCompat keeps this synchronized with the
             // Android 13+ per-app language setting and persists it on older OSes.
@@ -1205,12 +1261,16 @@ private fun AppearanceModeControl(
                             if (option == displayedMode) MaterialTheme.colorScheme.surfaceContainerHigh
                             else Color.Transparent,
                         )
+                        .alpha(if (modeApplies || option == displayedMode) 1f else 0.38f)
                         .clickable(enabled = modeApplies) { onThemeModeSelected(option) },
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (option == displayedMode) {
                         Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                    } else if (!modeApplies) {
+                        Icon(Icons.Filled.Lock, null, Modifier.size(14.dp))
                         Spacer(Modifier.width(5.dp))
                     }
                     Text(labels[index], style = MaterialTheme.typography.labelLarge)

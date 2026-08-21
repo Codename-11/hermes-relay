@@ -141,6 +141,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.CustomThemeScreen
 import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
 import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
@@ -477,6 +478,7 @@ sealed class Screen(
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
     data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
     data object CustomPetGuide : Screen("settings/appearance/custom-pet", "Create a pet", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
@@ -704,6 +706,7 @@ fun RelayApp() {
     val appFontId by connectionViewModel.appFont.collectAsState()
     val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
+    val activeCustomTheme by connectionViewModel.activeCustomTheme.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -864,6 +867,7 @@ fun RelayApp() {
         appFontId = appFontId,
         accentHex = appearanceAccent,
         shapeId = appearanceShape,
+        customTheme = activeCustomTheme,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -2604,6 +2608,13 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
                         onCreatePet = { navController.navigate(Screen.CustomPetGuide.route) },
+                        onOpenCustomTheme = { navController.navigate(Screen.CustomTheme.route) },
+                    )
+                }
+                composable(Screen.CustomTheme.route) {
+                    CustomThemeScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.PetdexBrowse.route) {

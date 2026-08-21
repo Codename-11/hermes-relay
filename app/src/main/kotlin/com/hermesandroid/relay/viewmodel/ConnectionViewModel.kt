@@ -28,6 +28,7 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.DemoMode
@@ -122,6 +123,7 @@ import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
 import java.net.URI
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1423,6 +1425,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             preferences[AppearancePreferences.appThemeKey] ?: AppThemes.DEFAULT_ID
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
+
+    val customThemes: StateFlow<List<CustomThemePreset>> = AppearancePreferences.customThemes(application)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val activeCustomTheme: StateFlow<CustomThemePreset?> = combine(appTheme, customThemes) { themeId, presets ->
+        CustomThemePreset.idFromAppTheme(themeId)?.let { id -> presets.firstOrNull { it.id == id } }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
         .map { preferences -> normalizeAccentHex(preferences[AppearancePreferences.accentKey]) }
@@ -6918,6 +6927,57 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 preferences[AppearancePreferences.shapeKey] = AppearanceShape.fromId(shapeId).id
             }
         }
+    }
+
+    fun saveCustomTheme(preset: CustomThemePreset, select: Boolean = true) {
+        val normalized = preset.normalized() ?: return
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val current = AppearancePreferences.decodeCustomThemes(
+                    preferences[AppearancePreferences.customThemesKey],
+                )
+                val updated = AppearancePreferences.upsertCustomTheme(current, normalized) ?: return@edit
+                preferences[AppearancePreferences.customThemesKey] =
+                    AppearancePreferences.encodeCustomThemes(updated)
+                if (select) {
+                    preferences[AppearancePreferences.appThemeKey] = normalized.appThemeId
+                    preferences[AppearancePreferences.themeKey] = normalized.mode
+                    preferences[AppearancePreferences.shapeKey] = normalized.shapeId
+                    preferences.remove(AppearancePreferences.accentKey)
+                }
+            }
+        }
+    }
+
+    fun duplicateCustomTheme(preset: CustomThemePreset) {
+        saveCustomTheme(
+            preset.copy(
+                id = UUID.randomUUID().toString(),
+                name = "${preset.name} copy".take(CustomThemePreset.MAX_NAME_LENGTH),
+            ),
+        )
+    }
+
+    fun deleteCustomTheme(id: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val updated = AppearancePreferences.decodeCustomThemes(
+                    preferences[AppearancePreferences.customThemesKey],
+                ).filterNot { it.id == id }
+                preferences[AppearancePreferences.customThemesKey] =
+                    AppearancePreferences.encodeCustomThemes(updated)
+                if (CustomThemePreset.idFromAppTheme(preferences[AppearancePreferences.appThemeKey]) == id) {
+                    preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                    preferences[AppearancePreferences.themeKey] = "auto"
+                    preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
+                    preferences.remove(AppearancePreferences.accentKey)
+                }
+            }
+        }
+    }
+
+    fun selectCustomTheme(id: String) {
+        customThemes.value.firstOrNull { it.id == id }?.let { saveCustomTheme(it) }
     }
 
     fun resetAppearanceTheme() {

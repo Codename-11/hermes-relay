@@ -217,3 +217,50 @@ final result: passed
 Final same-viewport implementation captures and a combined reference/implementation comparison require user-positioned device states. UI review is intentionally user-driven.
 
 final result: blocked
+
+# Custom theme preset workshop
+
+
+**Comparison target**
+
+- Source visual truth: `app/build/ui-evidence/custom-theme-preset-workshop-reference.png`
+- Rendered implementation: `app/build/ui-evidence/custom-theme-preset-workshop.png`
+- Focused interaction evidence: `app/build/ui-evidence/custom-theme-preset-workshop-menu.png` and `app/build/ui-evidence/custom-theme-preset-workshop-style.png`
+- Combined evidence: `app/build/ui-evidence/custom-theme-preset-workshop-comparison.png` and `app/build/ui-evidence/custom-theme-preset-workshop-focused-comparison.png`
+- Viewport: Android Compose at `390dp x 844dp`, Robolectric qualifier `w390dp-h844dp-432dpi`
+- Pixels and normalization: source `852 x 1846`; implementation captures `1053 x 2278` at Android density `2.7`. Comparisons downsample the implementation to `852 x 1846` so both panels have the same visible bounds. The generated source is a conceptual phone mock rather than a CSS viewport, so no CSS pixel size or device-scale factor applies to it.
+- State: Aurora selected, dark fixed mode, Balanced shape, four editable color roles. The full-view implementation capture keeps the preset menu closed for a stable top-of-screen comparison; the focused capture proves the open overflow menu and the scrolled mode/shape state separately.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- The implementation preserves the selected direction: a dedicated Custom screen, saved preset rail, live preview, Colors/Style tabs, direct color-role editing, fixed-mode disclosure, shape selection, and persistent Revert/Save actions.
+- Fonts and typography: the implementation intentionally uses Hermes' existing Material typography instead of the mock's denser generated type. Preset labels use `labelMedium` and now fit Aurora while allowing Terminal Green and Warm Mono to wrap to two readable lines.
+- Spacing and layout rhythm: the native screen scrolls rather than shrinking type or touch targets to fit every control above the fold. The partially visible Add card is an intentional horizontal-scroll affordance. Sticky actions remain visible.
+- Colors and visual tokens: the rendered Aurora roles match the source values (`#0B0B0F`, `#141421`, `#5B6CFF`, `#F5F6F7`), with app-native semantic derivation for secondary roles and a visible WCAG AA contrast result.
+- Image quality and asset fidelity: the target contains no photographic, illustrative, or brand-image assets. The implementation uses the app's Material icon set and real message-bubble components; no placeholder or handcrafted image substitutes are present.
+- Copy and content: labels and saved-preset actions match the selected workflow. Preview copy is shortened to keep the native preview representative without duplicating the mock's synthetic agent/tool transcript.
+
+**Comparison history**
+
+1. Initial comparison found a P2 label-density issue: `90dp` preset cards forced Aurora to wrap and over-truncated Terminal Green.
+2. Fixed by widening preset cards to `104dp`, using the established `labelMedium` type, and retaining horizontal scrolling.
+3. Post-fix evidence in `custom-theme-preset-workshop-comparison.png` shows readable two-line maximum labels and the intended rail rhythm. No P0/P1/P2 issue remains.
+
+**Open Questions**
+
+- None blocking. The mock displays all editor sections simultaneously; the implementation deliberately requires vertical scrolling to preserve established font sizes, 44dp controls, and accessibility.
+
+**Implementation Checklist**
+
+- [x] Match the selected preset-workshop information architecture.
+- [x] Keep live preview and color editing functional.
+- [x] Render unsupported theme modes as visibly and semantically disabled.
+- [x] Preserve sticky actions and accessible control sizes.
+- [x] Verify preset menu, mode, shape, and save-state interactions with Compose tests.
+
+**Follow-up Polish**
+
+- P3: physical-device review can confirm whether the horizontal Add-card peek is discoverable at the user's actual font and display scales.
+
+final result: passed

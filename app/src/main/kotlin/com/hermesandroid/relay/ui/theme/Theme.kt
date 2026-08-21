@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.PersistedAppearance
 
 /**
@@ -39,11 +40,16 @@ fun HermesRelayTheme(
     appFontId: String = AppFont.DEFAULT.id,
     accentHex: String? = null,
     shapeId: String = AppearanceShape.DEFAULT.id,
+    customTheme: CustomThemePreset? = null,
     content: @Composable () -> Unit
 ) {
-    val appTheme = AppThemes.byId(appThemeId)
+    val appTheme = customTheme?.toAppTheme() ?: AppThemes.byId(appThemeId)
     val useDarkTheme = appTheme.resolveDark(themePreference, isSystemInDarkTheme())
-    val palette = appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
+    val palette = if (customTheme != null) {
+        customTheme.toBrandPalette()
+    } else {
+        appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
+    }
     val colorScheme = palette.toColorScheme()
     val shapeScale = remember(shapeId) { appearanceShapeScale(shapeId) }
     val shapes = remember(shapeScale) { shapeScale.asMaterialShapes() }
@@ -110,6 +116,7 @@ fun PersistedHermesRelayTheme(content: @Composable () -> Unit) {
         appFontId = appearance.appFontId,
         accentHex = appearance.accentHex,
         shapeId = appearance.shapeId,
+        customTheme = appearance.customTheme,
         content = content,
     )
 }

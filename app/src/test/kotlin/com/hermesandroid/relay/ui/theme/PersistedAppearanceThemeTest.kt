@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.relayDataStore
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -68,6 +69,53 @@ class PersistedAppearanceThemeTest {
         assertEquals(AppearanceShape.SHARP, result.shape)
         assertEquals(1.3f, result.fontScale, 0.01f)
         assertEquals(AppFont.Nunito.fontFamily(), result.bodyFont)
+    }
+
+    @Test
+    fun externalThemeRootRestoresSavedCustomTheme() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val preset = CustomThemePreset(
+            id = "aurora",
+            name = "Aurora",
+            mode = CustomThemePreset.MODE_DARK,
+            backgroundHex = "#0B0B0F",
+            surfaceHex = "#141421",
+            accentHex = "#5B6CFF",
+            textHex = "#F5F6F7",
+            shapeId = AppearanceShape.BALANCED.id,
+        )
+        runBlocking {
+            app.relayDataStore.edit {
+                it.clear()
+                it[AppearancePreferences.customThemesKey] =
+                    AppearancePreferences.encodeCustomThemes(listOf(preset))
+                it[AppearancePreferences.appThemeKey] = preset.appThemeId
+                it[AppearancePreferences.shapeKey] = preset.shapeId
+            }
+        }
+
+        var observed: ObservedAppearance? = null
+        compose.setContent {
+            PersistedHermesRelayTheme {
+                val brand = LocalBrand.current
+                val shape = LocalAppearanceShapeScale.current
+                SideEffect {
+                    observed = ObservedAppearance(
+                        isDark = brand.isDark,
+                        electric = brand.electric,
+                        shape = shape.mode,
+                        fontScale = 1f,
+                        bodyFont = null,
+                    )
+                }
+            }
+        }
+
+        compose.waitUntil(timeoutMillis = 5_000) {
+            observed?.electric == accentColor("#5B6CFF") && observed?.shape == AppearanceShape.BALANCED
+        }
+        assertEquals(accentColor("#5B6CFF"), observed?.electric)
+        assertEquals(AppearanceShape.BALANCED, observed?.shape)
     }
 
     private data class ObservedAppearance(

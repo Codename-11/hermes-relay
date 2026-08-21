@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import com.hermesandroid.relay.data.CustomThemePreset
 
 /**
  * Theme-scoped brand token bundle.
@@ -74,6 +75,53 @@ data class BrandPalette(
     val line: Color,
     val lineStrong: Color,
 )
+
+fun CustomThemePreset.toBrandPalette(): BrandPalette {
+    val background = checkNotNull(accentColor(backgroundHex))
+    val surface = checkNotNull(accentColor(surfaceHex))
+    val accent = checkNotNull(accentColor(accentHex))
+    val text = checkNotNull(accentColor(textHex))
+    val reference = if (isDark) BrandPalettes.HermesDark else BrandPalettes.HermesLight
+    val muted = lerp(text, background, 0.38f)
+    val dim = lerp(text, background, 0.58f)
+    return reference.copy(
+        isDark = isDark,
+        ink = text,
+        paper = text,
+        muted = muted,
+        dim = dim,
+        background = background,
+        surfaceLowest = if (isDark) background.darken(0.22f) else background.lighten(0.20f),
+        surfaceLow = lerp(background, surface, 0.48f),
+        navy = lerp(background, surface, 0.72f),
+        navy2 = surface,
+        navy3 = if (isDark) surface.lighten(0.12f) else surface.darken(0.06f),
+        relay = if (isDark) accent.lighten(0.28f) else accent.darken(0.08f),
+        purple = lerp(accent, reference.purple, 0.36f),
+        electric = accent,
+        electricMuted = if (isDark) accent.lighten(0.18f) else accent.lighten(0.12f),
+        cyan = lerp(accent, reference.cyan, 0.44f),
+        line = text.copy(alpha = 0.14f),
+        lineStrong = text.copy(alpha = 0.28f),
+    )
+}
+
+fun CustomThemePreset.toAppTheme(): AppTheme {
+    val palette = toBrandPalette()
+    return AppTheme(
+        id = appThemeId,
+        label = name,
+        description = "Saved custom theme",
+        mode = if (isDark) ThemeMode.DARK_ONLY else ThemeMode.LIGHT_ONLY,
+        darkPalette = palette,
+        lightPalette = palette,
+        swatch = listOf(
+            checkNotNull(accentColor(backgroundHex)),
+            checkNotNull(accentColor(accentHex)),
+            checkNotNull(accentColor(textHex)),
+        ),
+    )
+}
 
 /** Active palette accessor for new, composition-correct code. */
 val LocalBrand = staticCompositionLocalOf { BrandPalettes.HermesDark }
