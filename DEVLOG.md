@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-20 — Android 1.11.0 Bridge access and lower idle power
+
+Hermes-Relay Android 1.11.0 is published from the immutable
+`android-v1.11.0` tag, with Google Play versionCode 46 submitted to the
+Production track. The release adds per-connection Bridge capability presets,
+custom grants, and explicit bounded or unlimited screen access while preserving
+the master kill switch and Android permission requirements.
+
+Stored-session resume failures now remain visible without silently changing
+conversation context, software-keyboard Return works across direct-text and
+synthesized-Enter IMEs, and cancelled recovery keeps its Stopped state. Idle
+render loops, screen-capture surfaces, audio effects, wake-word buffers, and
+unattended wake locks now follow tighter lifecycle boundaries to reduce power
+use without removing persistent Relay reachability.
+
 ## 2026-08-20 — Android stored-session resume failures stay visible
 
 Android now treats a failed Gateway `session.resume` as authoritative for the
