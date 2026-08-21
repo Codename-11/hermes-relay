@@ -151,7 +151,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun allProfilesOpenKeepsGlobalSelectionButScopesHistoryResumeAndSendToOwner() {
+    fun allProfilesOpenScopesHistoryResumeAndSendToSelectedOwner() {
         val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
         val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
         var loadedProfile: String? = null
@@ -172,16 +172,16 @@ class ChatViewModelGatewayInboundTurnTest {
         )
 
         awaitCondition { loadedProfile == owner.name }
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals(owner.name, gatewayClient.sessionProfileProvider())
         assertEquals("X-bot", handler.activeAgentName)
-        assertEquals("unchanged", persistedSession)
+        assertEquals("x-bot-session", persistedSession)
 
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", global.name),
             sessionId = null,
         )
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
 
         viewModel.openProfileSession(
@@ -190,10 +190,10 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
             sessionId = "x-bot-session",
         )
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
 
         viewModel.createNewChat()
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
     }
 
@@ -201,8 +201,13 @@ class ChatViewModelGatewayInboundTurnTest {
     fun allProfilesSwitchBetweenDifferentOwnersReplacesVisibleIdentity() {
         val global = Profile(name = "victor", model = "gpt-5.6-sol", description = "Victor")
         val lucy = Profile(name = "lucy", model = "gpt-5.6-sol", description = "Lucy")
-        viewModel.setSelectedProfileProvider { global }
-        viewModel.setSessionProfileNameProvider { global.name }
+        var selected = global
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = requireNotNull(profile)
+            true
+        }
 
         viewModel.openProfileSession(
             profileName = lucy.name,
@@ -210,7 +215,8 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", lucy.name),
             sessionId = "lucy-session",
         )
-        assertEquals(lucy.name, viewModel.openedSessionProfileName.value)
+        assertEquals(lucy, selected)
+        assertEquals(lucy.name, viewModel.conversationBinding.value.profileName)
         assertEquals("Lucy", handler.activeAgentName)
 
         viewModel.openProfileSession(
@@ -220,10 +226,37 @@ class ChatViewModelGatewayInboundTurnTest {
             sessionId = "victor-session",
         )
 
-        assertEquals(global.name, viewModel.openedSessionProfileName.value)
+        assertEquals(global, selected)
+        assertEquals(global.name, viewModel.conversationBinding.value.profileName)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
         assertEquals("Victor", handler.activeAgentName)
         assertEquals("victor-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun profileLockRejectsCrossProfileOpenBeforeSelectionOrChatStateChanges() {
+        val victor = Profile(name = "victor", model = "gpt-5.6-sol", description = "Victor")
+        val lucy = Profile(name = "lucy", model = "gpt-5.6-sol", description = "Lucy")
+        var selectionCalls = 0
+        viewModel.setSelectedProfileProvider { victor }
+        viewModel.setSessionProfileNameProvider { victor.name }
+        viewModel.setLockedProfileNameProvider { victor.name }
+        viewModel.setProfileSelectionHandler {
+            selectionCalls += 1
+            true
+        }
+
+        val opened = viewModel.openProfileSession(
+            profileName = lucy.name,
+            profile = lucy,
+            contextKey = AgentDisplay.profileContextKey("connection-a", lucy.name),
+            sessionId = "lucy-session",
+        )
+
+        assertFalse(opened)
+        assertEquals(0, selectionCalls)
+        assertFalse(viewModel.conversationBinding.value.isBound)
+        assertEquals(STORED_SESSION_ID, handler.currentSessionId.value)
     }
 
     @Test
@@ -253,13 +286,13 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.refreshSessions()
 
         awaitCondition { listedProfile == owner.name }
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals("x-bot-session", handler.currentSessionId.value)
         assertEquals(owner.name, gatewayClient.sessionProfileProvider())
 
         viewModel.switchSession("x-bot-sibling")
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
-        assertEquals("unchanged", persistedSession)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-sibling", persistedSession)
     }
 
     @Test
@@ -303,7 +336,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
         awaitCondition { handler.messages.value.any { it.content == "Owned transcript" } }
         assertEquals(owner.name, loadedProfile)
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals("x-bot-session", handler.currentSessionId.value)
     }
 
@@ -358,7 +391,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
+    fun explicitDefaultDraftUsesLiteralDefaultProfile() {
         val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
         val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
         var persistedSession = "unchanged"
@@ -372,7 +405,7 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
         )
 
-        assertEquals("default", viewModel.openedSessionProfileName.value)
+        assertEquals("default", viewModel.conversationBinding.value.profileName)
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
         assertEquals("Hermes", handler.activeAgentName)

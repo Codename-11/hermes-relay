@@ -1271,7 +1271,7 @@ class ChatViewModel : ViewModel() {
                 // here skips the setModel below, leaving the gateway on its true
                 // server-configured default.
                 val defaultModel = AgentDisplay.requestModelName(
-                    (openedSessionDisplayProfile ?: effectiveProfileProvider() ?: selectedProfileProvider())?.model
+                    (bindingDisplayProfile ?: effectiveProfileProvider() ?: selectedProfileProvider())?.model
                         ?: _serverModelName.value,
                 )
                 if (!defaultModel.isNullOrBlank()) {
@@ -2769,22 +2769,28 @@ class ChatViewModel : ViewModel() {
         effectiveProfileProvider() ?: selectedProfileProvider()
     }
     private var displayAliasProvider: () -> String? = { null }
-    private var activeProfileContextKey: String? = null
-    private val _openedSessionProfileName = MutableStateFlow<String?>(null)
-    val openedSessionProfileName: StateFlow<String?> = _openedSessionProfileName.asStateFlow()
-    private var openedSessionDisplayProfile: Profile? = null
+    private var lockedProfileNameProvider: () -> String? = { null }
+    private var profileSelectionHandler: (Profile?) -> Boolean = { true }
+    private val conversationBindingController = ConversationBindingController()
+    internal val conversationBinding: StateFlow<ConversationBinding> =
+        conversationBindingController.state
+    private val activeProfileContextKey: String?
+        get() = conversationBinding.value.contextKey
+    private val bindingDisplayProfile: Profile?
+        get() = conversationBinding.value.displayProfile
 
     /**
      * Profile namespace owned by the conversation currently on screen. Opening a
-     * row from the global All Profiles browser must not mutate the persistent
-     * profile selector, but resume/history/send still need the row's exact owner.
+     * row from the global All Profiles browser binds this state first; the UI
+     * synchronously moves the persistent profile selector to the same owner.
      */
     private fun currentSessionProfileName(): String? =
-        _openedSessionProfileName.value ?: sessionProfileNameProvider()
+        conversationBinding.value.let { binding ->
+            if (binding.isBound) binding.profileName else sessionProfileNameProvider()
+        }
 
     private fun clearOpenedSessionOwner() {
-        _openedSessionProfileName.value = null
-        openedSessionDisplayProfile = null
+        conversationBindingController.releaseExplicitOwner()
     }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
@@ -2835,6 +2841,29 @@ class ChatViewModel : ViewModel() {
     fun setDisplayAliasProvider(provider: () -> String?) {
         displayAliasProvider = provider
         refreshActiveAgentName(relabelGenericMessages = true)
+    }
+
+    fun setLockedProfileNameProvider(provider: () -> String?) {
+        lockedProfileNameProvider = provider
+    }
+
+    fun setProfileSelectionHandler(handler: (Profile?) -> Boolean) {
+        profileSelectionHandler = handler
+    }
+
+    private fun selectConversationProfile(profileName: String?, profile: Profile?): Boolean {
+        if (!conversationBindingController.profileAllowed(
+                profileName,
+                lockedProfileNameProvider(),
+            )
+        ) return false
+        if (
+            AgentDisplay.profileSessionKey(selectedProfileProvider()?.name) !=
+            AgentDisplay.profileSessionKey(profileName)
+        ) {
+            return profileSelectionHandler(profile)
+        }
+        return true
     }
 
     fun refreshAgentDisplayName(relabelGenericMessages: Boolean = false) {
@@ -3532,7 +3561,7 @@ class ChatViewModel : ViewModel() {
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
-                activeProfileContextKey = null
+                conversationBindingController.reset()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
                 _reasoningCapabilityRevision.value += 1L
@@ -3578,33 +3607,42 @@ class ChatViewModel : ViewModel() {
         profile: Profile?,
         contextKey: String,
         sessionId: String,
-    ) {
+    ): Boolean {
+        if (!selectConversationProfile(profileName, profile)) return false
         // Detach the old live gateway session without reading launch/global
         // model options: session.info for the resumed owner is authoritative.
         activateGatewayProfile(profile, refreshModelOptions = false)
-        _openedSessionProfileName.value = profileName
-        openedSessionDisplayProfile = profile
         refreshActiveAgentName(profile, relabelGenericMessages = true)
-        switchProfileContextInternal(contextKey, sessionId, persistLastSession = false)
+        switchProfileContextInternal(
+            contextKey = contextKey,
+            sessionId = sessionId,
+            explicitProfileName = profileName,
+            explicitDisplayProfile = profile,
+        )
+        return true
     }
 
     /**
-     * Start a fresh draft owned by an explicit profile without changing the
-     * persistent profile selector. The All Profiles browser uses this for its
-     * New chat action, where upstream's literal `default` profile must win over
-     * the server's sticky active profile.
+     * Start a fresh draft owned by an explicit profile. The All Profiles browser
+     * also moves the selected profile before calling this, so upstream's literal
+     * `default` profile wins over the server's sticky active profile everywhere.
      */
     fun createProfileChat(
         profileName: String,
         profile: Profile?,
         contextKey: String,
-    ) {
+    ): Boolean {
+        if (!selectConversationProfile(profileName, profile)) return false
         activateGatewayProfile(profile, refreshModelOptions = false)
-        _openedSessionProfileName.value = profileName
-        openedSessionDisplayProfile = profile
         refreshActiveAgentName(profile, relabelGenericMessages = true)
-        switchProfileContextInternal(contextKey, sessionId = null, persistLastSession = false)
+        switchProfileContextInternal(
+            contextKey = contextKey,
+            sessionId = null,
+            explicitProfileName = profileName,
+            explicitDisplayProfile = profile,
+        )
         AppAnalytics.onSessionCreated()
+        return true
     }
 
     fun switchProfileContext(contextKey: String, sessionId: String?) {
@@ -3615,32 +3653,56 @@ class ChatViewModel : ViewModel() {
     /**
      * Reconcile the globally selected profile after runtime readiness changes.
      *
-     * An All Profiles row is an explicit visible binding whose owner is allowed
-     * to differ from the persistent profile selector. Activity recreation,
-     * route revalidation, and other lifecycle emissions must not replace that
-     * binding with the selector's last-session slot. User actions clear the
-     * explicit owner through [activateGatewayProfile], [createNewChat], or
-     * [switchProfileContext] before requesting a different namespace.
+     * An All Profiles row is an explicit binding while profile/session
+     * persistence catches up. Activity recreation and route revalidation cannot
+     * replace it with stale state; once the persisted selector reports the same
+     * profile/session tuple, the reducer converges it to ordinary global state.
      */
     fun reconcileProfileContext(contextKey: String, sessionId: String?) {
-        if (_openedSessionProfileName.value != null) {
-            _initialChatSettled.value = true
-            return
-        }
-        switchProfileContextInternal(contextKey, sessionId)
+        switchProfileContextInternal(contextKey, sessionId, reconciliation = true)
     }
 
     private fun switchProfileContextInternal(
         contextKey: String,
         sessionId: String?,
-        persistLastSession: Boolean = true,
+        explicitProfileName: String? = null,
+        explicitDisplayProfile: Profile? = null,
+        reconciliation: Boolean = false,
     ) {
         val handler = chatHandler ?: return
         dismissChatFailure()
-        val isInitialContextBinding = activeProfileContextKey == null
+        val previousBinding = conversationBinding.value
+        val isInitialContextBinding = !previousBinding.isBound
+        val targetProfileName = explicitProfileName ?: sessionProfileNameProvider()
+        if (explicitProfileName != null) {
+            val accepted = conversationBindingController.openExplicit(
+                contextKey = contextKey,
+                profileName = explicitProfileName,
+                sessionId = sessionId,
+                displayProfile = explicitDisplayProfile,
+                lockedProfileToken = lockedProfileNameProvider(),
+            )
+            if (!accepted) return
+        } else if (reconciliation) {
+            val accepted = conversationBindingController.reconcileGlobal(
+                contextKey = contextKey,
+                profileName = targetProfileName,
+                sessionId = sessionId,
+            )
+            if (!accepted) {
+                _initialChatSettled.value = true
+                return
+            }
+        } else {
+            conversationBindingController.forceGlobal(
+                contextKey = contextKey,
+                profileName = targetProfileName,
+                sessionId = sessionId,
+            )
+        }
         handler.activeAgentName = currentAgentDisplayName()
         if (
-            activeProfileContextKey == contextKey &&
+            previousBinding.contextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
             publishQueuedMessages()
@@ -3648,12 +3710,11 @@ class ChatViewModel : ViewModel() {
             return
         }
         if (
-            activeProfileContextKey == null &&
+            !previousBinding.isBound &&
             sessionId != null &&
             handler.currentSessionId.value == sessionId
         ) {
             activateModelOptionsProfile(contextKey)
-            activeProfileContextKey = contextKey
             refreshRelayReasoningCapabilities()
             publishBackgroundSessionActivity()
             activeTurnCheckpointSeed?.contextKey = contextKey
@@ -3669,12 +3730,11 @@ class ChatViewModel : ViewModel() {
         if (!isInitialContextBinding) releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
-        val sessionProfileName = currentSessionProfileName()
+        val sessionProfileName = targetProfileName
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
         _isLoadingSessions.value = false
         activateModelOptionsProfile(contextKey)
-        activeProfileContextKey = contextKey
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
         _steerableTurn.value = false
@@ -3718,7 +3778,7 @@ class ChatViewModel : ViewModel() {
         handler.setSessionId(sessionId)
         publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
-        if (sessionId != null && persistLastSession) {
+        if (sessionId != null) {
             onSessionChanged?.invoke(sessionId)
         }
 
@@ -4199,6 +4259,7 @@ class ChatViewModel : ViewModel() {
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        conversationBindingController.switchSession(sessionId)
 
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -4226,12 +4287,7 @@ class ChatViewModel : ViewModel() {
         // The switched-to session owns its own YOLO state (session.info
         // reconciles) — drop any pick stashed for a different draft.
         pendingYolo = null
-        // An All Profiles binding deliberately does not mutate the persistent
-        // global selector's last-session slot. Sibling sessions in its scoped
-        // drawer retain that same ownership contract.
-        if (_openedSessionProfileName.value == null) {
-            onSessionChanged?.invoke(sessionId)
-        }
+        onSessionChanged?.invoke(sessionId)
         AppAnalytics.onSessionSwitched()
         // Recover a retained live turn before doing an ordinary history load.
         // This avoids a concurrent list fetch wiping the restored streaming
@@ -4295,10 +4351,8 @@ class ChatViewModel : ViewModel() {
         if (handler.currentSessionId.value == null) {
             selectBackgroundProcessSession(null)
         }
-        if (
-            handler.currentSessionId.value == null &&
-            _openedSessionProfileName.value == null
-        ) {
+        if (handler.currentSessionId.value == null) {
+            conversationBindingController.switchSession(null)
             onSessionChanged?.invoke(null)
         }
 
@@ -8478,7 +8532,7 @@ class ChatViewModel : ViewModel() {
     ): String? {
         val selectedProfile = selectedProfileProvider()
         val effectiveProfile = effectiveProfileOverride
-            ?: openedSessionDisplayProfile
+            ?: bindingDisplayProfile
             ?: displayProfileProvider()
             ?: effectiveProfileProvider()
             ?: selectedProfile
@@ -8487,7 +8541,7 @@ class ChatViewModel : ViewModel() {
             selectedPersonality = _selectedPersonality.value,
             defaultPersonality = _defaultPersonality.value,
             connectionLabel = null,
-            localDisplayAlias = if (_openedSessionProfileName.value == null) {
+            localDisplayAlias = if (!conversationBinding.value.hasExplicitOwner) {
                 displayAliasProvider()
             } else {
                 null

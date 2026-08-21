@@ -1245,6 +1245,11 @@ class ProfileController(
         applyProfileSelection(normalizedProfile)
     }
 
+    fun isProfileSelectionAllowed(profileName: String?): Boolean {
+        val locked = lockedProfileName.value ?: return true
+        return AgentDisplay.profileSessionKey(profileName) == locked
+    }
+
     fun moveProfile(profileName: String?, delta: Int) {
         val connectionId = activeConnectionId.value ?: return
         val key = AgentDisplay.profileSessionKey(profileName)

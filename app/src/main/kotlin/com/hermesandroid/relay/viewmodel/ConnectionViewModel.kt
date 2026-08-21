@@ -1764,6 +1764,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
 
+    fun isProfileSelectionAllowed(profileName: String?): Boolean =
+        profileController.isProfileSelectionAllowed(profileName)
+
     // --- Profile lock (per-connection pin to one profile) ------------------
     //
     // When set, the profile pickers/switchers across the app collapse to a

@@ -268,6 +268,41 @@ class SessionDrawerTest {
     }
 
     @Test
+    fun `profile lock hides all profiles and exits its saved browser scope`() {
+        var allProfilesSupported by mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("m", "Mizu chat", null)),
+                    currentSessionId = null,
+                    scopeTitle = "Mizu Sessions",
+                    activeProfileName = "mizu",
+                    allProfilesSupported = allProfilesSupported,
+                    allProfileSessions = listOf(
+                        ProfileSessionRow("mizu", ChatSession("m", "Mizu chat", null)),
+                        ProfileSessionRow("x-bot", ChatSession("x", "X Bot chat", null)),
+                    ),
+                    onRefreshAllProfiles = {},
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All Profiles").performClick()
+        compose.onNodeWithText("X Bot chat").assertIsDisplayed()
+
+        compose.runOnIdle { allProfilesSupported = false }
+
+        compose.onNodeWithText("All Profiles").assertDoesNotExist()
+        compose.onNodeWithText("X Bot chat").assertDoesNotExist()
+        compose.onNodeWithText("Mizu chat").assertIsDisplayed()
+    }
+
+    @Test
     fun `new chat from all profiles requests an explicit default draft`() {
         var scopedNewChats = 0
         var defaultNewChats = 0
