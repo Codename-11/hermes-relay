@@ -34,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_code: ${{ steps.version.outputs.version_code }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,8 +57,14 @@ jobs:
             REF_VERSION="${GITHUB_REF#refs/tags/android-v}"
           fi
           VERSION_CODE=$(grep -oP 'appVersionCode\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
+          if [[ "$REF_VERSION" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
           echo "version=$REF_VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Verify version sync
         run: |
@@ -81,14 +88,24 @@ jobs:
       - name: Verify public privacy policy URLs
         run: python3 scripts/check-privacy-policy.py --live
 
-      - name: Verify tagged commit belongs to main
+      - name: Verify tag belongs to the correct integration branch
+        env:
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          git fetch origin main --no-tags
           tag_commit="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "Android releases must be tagged from main; $tag_commit is not in origin/main" >&2
-            exit 1
+          if [ "$PRERELEASE" = "true" ]; then
+            git fetch origin dev --no-tags
+            if ! git merge-base --is-ancestor "$tag_commit" origin/dev; then
+              echo "Android prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
+              exit 1
+            fi
+          else
+            git fetch origin main --no-tags
+            if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+              echo "Stable Android releases must be tagged from main; $tag_commit is not in origin/main" >&2
+              exit 1
+            fi
           fi
 
       - name: Require successful Play preflight for this exact release tree
@@ -175,7 +192,8 @@ jobs:
           echo "$HERMES_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "HERMES_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build release artifacts (APK + AAB)
+      - name: Build stable release artifacts (APK + AAB)
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
         env:
           HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
           HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
@@ -191,10 +209,27 @@ jobs:
         #   app/build/outputs/bundle/sideloadRelease/hermes-relay-<version>-sideload-release.aab
         run: ./gradlew bundleRelease assembleRelease
 
+      - name: Build side-by-side release candidate APK
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        env:
+          HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
+          HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
+          HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          ./gradlew :app:assembleSideloadCandidate \
+            -Pcandidate.kind=rc \
+            -Pcandidate.label="Android ${VERSION}" \
+            -Pcandidate.sourceRef="android-v${VERSION}" \
+            -Pcandidate.sourceSha="$SOURCE_SHA" \
+            --console=plain
+
       # The Play AAB carries its mapping for Play Console deobfuscation, but
       # sideload issue reports need the exact mapping from this immutable build.
       # Keep both variants as a workflow artifact (not a public release asset).
       - name: Retain R8 mappings for retrace
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: android-r8-mappings-${{ needs.validate.outputs.version }}-${{ github.sha }}
@@ -204,11 +239,27 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Scan release DEX for unsupported collection APIs
+      - name: Retain candidate R8 mapping for retrace
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-rc-r8-mapping-${{ needs.validate.outputs.version }}-${{ github.sha }}
+          path: app/build/outputs/mapping/sideloadCandidate/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Scan stable release DEX for unsupported collection APIs
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
         run: |
           python3 scripts/check-android-collection-apis.py \
             --apk app/build/outputs/apk/googlePlay/release/*.apk \
             --apk app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Scan candidate DEX for unsupported collection APIs
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        run: |
+          python3 scripts/check-android-collection-apis.py \
+            --apk app/build/outputs/apk/sideload/candidate/*.apk
 
       - name: List produced artifacts (debug aid)
         run: |
@@ -217,7 +268,8 @@ jobs:
           echo "=== AAB outputs ==="
           find app/build/outputs/bundle -name '*.aab' -print 2>/dev/null || true
 
-      - name: Generate checksums
+      - name: Generate stable checksums
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
         # Flavor dimension adds an extra path segment to the AGP output layout.
         # APKs live under `apk/<flavor>/release/`, AABs under `bundle/<flavor>Release/`
         # (note the concatenated camelCase — AGP path quirk, documented but
@@ -227,6 +279,13 @@ jobs:
         run: |
           cd app/build/outputs
           sha256sum apk/sideload/release/*.apk bundle/googlePlayRelease/*.aab > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate candidate checksums
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        run: |
+          cd app/build/outputs
+          sha256sum apk/sideload/candidate/*.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Require Play credentials for stable release
@@ -255,13 +314,14 @@ jobs:
       # Public distribution happens only after Play accepts the production
       # submission above. This keeps a Play-detected release blocker from
       # appearing after the sideload APK is already public.
-      - name: Create GitHub Release
+      - name: Create stable GitHub Release
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
         uses: softprops/action-gh-release@v3
         with:
           name: Hermes-Relay-Android v${{ needs.validate.outputs.version }}
           tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
-          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          prerelease: false
           # Deliberate 2-asset policy (#144): attach ONLY the installable
           # sideload APK and Play AAB, plus checksums covering those files.
           files: |
@@ -269,13 +329,31 @@ jobs:
             app/build/outputs/bundle/googlePlayRelease/*.aab
             app/build/outputs/SHA256SUMS.txt
 
+      - name: Create candidate GitHub prerelease
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Hermes-Relay-Android v${{ needs.validate.outputs.version }}
+          tag_name: android-v${{ needs.validate.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            app/build/outputs/apk/sideload/candidate/*.apk
+            app/build/outputs/SHA256SUMS.txt
+
       - name: Release summary
         env:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           echo "## Hermes-Relay-Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$HERMES_KEYSTORE_BASE64" ]; then
+          if [ "$PRERELEASE" = "true" ] && [ -n "$HERMES_KEYSTORE_BASE64" ]; then
+            echo "✅ **Release-signed Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$PRERELEASE" = "true" ]; then
+            echo "⚠️ **Debug-signed Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$HERMES_KEYSTORE_BASE64" ]; then
             echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "⚠️ **Debug-signed** (no \`HERMES_KEYSTORE_BASE64\` secret) — NOT suitable for Play Store. Add the secret in repo settings to enable release signing." >> "$GITHUB_STEP_SUMMARY"

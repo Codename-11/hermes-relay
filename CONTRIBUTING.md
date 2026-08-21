@@ -29,6 +29,20 @@ scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ```
 
+### Review bundles
+
+Maintainers can produce a matched Android + Relay handoff for one pull request
+without cutting a release. Run **Actions → Build Review Bundle** with the PR
+number or an exact 40-character SHA. The short-lived artifact contains a
+side-by-side Candidate APK, Relay packages/source from the same commit,
+provenance, checksums, and install/rollback guidance.
+
+Review bundles never bump versions, create tags, upload to Play, or replace the
+stable Android app. Relay review still requires a staging Hermes instance or an
+explicit immutable snapshot/rollback window because two Relay plugins cannot
+own the same tools and hooks in one Hermes process. See
+[Review builds and release candidates](docs/review-candidates.md).
+
 Linux/macOS equivalent lives at `scripts/dev.sh`.
 
 ### Fast Android iteration

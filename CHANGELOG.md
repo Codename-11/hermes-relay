@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Maintainers can build matched Android + Relay review bundles without cutting a release.** An exact PR/SHA produces a short-lived Candidate APK and Relay packages with shared provenance and checksums. The Candidate app installs beside stable Play and sideload builds, uses separate data, stays out of stable update prompts, and carries a persistent expandable source banner. Release-candidate tags now cut from release-prepared `dev` commits while stable production tags remain `main`-only.
+
 - **Sideload Bridge access is explicitly capability-scoped.** Read-only, read-and-confirm, and custom presets grant only selected powers for the active connection. Screen inspection and control can be allowed for a bounded period or explicitly left unlimited, and Relay status reports the resulting permanent, timed, and unlimited grants.
 
 ### Changed
