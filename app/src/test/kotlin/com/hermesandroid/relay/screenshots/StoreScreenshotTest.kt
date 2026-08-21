@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.datastore.preferences.core.edit
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,9 +57,11 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.AppearancePreferences
 import com.hermesandroid.relay.data.DashboardConnectionStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -77,6 +80,8 @@ import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.VoicePresentationMode
@@ -88,6 +93,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.PetAvatar
+import kotlinx.coroutines.runBlocking
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.viewmodel.InteractionMode
@@ -207,24 +213,35 @@ class StoreScreenshotTest {
     }
 
     @Test fun s05_theme_customizer() {
-        val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        runBlocking {
+            application.relayDataStore.edit { preferences ->
+                preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
+                preferences.remove(AppearancePreferences.accentKey)
+            }
+        }
+        val vm = ConnectionViewModel(application)
+        val shapeLabel = application.getString(R.string.appearance_shape)
+        val sharpLabel = application.getString(R.string.appearance_shape_sharp)
+        val resetThemeLabel = application.getString(R.string.appearance_reset)
+        val applyChangesLabel = application.getString(R.string.appearance_apply_changes)
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
                     AppearanceSettingsScreen(
                         connectionViewModel = vm,
                         onBack = {},
+                        initialCustomizerExpanded = true,
                     )
                 }
             }
         }
-        compose.onNodeWithText("Customize Relay").performScrollTo()
-        compose.onNodeWithText("Customize Relay").performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithText("Shape").performScrollTo()
-        compose.onNodeWithText("Sharp").performClick()
-        compose.onNodeWithText("Apply changes").assertDoesNotExist()
-        compose.onNodeWithText("Reset theme").assertExists()
+        compose.onNodeWithText(shapeLabel).performScrollTo()
+        compose.onNodeWithText(sharpLabel).performClick()
+        compose.onNodeWithText(applyChangesLabel).assertDoesNotExist()
+        compose.onNodeWithText(resetThemeLabel).assertExists()
         compose.onRoot().captureRoboImage("build/store-shots/05_theme_customizer.png")
     }
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
