@@ -1,22 +1,21 @@
 # Hermes-Relay-Server v__VERSION__
 
-**Release Date:** August 14, 2026
+**Release Date:** August 21, 2026
 
-This release adds an official, opt-in Relay pane for Hermes Desktop through the supported runtime Plugin SDK. It keeps Relay management profile-scoped and user-invoked without opening a pane during startup, reconnects, profile changes, or plugin updates.
+## Summary
+
+This release makes delayed phone delivery and active Bridge access easier to understand. Relay now identifies messages flushed after reconnect, emits one completion signal for the backlog, and reports permanent, timed, and unlimited phone capabilities through status surfaces.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
-## What's changed
+## Added
 
-### Added
+- **Reconnect backlog context.** Messages flushed from the bounded offline queue carry an explicit delayed-delivery marker, followed by one ordered completion event with the delivered count.
+- **Granular phone capability status.** Relay status and `android_phone_status` report permanent, timed, and unlimited Bridge capabilities alongside existing Android permissions and safety state.
 
-- **Official Hermes Desktop pane.** The unified plugin package registers a movable native pane for Relay status, paired devices, bridge activity, media, pairing, revocation, and remote-access management.
-- **Explicit entry points.** Labeled sidebar, status-bar, and command-palette actions register and reveal the pane lazily; repeated opens reuse the same surface.
-- **Profile-scoped state.** Cached Relay state follows the active Hermes profile and is disposed cleanly when the plugin unloads.
+## Changed
 
-### Changed
-
-- **Plugin loading stays passive.** Loading, startup, reconnects, profile changes, and updates never reveal the pane or perform pane-owned network work.
+- **Phone surfacing semantics are explicit.** Default delivery persists to Threads and notifies, Inbox delivery remains silent, and Session delivery targets an available active conversation before falling back to a notification.
 
 ## Install / update
 
@@ -31,7 +30,6 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 ## Verify
 
     hermes relay doctor
-    # Agent/tool callers can use desktop_health to list desktop targets.
     python scripts/check-plugin-version-sync.py --expect __VERSION__
 
 ---
