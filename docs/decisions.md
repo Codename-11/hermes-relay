@@ -3604,3 +3604,39 @@ Normal terminal delivery is unchanged, queued turns retain their existing
 ownership, Relay remains optional, and unmodified upstream compatibility is
 preserved. Physical certification across the reported device/network matrix
 remains tracked in `TODO.md`.
+
+---
+
+## ADR 65 — Gateway client contracts use reusable on-demand scenario fixtures
+
+**Status:** Accepted (2026-08-21).
+
+**Context.** Android, official Desktop, the TUI, and API fallback expose related
+but non-identical chat lifecycles. Existing tests grew around individual event
+mappers, client harnesses, and source markers. They proved many local behaviors
+but did not provide one reusable scenario for a real socket gap, exact-session
+activation, authoritative history, lifecycle-aware rendering, and physical
+device evidence. Issue #365 crossed all of those boundaries.
+
+**Decision.** Hermes-Relay keeps a client-neutral vanilla Gateway fixture with
+real HTTP/WebSocket JSON-RPC and declarative scenarios. Scenario manifests may
+declare current-upstream requirements; a separate non-provider source check
+validates those requirements against a clean unmodified upstream checkout.
+Android uses both a standalone real-socket instrumentation regression and an
+external-fixture adapter built from production Gateway, ViewModel, handler,
+main-looper, lifecycle, and Compose collection paths. A separate opt-in ADB
+runner owns APK identity, port reversal, instrumentation execution, optional
+app lifecycle smoke, and bounded privacy-safe evidence.
+
+The lanes are manual and on demand. No cron, scheduled workflow, nightly run,
+device farm, provider call, real conversation, or automatic radio mutation is
+created. Device-wide radio changes require an explicit dry-run receipt and a
+second exact confirmation. Relay-only routes, OAuth browser flows, Desktop/TUI
+client adapters, hosted devices, and scheduled execution remain future work.
+
+**Consequences.** Protocol regressions gain a deterministic cross-client
+vocabulary while client-specific assertions remain with each client. Current
+upstream drift, Android state-machine defects, rendered lifecycle failures, and
+physical-device failures are reported as distinct evidence lanes. A physical
+pass is never inferred from JVM or source checks, and scheduled execution can
+be considered later without being silently introduced now.

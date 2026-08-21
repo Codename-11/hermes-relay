@@ -1,0 +1,30 @@
+{
+  "name": "queued_follow_up",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "First turn."}},
+        {"op": "sleep", "milliseconds": 150},
+        {"op": "persist", "messages": [{"id": 1, "role": "assistant", "content": "First turn.", "timestamp": 1.0}]},
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "First turn."}}
+      ]
+    },
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Queued follow-up."}},
+        {"op": "persist", "messages": [{"id": 2, "role": "assistant", "content": "Queued follow-up.", "timestamp": 2.0}]},
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "Queued follow-up."}}
+      ]
+    }
+  ]
+}

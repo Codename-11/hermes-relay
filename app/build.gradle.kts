@@ -366,6 +366,9 @@ dependencies {
     // Konsist — enforces the ADR 34 upstream/relay/shared package fence as a JUnit test
     testImplementation(libs.konsist)
     androidTestImplementation(libs.compose.ui.test.junit4)
+    // On-device vanilla-Gateway contract tests exercise the production
+    // Dashboard ticket + WebSocket stack over real loopback sockets.
+    androidTestImplementation(libs.okhttp.mockwebserver)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 

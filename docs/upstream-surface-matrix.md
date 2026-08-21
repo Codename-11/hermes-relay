@@ -9,7 +9,7 @@ Hermes, what belongs to the Relay plugin, and what is only legacy compatibility.
 Verified upstream source snapshot:
 
 - Repository: `NousResearch/hermes-agent`
-- Commit: `8794e5a21c980a0f26532cb4883284b786cb3f25`
+- Commit: `fcbd1076a93841fa88855acce810e342a5b78101`
 - Primary files checked: `gateway/platforms/api_server.py`,
   `hermes_cli/web_routers/sessions.py`, `apps/desktop/src/store/session-pin-sync.ts`,
   `hermes_cli/web_server.py`, `hermes_cli/dashboard_auth/routes.py`,
