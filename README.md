@@ -302,6 +302,12 @@ scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start the relay server (dev, no TLS)
 ```
 
+Gateway, session, streaming, reconnect, or authoritative-history changes use
+the reusable, on-demand [Gateway contract lab](docs/gateway-contract-testing.md).
+It includes deterministic protocol scenarios, current-upstream conformance,
+Android instrumentation, and opt-in physical-device certification; none of
+those lanes is scheduled automatically.
+
 ### Tech Stack
 
 | Component | Stack |

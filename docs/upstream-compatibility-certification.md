@@ -53,6 +53,25 @@ Pass `--python` when the upstream environment is not at `.venv/bin/python` (or
 The equivalent manual commands are retained below for upstream maintainers who
 do not have a Hermes-Relay checkout.
 
+### Scenario-level Gateway contract check
+
+For a client regression expressed through the reusable Gateway contract lab,
+run the scenario manifest against the same clean upstream checkout:
+
+```bash
+python scripts/check-gateway-scenario-conformance.py \
+  /path/to/hermes-agent \
+  --scenario-manifest test-fixtures/vanilla-gateway/vanilla_gateway/scenarios/terminal_gap_activate.json
+```
+
+This source-only check validates only the contract identifiers selected by the
+scenario, such as terminal completion, settled `session.info`, exact live
+activation, durable resume, or the distinct API fallback lifecycle. It starts
+no Gateway, creates no sessions, and makes no provider calls. See
+[`gateway-contract-testing.md`](gateway-contract-testing.md) for fixture,
+Android instrumentation, and physical-device execution. This lane is on demand
+and is not added to scheduled CI.
+
 From the upstream `hermes-agent` checkout:
 
 ```bash

@@ -12,6 +12,7 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Gateway/session/reconnect testing → **[docs/gateway-contract-testing.md](docs/gateway-contract-testing.md)**
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
 - Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
@@ -44,6 +45,15 @@ a staging branch.
   through upstream PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /
   `tui_gateway/server.py` in hermes-agent) before assuming a route exists.
+- **Use the Gateway contract lab when its boundary changes.** Changes to
+  Gateway chat events, session identity/resume/activation, streaming completion,
+  queue ownership, reconnect/lifecycle recovery, or authoritative history must
+  reuse or extend the declarative fixture scenarios, run the relevant Android
+  instrumentation when rendered/lifecycle behavior is affected, and run the
+  scenario manifest through current-upstream conformance. Physical ADB
+  certification is required only when device/runtime behavior is claimed. All
+  of these lanes are on demand; do not add scheduled execution without explicit
+  approval.
 - **Conventional Commits + `main`/`dev` branching.** Normal branches start at
   `dev` and PR back to `dev`; merge commits/no-ff are the repository policy.
   Version bumps happen only during release preparation on `dev`, and production
