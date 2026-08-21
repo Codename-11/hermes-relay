@@ -1143,6 +1143,17 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   vouches for Relay on another port. Results are cached independently by
   candidate and surface, so a Relay outage cannot poison healthy standard chat,
   Manage, sessions, or Vanilla Hermes voice.
+- **Relay endpoint normalization is path-aware and idempotent (amended
+  2026-08-20).** A Relay candidate may name its base, its terminal `/ws`
+  socket route, or its terminal `/health` route using HTTP(S) or WS(S).
+  Android removes that terminal route segment once and derives sibling
+  `<base>/ws` and `<base>/health` routes. Root bases therefore map to `/ws`
+  and `/health`, while `/relay`, `/relay/ws`, and `/relay/health` all map to
+  `/relay/ws` and `/relay/health`. Arbitrary path probing is prohibited.
+  Authorities, ports, IPv6 literals, and custom path prefixes are preserved;
+  user info, queries, fragments, malformed URLs, relative segments, and
+  ambiguous encoded separators fail closed. Plain HTTP/WS continues to require
+  the existing explicit trusted-LAN/VPN consent.
 - **Network-change re-probe**: Android's `ConnectivityManager
   .NetworkCallback.onAvailable` / `onLost` triggers a re-probe. If a
   higher-priority candidate became reachable after a network transition,

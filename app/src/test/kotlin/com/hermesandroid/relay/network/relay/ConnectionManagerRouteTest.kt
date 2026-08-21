@@ -26,6 +26,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowNetwork
+import java.util.concurrent.TimeUnit
 
 /**
  * Standard-route (no relay socket) coverage for [ConnectionManager]'s ADR 24
@@ -194,5 +195,17 @@ class ConnectionManagerRouteTest {
             "the failed outcome must be published, not silently swallowed",
             manager.activeEndpoint.value,
         )
+    }
+
+    @Test
+    fun `route qualified input opens canonical websocket without double append`() {
+        val manager = ConnectionManager(ChannelMultiplexer()).also { managers.add(it) }
+        manager.setInsecureMode(true)
+
+        manager.connect("ws://${server.hostName}:${server.port}/relay/ws")
+
+        val request = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(request)
+        assertEquals("/relay/ws", request!!.path)
     }
 }

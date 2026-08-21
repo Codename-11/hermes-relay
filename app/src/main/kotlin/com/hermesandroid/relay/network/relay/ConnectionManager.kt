@@ -10,6 +10,7 @@ import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.RelayEndpointContract
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
@@ -453,7 +454,22 @@ class ConnectionManager(
         replaceReason: String = "Relay socket replaced",
         preserveReconnectBackoff: Boolean = false,
     ) {
-        val isInsecure = url.startsWith("ws://") && !url.startsWith("wss://")
+        val endpoints = RelayEndpointContract.parseOrNull(url)
+        if (endpoints == null) {
+            Log.e(TAG, "Invalid Relay URL")
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Relay,
+                severity = DiagnosticSeverity.Error,
+                title = context?.getString(R.string.conn_diag_url_invalid) ?: "Relay socket URL invalid",
+                detail = "Malformed or unsafe Relay URL",
+                operation = "Open Relay WebSocket",
+                configuredUrl = url,
+                suggestion = "Use a Relay URL with no credentials, query, or fragment.",
+            )
+            return
+        }
+        val normalized = endpoints.webSocketUrl
+        val isInsecure = normalized.startsWith("ws://", ignoreCase = true)
         if (isInsecure && !_insecureMode.value) {
             Log.e(TAG, "Blocked ws:// connection — insecure mode is disabled. Use wss:// or enable insecure mode in Settings.")
             DiagnosticsLog.record(
@@ -467,25 +483,6 @@ class ConnectionManager(
             )
             return
         }
-        if (!url.startsWith("ws://") && !url.startsWith("wss://")) {
-            Log.e(TAG, "Invalid URL scheme — must start with ws:// or wss://")
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Error,
-                title = context?.getString(R.string.conn_diag_url_invalid) ?: "Relay socket URL invalid",
-                detail = "URL must start with ws:// or wss://",
-                operation = "Open Relay WebSocket",
-                configuredUrl = url,
-                suggestion = "Edit or re-pair the Relay route with a ws:// or wss:// URL.",
-            )
-            return
-        }
-
-        // Normalize: append /ws if the user gave us a bare host:port with no
-        // path. The relay routes the WebSocket handler at /ws; a bare URL
-        // hits the HTTP root and comes back as 404 Not Found during the
-        // upgrade handshake. We still accept an explicit path if present.
-        val normalized = normalizeRelayUrl(url)
         if (isRelayRateLimitBackoffActive(
                 rateLimitBackoffUntilMs,
                 SystemClock.elapsedRealtime(),
@@ -888,21 +885,8 @@ class ConnectionManager(
         }
     }
 
-    private fun normalizeRelayUrl(url: String): String {
-        // Strip scheme to reason about the path portion cheaply.
-        val schemeEnd = url.indexOf("://")
-        if (schemeEnd < 0) return url
-        val afterScheme = url.substring(schemeEnd + 3)
-        val pathStart = afterScheme.indexOf('/')
-        return if (pathStart < 0) {
-            // No path at all — append /ws
-            "$url/ws"
-        } else {
-            val path = afterScheme.substring(pathStart)
-            // Empty or root path — append ws
-            if (path == "/" || path.isEmpty()) "${url.trimEnd('/')}/ws" else url
-        }
-    }
+    private fun normalizeRelayUrl(url: String): String =
+        RelayEndpointContract.parseOrNull(url)?.webSocketUrl ?: url
 
     fun disconnect() {
         shouldReconnect = false

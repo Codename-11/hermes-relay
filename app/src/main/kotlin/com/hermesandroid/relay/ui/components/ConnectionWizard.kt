@@ -2215,11 +2215,10 @@ private fun optionalHttpUrlError(
 private fun relayUrlSchemeError(url: String, context: android.content.Context): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return null
-    return when {
-        trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true) ->
-            context.getString(R.string.cw_relay_url_scheme_error)
-        else -> null
+    return if (ConnectionValidation.validateOptionalRelayUrl(trimmed) == null) {
+        null
+    } else {
+        context.getString(R.string.cw_relay_url_scheme_error)
     }
 }
 
