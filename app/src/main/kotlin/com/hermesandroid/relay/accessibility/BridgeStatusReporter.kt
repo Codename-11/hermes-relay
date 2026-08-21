@@ -21,6 +21,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
 
 /**
@@ -226,6 +228,7 @@ class BridgeStatusReporter(
         val destructiveVerbsCount = safetySnapshot?.destructiveVerbs?.size ?: 0
         val autoDisableMinutes = safetySnapshot?.autoDisableMinutes ?: 0
         val autoDisableAtMs = safetyManager?.autoDisableAtMs?.value
+        val capabilityPolicy = safetyManager?.activeCapabilityPolicy?.value
 
         val deviceName = Build.MODEL ?: "unknown"
 
@@ -280,6 +283,33 @@ class BridgeStatusReporter(
                     } else {
                         put("auto_disable_at_ms", autoDisableAtMs)
                     }
+                })
+                put("capabilities", buildJsonObject {
+                    put("schema_version", capabilityPolicy?.schemaVersion ?: 1)
+                    put("permanent", buildJsonArray {
+                        capabilityPolicy?.permanentGrants
+                            ?.sortedBy { it.wireId }
+                            ?.forEach { add(it.wireId) }
+                    })
+                    put("timed", buildJsonObject {
+                        capabilityPolicy?.timedExpiriesMs
+                            ?.filterValues {
+                                it != com.hermesandroid.relay.bridge.BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+                            }
+                            ?.toSortedMap(compareBy { it.wireId })
+                            ?.forEach { (capability, expiry) ->
+                                put(capability.wireId, expiry)
+                            }
+                    })
+                    put("unlimited", buildJsonArray {
+                        capabilityPolicy?.timedExpiriesMs
+                            ?.filterValues {
+                                it == com.hermesandroid.relay.bridge.BridgeCapabilityPolicy.NEVER_EXPIRES_AT_MS
+                            }
+                            ?.keys
+                            ?.sortedBy { it.wireId }
+                            ?.forEach { add(it.wireId) }
+                    })
                 })
 
                 // v0.4.1: unattended-access state so the agent can decide

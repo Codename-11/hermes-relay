@@ -737,7 +737,7 @@ fun SessionDrawerContent(
                             actionsEnabled = !provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
-                            animationEnabled = animationEnabled,
+                            animationEnabled = animationEnabled && isOpen,
                             pinned = session.pinned,
                             archived = session.archived,
                             archiveSupported = archiveSupported,

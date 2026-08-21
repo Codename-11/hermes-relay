@@ -221,6 +221,30 @@ Message types:
 | `bridge.response` | Client → Server | Phone replies, echoing `request_id` |
 | `bridge.status` | Client → Server | Periodic device state (screen on, battery, current app, accessibility on) |
 
+Android Bridge commands are authorized on-device after Relay channel/session
+authorization. Current clients add a `capabilities` object to `bridge.status`:
+
+```json
+{
+  "capabilities": {
+    "schema_version": 1,
+    "permanent": ["contacts_read", "clipboard_read"],
+    "timed": {"screen_inspection": 1787180400000},
+    "unlimited": ["screen_control"]
+  }
+}
+```
+
+`timed` contains epoch-millisecond expiries for renewable idle leases;
+`unlimited` contains explicitly selected Until-turned-off screen leases. The
+lists contain stable capability IDs only;
+they contain no command arguments, contact data, clipboard content, or screen
+content. Relay caches this additive status for diagnostics but does not turn it
+into authority. The phone's closed `(method, path)` registry is authoritative,
+and unknown commands, absent grants, and expired grants return 403. This keeps
+mixed-version Relays compatible without letting an older server bypass a newer
+phone policy. See ADR 63 and `BridgeCapabilities.kt` for the complete matrix.
+
 Bridge exposes 30+ HTTP routes on the relay itself (mirrored from legacy): `/ping`, `/screen`, `/screenshot`, `/tap`, `/tap_text`, `/long_press`, `/type`, `/swipe`, `/drag`, `/open_app`, `/return_to_hermes`, `/press_key`, `/scroll`, `/clipboard`, `/wait`, `/setup`, `/media`, `/find_nodes`, `/screen_hash`, `/diff_screen`, `/send_intent`, `/broadcast`, `/events`, `/location`, `/search_contacts`, `/call`, `/send_sms`, `/share_media`, `/send_mms`, …
 
 Sources: `plugin/relay/channels/bridge.py`, `app/src/main/kotlin/.../network/handlers/BridgeCommandHandler.kt`.

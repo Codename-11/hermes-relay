@@ -3345,6 +3345,7 @@ class ChatHandler {
                 .filterNot { msg ->
                         msg.matchesIdentity(messageId) &&
                         msg.role == MessageRole.ASSISTANT &&
+                        msg.badges.isEmpty() &&
                         msg.toolCalls.isEmpty() &&
                         msg.backgroundTask == null &&
                         msg.thinkingContent.isBlank() &&

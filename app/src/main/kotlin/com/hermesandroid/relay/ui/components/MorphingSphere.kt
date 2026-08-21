@@ -14,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -54,9 +53,6 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
 private const val SPHERE_TIME_UNITS_PER_SEC = 1f
 private const val SPHERE_TWO_PI = 6.2832f
 private const val SPHERE_COLOR_RADIANS_PER_SEC = 0.7854f
-
-// Idle cadence: this delay plus the next frame wait nets a ~33ms period (~30fps).
-private const val SPHERE_IDLE_FRAME_INTERVAL_MS = 25L
 
 @Composable
 fun MorphingSphere(
@@ -108,19 +104,14 @@ fun MorphingSphere(
     val cg2 by animateFloatAsState(targetC.g2, spec, label = "cg2")
     val cb2 by animateFloatAsState(targetC.b2, spec, label = "cb2")
 
-    // Continuous motion is driven by a manual frame loop rather than
-    // rememberInfiniteTransition so the redraw rate can follow the orb's
-    // activity. An infinite transition pins the Canvas at the display refresh
-    // (120Hz) forever — even when Idle — which needlessly drains battery and,
-    // on Android 15, makes the platform log `setRequestedFrameRate` on every
-    // frame. Here we advance every frame while ACTIVE (full-smoothness
-    // thinking/streaming/voice pulse) and throttle to ~30fps while Idle, where
-    // the slower cadence is imperceptible for the chunky ASCII glyphs.
-    // dt-based accumulation keeps the animation speed identical at either rate.
+    // Continuous motion runs only for active agent/voice states. Idle is a
+    // stable frame: the 58x34 text grid is expensive enough that even a
+    // throttled cosmetic drift dominated measured screen-on CPU. Active states
+    // retain full display-rate motion and dt-based timing.
     val animatedTime = remember { mutableFloatStateOf(0f) }
     val animatedColorPhase = remember { mutableFloatStateOf(0f) }
-    val driveAnimation = fixedTime == null || fixedColorPhase == null
     val fullFrameRate = state != SphereState.Idle || effVoiceMode
+    val driveAnimation = (fixedTime == null || fixedColorPhase == null) && fullFrameRate
     if (driveAnimation) {
         LaunchedEffect(fullFrameRate) {
             var lastNanos = withFrameNanos { it }
@@ -133,7 +124,6 @@ fun MorphingSphere(
                 animatedColorPhase.floatValue =
                     (animatedColorPhase.floatValue + dtSec * SPHERE_COLOR_RADIANS_PER_SEC) %
                     SPHERE_TWO_PI
-                if (!fullFrameRate) delay(SPHERE_IDLE_FRAME_INTERVAL_MS)
             }
         }
     }
@@ -146,6 +136,7 @@ fun MorphingSphere(
 
     // Cache covers the ~25 distinct glyphs across charSets/dataChars/debrisChars.
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
+    val glyphStrings = remember { HashMap<Char, String>(32) }
 
     Canvas(modifier = modifier.fillMaxSize().clipToBounds()) {
         val canvasW = size.width
@@ -176,7 +167,8 @@ fun MorphingSphere(
         )
 
         forEachSphereCell(frame) { cell ->
-            val layout = textMeasurer.measure(cell.char.toString(), style)
+            val glyph = glyphStrings.getOrPut(cell.char) { cell.char.toString() }
+            val layout = textMeasurer.measure(glyph, style)
             // Legacy Paint used y as baseline (`row*cellH + cellH*0.8f`).
             // Compose `drawText` uses top-left — offset by firstBaseline to match.
             val px = cell.col * cellW

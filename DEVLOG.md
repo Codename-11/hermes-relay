@@ -1,5 +1,36 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-20 — Android stored-session resume failures stay visible
+
+Android now treats a failed Gateway `session.resume` as authoritative for the
+selected stored conversation. The client no longer creates a replacement
+session and submits the continuation after a resume rejection or profile-scope
+mismatch, preventing a context-free turn from silently selecting different
+runtime state.
+
+Gateway terminal failures and pre-submit transport failures now share a
+session-scoped panel immediately above the composer. The panel keeps the failed
+transcript row intact, shows only confirmed route/model/provider identity,
+offers explicit Details, Retry, and Dismiss actions, and records bounded,
+redacted evidence in the existing Diagnostics review/share flow. No route or
+model is changed automatically.
+
+## 2026-08-18 — Android 1.10.0 chat continuity and streaming Markdown
+
+Hermes-Relay Android 1.10.0 is published from the immutable
+`android-v1.10.0` tag, with the production Play submission committed as
+versionCode 45. The release preserves exact-session composer drafts across
+restarts, converts large pastes into reviewable attachments, and keeps standard
+chat compatible with unmodified upstream Hermes.
+
+Assistant replies now render completed Markdown structures incrementally while
+holding an incomplete streaming tail stable. Stable message identity and a
+bounded bottom-follow controller prevent completion-time replacement, stacked
+scroll animations, and transcript-distance velocity from moving a reader who
+has deliberately scrolled away. Foreground reconnect reattaches the visible
+Gateway session, malformed imported credentials fail closed, and software
+keyboard Return remains distinct from the dedicated Send action.
+
 ## 2026-08-17 — Android composer continuity and large-paste review
 
 Android's multiline composer now leaves the software IME action as Return while

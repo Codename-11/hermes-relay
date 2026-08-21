@@ -70,6 +70,8 @@ fun UnattendedAccessRow(
     // should reflect that reality — otherwise users flip it and see no
     // observable change, which reads as a broken control.
     masterEnabled: Boolean = true,
+    screenControlAvailable: Boolean = true,
+    screenAccessUnlimited: Boolean = false,
 ) {
     var showWarning by remember { mutableStateOf(false) }
     var pendingEnableAfterWarning by remember { mutableStateOf(false) }
@@ -77,7 +79,7 @@ fun UnattendedAccessRow(
     // "Effectively on" — the persisted preference AND the master gate.
     // Drives the keyguard warning (no point showing it when master is
     // off — the feature isn't active regardless of lock state).
-    val effectivelyOn = enabled && masterEnabled
+    val effectivelyOn = enabled && masterEnabled && screenControlAvailable
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -104,6 +106,7 @@ fun UnattendedAccessRow(
                     Text(
                         text = when {
                             !masterEnabled -> stringResource(R.string.unattended_requires_master)
+                            !screenControlAvailable -> stringResource(R.string.unattended_requires_timed_control)
                             enabled -> stringResource(R.string.unattended_on)
                             else -> stringResource(R.string.unattended_off)
                         },
@@ -113,7 +116,7 @@ fun UnattendedAccessRow(
                 }
                 Switch(
                     checked = enabled,
-                    enabled = masterEnabled,
+                    enabled = masterEnabled && screenControlAvailable,
                     onCheckedChange = { wantsOn ->
                         if (wantsOn && !warningSeen) {
                             // First enable → show the scary dialog and
@@ -129,7 +132,13 @@ fun UnattendedAccessRow(
             }
 
             Text(
-                text = stringResource(R.string.unattended_description),
+                text = stringResource(
+                    if (screenAccessUnlimited) {
+                        R.string.unattended_description_unlimited
+                    } else {
+                        R.string.unattended_description
+                    },
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
  *
  * 4. **`masterToggle`** write path — flipping the master switch persists via
  *    [BridgePreferencesRepository.setMasterEnabled]. accessibility's service reads the
- *    same DataStore key (`bridge_master_enabled`) and treats it as the
+ *    same DataStore key (`bridge_master_enabled_v2`) and treats it as the
  *    runtime disable switch — when false, the service should ignore all
  *    incoming `bridge.command` envelopes. bridge-ui does not wire the service lifecycle
  *    to this toggle; that's accessibility's call.
@@ -230,20 +230,24 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         // === END PHASE3-bridge-ui-followup ===
 
         // === PHASE3-safety-rails: foreground service lifecycle ===
-        // Start/stop BridgeForegroundService based on the master toggle.
-        // distinctUntilChanged prevents re-firing the startForegroundService
-        // intent on every DataStore tick. Cancel the safety manager's
-        // auto-disable timer when the user flips the toggle off manually
-        // (otherwise we race a pending timer against the user).
+        // Start/stop BridgeForegroundService from the persisted settings Flow,
+        // not masterToggle's synthetic initial=false StateFlow value. Using the
+        // synthetic value here could revoke an unlimited lease during startup
+        // before DataStore reported that Master was actually persisted ON.
+        // distinctUntilChanged prevents duplicate service work. Cancel the safety manager's
+        // timed screen grants when the user flips the master off manually
+        // (otherwise stale authority could revive when master is re-enabled).
         viewModelScope.launch {
-            masterToggle.collect { enabled ->
+            prefsRepo.settings
+                .map { it.masterEnabled }
+                .distinctUntilChanged()
+                .collect { enabled ->
                 val ctx = getApplication<Application>()
                 if (enabled) {
                     runCatching { BridgeForegroundService.start(ctx) }
-                    BridgeSafetyManager.peek()?.rescheduleAutoDisable()
                 } else {
                     runCatching { BridgeForegroundService.stop(ctx) }
-                    BridgeSafetyManager.peek()?.cancelAutoDisable()
+                    BridgeSafetyManager.peek()?.revokeTimedCapabilities()
                     // Force the overlay chip off even if the user hasn't
                     // explicitly disabled it — no point showing "bridge
                     // active" when the toggle is off.
@@ -252,13 +256,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                     // drop it on toggle-off so the row goes back to red
                     // and the next bridge enable prompts for fresh consent.
                     MediaProjectionHolder.revoke()
-                    // v0.4.1: drop the unattended-access wake lock immediately
-                    // when the master toggle drops. The unattended toggle
-                    // itself may still be persisted ON in DataStore — that's
-                    // intentional, the user's "I want unattended when bridge
-                    // is on" preference shouldn't be cleared by every bridge
-                    // toggle cycle — but the wake lock is meaningless
-                    // without an active bridge.
+                    // Drop the unattended wake lock immediately. The safety
+                    // manager also clears the persisted unattended preference,
+                    // so re-enabling Master cannot silently revive it.
                     UnattendedAccessManager.release()
                 }
             }
@@ -331,6 +331,12 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun setUnattendedAccessEnabled(enabled: Boolean) {
         viewModelScope.launch {
             safetyPrefsRepo.setUnattendedAccessEnabled(enabled)
+        }
+    }
+
+    fun setTimedAccessMinutes(minutes: Int) {
+        viewModelScope.launch {
+            safetyPrefsRepo.setAutoDisableMinutes(minutes)
         }
     }
 

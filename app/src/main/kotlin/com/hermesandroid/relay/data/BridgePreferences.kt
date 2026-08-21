@@ -70,7 +70,11 @@ data class BridgeSettings(
 class BridgePreferencesRepository(private val context: Context) {
 
     companion object {
-        private val KEY_MASTER_ENABLED = booleanPreferencesKey("bridge_master_enabled")
+        // v2 is deliberately separate. Older APKs know only the legacy key
+        // and therefore remain disabled after a downgrade instead of treating
+        // the new granular grants as blanket authority.
+        private val KEY_MASTER_ENABLED = booleanPreferencesKey("bridge_master_enabled_v2")
+        private val KEY_LEGACY_MASTER_ENABLED = booleanPreferencesKey("bridge_master_enabled")
         private val KEY_ACTIVITY_LOG = stringPreferencesKey("bridge_activity_log")
 
         /** Hard cap on persisted entries. See file-level KDoc for rationale. */
@@ -99,7 +103,10 @@ class BridgePreferencesRepository(private val context: Context) {
     }
 
     suspend fun setMasterEnabled(enabled: Boolean) {
-        context.relayDataStore.edit { it[KEY_MASTER_ENABLED] = enabled }
+        context.relayDataStore.edit {
+            it[KEY_MASTER_ENABLED] = enabled
+            it[KEY_LEGACY_MASTER_ENABLED] = false
+        }
     }
 
     /**

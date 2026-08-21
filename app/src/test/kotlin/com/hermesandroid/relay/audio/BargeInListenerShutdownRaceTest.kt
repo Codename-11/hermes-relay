@@ -49,7 +49,6 @@ class BargeInListenerShutdownRaceTest {
         val listener = BargeInListener(
             audioSource = source,
             vadEngine = vadEngine,
-            audioSessionIdProvider = { 42 },
             readerDispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -61,6 +60,7 @@ class BargeInListenerShutdownRaceTest {
     }
 
     private class OneFrameAudioSource : BargeInListener.AudioFrameSource {
+        override val audioSessionId: Int = 42
         var readCount: Int = 0
             private set
         var released: Boolean = false

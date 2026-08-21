@@ -550,6 +550,12 @@ data class GatewaySessionModel(
     val fast: Boolean? = null,
 )
 
+/** Structured terminal failure carried by Gateway `message.complete`. */
+data class GatewayTurnFailure(
+    val error: String,
+    val recoverable: Boolean,
+)
+
 /** Result of the gateway `config.get {key:"reasoning"}` RPC. */
 data class GatewayReasoningSettings(
     val effort: String,
@@ -618,6 +624,10 @@ class GatewayTurnCallbacks(
     val onInteractionRequest: (GatewayAsk) -> Unit,
     /** Server declared a pending interaction expired; clear only the matching card. */
     val onInteractionExpired: (GatewayAskExpiry) -> Unit,
+    /** Existing durable session could not be rebound; no prompt was submitted. */
+    val onResumeFailure: (String) -> Unit = { _ -> },
+    /** Terminal `message.complete {status:"error"}` without prose inspection. */
+    val onFailure: (GatewayTurnFailure) -> Unit = { _ -> },
     /**
      * Gateway `status.update` lifecycle line — model fallback, retries, and
      * errors (often emoji-prefixed: 🔄 fallback, ⏳ retry, ❌ error). Default

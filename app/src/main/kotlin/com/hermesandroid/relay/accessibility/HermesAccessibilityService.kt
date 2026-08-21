@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
  *
  * The Android system toggle in `Settings → Accessibility → Hermes-Relay` is
  * the hard switch — if it's off we never receive events. On top of that the
- * user can flip a soft master in Settings (`bridge_master_enabled`); when
+ * user can flip a soft master in Settings (`bridge_master_enabled_v2`); when
  * that's false we still run (Android requires it to stay connected) but we
  * refuse to execute commands. [isMasterEnabled] is a StateFlow the UI
  * observes and the command handler checks before dispatching actions.
@@ -61,7 +61,9 @@ class HermesAccessibilityService : AccessibilityService() {
         private const val TAG = "HermesA11yService"
 
         /** Master-enable DataStore key — read + toggled from Settings UI. */
-        val KEY_BRIDGE_MASTER_ENABLED = booleanPreferencesKey("bridge_master_enabled")
+        val KEY_BRIDGE_MASTER_ENABLED = booleanPreferencesKey("bridge_master_enabled_v2")
+        private val KEY_LEGACY_BRIDGE_MASTER_ENABLED =
+            booleanPreferencesKey("bridge_master_enabled")
 
         /**
          * Static reference to the live service instance, or null if the
@@ -92,6 +94,7 @@ class HermesAccessibilityService : AccessibilityService() {
         suspend fun setMasterEnabled(context: Context, enabled: Boolean) {
             context.applicationContext.relayDataStore.edit { prefs ->
                 prefs[KEY_BRIDGE_MASTER_ENABLED] = enabled
+                prefs[KEY_LEGACY_BRIDGE_MASTER_ENABLED] = false
             }
         }
     }

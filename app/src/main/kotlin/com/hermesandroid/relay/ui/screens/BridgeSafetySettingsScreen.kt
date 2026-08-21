@@ -61,6 +61,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetySettings
+import com.hermesandroid.relay.bridge.BridgeCapability
+import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
+import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.data.DEFAULT_BLOCKLIST
 import com.hermesandroid.relay.data.MAX_AUTO_DISABLE_MINUTES
 import com.hermesandroid.relay.data.MAX_CONFIRMATION_TIMEOUT_SECONDS
@@ -85,11 +88,18 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
+fun BridgeSafetySettingsScreen(
+    connectionId: String? = null,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { BridgeSafetyPreferencesRepository(context) }
     val settings by repo.settings.collectAsState(initial = BridgeSafetySettings())
+    val safetyManager = BridgeSafetyManager.peek()
+    val capabilityPolicy by (safetyManager?.capabilityPolicy(connectionId)
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(BridgeCapabilityPolicy()) })
+        .collectAsState(initial = BridgeCapabilityPolicy())
 
     // Overlay-permission live check — recompute on resume so returning
     // from Settings flips the switch's availability without nav churn.
@@ -139,6 +149,22 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+
+            CapabilityGrantCards(
+                policy = capabilityPolicy,
+                timerMinutes = settings.autoDisableMinutes,
+                enabled = safetyManager != null && connectionId != null,
+                onPermanentChanged = { capability, allowed ->
+                    scope.launch {
+                        safetyManager?.setPermanentCapability(connectionId, capability, allowed)
+                    }
+                },
+                onTimedChanged = { capability, allowed ->
+                    scope.launch {
+                        safetyManager?.setTimedCapability(connectionId, capability, allowed)
+                    }
+                },
+            )
 
             // ── Blocklist ───────────────────────────────────────────────
             SectionCard(title = stringResource(R.string.bss_blocked_apps)) {
@@ -357,6 +383,152 @@ fun BridgeSafetySettingsScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.size(24.dp))
         }
     }
+}
+
+@Composable
+internal fun CapabilityGrantCards(
+    policy: BridgeCapabilityPolicy,
+    timerMinutes: Int,
+    enabled: Boolean,
+    onPermanentChanged: (BridgeCapability, Boolean) -> Unit,
+    onTimedChanged: (BridgeCapability, Boolean) -> Unit,
+) {
+    SectionCard(title = stringResource(R.string.bridge_access_read_group)) {
+        Text(
+            text = stringResource(R.string.bridge_access_read_group_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!enabled) {
+            Text(
+                text = stringResource(R.string.bss_capabilities_unavailable),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        Spacer(Modifier.size(8.dp))
+        listOf(
+            BridgeCapability.DEVICE_INFO,
+            BridgeCapability.CONTACTS_READ,
+            BridgeCapability.LOCATION_READ,
+            BridgeCapability.CLIPBOARD_READ,
+        ).forEach { capability ->
+            val allowed = capability in policy.permanentGrants
+            CapabilityRow(
+                capability = capability,
+                checked = allowed,
+                stateLabel = stringResource(
+                    if (allowed) R.string.bss_capability_always else R.string.bss_capability_never,
+                ),
+                enabled = enabled,
+                onCheckedChange = { onPermanentChanged(capability, it) },
+            )
+        }
+    }
+
+    SectionCard(title = stringResource(R.string.bridge_access_actions_group)) {
+        Text(
+            text = stringResource(R.string.bridge_access_actions_group_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(8.dp))
+        listOf(
+            BridgeCapability.CLIPBOARD_WRITE,
+            BridgeCapability.MEDIA_CONTROL,
+            BridgeCapability.COMMUNICATIONS,
+            BridgeCapability.OUTBOUND_SHARING,
+        ).forEach { capability ->
+            val allowed = capability in policy.permanentGrants
+            CapabilityRow(
+                capability = capability,
+                checked = allowed,
+                stateLabel = stringResource(
+                    if (allowed) R.string.bss_capability_always else R.string.bss_capability_never,
+                ),
+                enabled = enabled,
+                onCheckedChange = { onPermanentChanged(capability, it) },
+            )
+        }
+    }
+
+    SectionCard(title = stringResource(R.string.bss_timed_capabilities_title)) {
+        val now = System.currentTimeMillis()
+        val activeScreenCapabilities = BridgeCapability.entries
+            .filter { it.timed && policy.allows(it, now) }
+        val hasUnlimited = activeScreenCapabilities.any(policy::isUnlimited)
+        Text(
+            text = when {
+                hasUnlimited -> stringResource(R.string.bss_screen_access_unlimited_desc)
+                activeScreenCapabilities.isNotEmpty() ->
+                    stringResource(R.string.bss_timed_capabilities_desc, timerMinutes)
+                else -> stringResource(R.string.bss_screen_access_off_desc, timerMinutes)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(8.dp))
+        BridgeCapability.entries.filter { it.timed }.forEach { capability ->
+            val active = (policy.expiryFor(capability) ?: 0L) > now
+            CapabilityRow(
+                capability = capability,
+                checked = active,
+                stateLabel = when {
+                    policy.isUnlimited(capability) ->
+                        stringResource(R.string.bridge_timed_until_off)
+                    active -> stringResource(R.string.bss_capability_timed_on)
+                    else -> stringResource(R.string.bss_capability_timed_off)
+                },
+                enabled = enabled,
+                onCheckedChange = { onTimedChanged(capability, it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CapabilityRow(
+    capability: BridgeCapability,
+    checked: Boolean,
+    stateLabel: String,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(vertical = 6.dp)) {
+            Text(
+                text = stringResource(capability.titleResource()),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                text = stateLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            enabled = enabled,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+private fun BridgeCapability.titleResource(): Int = when (this) {
+    BridgeCapability.DEVICE_INFO -> R.string.bss_capability_device_info
+    BridgeCapability.CONTACTS_READ -> R.string.bss_capability_contacts
+    BridgeCapability.LOCATION_READ -> R.string.bss_capability_location
+    BridgeCapability.CLIPBOARD_READ -> R.string.bss_capability_clipboard_read
+    BridgeCapability.CLIPBOARD_WRITE -> R.string.bss_capability_clipboard_write
+    BridgeCapability.MEDIA_CONTROL -> R.string.bss_capability_media
+    BridgeCapability.COMMUNICATIONS -> R.string.bss_capability_communications
+    BridgeCapability.OUTBOUND_SHARING -> R.string.bss_capability_sharing
+    BridgeCapability.SCREEN_INSPECTION -> R.string.bss_capability_screen_inspection
+    BridgeCapability.SCREEN_CONTROL -> R.string.bss_capability_screen_control
 }
 
 @Composable

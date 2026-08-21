@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-08-20
+
+### Added
+
+- **Sideload Bridge access is explicitly capability-scoped.** Read-only, read-and-confirm, and custom presets grant only selected powers for the active connection. Screen inspection and control can be allowed for a bounded period or explicitly left unlimited, and Relay status reports the resulting permanent, timed, and unlimited grants.
+
+### Changed
+
+- **The sideload Bridge screen is a summary-first access cockpit.** Agent access, unattended mode, selected Android requirements, and advanced safety controls are separated clearly while the complete permission matrix and power-user controls remain available one tap deeper.
+
+### Fixed
+
+- **Android keeps failed session resumes visible and in context.** Continuing a stored Gateway session no longer falls through to a fresh session when Hermes rejects or mis-scopes the resume. Failed turns remain error-marked and expose a composer-adjacent recovery panel with route-aware details, explicit retry/dismiss actions, and sanitized Diagnostics evidence.
+- **Software-keyboard Return inserts a newline across both common Android IME paths.** Keyboards that commit text directly and keyboards that synthesize `KEYCODE_ENTER` now keep multiline composition separate from physical-keyboard Send behavior. (#367)
+- **Cancelled answer recovery retains its Stopped status.** Empty recovery placeholders with a persistent status badge are no longer discarded during stream finalization.
+- **Android screen-on idle no longer continuously redraws the ASCII sphere.** Idle holds a stable frame while thinking, streaming, and voice states retain full-rate motion; inactive voice waveforms and closed session drawers also stop their frame loops.
+- **Android capture and audio effects release power-sensitive resources at their actual lifecycle boundaries.** Screen capture attaches its MediaProjection surface only for a requested frame, unattended Bridge wake locks release when the command finishes, and barge-in AEC/noise suppression attach to the microphone capture session instead of playback.
+- **Experimental wake-word listening reuses its PCM normalization buffer.** Continuous opt-in listening no longer allocates a new float frame for every inference call.
+
 ## [1.10.0] - 2026-08-18
 
 ### Added

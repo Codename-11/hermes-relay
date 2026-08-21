@@ -233,6 +233,26 @@ def render_status_block(data: dict, palette: _Palette) -> str:
             f"    Notifications:    {_granted(bridge.get('notification_listener_granted'), palette)}"
         )
 
+    capabilities = data.get("capabilities") or {}
+    if isinstance(capabilities, dict) and capabilities:
+        permanent = capabilities.get("permanent") or []
+        timed = capabilities.get("timed") or {}
+        unlimited = capabilities.get("unlimited") or []
+        lines.append("")
+        lines.append("  " + palette.label("Capability grants"))
+        lines.append(
+            "    Always:  "
+            + (", ".join(str(item) for item in permanent) if permanent else "none")
+        )
+        lines.append(
+            "    Timed:   "
+            + (", ".join(sorted(str(item) for item in timed)) if isinstance(timed, dict) and timed else "none")
+        )
+        lines.append(
+            "    Until off: "
+            + (", ".join(str(item) for item in unlimited) if unlimited else "none")
+        )
+
     # Safety
     safety = data.get("safety") or {}
     if isinstance(safety, dict) and safety:
@@ -249,10 +269,10 @@ def render_status_block(data: dict, palette: _Palette) -> str:
         if auto is not None:
             if at_ms:
                 lines.append(
-                    f"    Auto-disable:     {auto} min idle (armed)"
+                    f"    Timed screen:     {auto} min idle (armed)"
                 )
             else:
-                lines.append(f"    Auto-disable:     {auto} min idle")
+                lines.append(f"    Timed screen:     {auto} min idle")
 
     lines.append("")
     return "\n".join(lines)

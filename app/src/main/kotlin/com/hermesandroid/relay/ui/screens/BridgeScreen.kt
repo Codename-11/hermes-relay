@@ -44,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,12 +62,23 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 // === PHASE3-safety-rails: safety summary card ===
 import com.hermesandroid.relay.bridge.BridgeSafetyManager
 import com.hermesandroid.relay.data.BridgeSafetySettings
+import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
 import com.hermesandroid.relay.ui.components.BridgeSafetySummaryCard
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.components.BridgeActivityLog
 import com.hermesandroid.relay.ui.components.BridgeMasterToggle
 import com.hermesandroid.relay.ui.components.BridgePermissionChecklist
+import com.hermesandroid.relay.ui.components.BridgeAccessPreset
+import com.hermesandroid.relay.ui.components.BridgeAccessSetupSheet
+import com.hermesandroid.relay.ui.components.BridgeAgentAccessCard
+import com.hermesandroid.relay.ui.components.BridgeAndroidAccessSummaryCard
+import com.hermesandroid.relay.ui.components.BridgeTimedAccessSheet
+import com.hermesandroid.relay.ui.components.BridgeSelectedAndroidAccessCard
+import com.hermesandroid.relay.ui.components.READ_CONFIRMED_BRIDGE_CAPABILITIES
+import com.hermesandroid.relay.ui.components.READ_ONLY_BRIDGE_CAPABILITIES
+import com.hermesandroid.relay.ui.components.activeTimedCapabilities
+import com.hermesandroid.relay.ui.components.bridgeAndroidAccessSummary
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.RelayHeroPanel
 import com.hermesandroid.relay.ui.components.RelayReturnStrip
@@ -84,13 +96,15 @@ import kotlinx.coroutines.launch
  * Bridge tab — phase 3 Wave 1 rewrite (Agent bridge-ui, `bridge-screen-ui`).
  *
  * Replaces the Phase 0 "Coming Soon" placeholder with the real control
- * surface described in `Plans/Phase 3 — Bridge Channel.md` §5. Four stacked
- * cards in a verticalScroll column:
+ * surface described in `Plans/Phase 3 — Bridge Channel.md` §5. The main page
+ * is a summary-first cockpit with complete drill-downs:
  *
- *   1. [BridgeMasterToggle]        — "Allow Agent Control" + live status
- *   2. [BridgePermissionChecklist] — accessibility / capture / overlay / notif
- *   3. [BridgeActivityLog]         — scrollable recent-command history
- *   4. Safety placeholder          — stub owned by Agent safety-rails in Wave 2
+ *   1. [BridgeMasterToggle]        — global kill switch + live device status
+ *   2. [BridgeAgentAccessCard]     — permanent and screen-access policy posture
+ *   3. Unattended access           — single authoritative sideload control
+ *   4. Android readiness summary   — selected requirements + expandable full matrix
+ *   5. Advanced safety controls    — complete power-user controls
+ *   6. [BridgeActivityLog]         — scrollable recent-command history
  *
  * State comes from [BridgeViewModel] which in turn reads from the
  * [com.hermesandroid.relay.data.BridgePreferencesRepository] DataStore for
@@ -151,6 +165,9 @@ fun BridgeScreen(
     // === END PHASE3-safety-rails-followup ===
 
     val context = LocalContext.current
+    val accessScope = androidx.compose.runtime.rememberCoroutineScope()
+    val accessSavedMessage = stringResource(R.string.bridge_access_saved_review_android)
+    val timedAccessEndedMessage = stringResource(R.string.bridge_timed_ended_snackbar)
 
     // Result callback used by every runtime-permission launcher on this screen.
     // If the user has permanently denied the permission (two declines on
@@ -197,6 +214,63 @@ fun BridgeScreen(
     val trustedVerbs by (safetyManager?.trustedDestructiveVerbs
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet()) })
         .collectAsState()
+    val activeConnectionId by (connectionViewModel?.activeConnectionId
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow<String?>(null) })
+        .collectAsState()
+    val activeCapabilityPolicy by (safetyManager?.activeCapabilityPolicy
+        ?: remember { kotlinx.coroutines.flow.MutableStateFlow(BridgeCapabilityPolicy()) })
+        .collectAsState()
+    val screenControlAvailable = activeCapabilityPolicy.allows(
+        com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+        System.currentTimeMillis(),
+    )
+    val screenControlUnlimited = activeCapabilityPolicy.isUnlimited(
+        com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+    )
+    val screenAccessActive = activeCapabilityPolicy.activeTimedCapabilities(
+        System.currentTimeMillis(),
+    ).isNotEmpty()
+    val anyScreenAccessUnlimited = activeCapabilityPolicy.activeTimedCapabilities(
+        System.currentTimeMillis(),
+    ).any(activeCapabilityPolicy::isUnlimited)
+    val overlayRequired = screenControlAvailable ||
+        com.hermesandroid.relay.bridge.BridgeCapability.COMMUNICATIONS in
+        activeCapabilityPolicy.permanentGrants ||
+        com.hermesandroid.relay.bridge.BridgeCapability.OUTBOUND_SHARING in
+        activeCapabilityPolicy.permanentGrants
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    if (autoDisableAtMs != null) {
+        LaunchedEffect(autoDisableAtMs) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                kotlinx.coroutines.delay(1_000L)
+            }
+        }
+    }
+    val androidAccessSummary = bridgeAndroidAccessSummary(
+        policy = activeCapabilityPolicy,
+        status = permissionStatus,
+        nowMs = nowMs,
+    )
+    var permissionsExpanded by remember { mutableStateOf(false) }
+    var showSetupSheet by remember { mutableStateOf(false) }
+    var selectedPreset by remember { mutableStateOf(BridgeAccessPreset.READ_ONLY) }
+    var showTimedSheet by remember { mutableStateOf(false) }
+    var timedInspect by remember { mutableStateOf(true) }
+    var timedControl by remember { mutableStateOf(true) }
+    var timedMinutes by remember { mutableStateOf(safetySettings.autoDisableMinutes) }
+    var timedUnlimited by remember { mutableStateOf(false) }
+    val timedCurrentlyActive = activeCapabilityPolicy.activeTimedCapabilities(nowMs).isNotEmpty()
+    fun openTimedSheet() {
+        val current = activeCapabilityPolicy.activeTimedCapabilities(nowMs)
+        timedInspect = if (current.isEmpty()) true else
+            com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_INSPECTION in current
+        timedControl = if (current.isEmpty()) true else
+            com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL in current
+        timedMinutes = safetySettings.autoDisableMinutes
+        timedUnlimited = current.any(activeCapabilityPolicy::isUnlimited)
+        showTimedSheet = true
+    }
     // === END PHASE3-safety-rails ===
 
     // Re-run permission + system-status probes whenever the screen resumes.
@@ -328,6 +402,7 @@ fun BridgeScreen(
             // needed and the nag would confuse users + reviewers.
             if (BuildFlavor.isSideload &&
                 masterToggle &&
+                overlayRequired &&
                 !permissionStatus.overlayPermitted
             ) {
                 OverlayPermissionNagCard(
@@ -397,58 +472,20 @@ fun BridgeScreen(
                     stringResource(R.string.bridge_enable_bridge_mode),
             )
 
-            // 2. Permissions — prerequisites come before advanced features.
-            BridgePermissionChecklist(
-                status = permissionStatus,
-                // === PHASE3-safety-rails-followup: in-app permission Test handlers ===
-                onTestAccessibility = { viewModel.testAccessibilityService() },
-                onTestScreenCapture = { viewModel.testScreenCapture() },
-                onTestOverlay = { viewModel.testOverlayPermission() },
-                // === END PHASE3-safety-rails-followup ===
-                // === PHASE3-bridge-ui-followup: extended interactions ===
-                onRequestScreenCapture = { viewModel.requestScreenCapture() },
-                onTestNotificationListener = { viewModel.testNotificationListener() },
-                // === END PHASE3-bridge-ui-followup ===
-                onRequestNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // Same "tap always goes to Settings" treatment as the
-                    // other runtime-permission rows. The master-toggle
-                    // auto-request path (BridgeMasterToggle onToggle) still
-                    // uses the launcher directly since that's a programmatic
-                    // flow where a dialog is appropriate.
-                    { openAppDetailsSettings(context) }
-                } else null,
-                // === v0.4.1 polish: runtime-permission row taps go to Settings ====
-                // Earlier iteration tried launcher.launch(permission) with a
-                // post-denial fallback to app-details Settings. That
-                // fallback depended on (context as? Activity) succeeding
-                // which quietly returned null in the Compose context chain
-                // — so taps after a permanent denial were a silent no-op.
-                // Simpler + matches user expectation: tap ALWAYS opens the
-                // app-details Settings page. Parity with Accessibility /
-                // Notification Listener / Overlay rows which also open
-                // Settings unconditionally. First-time grant is one extra
-                // tap vs. a system dialog — acceptable trade-off for
-                // "tap always does something visible".
-                onRequestMicrophone = { openAppDetailsSettings(context) },
-                onRequestCamera = { openAppDetailsSettings(context) },
-                onRequestContacts = { openAppDetailsSettings(context) },
-                onRequestSms = { openAppDetailsSettings(context) },
-                onRequestPhone = { openAppDetailsSettings(context) },
-                onRequestLocation = { openAppDetailsSettings(context) },
-                // === END v0.4.1 polish ====
+            // 2. Capability policy stays visible directly under the master.
+            // Detailed toggles remain one tap away on the full safety screen.
+            BridgeAgentAccessCard(
+                policy = activeCapabilityPolicy,
+                nowMs = nowMs,
+                onSetUp = { showSetupSheet = true },
+                onManage = onNavigateToBridgeSafety,
+                onAllowScreen = { openTimedSheet() },
             )
 
-            // 3. Advanced section — unattended access + safety. Sideload
-            //    only — these features don't exist on googlePlay (no wake
-            //    lock, no destructive-verb routes).
+            // 3. One authoritative unattended control, kept beside the
+            // access policy it extends. Do not duplicate this state inside
+            // Agent access or Advanced: one switch owns one mode.
             if (BuildFlavor.isSideload) {
-                AdvancedSectionHeader()
-
-                // 4. Unattended access — a SUB-FEATURE of the master
-                //    toggle. Gated: Switch is non-interactive when the
-                //    master toggle is off so users can't flip it and
-                //    observe nothing happening (the acquire path
-                //    short-circuits when master is off anyway).
                 UnattendedAccessRow(
                     enabled = unattendedEnabled,
                     warningSeen = unattendedWarningSeen,
@@ -456,15 +493,76 @@ fun BridgeScreen(
                     onToggle = { viewModel.setUnattendedAccessEnabled(it) },
                     onWarningSeen = { viewModel.markUnattendedWarningSeen() },
                     masterEnabled = masterToggle,
+                    screenControlAvailable = screenControlAvailable,
+                    screenAccessUnlimited = screenControlUnlimited,
                 )
+            }
 
-                // 5. Safety summary — auto-disable, destructive verbs,
-                //    blocklist. Belongs adjacent to unattended because
-                //    they share the "advanced / opt-in / sideload-only"
-                //    mental model.
+            // 4. Android permission state is summarized against the selected
+            // policy. Expanding preserves the complete existing matrix and
+            // every Settings/Test action—no power-user surface is removed.
+            BridgeAndroidAccessSummaryCard(
+                summary = androidAccessSummary,
+                expanded = permissionsExpanded,
+                onToggle = { permissionsExpanded = !permissionsExpanded },
+            )
+            if (permissionsExpanded) {
+                BridgeSelectedAndroidAccessCard(
+                    summary = androidAccessSummary,
+                    onOpenAccessibility = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                },
+                            )
+                        }
+                    },
+                    onOpenAppSettings = { openAppDetailsSettings(context) },
+                    onOpenOverlay = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}"),
+                                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) },
+                            )
+                        }
+                    },
+                )
+                BridgePermissionChecklist(
+                    status = permissionStatus,
+                    onTestAccessibility = { viewModel.testAccessibilityService() },
+                    onTestScreenCapture = { viewModel.testScreenCapture() },
+                    onTestOverlay = { viewModel.testOverlayPermission() },
+                    onRequestScreenCapture = { viewModel.requestScreenCapture() },
+                    onTestNotificationListener = { viewModel.testNotificationListener() },
+                    onRequestNotifications = if (
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    ) {
+                        { openAppDetailsSettings(context) }
+                    } else null,
+                    onRequestMicrophone = { openAppDetailsSettings(context) },
+                    onRequestCamera = { openAppDetailsSettings(context) },
+                    onRequestContacts = { openAppDetailsSettings(context) },
+                    onRequestSms = { openAppDetailsSettings(context) },
+                    onRequestPhone = { openAppDetailsSettings(context) },
+                    onRequestLocation = { openAppDetailsSettings(context) },
+                )
+            }
+
+            // 5. Advanced safety controls. Sideload only — these features
+            //    don't exist on googlePlay (no destructive-verb routes).
+            if (BuildFlavor.isSideload) {
+                AdvancedSectionHeader()
+
+                // Safety summary — auto-disable, destructive verbs,
+                // blocklist, and the complete granular editor.
                 BridgeSafetySummaryCard(
                     settings = safetySettings,
                     autoDisableAtMs = autoDisableAtMs,
+                    screenAccessActive = screenAccessActive,
+                    screenAccessUnlimited = anyScreenAccessUnlimited,
                     onManage = onNavigateToBridgeSafety,
                 )
 
@@ -491,6 +589,102 @@ fun BridgeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    if (showSetupSheet) {
+        BridgeAccessSetupSheet(
+            selected = selectedPreset,
+            onSelected = { selectedPreset = it },
+            onDismiss = { showSetupSheet = false },
+            onContinue = {
+                when (selectedPreset) {
+                    BridgeAccessPreset.CUSTOM -> {
+                        showSetupSheet = false
+                        onNavigateToBridgeSafety()
+                    }
+                    BridgeAccessPreset.READ_ONLY,
+                    BridgeAccessPreset.READ_CONFIRMED -> accessScope.launch {
+                        val grants = if (selectedPreset == BridgeAccessPreset.READ_ONLY) {
+                            READ_ONLY_BRIDGE_CAPABILITIES
+                        } else {
+                            READ_CONFIRMED_BRIDGE_CAPABILITIES
+                        }
+                        safetyManager?.replacePermanentCapabilities(activeConnectionId, grants)
+                        showSetupSheet = false
+                        permissionsExpanded = true
+                        snackbarHost.showSnackbar(accessSavedMessage)
+                    }
+                }
+            },
+        )
+    }
+
+    if (showTimedSheet) {
+        BridgeTimedAccessSheet(
+            inspectEnabled = timedInspect,
+            controlEnabled = timedControl,
+            durationMinutes = timedMinutes,
+            unlimited = timedUnlimited,
+            accessibilityReady = permissionStatus.accessibilityServiceEnabled,
+            overlayReady = permissionStatus.overlayPermitted,
+            currentlyActive = timedCurrentlyActive,
+            onInspectChanged = { timedInspect = it },
+            onControlChanged = { timedControl = it },
+            onDurationChanged = { timedMinutes = it },
+            onUnlimitedChanged = { timedUnlimited = it },
+            onOpenAccessibility = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        },
+                    )
+                }
+            },
+            onOpenOverlay = {
+                runCatching {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) },
+                    )
+                }
+            },
+            onDismiss = { showTimedSheet = false },
+            onAllow = {
+                accessScope.launch {
+                    val capabilities = buildSet {
+                        if (timedInspect) add(
+                            com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_INSPECTION,
+                        )
+                        if (timedControl) add(
+                            com.hermesandroid.relay.bridge.BridgeCapability.SCREEN_CONTROL,
+                        )
+                    }
+                    viewModel.setTimedAccessMinutes(timedMinutes)
+                    safetyManager?.replaceTimedCapabilities(
+                        activeConnectionId,
+                        capabilities,
+                        timedMinutes,
+                        unlimited = timedUnlimited,
+                    )
+                    showTimedSheet = false
+                }
+            },
+            onEndNow = {
+                accessScope.launch {
+                    safetyManager?.replaceTimedCapabilities(
+                        activeConnectionId,
+                        emptySet(),
+                        timedMinutes,
+                    )
+                    viewModel.setUnattendedAccessEnabled(false)
+                    showTimedSheet = false
+                    snackbarHost.showSnackbar(timedAccessEndedMessage)
+                }
+            },
+        )
     }
 }
 
