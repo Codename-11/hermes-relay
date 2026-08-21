@@ -1,1 +1,3 @@
-See Markdown take shape while replies stream without a final message rebuild or scroll jump. Return from another app and resume the open Hermes session automatically. Composer drafts and pending attachments now survive restarts, large pastes become reviewable text attachments, and the software keyboard exposes Return while the dedicated button sends.
+v1.11.0 - More reliable chat
+
+Keep stored-session failures visible with route-aware retry details. Use Return for multiline prompts across more software keyboards. Preserve Stopped status when cancelling answer recovery. Reduce idle redraws and release capture and audio resources sooner.

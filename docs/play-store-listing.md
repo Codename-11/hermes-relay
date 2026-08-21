@@ -89,15 +89,10 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.10.0 - Chat that stays put
+v1.11.0 - More reliable chat
 
-* Render Markdown while replies stream without a final rebuild or scroll jump.
-* Resume the open Hermes session after returning from another app.
-* Restore composer drafts and pending attachments after app restarts.
-* Turn large pastes into reviewable text attachments.
-* Use Return on the software keyboard while the dedicated button sends.
+Keep stored-session failures visible with route-aware retry details. Use Return for multiline prompts across more software keyboards. Preserve Stopped status when cancelling answer recovery. Reduce idle redraws and release capture and audio resources sooner.
 ```
-
 ## Category
 
 Tools
