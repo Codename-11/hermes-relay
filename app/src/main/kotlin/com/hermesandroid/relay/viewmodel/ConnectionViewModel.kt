@@ -1600,20 +1600,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
 
+    suspend fun listProfileScopedSessions(
+        profileName: String?,
+        limit: Int = 200,
+    ): Result<List<SessionItem>>? =
+        profileController.listProfileScopedSessions(profileName, limit)
+
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
 
-    suspend fun deleteSession(profileName: String, sessionId: String): Boolean =
-        profileController.deleteSession(profileName, sessionId)
+    suspend fun deleteSession(
+        profileName: String?,
+        sessionId: String,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.deleteSession(profileName, sessionId, expectedContextKey)
 
-    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean =
-        profileController.renameSession(profileName, sessionId, title)
+    suspend fun renameSession(
+        profileName: String?,
+        sessionId: String,
+        title: String,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.renameSession(profileName, sessionId, title, expectedContextKey)
 
-    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean =
-        profileController.setSessionPinned(profileName, sessionId, pinned)
+    suspend fun setSessionPinned(
+        profileName: String?,
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.setSessionPinned(profileName, sessionId, pinned, expectedContextKey)
 
-    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean =
-        profileController.setSessionArchived(profileName, sessionId, archived)
+    suspend fun setSessionArchived(
+        profileName: String?,
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.setSessionArchived(profileName, sessionId, archived, expectedContextKey)
 
     suspend fun loadProfileScopedMessages(
         sessionId: String,

@@ -2848,9 +2848,12 @@ class ChatViewModel : ViewModel() {
      * shared api_server list. Wired from RelayApp to
      * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.listProfileScopedSessions].
      */
-    private var profileSessionLister: (suspend () -> Result<List<SessionItem>>?)? = null
+    private var profileSessionLister:
+        (suspend (String?) -> Result<List<SessionItem>>?)? = null
 
-    fun setProfileSessionLister(lister: suspend () -> Result<List<SessionItem>>?) {
+    fun setProfileSessionLister(
+        lister: suspend (String?) -> Result<List<SessionItem>>?,
+    ) {
         profileSessionLister = lister
     }
 
@@ -2860,10 +2863,9 @@ class ChatViewModel : ViewModel() {
      * [profileSessionLister]: a non-default profile's row lives in that profile's
      * own DB, so the unscoped api_server delete leaves it behind and the next
      * profile-scoped list resurrects it. Returns `true` on success. Wired from
-     * RelayApp to
-     * [com.hermesandroid.relay.viewmodel.ConnectionViewModel.deleteProfileScopedSession].
+     * RelayApp to the exact-profile Dashboard writer.
      */
-    var profileSessionDeleter: (suspend (String) -> Boolean)? = null
+    var profileSessionDeleter: (suspend (String?, String, String?) -> Boolean)? = null
 
     /**
      * Renames a session scoped to the active profile on gateway connections
@@ -2871,13 +2873,13 @@ class ChatViewModel : ViewModel() {
      * [profileSessionDeleter]: without it, a rename on a non-default gateway
      * profile patches the shared api_server DB and the new title never lands in
      * the profile's own state.db. Returns `true` on success. Wired from RelayApp
-     * to [com.hermesandroid.relay.viewmodel.ConnectionViewModel.renameProfileScopedSession].
+     * to the exact-profile Dashboard writer.
      */
-    var profileSessionRenamer: (suspend (String, String) -> Boolean)? = null
+    var profileSessionRenamer: (suspend (String?, String, String, String?) -> Boolean)? = null
 
     /** Profile-scoped durable session metadata writers; never cross to the shared API DB. */
-    var profileSessionPinner: (suspend (String, Boolean, String?) -> Boolean)? = null
-    var profileSessionArchiver: (suspend (String, Boolean, String?) -> Boolean)? = null
+    var profileSessionPinner: (suspend (String?, String, Boolean, String?) -> Boolean)? = null
+    var profileSessionArchiver: (suspend (String?, String, Boolean, String?) -> Boolean)? = null
 
     private val sessionFlagMutationRevisions = mutableMapOf<String, Int>()
     private val sessionFlagMutationLocks = ConcurrentHashMap<String, Mutex>()
@@ -3610,6 +3612,24 @@ class ChatViewModel : ViewModel() {
         switchProfileContextInternal(contextKey, sessionId)
     }
 
+    /**
+     * Reconcile the globally selected profile after runtime readiness changes.
+     *
+     * An All Profiles row is an explicit visible binding whose owner is allowed
+     * to differ from the persistent profile selector. Activity recreation,
+     * route revalidation, and other lifecycle emissions must not replace that
+     * binding with the selector's last-session slot. User actions clear the
+     * explicit owner through [activateGatewayProfile], [createNewChat], or
+     * [switchProfileContext] before requesting a different namespace.
+     */
+    fun reconcileProfileContext(contextKey: String, sessionId: String?) {
+        if (_openedSessionProfileName.value != null) {
+            _initialChatSettled.value = true
+            return
+        }
+        switchProfileContextInternal(contextKey, sessionId)
+    }
+
     private fun switchProfileContextInternal(
         contextKey: String,
         sessionId: String?,
@@ -3851,6 +3871,8 @@ class ChatViewModel : ViewModel() {
     fun refreshSessions() {
         val handler = chatHandler ?: return
         val generation = sessionRefreshGeneration.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
         sessionRefreshJob?.cancel()
         sessionRefreshJob = viewModelScope.launch {
             // Treat refreshes over an existing list as quiet background syncs.
@@ -3866,11 +3888,28 @@ class ChatViewModel : ViewModel() {
                 // api_server `/api/sessions` (one shared DB, no profile concept)
                 // is the fallback for connections without a Manage/dashboard
                 // session.
-                val scoped = if (streamingEndpoint == "gateway") profileSessionLister?.invoke() else null
+                val scoped = if (streamingEndpoint == "gateway") {
+                    profileSessionLister?.invoke(profileName)
+                } else {
+                    null
+                }
                 val result = scoped ?: apiClient?.listSessionsResult()
                 result?.fold(
-                    onSuccess = { sessions -> handler.updateSessions(sessions) },
+                    onSuccess = { sessions ->
+                        if (
+                            sessionRefreshGeneration.get() == generation &&
+                            activeProfileContextKey == contextKey &&
+                            currentSessionProfileName() == profileName
+                        ) {
+                            handler.updateSessions(sessions)
+                        }
+                    },
                     onFailure = { error ->
+                        if (
+                            sessionRefreshGeneration.get() != generation ||
+                            activeProfileContextKey != contextKey ||
+                            currentSessionProfileName() != profileName
+                        ) return@fold
                         if (scoped != null) {
                             // The shared API list belongs to the launch/default
                             // database. Preserve the current profile's rows and
@@ -4149,7 +4188,6 @@ class ChatViewModel : ViewModel() {
     fun switchSession(sessionId: String) {
         val handler = chatHandler ?: return
         dismissChatFailure()
-        clearOpenedSessionOwner()
         if (streamingEndpoint != "gateway" && apiClient == null) return
         pendingThread = null
         creatingThread = null
@@ -4159,6 +4197,8 @@ class ChatViewModel : ViewModel() {
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
 
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -4186,7 +4226,12 @@ class ChatViewModel : ViewModel() {
         // The switched-to session owns its own YOLO state (session.info
         // reconciles) — drop any pick stashed for a different draft.
         pendingYolo = null
-        onSessionChanged?.invoke(sessionId)
+        // An All Profiles binding deliberately does not mutate the persistent
+        // global selector's last-session slot. Sibling sessions in its scoped
+        // drawer retain that same ownership contract.
+        if (_openedSessionProfileName.value == null) {
+            onSessionChanged?.invoke(sessionId)
+        }
         AppAnalytics.onSessionSwitched()
         // Recover a retained live turn before doing an ordinary history load.
         // This avoids a concurrent list fetch wiping the restored streaming
@@ -4199,9 +4244,11 @@ class ChatViewModel : ViewModel() {
                 false
             }
             if (!recovered) {
-                val messages = loadSessionHistory(sessionId)
+                val messages = loadSessionHistory(sessionId, profileName = profileName)
                 if (
                     historyLoadGeneration.get() == loadGeneration &&
+                    activeProfileContextKey == contextKey &&
+                    currentSessionProfileName() == profileName &&
                     handler.currentSessionId.value == sessionId
                 ) {
                     handler.loadMessageHistory(messages)
@@ -4227,6 +4274,8 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
+        val profileName = currentSessionProfileName()
+        val contextKey = activeProfileContextKey
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
@@ -4246,7 +4295,10 @@ class ChatViewModel : ViewModel() {
         if (handler.currentSessionId.value == null) {
             selectBackgroundProcessSession(null)
         }
-        if (handler.currentSessionId.value == null) {
+        if (
+            handler.currentSessionId.value == null &&
+            _openedSessionProfileName.value == null
+        ) {
             onSessionChanged?.invoke(null)
         }
 
@@ -4260,10 +4312,14 @@ class ChatViewModel : ViewModel() {
             // api_server DB, no profiles) the plain delete is correct. A missing
             // gateway deleter is a wiring failure, not permission to cross DBs.
             val success = if (streamingEndpoint == "gateway") {
-                profileSessionDeleter?.invoke(sessionId) ?: false
+                profileSessionDeleter?.invoke(profileName, sessionId, contextKey) ?: false
             } else {
                 client?.deleteSession(sessionId) == true
             }
+            if (
+                activeProfileContextKey != contextKey ||
+                currentSessionProfileName() != profileName
+            ) return@launch
             if (success) {
                 onDeleted()
                 // Re-fetch so a server that still has the row can't leave it
@@ -4284,6 +4340,8 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
+        val profileName = currentSessionProfileName()
+        val contextKey = activeProfileContextKey
 
         val previousTitle = handler.sessions.value.find { it.sessionId == sessionId }?.title
         // Optimistic rename
@@ -4299,7 +4357,16 @@ class ChatViewModel : ViewModel() {
             // the plain rename is correct. A missing gateway renamer is a wiring
             // failure, not permission to cross databases.
             if (streamingEndpoint == "gateway") {
-                val scoped = profileSessionRenamer?.invoke(sessionId, newTitle)
+                val scoped = profileSessionRenamer?.invoke(
+                    profileName,
+                    sessionId,
+                    newTitle,
+                    contextKey,
+                )
+                if (
+                    activeProfileContextKey != contextKey ||
+                    currentSessionProfileName() != profileName
+                ) return@launch
                 if (scoped != true) {
                     previousTitle?.let { handler.renameSessionLocal(sessionId, it) }
                     emitError(
@@ -4315,6 +4382,7 @@ class ChatViewModel : ViewModel() {
 
     fun setSessionPinned(sessionId: String, pinned: Boolean) {
         val expectedContextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
         mutateSessionFlag(
             sessionId = sessionId,
             target = pinned,
@@ -4322,7 +4390,8 @@ class ChatViewModel : ViewModel() {
                 handler.setSessionFlagsLocal(sessionId, pinned = value)
             },
             profileWrite = {
-                profileSessionPinner?.invoke(sessionId, pinned, expectedContextKey) ?: false
+                profileSessionPinner?.invoke(profileName, sessionId, pinned, expectedContextKey)
+                    ?: false
             },
             apiWrite = { apiClient?.setSessionPinned(sessionId, pinned) == true },
             errorContext = "pin_profile_session",
@@ -4338,6 +4407,7 @@ class ChatViewModel : ViewModel() {
             return
         }
         val expectedContextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
         mutateSessionFlag(
             sessionId = sessionId,
             target = archived,
@@ -4345,7 +4415,8 @@ class ChatViewModel : ViewModel() {
                 handler.setSessionFlagsLocal(sessionId, archived = value)
             },
             profileWrite = {
-                profileSessionArchiver?.invoke(sessionId, archived, expectedContextKey) ?: false
+                profileSessionArchiver?.invoke(profileName, sessionId, archived, expectedContextKey)
+                    ?: false
             },
             apiWrite = { apiClient?.setSessionArchived(sessionId, archived) == true },
             errorContext = "archive_profile_session",

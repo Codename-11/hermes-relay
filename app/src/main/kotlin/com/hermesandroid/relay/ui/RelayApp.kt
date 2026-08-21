@@ -1830,6 +1830,7 @@ fun RelayApp() {
                                 }
                                 if (targetProfile == null || selection != null) {
                                     connectionViewModel.selectProfile(selection)
+                                    chatViewModel.activateGatewayProfile(selection)
                                 }
                                 return@LaunchedEffect
                             }

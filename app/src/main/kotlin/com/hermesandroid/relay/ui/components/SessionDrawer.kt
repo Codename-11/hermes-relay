@@ -78,6 +78,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -247,7 +248,10 @@ fun SessionDrawerContent(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
-    var showAllProfiles by remember { mutableStateOf(false) }
+    // App-language changes recreate the Activity. Keep the drawer's namespace
+    // mode so an open All Profiles browser does not silently become the normal
+    // selected-profile list during that recreation.
+    var showAllProfiles by rememberSaveable { mutableStateOf(false) }
     var customizeOpen by remember { mutableStateOf(false) }
     var viewOptions by remember { mutableStateOf(SessionDrawerViewOptions()) }
     val listState = rememberLazyListState()
