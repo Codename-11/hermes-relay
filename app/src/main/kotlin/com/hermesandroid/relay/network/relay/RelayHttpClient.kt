@@ -8,6 +8,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -1469,4 +1470,86 @@ class RelayHttpClient(
         val value = header?.trim()?.lowercase() ?: return false
         return value == "1" || value == "true"
     }
+
+    /** Provider-neutral compatibility fetch for gateways without `account.usage`. */
+    suspend fun fetchProviderUsage(
+        profile: String? = null,
+        sessionId: String? = null,
+    ): Result<ProviderUsageResponse?> =
+        withContext(Dispatchers.IO) {
+            val relayUrl = relayUrlProvider()?.trim().orEmpty()
+            if (relayUrl.isEmpty()) {
+                return@withContext Result.success(null)
+            }
+            val sessionToken = sessionTokenProvider()
+            if (sessionToken.isNullOrBlank()) {
+                return@withContext Result.success(null)
+            }
+
+            val httpBase = relayUrl
+                .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
+                .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
+                .trimEnd('/')
+
+            val url = "$httpBase/usage/providers".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.apply {
+                    profile?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        addQueryParameter("profile", it)
+                    }
+                    sessionId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        addQueryParameter("session_id", it)
+                    }
+                }
+                ?.build()
+                ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid relay URL: $httpBase")
+                )
+
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("Authorization", "Bearer $sessionToken")
+                .header("Accept", "application/json")
+                .build()
+
+            try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.code == 404) {
+                        // Older or operator-disabled hosts simply do not expose
+                        // account usage. This is capability absence, not an error.
+                        return@withContext Result.success(null)
+                    }
+                    if (!response.isSuccessful) {
+                        val reason = when (response.code) {
+                            401, 403 -> "Unauthorized — re-pair with the relay"
+                            502 -> "Provider usage upstream error (HTTP ${response.code})"
+                            in 500..599 -> "Relay error (HTTP ${response.code})"
+                            else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                        }
+                        return@withContext Result.failure(IOException(reason))
+                    }
+                    val body = response.body?.string().orEmpty()
+                    if (body.isBlank()) {
+                        return@withContext Result.failure(IOException("Empty response body"))
+                    }
+                    val parsed = runCatching {
+                        sessionsJson.decodeFromString(
+                            ProviderUsageResponse.serializer(),
+                            body,
+                        )
+                    }.getOrElse {
+                        Log.w(TAG, "fetchProviderUsage parse error: ${it.message}")
+                        return@withContext Result.failure(IOException("Unrecognized usage payload"))
+                    }
+                    Result.success(parsed)
+                }
+            } catch (e: IOException) {
+                Log.w(TAG, "fetchProviderUsage failed: ${e.message}")
+                Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchProviderUsage unexpected error: ${e.message}")
+                Result.failure(e)
+            }
+        }
 }

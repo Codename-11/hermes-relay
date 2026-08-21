@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -71,6 +72,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -97,11 +99,17 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProviderUsageLandingMode
+import com.hermesandroid.relay.data.ProviderUsagePreferences
+import com.hermesandroid.relay.data.ProviderUsagePreferencesRepository
+import com.hermesandroid.relay.network.usage.ProviderUsageRepository
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
+import com.hermesandroid.relay.ui.components.RelaySkeletonLine
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
@@ -114,6 +122,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
 
 private const val SETTINGS_PET_SURFACE_ROUTE = "settings"
 private val SETTINGS_PET_SURFACE_ROUTES = setOf(SETTINGS_PET_SURFACE_ROUTE)
@@ -170,6 +179,7 @@ fun SettingsScreen(
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
     onNavigateToManage: () -> Unit,
+    onNavigateToProviderUsage: () -> Unit,
     onNavigateToPlugins: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
@@ -200,9 +210,57 @@ fun SettingsScreen(
     val isDarkTheme = LocalBrand.current.isDark
 
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val currentSessionId by chatViewModel.currentSessionId.collectAsState()
+    val providerUsagePreferencesRepository = remember(context) {
+        ProviderUsagePreferencesRepository(context)
+    }
+    val providerUsagePreferences by providerUsagePreferencesRepository.preferences.collectAsState(
+        initial = ProviderUsagePreferences(),
+    )
+    val providerUsageRepository = remember(connectionViewModel) {
+        ProviderUsageRepository(
+            gatewayClientProvider = connectionViewModel::activeGatewayChatClient,
+            dashboardClientProvider = {
+                connectionViewModel.activeDashboardUrl()?.let(
+                    connectionViewModel::dashboardClientForActive,
+                )
+            },
+            relayHttpClient = connectionViewModel.relayHttpClient,
+            profileProvider = { connectionViewModel.selectedProfile.value?.name },
+            sessionProvider = { chatViewModel.currentSessionId.value },
+        )
+    }
+    var providerUsageResponse by remember { mutableStateOf<ProviderUsageResponse?>(null) }
+    var providerUsageLoaded by remember { mutableStateOf(false) }
+    var providerUsageRefreshing by remember { mutableStateOf(false) }
+    var providerUsageRefreshKey by remember { mutableIntStateOf(0) }
+    LaunchedEffect(
+        activeConnection?.id,
+        selectedProfile?.name,
+        currentSessionId,
+        providerUsagePreferences.landingMode,
+        providerUsageRefreshKey,
+    ) {
+        if (providerUsagePreferences.landingMode == ProviderUsageLandingMode.Hidden) {
+            providerUsageResponse = null
+            providerUsageLoaded = true
+        } else {
+            if (providerUsageResponse == null) providerUsageLoaded = false
+            providerUsageRefreshing = providerUsageResponse != null
+            providerUsageRepository.fetch().getOrNull()?.let { providerUsageResponse = it }
+            providerUsageLoaded = true
+            providerUsageRefreshing = false
+        }
+    }
+    LaunchedEffect(providerUsagePreferences.landingMode) {
+        while (providerUsagePreferences.landingMode != ProviderUsageLandingMode.Hidden) {
+            delay(300_000)
+            providerUsageRefreshKey++
+        }
+    }
     // Active Agent card inputs — personality + profile drive the title,
     // ring-accent, and subtitle.
-    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
@@ -474,6 +532,16 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_connections),
                 subtitle = stringResource(R.string.settings_connections_desc),
                 onClick = onNavigateToConnections,
+                isDarkTheme = isDarkTheme,
+            )
+
+            ProviderUsageLandingCard(
+                response = providerUsageResponse,
+                loaded = providerUsageLoaded,
+                refreshing = providerUsageRefreshing,
+                preferences = providerUsagePreferences,
+                onDisplay = onNavigateToProviderUsage,
+                onRefresh = { providerUsageRefreshKey++ },
                 isDarkTheme = isDarkTheme,
             )
 
@@ -1254,6 +1322,135 @@ private fun SettingsStatusPill(pill: SettingsStatusPillModel) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
         )
+    }
+}
+
+@Composable
+private fun ProviderUsageLandingCard(
+    response: ProviderUsageResponse?,
+    loaded: Boolean,
+    refreshing: Boolean,
+    preferences: ProviderUsagePreferences,
+    onDisplay: () -> Unit,
+    onRefresh: () -> Unit,
+    isDarkTheme: Boolean,
+) {
+    val providers = response?.providers
+        ?.filter { it.available && it.id in preferences.visibleProviders }
+        .orEmpty()
+    Card(
+        modifier = Modifier
+            .settingsPetSurface("settings-card:provider-usage")
+            .fillMaxWidth()
+            .gradientBorder(
+                shape = RoundedCornerShape(12.dp),
+                isDarkTheme = isDarkTheme,
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Analytics,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.provider_usage_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = stringResource(
+                            when (response?.relayEnhanced) {
+                                true -> R.string.provider_usage_settings_desc_relay
+                                false -> R.string.provider_usage_settings_desc_basic
+                                null -> R.string.provider_usage_settings_desc
+                            },
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onRefresh, enabled = !refreshing) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = stringResource(R.string.provider_usage_refresh),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = onDisplay) {
+                    Text(stringResource(R.string.provider_usage_customize))
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+
+            when {
+                preferences.landingMode == ProviderUsageLandingMode.Hidden -> {
+                    Text(
+                        text = stringResource(R.string.provider_usage_hidden_hint),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                !loaded -> {
+                    ProviderUsageSkeleton(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    )
+                }
+                providers.isEmpty() -> {
+                    Text(
+                        text = stringResource(R.string.provider_usage_not_available_compact),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                else -> providers.forEachIndexed { index, provider ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                    }
+                    ProviderUsageContent(
+                        provider = provider,
+                        detailed = preferences.landingMode == ProviderUsageLandingMode.Expanded,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderUsageSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        RelaySkeletonLine(width = 112.dp, height = 16.dp)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            RelaySkeletonLine(width = 86.dp)
+            RelaySkeletonLine(width = 58.dp)
+        }
+        RelaySkeletonLine(width = 260.dp, height = 6.dp)
+        RelaySkeletonLine(width = 92.dp, height = 10.dp)
     }
 }
 

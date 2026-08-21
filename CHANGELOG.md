@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. The UI identifies Relay-plugin-enhanced data and explains which capabilities require the matching plugin. Provider credentials remain host-side.
+
 ## [1.11.0] - 2026-08-20
 
 ### Added
@@ -26,7 +30,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android screen-on idle no longer continuously redraws the ASCII sphere.** Idle holds a stable frame while thinking, streaming, and voice states retain full-rate motion; inactive voice waveforms and closed session drawers also stop their frame loops.
 - **Android capture and audio effects release power-sensitive resources at their actual lifecycle boundaries.** Screen capture attaches its MediaProjection surface only for a requested frame, unattended Bridge wake locks release when the command finishes, and barge-in AEC/noise suppression attach to the microphone capture session instead of playback.
 - **Experimental wake-word listening reuses its PCM normalization buffer.** Continuous opt-in listening no longer allocates a new float frame for every inference call.
-
 ## [1.10.0] - 2026-08-18
 
 ### Added

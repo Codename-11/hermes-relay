@@ -102,6 +102,11 @@ class RelayConfig:
     trust_proxy_headers: bool = False
     allow_insecure_api_bearer: bool = False
 
+    # Provider-account usage can expose billing and quota metadata to paired
+    # devices. Provider credentials alone are not consent to that disclosure;
+    # operators must explicitly enable the read-only mobile surface.
+    provider_usage_enabled: bool = False
+
     # Provider-neutral voice output broker. This is the default assistant
     # speech renderer: final Hermes text goes in, streamed provider PCM comes
     # out. Realtime providers remain available separately as agent-mode tests.
@@ -282,6 +287,12 @@ class RelayConfig:
         ).strip().lower()
         if insecure_api_bearer in ("1", "true", "yes", "on"):
             config.allow_insecure_api_bearer = True
+
+        provider_usage = os.getenv(
+            "RELAY_PROVIDER_USAGE_ENABLED", ""
+        ).strip().lower()
+        if provider_usage in ("1", "true", "yes", "on"):
+            config.provider_usage_enabled = True
 
         apply_voice_output_config_file(config)
         apply_realtime_voice_config_file(config)

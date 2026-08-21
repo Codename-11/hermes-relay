@@ -1,8 +1,9 @@
 """Lifecycle hooks for the hermes-relay plugin.
 
-Registered via ``ctx.register_hook(...)``. There is exactly one hook here:
-``on_session_start``, which performs a single fast, fully-guarded loopback
-probe of the relay's ``/health`` endpoint and caches the result.
+Registered via ``ctx.register_hook(...)``. Session-start performs a single
+fast, fully-guarded loopback health probe. Turn-boundary hooks also persist the
+stable credential-pool entry selected by the live Gateway session so Relay can
+report the correct account without ever receiving its token.
 
 IMPORTANT — runs in the gateway process
 ---------------------------------------
@@ -30,6 +31,7 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,94 @@ def on_session_start(**kwargs: Any) -> None:
     return None
 
 
+def resolve_live_active_credential(session_id: str) -> dict[str, Any] | None:
+    """Resolve a live Gateway session's active credential without exposing it."""
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+    try:
+        from tui_gateway import server as gateway_server
+
+        sessions = getattr(gateway_server, "_sessions", {})
+
+        def resolve_record():
+            direct = sessions.get(session_id)
+            if isinstance(direct, dict):
+                return session_id, direct
+            for gateway_id, candidate in sessions.items():
+                if not isinstance(candidate, dict):
+                    continue
+                agent = candidate.get("agent")
+                aliases = {
+                    str(candidate.get("session_key") or ""),
+                    str(getattr(agent, "session_id", "") or ""),
+                }
+                if session_id in aliases:
+                    return str(gateway_id), candidate
+            return None, None
+
+        lock = getattr(gateway_server, "_sessions_lock", None)
+        if lock is None:
+            gateway_id, record = resolve_record()
+        else:
+            with lock:
+                gateway_id, record = resolve_record()
+        if not isinstance(record, dict):
+            return None
+        agent = record.get("agent")
+        credential_id = str(getattr(agent, "_credential_pool_entry_id", "") or "").strip()
+        pool = getattr(agent, "_credential_pool", None)
+        provider_id = str(getattr(pool, "provider", "") or "").strip()
+        if not credential_id or not provider_id:
+            return None
+
+        raw_home = record.get("profile_home")
+        if raw_home:
+            profile_home = Path(raw_home).expanduser().resolve()
+        else:
+            from hermes_constants import get_hermes_home
+
+            profile_home = Path(get_hermes_home()).expanduser().resolve()
+        aliases = {
+            value
+            for value in (
+                session_id,
+                str(gateway_id or ""),
+                str(record.get("session_key") or ""),
+                str(getattr(agent, "session_id", "") or ""),
+            )
+            if value
+        }
+        return {
+            "profile_home": profile_home,
+            "provider_id": provider_id,
+            "credential_id": credential_id,
+            "session_ids": aliases,
+        }
+    except Exception as exc:  # noqa: BLE001 -- live lookup must fail open
+        logger.debug("active credential lookup skipped: %s", exc)
+        return None
+
+
+def capture_active_credential(**kwargs: Any) -> None:
+    """Persist the current live session's stable credential id, if available."""
+    try:
+        resolved = resolve_live_active_credential(str(kwargs.get("session_id") or ""))
+        if resolved is None:
+            return None
+        from .relay.active_credentials import record_active_credential_aliases
+
+        record_active_credential_aliases(
+            resolved["profile_home"],
+            session_ids=resolved["session_ids"],
+            provider_id=resolved["provider_id"],
+            credential_id=resolved["credential_id"],
+        )
+    except Exception as exc:  # noqa: BLE001 -- this hook must always fail open
+        logger.debug("active credential capture skipped: %s", exc)
+    return None
+
+
 def register_hooks(ctx) -> None:
     """Register the ``on_session_start`` hook with the plugin host.
 
@@ -121,5 +211,11 @@ def register_hooks(ctx) -> None:
     """
     try:
         ctx.register_hook("on_session_start", on_session_start)
-    except (AttributeError, TypeError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         logger.debug("register_hook unavailable; skipping on_session_start: %s", exc)
+        return
+    for hook_name in ("pre_llm_call", "post_llm_call"):
+        try:
+            ctx.register_hook(hook_name, capture_active_credential)
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug("register_hook unavailable; skipping %s: %s", hook_name, exc)
