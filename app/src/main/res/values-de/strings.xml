@@ -4288,6 +4288,7 @@
     <string name="custom_theme_mode">Modus</string>
     <string name="custom_theme_fixed_dark">%1$s unterstützt nur Dunkel.</string>
     <string name="custom_theme_fixed_light">%1$s unterstützt nur Hell.</string>
+    <string name="custom_theme_mode_summary">Wähle Hell oder Dunkel. Automatisch erfordert getrennte helle und dunkle Paletten.</string>
     <string name="custom_theme_style_summary">Die Form wird mit diesem Preset gespeichert. Die Typografie folgt weiterhin der appweiten Schriftarteinstellung.</string>
     <string name="custom_theme_preview_name">Vorschau · %1$s</string>
     <string name="custom_theme_preview_user">Zeig mir, wie sich dieses Theme anfühlt.</string>

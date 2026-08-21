@@ -1351,6 +1351,7 @@
     <string name="custom_theme_mode">Mode</string>
     <string name="custom_theme_fixed_dark">%1$s supports Dark only.</string>
     <string name="custom_theme_fixed_light">%1$s supports Light only.</string>
+    <string name="custom_theme_mode_summary">Choose Light or Dark. Auto requires separate light and dark palettes.</string>
     <string name="custom_theme_style_summary">Shape is saved with this preset. Typography continues to follow the app-wide font setting.</string>
     <string name="custom_theme_preview_name">Preview · %1$s</string>
     <string name="custom_theme_preview_user">Show me how this theme feels.</string>

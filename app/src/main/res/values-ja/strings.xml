@@ -4286,6 +4286,7 @@
     <string name="custom_theme_mode">モード</string>
     <string name="custom_theme_fixed_dark">%1$s はダークのみ対応しています。</string>
     <string name="custom_theme_fixed_light">%1$s はライトのみ対応しています。</string>
+    <string name="custom_theme_mode_summary">ライトまたはダークを選択してください。自動にはライト用とダーク用の別々のパレットが必要です。</string>
     <string name="custom_theme_style_summary">形状はこのテーマに保存されます。書体はアプリ全体のフォント設定に従います。</string>
     <string name="custom_theme_preview_name">プレビュー · %1$s</string>
     <string name="custom_theme_preview_user">このテーマの雰囲気を見せてください。</string>

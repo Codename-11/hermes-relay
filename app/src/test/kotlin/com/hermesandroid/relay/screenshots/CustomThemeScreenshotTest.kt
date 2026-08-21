@@ -4,11 +4,14 @@ import android.app.Application
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.datastore.preferences.core.edit
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -55,7 +58,7 @@ class CustomThemeScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Aurora").assertExists()
+        compose.onAllNodesWithText("Aurora").assertCountEquals(2)
         compose.onRoot().captureRoboImage("build/ui-evidence/custom-theme-preset-workshop.png")
         compose.onAllNodesWithContentDescription("More theme actions")[0].performClick()
         compose.onNodeWithText("Duplicate").assertExists()
@@ -63,7 +66,7 @@ class CustomThemeScreenshotTest {
     }
 
     @Test
-    fun newPresetEnablesSaveThroughTheRealScreenOwner() {
+    fun newPresetSupportsDirectNamingAndLightMode() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val aurora = preset("aurora", "Aurora", "#0B0B0F", "#141421", "#5B6CFF", "#F5F6F7")
         runBlocking {
@@ -79,8 +82,12 @@ class CustomThemeScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Aurora").assertExists()
+        compose.onAllNodesWithText("Aurora").assertCountEquals(2)
         compose.onNodeWithText("New").performClick()
+        compose.onNodeWithText("Custom 2").performTextReplacement("Morning Paper")
+        compose.onNodeWithText("Morning Paper").assertExists()
+        compose.onNodeWithText("Light").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("Dark").assertIsEnabled()
         compose.onNodeWithText("Save changes").assertIsEnabled()
     }
 
@@ -103,7 +110,8 @@ class CustomThemeScreenshotTest {
 
         compose.onNodeWithText("Changes saved to Aurora").performScrollTo()
         compose.onNodeWithText("Auto").assertIsNotEnabled()
-        compose.onNodeWithText("Light").assertIsNotEnabled()
+        compose.onNodeWithText("Light").assertIsEnabled()
+        compose.onNodeWithText("Dark").assertIsEnabled()
         compose.onRoot().captureRoboImage("build/ui-evidence/custom-theme-preset-workshop-style.png")
     }
 

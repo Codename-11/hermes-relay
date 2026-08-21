@@ -4213,6 +4213,7 @@
     <string name="custom_theme_mode">模式</string>
     <string name="custom_theme_fixed_dark">%1$s 仅支持深色模式。</string>
     <string name="custom_theme_fixed_light">%1$s 仅支持浅色模式。</string>
+    <string name="custom_theme_mode_summary">选择浅色或深色。自动模式需要分别设置浅色和深色调色板。</string>
     <string name="custom_theme_style_summary">形状会保存在此预设中。字体继续使用应用的全局字体设置。</string>
     <string name="custom_theme_preview_name">预览 · %1$s</string>
     <string name="custom_theme_preview_user">展示一下这个主题的效果。</string>

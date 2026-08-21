@@ -4015,6 +4015,7 @@
     <string name="custom_theme_mode">Режим</string>
     <string name="custom_theme_fixed_dark">%1$s поддерживает только темный режим.</string>
     <string name="custom_theme_fixed_light">%1$s поддерживает только светлый режим.</string>
+    <string name="custom_theme_mode_summary">Выберите светлый или тёмный режим. Для авто нужны отдельные светлая и тёмная палитры.</string>
     <string name="custom_theme_style_summary">Форма сохраняется в этой теме. Типографика следует общей настройке шрифта приложения.</string>
     <string name="custom_theme_preview_name">Предпросмотр · %1$s</string>
     <string name="custom_theme_preview_user">Покажи, как выглядит эта тема.</string>

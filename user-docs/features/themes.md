@@ -32,4 +32,4 @@ Each shot below is the **same conversation**, reskinned end-to-end by the theme 
 
 Choose **Custom** in the preset gallery to open the theme workshop. A custom preset stores its name, Background, Surface, Accent, Text, and Soft/Balanced/Sharp shape on this device. The live conversation preview updates before you save.
 
-Saved presets can be selected, renamed, duplicated, or deleted. Each preset is intentionally fixed to the Light or Dark mode it was created from; unsupported Auto/Light/Dark options appear disabled instead of silently changing the authored colors. **Reset theme** returns the app to Relay + Auto + Soft without deleting saved custom themes.
+Saved presets can be selected, renamed, duplicated, or deleted. Edit the name directly in the workshop and choose whether the preset is Light or Dark. Auto remains disabled because each preset stores one authored palette rather than a paired light/dark set. **Reset theme** returns the app to Relay + Auto + Soft without deleting saved custom themes.
