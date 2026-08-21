@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -155,6 +156,15 @@ class GatewayKeepAliveService : Service() {
         if (runningInstance === this) runningInstance = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Per-app locale changes recreate MainActivity but intentionally keep
+        // this foreground service (and its Gateway socket) alive. Re-post the
+        // existing notification so its localized title/body follow the new
+        // application resources without restarting either owner.
+        startForegroundNotification()
     }
 
     private fun applyState(

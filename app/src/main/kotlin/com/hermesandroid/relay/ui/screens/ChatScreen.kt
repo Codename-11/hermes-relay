@@ -907,6 +907,12 @@ fun ChatScreen(
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
     val openedSessionProfileName by chatViewModel.openedSessionProfileName.collectAsState()
+    val openedSessionProfileIconPath by remember(
+        connectionViewModel,
+        openedSessionProfileName,
+    ) {
+        connectionViewModel.profileIconFlow(openedSessionProfileName)
+    }.collectAsState(initial = null)
     val conversationProfile = openedSessionProfileName?.let { owner ->
         agentProfiles.firstOrNull { it.name.equals(owner, ignoreCase = true) }
             ?: allProfileSessions.firstOrNull {
@@ -2236,8 +2242,9 @@ fun ChatScreen(
         // voice overlay already owns input while voice mode is visible.
         gesturesEnabled = true,
         drawerContent = {
-            val drawerTitle = if (effectiveProfile != null) {
-                stringResource(R.string.chat_profile_sessions, globalSelectedAgentDisplayName)
+            val drawerProfileName = openedSessionProfileName ?: effectiveProfile?.name
+            val drawerTitle = if (drawerProfileName != null) {
+                stringResource(R.string.chat_profile_sessions, agentDisplayName)
             } else {
                 stringResource(R.string.chat_server_default_sessions)
             }
@@ -2281,7 +2288,7 @@ fun ChatScreen(
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
-                activeProfileName = effectiveProfile?.name ?: "default",
+                activeProfileName = drawerProfileName ?: "default",
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
@@ -2655,7 +2662,15 @@ fun ChatScreen(
                                 if (isChatConnecting) {
                                     ChatConnectingAvatarGlyph()
                                 } else {
-                                    val agentIconPath = LocalAgentIconPath.current
+                                    // An All Profiles conversation keeps the
+                                    // global profile selector unchanged. Its
+                                    // header still belongs to the exact visible
+                                    // session owner, including the icon.
+                                    val agentIconPath = if (openedSessionProfileName != null) {
+                                        openedSessionProfileIconPath
+                                    } else {
+                                        LocalAgentIconPath.current
+                                    }
                                     if (!agentIconPath.isNullOrBlank()) {
                                         AsyncImage(
                                             model = File(agentIconPath),

@@ -198,6 +198,35 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun allProfilesSwitchBetweenDifferentOwnersReplacesVisibleIdentity() {
+        val global = Profile(name = "victor", model = "gpt-5.6-sol", description = "Victor")
+        val lucy = Profile(name = "lucy", model = "gpt-5.6-sol", description = "Lucy")
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+
+        viewModel.openProfileSession(
+            profileName = lucy.name,
+            profile = lucy,
+            contextKey = AgentDisplay.profileContextKey("connection-a", lucy.name),
+            sessionId = "lucy-session",
+        )
+        assertEquals(lucy.name, viewModel.openedSessionProfileName.value)
+        assertEquals("Lucy", handler.activeAgentName)
+
+        viewModel.openProfileSession(
+            profileName = global.name,
+            profile = global,
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = "victor-session",
+        )
+
+        assertEquals(global.name, viewModel.openedSessionProfileName.value)
+        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+        assertEquals("Victor", handler.activeAgentName)
+        assertEquals("victor-session", handler.currentSessionId.value)
+    }
+
+    @Test
     fun lifecycleReconciliationKeepsExplicitOwnerAndScopesDrawerRefreshToIt() {
         val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
         val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
