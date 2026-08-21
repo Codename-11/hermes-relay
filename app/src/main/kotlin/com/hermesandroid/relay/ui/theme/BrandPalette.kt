@@ -6,6 +6,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 
@@ -146,26 +147,29 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         surfaceContainerHigh = navy2,
         surfaceContainerHighest = navy3,
         error = danger,
-        onError = background,
+        onError = readableContentColor(danger),
         errorContainer = danger.copy(alpha = 0.18f),
         onErrorContainer = paper,
         outline = lineStrong,
         outlineVariant = line,
     )
 } else {
+    val renderedPrimaryContainer = relay.copy(alpha = 0.22f).compositeOver(background)
+    val renderedSecondaryContainer = purple.copy(alpha = 0.16f).compositeOver(background)
+    val renderedTertiaryContainer = cyan.copy(alpha = 0.16f).compositeOver(background)
     lightColorScheme(
         primary = electric,
         onPrimary = readableContentColor(electric),
         primaryContainer = relay.copy(alpha = 0.22f),
-        onPrimaryContainer = electric.darken(0.32f),
+        onPrimaryContainer = readableContentColor(renderedPrimaryContainer),
         secondary = purple,
         onSecondary = readableContentColor(purple),
         secondaryContainer = purple.copy(alpha = 0.16f),
-        onSecondaryContainer = purple.darken(0.38f),
+        onSecondaryContainer = readableContentColor(renderedSecondaryContainer),
         tertiary = cyan,
         onTertiary = readableContentColor(cyan),
         tertiaryContainer = cyan.copy(alpha = 0.16f),
-        onTertiaryContainer = cyan.darken(0.42f),
+        onTertiaryContainer = readableContentColor(renderedTertiaryContainer),
         background = background,
         onBackground = ink,
         surface = background,

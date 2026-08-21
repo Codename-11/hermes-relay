@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -32,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.reliability.ReliabilityReport
 import com.hermesandroid.relay.reliability.SupportBundleBuilder
 import com.hermesandroid.relay.util.IssueReport
@@ -63,7 +63,7 @@ fun SupportBundleDialog(state: SupportReviewState, onDismiss: () -> Unit) {
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(0.94f),
-            shape = RoundedCornerShape(24.dp),
+            shape = appearanceRoundedCornerShape(24.dp),
             tonalElevation = 6.dp,
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
@@ -81,7 +81,7 @@ fun SupportBundleDialog(state: SupportReviewState, onDismiss: () -> Unit) {
                         .heightIn(min = 160.dp, max = 420.dp)
                         .background(
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            RoundedCornerShape(12.dp),
+                            appearanceRoundedCornerShape(12.dp),
                         ),
                 ) {
                     SelectionContainer {

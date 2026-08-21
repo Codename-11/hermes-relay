@@ -5,9 +5,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.PersistedAppearance
 
 /**
  * App theme root.
@@ -40,7 +45,8 @@ fun HermesRelayTheme(
     val useDarkTheme = appTheme.resolveDark(themePreference, isSystemInDarkTheme())
     val palette = appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
     val colorScheme = palette.toColorScheme()
-    val shapes = remember(shapeId) { appearanceShapes(shapeId) }
+    val shapeScale = remember(shapeId) { appearanceShapeScale(shapeId) }
+    val shapes = remember(shapeScale) { shapeScale.asMaterialShapes() }
 
     // Build the Material typography from the selected font. Remembered per id so
     // a recomposition (e.g. theme/mode change) doesn't rebuild the FontFamily
@@ -51,9 +57,15 @@ fun HermesRelayTheme(
     // call sites observe the active palette. SideEffect runs post-composition,
     // avoiding a state-write-during-composition; the default theme matches the
     // façade's initial value, so the common path has no first-frame flash.
-    SideEffect { RelayRefresh.activePalette = palette }
+    SideEffect {
+        RelayRefresh.activePalette = palette
+        RelayRefresh.activeShapeScale = shapeScale
+    }
 
-    CompositionLocalProvider(LocalBrand provides palette) {
+    CompositionLocalProvider(
+        LocalBrand provides palette,
+        LocalAppearanceShapeScale provides shapeScale,
+    ) {
         // Compose-wide font scaling. We multiply the user's chosen scale into the
         // current LocalDensity.fontScale (which already reflects the system font
         // size accessibility setting), so our preference stacks on top of the
@@ -83,4 +95,21 @@ fun HermesRelayTheme(
             }
         }
     }
+}
+
+/** Complete theme root for Compose windows hosted outside [com.hermesandroid.relay.ui.RelayApp]. */
+@Composable
+fun PersistedHermesRelayTheme(content: @Composable () -> Unit) {
+    val context = LocalContext.current.applicationContext
+    val appearanceFlow = remember(context) { AppearancePreferences.state(context) }
+    val appearance by appearanceFlow.collectAsState(initial = PersistedAppearance())
+    HermesRelayTheme(
+        appThemeId = appearance.appThemeId,
+        themePreference = appearance.themePreference,
+        fontScale = appearance.fontScale,
+        appFontId = appearance.appFontId,
+        accentHex = appearance.accentHex,
+        shapeId = appearance.shapeId,
+        content = content,
+    )
 }

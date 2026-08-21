@@ -17,6 +17,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.ui.theme.LocalAppearanceShapeScale
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -211,10 +213,18 @@ fun MessageBubble(
     val bottomStart = if (isUser) 16.dp else 4.dp  // tail side always small
     val bottomEnd = if (isUser) 4.dp else 16.dp     // tail side always small
 
+    val shapeScale = LocalAppearanceShapeScale.current
     val bubbleShape = when (message.role) {
-        MessageRole.USER -> RoundedCornerShape(topStart, topEnd, bottomEnd, bottomStart)
-        MessageRole.ASSISTANT -> RoundedCornerShape(topStart, topEnd, bottomEnd, bottomStart)
-        MessageRole.SYSTEM -> RoundedCornerShape(12.dp)
+        // The 4dp tail remains a semantic direction cue; the other corners
+        // follow the selected appearance scale.
+        MessageRole.USER,
+        MessageRole.ASSISTANT -> RoundedCornerShape(
+            topStart = shapeScale.radius(topStart),
+            topEnd = shapeScale.radius(topEnd),
+            bottomEnd = if (bottomEnd == 4.dp) bottomEnd else shapeScale.radius(bottomEnd),
+            bottomStart = if (bottomStart == 4.dp) bottomStart else shapeScale.radius(bottomStart),
+        )
+        MessageRole.SYSTEM -> shapeScale.rounded(12.dp)
     }
 
     val alignment = if (isUser) Alignment.End else Alignment.Start
@@ -454,7 +464,7 @@ fun MessageBubble(
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
-                shape = RoundedCornerShape(24.dp),
+                shape = appearanceRoundedCornerShape(24.dp),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 tonalElevation = 3.dp,
                 shadowElevation = 8.dp,
@@ -926,7 +936,7 @@ private fun MessageReactionBadge(
 ) {
     val description = "Reactions: ${reactions.joinToString(" ")}"
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 2.dp,
         shadowElevation = 2.dp,
@@ -965,7 +975,7 @@ private fun MessageInlineActions(
     onEdit: () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 2.dp,
         modifier = Modifier.padding(top = 2.dp),
@@ -1108,7 +1118,7 @@ internal fun shouldShowMessageGroupAvatar(
 @Composable
 private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
     Surface(
-        shape = RoundedCornerShape(6.dp),
+        shape = appearanceRoundedCornerShape(6.dp),
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f),
     ) {
         Row(

@@ -108,6 +108,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.GatewayProfileAuthChoice
 import com.hermesandroid.relay.data.GatewayProfileCreateRequest
 import com.hermesandroid.relay.data.GatewayProfileManagementUnsupportedException
@@ -3138,7 +3139,7 @@ private fun DashboardSignInCard(
                         .fillMaxWidth()
                         .background(
                             MaterialTheme.colorScheme.tertiaryContainer,
-                            RoundedCornerShape(8.dp),
+                            appearanceRoundedCornerShape(8.dp),
                         )
                         .padding(10.dp),
                 )
@@ -3818,7 +3819,7 @@ private fun SkillsHubDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 620.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -4288,7 +4289,7 @@ private fun SoulEditorDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 360.dp, max = 640.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),

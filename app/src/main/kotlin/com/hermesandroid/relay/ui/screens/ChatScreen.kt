@@ -262,6 +262,7 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanErrorAction
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -4420,7 +4421,7 @@ fun ChatScreen(
                 .padding(top = 80.dp, start = 16.dp, end = 16.dp),
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 tonalElevation = 2.dp,
             ) {
@@ -4905,7 +4906,7 @@ private fun ChatLoadingCommandPanel(
                 .fillMaxWidth()
                 .widthIn(max = 420.dp)
                 .animateContentSize(animationSpec = tween(durationMillis = 240)),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
             tonalElevation = 1.dp,
         ) {
@@ -4988,7 +4989,7 @@ private fun ChatLoadingCommandRow(command: ChatLoadingCommand) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(appearanceRoundedCornerShape(10.dp))
             .background(RelayRefresh.Amber.copy(alpha = activeHighlightAlpha))
             .animateContentSize(animationSpec = tween(durationMillis = 220))
             .alpha(rowAlpha)
@@ -5057,7 +5058,7 @@ private fun ChatSkeletonBubble(
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(widthFraction),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
         ) {
             Column(
@@ -5290,7 +5291,7 @@ private fun DateSeparator(timestamp: Long) {
         horizontalArrangement = Arrangement.Center
     ) {
         Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ) {
             Text(

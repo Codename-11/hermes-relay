@@ -4025,12 +4025,12 @@
     <string name="appearance_readability">読みやすさ</string>
     <string name="appearance_default">デフォルト</string>
     <string name="appearance_font_normal_summary">フォントサイズ: 標準</string>
-    <string name="appearance_reset_draft">下書きをリセット</string>
+    <string name="appearance_reset_draft">カスタマイズをリセット</string>
     <string name="appearance_accent">アクセントカラー</string>
     <string name="appearance_contrast_status">読みやすいコントラスト · %1$.1f:1</string>
     <string name="appearance_typography_density_summary">文字と密度には、下にあるフォントとフォントサイズの専用設定が使用されます。</string>
     <string name="appearance_readability_summary">ここで文字の密度を調整し、下のフォントセクションで書体を選択します。</string>
-    <string name="appearance_reset">リセット</string>
+    <string name="appearance_reset">テーマをリセット</string>
     <string name="appearance_apply">適用</string>
     <string name="appearance_background_installed">インストール済みアニメーション</string>
     <string name="appearance_import_background">背景アニメーションをインポート</string>

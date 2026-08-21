@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -46,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.reliability.ReliabilityReport
 import com.hermesandroid.relay.util.CrashReporter
 import com.hermesandroid.relay.util.IssueReport
@@ -106,7 +106,7 @@ private fun CrashReportDialog(report: ReliabilityReport, onDismiss: () -> Unit) 
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(0.94f),
-            shape = RoundedCornerShape(24.dp),
+            shape = appearanceRoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
         ) {
@@ -146,7 +146,7 @@ private fun CrashReportDialog(report: ReliabilityReport, onDismiss: () -> Unit) 
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 120.dp, max = 300.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(appearanceRoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
                     ) {
                         SelectionContainer {

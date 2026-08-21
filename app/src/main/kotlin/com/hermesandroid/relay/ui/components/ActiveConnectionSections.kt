@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
@@ -407,7 +408,7 @@ fun ActiveCardFeaturesSection(
     )
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
@@ -449,7 +450,7 @@ fun ActiveCardFeaturesSection(
     )
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -657,7 +658,7 @@ fun ActiveCardAdvancedSection(
         if (apiEditorOpen) {
             Surface(
                 color = Color.Transparent,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column(
@@ -675,7 +676,7 @@ fun ActiveCardAdvancedSection(
         } else {
             Surface(
                 color = Color.Transparent,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -710,7 +711,7 @@ fun ActiveCardAdvancedSection(
                     if (apiHelpOpen) {
                         Surface(
                             color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = appearanceRoundedCornerShape(8.dp),
                         ) {
                             Text(
                                 text = stringResource(R.string.active_section_api_key_explainer),
@@ -749,7 +750,7 @@ fun ActiveCardAdvancedSection(
         if (relayEditorOpen) {
             Surface(
                 color = Color.Transparent,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column(
@@ -791,7 +792,7 @@ fun ActiveCardAdvancedSection(
         if (pairingOpen) {
             Surface(
                 color = Color.Transparent,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1349,7 +1350,7 @@ private fun ManualPairingCodeSubsection(
     ManualPairStep(number = 2, title = step2RunCommand) {
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(6.dp),
+            shape = appearanceRoundedCornerShape(6.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -1491,7 +1492,7 @@ fun ActiveCardSecurityPosture(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
@@ -1580,7 +1581,7 @@ fun ActiveCardSecurityPosture(
         Text(text = stringResource(R.string.active_section_access), style = MaterialTheme.typography.titleSmall)
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {
@@ -1816,7 +1817,7 @@ fun ActiveCardRoutesSection(
             } else {
                 MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
             },
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
@@ -1861,7 +1862,7 @@ fun ActiveCardRoutesSection(
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
                             },
-                            shape = RoundedCornerShape(6.dp),
+                            shape = appearanceRoundedCornerShape(6.dp),
                         ) {
                             Text(
                                 text = if (dashboardReachable) {
@@ -1955,7 +1956,7 @@ fun ActiveCardRoutesSection(
         if (showTailscaleUnavailableHint) {
             Surface(
                 color = MaterialTheme.colorScheme.tertiaryContainer,
-                shape = RoundedCornerShape(8.dp),
+                shape = appearanceRoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -2004,7 +2005,7 @@ fun ActiveCardRoutesSection(
             // up. Offer the route editor directly.
             Surface(
                 color = MaterialTheme.colorScheme.tertiaryContainer,
-                shape = RoundedCornerShape(8.dp),
+                shape = appearanceRoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -2066,7 +2067,7 @@ fun ActiveCardRoutesSection(
             )
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -2103,7 +2104,7 @@ fun ActiveCardRoutesSection(
             }
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(

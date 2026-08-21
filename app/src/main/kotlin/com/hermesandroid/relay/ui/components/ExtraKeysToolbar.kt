@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.viewmodel.TerminalViewModel.SpecialKey
 
 /**
@@ -154,7 +154,7 @@ private fun ToolbarKey(
     minWidth: Dp = 36.dp,
 ) {
     val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(6.dp)
+    val shape = appearanceRoundedCornerShape(6.dp)
     val scheme = MaterialTheme.colorScheme
 
     val bg = if (active) scheme.primary.copy(alpha = 0.22f) else scheme.surface

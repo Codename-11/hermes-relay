@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -138,7 +139,7 @@ fun ChatSettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme
                     ),
                 colors = CardDefaults.cardColors(
@@ -1083,7 +1084,7 @@ private fun TransportTierCell(
     }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(7.dp),
+        shape = appearanceRoundedCornerShape(7.dp),
         color = containerColor,
         contentColor = contentColor,
         border = BorderStroke(
@@ -1120,7 +1121,7 @@ private fun TransportTierCell(
 private fun GatewaySignInCallout() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.58f),
         contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
     ) {

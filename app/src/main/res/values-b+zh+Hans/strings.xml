@@ -3954,12 +3954,12 @@
     <string name="appearance_readability">可读性</string>
     <string name="appearance_default">默认</string>
     <string name="appearance_font_normal_summary">字体大小：标准</string>
-    <string name="appearance_reset_draft">重置草稿</string>
+    <string name="appearance_reset_draft">重置自定义</string>
     <string name="appearance_accent">强调色</string>
     <string name="appearance_contrast_status">易读对比度 · %1$.1f:1</string>
     <string name="appearance_typography_density_summary">排版和密度使用下方独立的字体和字体大小控件。</string>
     <string name="appearance_readability_summary">在此调整文本密度；在下方的字体部分选择字形。</string>
-    <string name="appearance_reset">重置</string>
+    <string name="appearance_reset">重置主题</string>
     <string name="appearance_apply">应用</string>
     <string name="appearance_background_installed">已安装的动画</string>
     <string name="appearance_import_background">导入背景动画</string>

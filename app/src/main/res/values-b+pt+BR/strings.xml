@@ -3866,12 +3866,12 @@
     <string name="appearance_readability">Legibilidade</string>
     <string name="appearance_default">Padrão</string>
     <string name="appearance_font_normal_summary">Tamanho da fonte: Normal</string>
-    <string name="appearance_reset_draft">Redefinir rascunho</string>
+    <string name="appearance_reset_draft">Redefinir personalização</string>
     <string name="appearance_accent">Cor de destaque</string>
     <string name="appearance_contrast_status">Contraste legível · %1$.1f:1</string>
     <string name="appearance_typography_density_summary">A tipografia e a densidade usam os controles específicos de Fonte e Tamanho da fonte abaixo.</string>
     <string name="appearance_readability_summary">Ajuste a densidade do texto aqui; escolha a tipografia na seção Fonte abaixo.</string>
-    <string name="appearance_reset">Redefinir</string>
+    <string name="appearance_reset">Redefinir tema</string>
     <string name="appearance_apply">Aplicar</string>
     <string name="appearance_background_installed">Animações instaladas</string>
     <string name="appearance_import_background">Importar animação de fundo</string>

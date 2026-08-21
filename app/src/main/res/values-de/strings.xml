@@ -4026,12 +4026,12 @@
     <string name="appearance_readability">Lesbarkeit</string>
     <string name="appearance_default">Standard</string>
     <string name="appearance_font_normal_summary">Schriftgröße: Normal</string>
-    <string name="appearance_reset_draft">Entwurf zurücksetzen</string>
+    <string name="appearance_reset_draft">Anpassungen zurücksetzen</string>
     <string name="appearance_accent">Akzentfarbe</string>
     <string name="appearance_contrast_status">Lesbarer Kontrast · %1$.1f:1</string>
     <string name="appearance_typography_density_summary">Typografie und Dichte verwenden die gezielten Einstellungen für Schrift und Schriftgröße unten.</string>
     <string name="appearance_readability_summary">Passen Sie hier die Textdichte an; wählen Sie die Schriftart im Abschnitt „Schrift“ unten.</string>
-    <string name="appearance_reset">Zurücksetzen</string>
+    <string name="appearance_reset">Theme zurücksetzen</string>
     <string name="appearance_apply">Anwenden</string>
     <string name="appearance_background_installed">Installierte Animationen</string>
     <string name="appearance_import_background">Hintergrundanimation importieren</string>

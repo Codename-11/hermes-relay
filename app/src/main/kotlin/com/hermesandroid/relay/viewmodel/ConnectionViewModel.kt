@@ -27,6 +27,7 @@ import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.AppearancePreferences
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.DemoMode
@@ -439,18 +440,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         const val PLACEHOLDER_LABEL = "New connection…"
 
         // Shared
-        private val KEY_THEME = stringPreferencesKey("theme")
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
-        private val KEY_APP_THEME = stringPreferencesKey("app_theme")
         // Optional RGB accent override applied on top of the selected preset.
         // Null means the preset's authored accent remains authoritative.
-        private val KEY_APPEARANCE_ACCENT = stringPreferencesKey("appearance_accent")
-        private val KEY_APPEARANCE_SHAPE = stringPreferencesKey("appearance_shape")
         // Selected app font id (body typeface). Resolved against AppFont at the
         // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
         // (which scales sizes); this picks the family.
-        private val KEY_APP_FONT = stringPreferencesKey("app_font")
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
@@ -471,7 +467,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.End, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
-        private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
         private val KEY_LAST_SEEN_VERSION = stringPreferencesKey("last_seen_version")
@@ -1417,7 +1412,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Theme preference — light/dark/auto mode axis.
     val theme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_THEME] ?: "auto"
+            preferences[AppearancePreferences.themeKey] ?: "auto"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
@@ -1425,16 +1420,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // brand. Resolved against AppThemes.byId at the Compose theme root.
     val appTheme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_APP_THEME] ?: AppThemes.DEFAULT_ID
+            preferences[AppearancePreferences.appThemeKey] ?: AppThemes.DEFAULT_ID
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
 
     val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
-        .map { preferences -> normalizeAccentHex(preferences[KEY_APPEARANCE_ACCENT]) }
+        .map { preferences -> normalizeAccentHex(preferences[AppearancePreferences.accentKey]) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val appearanceShape: StateFlow<String> = application.relayDataStore.data
-        .map { preferences -> AppearanceShape.fromId(preferences[KEY_APPEARANCE_SHAPE]).id }
+        .map { preferences -> AppearanceShape.fromId(preferences[AppearancePreferences.shapeKey]).id }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppearanceShape.DEFAULT.id)
 
     // Selected app font id (body typeface). Defaults to Inter. Resolved against
@@ -1442,7 +1437,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // whole app re-themes live when this changes.
     val appFont: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_APP_FONT] ?: AppFont.DEFAULT.id
+            preferences[AppearancePreferences.appFontKey] ?: AppFont.DEFAULT.id
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppFont.DEFAULT.id)
 
@@ -1551,7 +1546,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // TerminalWebView's LaunchedEffect on this flow.
     val fontScale: StateFlow<Float> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_FONT_SCALE] ?: DEFAULT_FONT_SCALE
+            preferences[AppearancePreferences.fontScaleKey] ?: DEFAULT_FONT_SCALE
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_FONT_SCALE)
 
@@ -6796,7 +6791,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setTheme(theme: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_THEME] = theme
+                preferences[AppearancePreferences.themeKey] = theme
             }
         }
     }
@@ -6804,7 +6799,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppTheme(themeId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APP_THEME] = themeId
+                preferences[AppearancePreferences.appThemeKey] = themeId
             }
         }
     }
@@ -6813,7 +6808,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppFont(fontId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APP_FONT] = fontId
+                preferences[AppearancePreferences.appFontKey] = fontId
             }
         }
     }
@@ -6911,8 +6906,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 val normalized = normalizeAccentHex(accentHex)
-                if (normalized == null) preferences.remove(KEY_APPEARANCE_ACCENT)
-                else preferences[KEY_APPEARANCE_ACCENT] = normalized
+                if (normalized == null) preferences.remove(AppearancePreferences.accentKey)
+                else preferences[AppearancePreferences.accentKey] = normalized
             }
         }
     }
@@ -6920,7 +6915,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppearanceShape(shapeId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APPEARANCE_SHAPE] = AppearanceShape.fromId(shapeId).id
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.fromId(shapeId).id
+            }
+        }
+    }
+
+    fun resetAppearanceTheme() {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                preferences[AppearancePreferences.themeKey] = "auto"
+                preferences.remove(AppearancePreferences.accentKey)
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
             }
         }
     }
@@ -6979,7 +6985,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setFontScale(scale: Float) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_FONT_SCALE] = scale
+                preferences[AppearancePreferences.fontScaleKey] = scale
             }
         }
     }
@@ -7087,7 +7093,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // intentionally contains zero connections.
                 dataManager.restoreConnectionBackup(backup)
                 getApplication<Application>().relayDataStore.edit { preferences ->
-                    preferences[KEY_THEME] = backup.theme
+                    preferences[AppearancePreferences.themeKey] = backup.theme
                     importedRelayUrl?.let { preferences[KEY_RELAY_URL] = it }
                     backup.apiServerUrl
                         ?.takeIf { backup.connections.isEmpty() }

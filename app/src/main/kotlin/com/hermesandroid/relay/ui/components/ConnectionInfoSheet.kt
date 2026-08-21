@@ -119,6 +119,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
@@ -164,7 +165,7 @@ private fun StatusChip(text: String, background: Color, contentColor: Color) {
         fontWeight = FontWeight.Medium,
         color = contentColor,
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .background(background)
             .padding(horizontal = 10.dp, vertical = 4.dp)
     )
@@ -603,7 +604,7 @@ fun RelayInfoSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(appearanceRoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.errorContainer)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -983,7 +984,7 @@ fun AgentInfoSheet(
 
                 if (selectedTab == 0) {
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
+                    shape = appearanceRoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
@@ -1037,7 +1038,7 @@ fun AgentInfoSheet(
                 // visibly separate from the session-only model/effort card so
                 // it cannot be mistaken for an ephemeral override.
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
+                    shape = appearanceRoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
@@ -1088,7 +1089,7 @@ fun AgentInfoSheet(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(appearanceRoundedCornerShape(18.dp))
                         .background(
                             Brush.horizontalGradient(
                                 listOf(brand.purple, brand.relay),
@@ -1405,7 +1406,7 @@ private fun AgentPassportIdentityEditor(
     }
 
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = appearanceRoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -1482,7 +1483,7 @@ private fun AgentPassportHeader(
         stringResource(R.string.conn_info_skills_count, skillCount).takeIf { skillCount > 0 },
     ).joinToString(" · ")
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = appearanceRoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -1564,7 +1565,7 @@ private fun AgentPassportHeader(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onProfileClick),
-                shape = RoundedCornerShape(14.dp),
+                shape = appearanceRoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
@@ -1821,7 +1822,7 @@ internal fun AgentPassportSafetyCard(
         ),
     )
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = appearanceRoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -1993,7 +1994,7 @@ internal fun PassportSegmentedControl(
             modifier = Modifier
                 .fillMaxWidth()
                 .selectableGroup()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(appearanceRoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                 .padding(3.dp),
         ) {
@@ -2012,7 +2013,7 @@ internal fun PassportSegmentedControl(
                         .semantics {
                             contentDescription = "${option.label}. ${option.description}"
                         },
-                    shape = RoundedCornerShape(11.dp),
+                    shape = appearanceRoundedCornerShape(11.dp),
                     color = when {
                         selected != index -> Color.Transparent
                         enabled -> MaterialTheme.colorScheme.primary
@@ -2101,7 +2102,7 @@ private fun AgentPassportSessionTab(
         }
     }
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = appearanceRoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -2153,7 +2154,7 @@ private fun AgentPassportSessionTab(
         }
     }
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = appearanceRoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
@@ -2206,7 +2207,7 @@ private fun AgentPassportSessionTab(
     OutlinedButton(
         onClick = onManageConnections,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
     ) {
         Icon(Icons.Filled.Tune, contentDescription = null)
         Spacer(Modifier.size(8.dp))
@@ -3285,7 +3286,7 @@ private fun LegacyAgentInfoSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(appearanceRoundedCornerShape(8.dp))
                                 .background(MaterialTheme.colorScheme.errorContainer)
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -3731,7 +3732,7 @@ private fun CollapsiblePickerSection(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
+                .clip(appearanceRoundedCornerShape(10.dp))
                 .clickable { expanded = !expanded }
                 .padding(vertical = 6.dp),
         ) {
@@ -3896,7 +3897,7 @@ private fun ProfileRadioRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .selectable(
                 selected = selected,
                 enabled = enabled,

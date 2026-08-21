@@ -1315,12 +1315,12 @@
     <string name="appearance_readability">Readability</string>
     <string name="appearance_default">Default</string>
     <string name="appearance_font_normal_summary">Font size: Normal</string>
-    <string name="appearance_reset_draft">Reset draft</string>
+    <string name="appearance_reset_draft">Reset customization</string>
     <string name="appearance_accent">Accent color</string>
     <string name="appearance_contrast_status">Readable contrast · %1$.1f:1</string>
     <string name="appearance_typography_density_summary">Typography and density use the focused Font and Font size controls below.</string>
     <string name="appearance_readability_summary">Tune text density here; choose the typeface in the focused Font section below.</string>
-    <string name="appearance_reset">Reset</string>
+    <string name="appearance_reset">Reset theme</string>
     <string name="appearance_apply">Apply</string>
     <string name="appearance_fixed_light">%1$s is a fixed light theme.</string>
     <string name="appearance_fixed_dark">%1$s is a fixed dark theme. Switch to Hermes Relay for light/dark control.</string>

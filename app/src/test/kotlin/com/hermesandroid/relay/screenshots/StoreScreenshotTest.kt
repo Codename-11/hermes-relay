@@ -222,6 +222,9 @@ class StoreScreenshotTest {
         compose.onNodeWithText("Customize Relay").performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Shape").performScrollTo()
+        compose.onNodeWithText("Sharp").performClick()
+        compose.onNodeWithText("Apply changes").assertDoesNotExist()
+        compose.onNodeWithText("Reset theme").assertExists()
         compose.onRoot().captureRoboImage("build/store-shots/05_theme_customizer.png")
     }
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }

@@ -48,7 +48,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -125,13 +124,17 @@ import com.hermesandroid.relay.ui.theme.AppTheme
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.AccentSwatches
 import com.hermesandroid.relay.ui.theme.AppearanceShape
+import com.hermesandroid.relay.ui.theme.AppearanceShapeScale
 import com.hermesandroid.relay.ui.theme.BrandPalette
+import com.hermesandroid.relay.ui.theme.LocalAppearanceShapeScale
 import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.ui.theme.contrastRatio
 import com.hermesandroid.relay.ui.theme.toColorScheme
 import com.hermesandroid.relay.ui.theme.withAccent
-import com.hermesandroid.relay.ui.theme.appearanceShapes
+import com.hermesandroid.relay.ui.theme.appearanceComposerShape
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.appearanceShapeScale
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -174,16 +177,7 @@ fun AppearanceSettingsScreen(
     val appliedAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appliedShape by connectionViewModel.appearanceShape.collectAsState()
     var customizeExpanded by remember { mutableStateOf(initialCustomizerExpanded) }
-    var draftAccent by remember { mutableStateOf(appliedAccent) }
-    var draftShape by remember { mutableStateOf(appliedShape) }
-    LaunchedEffect(appliedAccent, appliedShape) {
-        if (!customizeExpanded) {
-            draftAccent = appliedAccent
-            draftShape = appliedShape
-        }
-    }
-    val previewPalette = selectedTheme.paletteFor(isDarkTheme)
-        .withAccent(if (customizeExpanded) draftAccent else appliedAccent)
+    val previewPalette = selectedTheme.paletteFor(isDarkTheme).withAccent(appliedAccent)
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<AgentAvatar?>(null) }
@@ -259,14 +253,7 @@ fun AppearanceSettingsScreen(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = {
-                        connectionViewModel.setAppTheme(AppThemes.DEFAULT_ID)
-                        connectionViewModel.setTheme("auto")
-                        connectionViewModel.setAppearanceAccent(null)
-                        connectionViewModel.setAppearanceShape(AppearanceShape.DEFAULT.id)
-                        draftAccent = null
-                        draftShape = AppearanceShape.DEFAULT.id
-                    }) {
+                    TextButton(onClick = connectionViewModel::resetAppearanceTheme) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text(stringResource(R.string.appearance_reset), modifier = Modifier.padding(start = 6.dp))
                     }
@@ -274,50 +261,6 @@ fun AppearanceSettingsScreen(
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            if (customizeExpanded) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    tonalElevation = 4.dp,
-                    shadowElevation = 8.dp,
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            stringResource(R.string.appearance_accent_preview_only_short),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                        )
-                        TextButton(onClick = {
-                            draftAccent = appliedAccent
-                            draftShape = appliedShape
-                            customizeExpanded = false
-                        }) {
-                            Text(stringResource(R.string.appearance_cancel), style = MaterialTheme.typography.labelLarge)
-                        }
-                        Button(
-                            onClick = {
-                                connectionViewModel.setAppearanceAccent(draftAccent)
-                                connectionViewModel.setAppearanceShape(draftShape)
-                                customizeExpanded = false
-                            },
-                        ) {
-                            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text(
-                                stringResource(R.string.appearance_apply_changes),
-                                modifier = Modifier.padding(start = 6.dp),
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
-                }
-            }
-        },
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -333,7 +276,7 @@ fun AppearanceSettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            AppearanceLivePreview(previewPalette, appearanceShapes(if (customizeExpanded) draftShape else appliedShape))
+            AppearanceLivePreview(previewPalette, appearanceShapeScale(appliedShape))
 
             // Preset-first gallery, matching the live preview above.
             Text(
@@ -365,20 +308,14 @@ fun AppearanceSettingsScreen(
             AccentCustomizer(
                 selectedTheme = selectedTheme,
                 expanded = customizeExpanded,
-                draftAccent = draftAccent,
-                draftShape = draftShape,
-                onToggle = {
-                    if (!customizeExpanded) {
-                        draftAccent = appliedAccent
-                        draftShape = appliedShape
-                    }
-                    customizeExpanded = !customizeExpanded
-                },
-                onDraftSelected = { draftAccent = it },
-                onShapeSelected = { draftShape = it },
+                selectedAccent = appliedAccent,
+                selectedShape = appliedShape,
+                onToggle = { customizeExpanded = !customizeExpanded },
+                onAccentSelected = connectionViewModel::setAppearanceAccent,
+                onShapeSelected = connectionViewModel::setAppearanceShape,
                 onReset = {
-                    draftAccent = null
-                    draftShape = AppearanceShape.DEFAULT.id
+                    connectionViewModel.setAppearanceAccent(null)
+                    connectionViewModel.setAppearanceShape(AppearanceShape.DEFAULT.id)
                 },
             )
 
@@ -395,7 +332,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("language")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme,
                     ),
                 colors = CardDefaults.cardColors(
@@ -468,7 +405,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("display")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme
                     ),
                 colors = CardDefaults.cardColors(
@@ -551,7 +488,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("font")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme
                     ),
                 colors = CardDefaults.cardColors(
@@ -593,7 +530,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("animation")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme
                     ),
                 colors = CardDefaults.cardColors(
@@ -725,7 +662,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("background")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme,
                     ),
                 colors = CardDefaults.cardColors(
@@ -879,7 +816,7 @@ fun AppearanceSettingsScreen(
                     .appearancePetSurface("floating-pet")
                     .fillMaxWidth()
                     .gradientBorder(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = appearanceRoundedCornerShape(12.dp),
                         isDarkTheme = isDarkTheme
                     ),
                 colors = CardDefaults.cardColors(
@@ -1161,7 +1098,7 @@ fun AppearanceSettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(appearanceRoundedCornerShape(12.dp))
                                 .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -1247,10 +1184,11 @@ private fun AppearanceModeControl(
         stringResource(R.string.appearance_theme_dark),
     )
     val modeApplies = selectedTheme.mode == ThemeMode.BOTH
+    val displayedMode = resolvedAppearanceModeSelection(theme, selectedTheme.mode)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth().height(40.dp),
-            shape = RoundedCornerShape(22.dp),
+            shape = appearanceRoundedCornerShape(22.dp),
             color = Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
@@ -1264,14 +1202,14 @@ private fun AppearanceModeControl(
                         .weight(1f)
                         .fillMaxHeight()
                         .background(
-                            if (option == theme) MaterialTheme.colorScheme.surfaceContainerHigh
+                            if (option == displayedMode) MaterialTheme.colorScheme.surfaceContainerHigh
                             else Color.Transparent,
                         )
                         .clickable(enabled = modeApplies) { onThemeModeSelected(option) },
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (option == theme) {
+                    if (option == displayedMode) {
                         Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(5.dp))
                     }
@@ -1294,27 +1232,34 @@ private fun AppearanceModeControl(
     }
 }
 
+internal fun resolvedAppearanceModeSelection(themePreference: String, themeMode: ThemeMode): String =
+    when (themeMode) {
+        ThemeMode.BOTH -> themePreference
+        ThemeMode.LIGHT_ONLY -> "light"
+        ThemeMode.DARK_ONLY -> "dark"
+    }
+
 @Composable
 private fun AccentCustomizer(
     selectedTheme: AppTheme,
     expanded: Boolean,
-    draftAccent: String?,
-    draftShape: String,
+    selectedAccent: String?,
+    selectedShape: String,
     onToggle: () -> Unit,
-    onDraftSelected: (String?) -> Unit,
+    onAccentSelected: (String?) -> Unit,
     onShapeSelected: (String) -> Unit,
     onReset: () -> Unit,
 ) {
-    val draftPalette = selectedTheme.paletteFor(LocalBrand.current.isDark).withAccent(draftAccent)
-    val scheme = draftPalette.toColorScheme()
+    val selectedPalette = selectedTheme.paletteFor(LocalBrand.current.isDark).withAccent(selectedAccent)
+    val scheme = selectedPalette.toColorScheme()
     val ratio = contrastRatio(scheme.onPrimary, scheme.primary)
     Card(
         modifier = Modifier.fillMaxWidth().border(
             1.dp,
             MaterialTheme.colorScheme.outlineVariant,
-            RoundedCornerShape(12.dp),
+            appearanceRoundedCornerShape(12.dp),
         ),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column {
@@ -1370,15 +1315,15 @@ private fun AccentCustomizer(
                                     .clip(CircleShape)
                                     .background(color)
                                     .border(
-                                        width = if (draftAccent == accent) 3.dp else 1.dp,
-                                        color = if (draftAccent == accent) MaterialTheme.colorScheme.onSurface
+                                        width = if (selectedAccent == accent) 3.dp else 1.dp,
+                                        color = if (selectedAccent == accent) MaterialTheme.colorScheme.onSurface
                                         else MaterialTheme.colorScheme.outline,
                                         shape = CircleShape,
                                     )
-                                    .clickable { onDraftSelected(accent) },
+                                    .clickable { onAccentSelected(accent) },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                if (draftAccent == accent) {
+                                if (selectedAccent == accent) {
                                     Icon(Icons.Filled.Check, null, tint = com.hermesandroid.relay.ui.theme.readableContentColor(color))
                                 }
                             }
@@ -1394,9 +1339,9 @@ private fun AccentCustomizer(
                                 SegmentedButton(
                                     shape = SegmentedButtonDefaults.itemShape(index, AppearanceShape.entries.size),
                                     onClick = { onShapeSelected(shape.id) },
-                                    selected = shape.id == draftShape,
+                                    selected = shape.id == selectedShape,
                                     icon = {
-                                        if (shape.id == draftShape) Icon(Icons.Filled.Check, null, Modifier.size(14.dp))
+                                        if (shape.id == selectedShape) Icon(Icons.Filled.Check, null, Modifier.size(14.dp))
                                     },
                                 ) {
                                     Text(
@@ -1470,10 +1415,13 @@ private fun AppearanceSummaryRow(
 @Composable
 private fun AppearanceLivePreview(
     palette: BrandPalette,
-    shapes: androidx.compose.material3.Shapes,
+    shapeScale: AppearanceShapeScale,
 ) {
-    CompositionLocalProvider(LocalBrand provides palette) {
-        MaterialTheme(colorScheme = palette.toColorScheme(), shapes = shapes) {
+    CompositionLocalProvider(
+        LocalBrand provides palette,
+        LocalAppearanceShapeScale provides shapeScale,
+    ) {
+        MaterialTheme(colorScheme = palette.toColorScheme(), shapes = shapeScale.asMaterialShapes()) {
             AppearanceLivePreviewContent()
         }
     }
@@ -1502,7 +1450,7 @@ private fun AppearanceLivePreviewContent() {
                     modifier = Modifier.padding(start = 6.dp).weight(1f),
                 )
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = MaterialTheme.shapes.small,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                 ) {
@@ -1514,7 +1462,7 @@ private fun AppearanceLivePreviewContent() {
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Surface(
-                            shape = RoundedCornerShape(9.dp),
+                            shape = MaterialTheme.shapes.extraSmall,
                             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         ) {
@@ -1590,7 +1538,7 @@ private fun AppearanceLivePreviewContent() {
                     modifier = Modifier.padding(start = 8.dp),
                 )
                 Surface(
-                    shape = RoundedCornerShape(7.dp),
+                    shape = MaterialTheme.shapes.extraSmall,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     modifier = Modifier.padding(start = 8.dp),
                 ) {
@@ -1646,7 +1594,7 @@ private fun AppearanceLivePreviewContent() {
                 }
             }
             Surface(
-                shape = MaterialTheme.shapes.medium,
+                shape = appearanceComposerShape(),
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 color = Color.Transparent,
             ) {
@@ -1669,16 +1617,23 @@ private fun AppearanceLivePreviewContent() {
                     Icon(Icons.Filled.GraphicEq, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
-            Row(
+            Surface(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
+                shape = appearanceRoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Icon(Icons.Filled.Bolt, null, Modifier.size(14.dp), tint = LocalBrand.current.amber)
-                Text(
-                    text = stringResource(R.string.appearance_preview_gateway),
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                    color = LocalBrand.current.green,
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.Bolt, null, Modifier.size(14.dp), tint = LocalBrand.current.amber)
+                    Text(
+                        text = stringResource(R.string.appearance_preview_gateway),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        color = LocalBrand.current.green,
+                    )
+                }
             }
         }
     }
@@ -1700,7 +1655,7 @@ private fun FontOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(appearanceRoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
@@ -1709,7 +1664,7 @@ private fun FontOptionRow(
                 } else {
                     MaterialTheme.colorScheme.outlineVariant
                 },
-                shape = RoundedCornerShape(10.dp),
+                shape = appearanceRoundedCornerShape(10.dp),
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1766,7 +1721,7 @@ private fun ThemeSwatchChip(
     Column(
         modifier = Modifier
             .width(77.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
@@ -1775,7 +1730,7 @@ private fun ThemeSwatchChip(
                 } else {
                     MaterialTheme.colorScheme.outlineVariant
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
             )
             .padding(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1785,7 +1740,7 @@ private fun ThemeSwatchChip(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(appearanceRoundedCornerShape(8.dp))
                 .background(background),
             contentAlignment = Alignment.TopStart,
         ) {
@@ -1864,7 +1819,7 @@ private fun SphereSkinChip(
     Column(
         modifier = Modifier
             .width(110.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
@@ -1873,7 +1828,7 @@ private fun SphereSkinChip(
                 } else {
                     MaterialTheme.colorScheme.outlineVariant
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
             )
             .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1882,7 +1837,7 @@ private fun SphereSkinChip(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(40.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(appearanceRoundedCornerShape(8.dp))
                 .background(Brush.horizontalGradient(listOf(poleA, poleB))),
             contentAlignment = Alignment.TopEnd,
         ) {
@@ -1936,7 +1891,7 @@ private fun AgentAvatarChip(
     Column(
         modifier = Modifier
             .width(110.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
@@ -1945,7 +1900,7 @@ private fun AgentAvatarChip(
                 } else {
                     MaterialTheme.colorScheme.outlineVariant
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
             )
             .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1954,7 +1909,7 @@ private fun AgentAvatarChip(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(40.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(appearanceRoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center,
         ) {

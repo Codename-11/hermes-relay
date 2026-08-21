@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.ExpandLess
@@ -53,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
@@ -337,7 +337,7 @@ private fun EndpointRow(
                     Row(
                         modifier = Modifier
                             .padding(top = 4.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(appearanceRoundedCornerShape(6.dp))
                             .clickable { detailsExpanded = !detailsExpanded }
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -545,7 +545,7 @@ private fun RouteSurfaceMap(
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(
@@ -635,7 +635,7 @@ private fun displayPort(url: String): String {
 private fun ActiveChip(label: String) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
             .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -659,7 +659,7 @@ private fun ActiveChip(label: String) {
 private fun PreferredChip(label: String) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(Color(0xFFFFA726).copy(alpha = 0.18f))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
@@ -681,12 +681,12 @@ private fun PreferredChip(label: String) {
 private fun FallbackChip(label: String) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(8.dp),
+                shape = appearanceRoundedCornerShape(8.dp),
             )
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
