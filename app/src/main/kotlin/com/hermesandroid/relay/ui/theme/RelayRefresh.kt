@@ -63,8 +63,14 @@ object RelayRefresh {
     val Line: Color get() = activePalette.line
     val LineStrong: Color get() = activePalette.lineStrong
 
-    // Non-color layout tokens are theme-independent (for now).
-    val CardRadius = 8.dp
+    // Legacy panel radius. New code should read LocalAppearanceShapeScale;
+    // this remains the bridge for the shared cockpit modifiers below.
+    private val activeShapeScaleState = mutableStateOf(appearanceShapeScale(AppearanceShape.DEFAULT.id))
+    var activeShapeScale: AppearanceShapeScale
+        get() = activeShapeScaleState.value
+        set(value) { activeShapeScaleState.value = value }
+
+    val CardRadius: Dp get() = activeShapeScale.radius(8.dp)
     val Mono = FontFamily.Monospace
 }
 

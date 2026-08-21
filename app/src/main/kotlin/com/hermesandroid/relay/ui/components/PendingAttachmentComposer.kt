@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
 import com.hermesandroid.relay.data.AttachmentState
@@ -139,7 +140,7 @@ private fun PendingAttachmentItem(
         modifier = Modifier
             .width(216.dp)
             .semantics { contentDescription = summary }
-            .clip(RoundedCornerShape(14.dp))
+            .clip(appearanceRoundedCornerShape(14.dp))
             .clickable(
                 enabled = previewEnabled,
                 onClickLabel = stringResource(R.string.pending_attachment_preview_named, name),
@@ -147,7 +148,7 @@ private fun PendingAttachmentItem(
                 onClick = onPreview,
             )
             .testTag("pending-attachment-$index"),
-        shape = RoundedCornerShape(14.dp),
+        shape = appearanceRoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Column(modifier = Modifier.padding(8.dp)) {

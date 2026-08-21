@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -45,6 +44,7 @@ import java.text.DateFormat
 import java.util.Date
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 /**
  * Bottom-sheet dialog showing full metadata for a single terminal tab plus
@@ -329,7 +329,7 @@ private fun StatusChip(label: String, isPositive: Boolean) {
     }
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(bg)
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
@@ -373,7 +373,7 @@ private fun GrantChipLocal(channel: String, expiresAt: Long?) {
     val neverText = stringResource(R.string.term_info_never)
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {

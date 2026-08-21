@@ -103,6 +103,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BargeInPreferences
 import com.hermesandroid.relay.data.BargeInSensitivity
@@ -685,7 +686,7 @@ internal fun VoiceSettingsTabs(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = appearanceRoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Row(modifier = Modifier.padding(3.dp)) {
@@ -696,7 +697,7 @@ internal fun VoiceSettingsTabs(
                         .weight(1f)
                         .height(48.dp)
                         .clickable { onSelect(section) },
-                    shape = RoundedCornerShape(13.dp),
+                    shape = appearanceRoundedCornerShape(13.dp),
                     color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent,
                     contentColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 ) {
@@ -736,7 +737,7 @@ private fun VoiceScopeBanner(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.30f),
         ),
@@ -1782,7 +1783,7 @@ private fun StreamingVoiceOutputEditor(
             },
             enabled = !voiceOutputSaving && voiceClient != null,
             modifier = Modifier.weight(1f).height(52.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
         ) {
             Text(if (voiceOutputSaving) stringResource(R.string.voice_settings_saving) else "Save changes", fontWeight = FontWeight.SemiBold)
         }
@@ -1803,7 +1804,7 @@ private fun StreamingVoiceOutputEditor(
             },
             enabled = !voiceOutputSaving && config != null,
             modifier = Modifier.weight(1f).height(52.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
         ) {
             Text(stringResource(R.string.voice_settings_discard), fontWeight = FontWeight.SemiBold)
         }
@@ -1849,7 +1850,7 @@ internal fun VoiceProviderGroupCard(
     var pickerOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1872,7 +1873,7 @@ internal fun VoiceProviderGroupCard(
             ) {
                 Surface(
                     modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = appearanceRoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) {
@@ -1998,7 +1999,7 @@ internal fun ModelAndVoiceGroupCard(
     val displayedVoices = if (voiceListExpanded) allVoices else voices
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -2021,7 +2022,7 @@ internal fun ModelAndVoiceGroupCard(
             ) {
                 Surface(
                     modifier = Modifier.size(38.dp),
-                    shape = RoundedCornerShape(13.dp),
+                    shape = appearanceRoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) {
@@ -2053,7 +2054,7 @@ internal fun ModelAndVoiceGroupCard(
                     )
                 }
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = appearanceRoundedCornerShape(14.dp),
                     color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else androidx.compose.ui.graphics.Color.Transparent,
                     border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)) else null,
                 ) {
@@ -2072,7 +2073,7 @@ internal fun ModelAndVoiceGroupCard(
                         RadioButton(selected = selected, onClick = null, enabled = enabled && choice.enabled)
                         Surface(
                             modifier = Modifier.size(34.dp),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = appearanceRoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHighest,
                             contentColor = MaterialTheme.colorScheme.primary,
                         ) {
@@ -2266,7 +2267,7 @@ internal fun LanguageQualityCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -2341,7 +2342,7 @@ private fun qualityLabel(sampleRate: String): String = when (sampleRate.toIntOrN
 private fun LanguageQualitySummaryCard(summary: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
@@ -2367,7 +2368,7 @@ private fun StaticProviderCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
@@ -2376,7 +2377,7 @@ private fun StaticProviderCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
                     modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = appearanceRoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) { Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.padding(10.dp)) }
@@ -2418,7 +2419,7 @@ private fun StaticModelVoiceCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
@@ -2427,7 +2428,7 @@ private fun StaticModelVoiceCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
                     modifier = Modifier.size(42.dp),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = appearanceRoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) { Icon(Icons.Filled.ViewInAr, contentDescription = null, modifier = Modifier.padding(10.dp)) }
@@ -2438,14 +2439,14 @@ private fun StaticModelVoiceCard(
                 PreviewCircleButton(active = false, loading = false, enabled = enabled, contentDescription = "Preview standard voice", onClick = onPreview)
             }
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = appearanceRoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.11f),
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RadioButton(selected = true, onClick = null, enabled = enabled)
                     Surface(
                         modifier = Modifier.size(38.dp),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = appearanceRoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerHighest,
                         contentColor = MaterialTheme.colorScheme.primary,
                     ) { Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.padding(9.dp)) }
@@ -2479,13 +2480,13 @@ private fun VoiceSaveActions(
                 onClick = onDiscard,
                 enabled = enabled && !saving,
                 modifier = Modifier.weight(1f).height(52.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = appearanceRoundedCornerShape(16.dp),
             ) { Text(stringResource(R.string.voice_settings_discard), fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = onSave,
                 enabled = enabled && !saving,
                 modifier = Modifier.weight(1f).height(52.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = appearanceRoundedCornerShape(16.dp),
             ) { Text(if (saving) stringResource(R.string.voice_settings_saving) else stringResource(R.string.voice_settings_save_changes), fontWeight = FontWeight.SemiBold) }
         }
     }
@@ -2504,7 +2505,7 @@ private fun VoiceOutputLoadingSkeleton() {
         )
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
@@ -2529,7 +2530,7 @@ private fun VoiceOutputLoadingSkeleton() {
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
@@ -5050,7 +5051,7 @@ private fun VoiceProfileSummaryCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -5063,7 +5064,7 @@ private fun VoiceProfileSummaryCard(
         ) {
             Surface(
                 modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = appearanceRoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHighest,
                 contentColor = MaterialTheme.colorScheme.primary,
             ) {
@@ -5380,7 +5381,7 @@ private fun SectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = appearanceRoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,

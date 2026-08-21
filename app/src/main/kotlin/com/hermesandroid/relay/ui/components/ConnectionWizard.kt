@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -100,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionValidation
@@ -1347,7 +1347,7 @@ private fun NewNearbyHermesStep(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
             ),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
@@ -1397,7 +1397,7 @@ private fun NewNearbyHermesStep(
         )
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -1503,7 +1503,7 @@ private fun ConnectionChooserRow(
     ) {
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
         ) {
             Icon(
                 imageVector = icon,
@@ -1713,7 +1713,7 @@ private fun DashboardFoundStep(
         )
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1874,7 +1874,7 @@ private fun RelayChoiceStep(
         )
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
@@ -3077,7 +3077,7 @@ private fun ShowCodeStep(
         )
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(6.dp),
+            shape = appearanceRoundedCornerShape(6.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -3813,7 +3813,7 @@ private fun SecureLinkPairingSummary(
     }.joinToString(" · ")
     Surface(
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -3873,7 +3873,7 @@ private fun SoftPill(
     fg: Color,
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = appearanceRoundedCornerShape(8.dp),
         color = fg.copy(alpha = 0.14f),
     ) {
         Text(

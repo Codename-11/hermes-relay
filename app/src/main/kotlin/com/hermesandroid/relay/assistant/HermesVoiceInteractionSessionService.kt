@@ -70,7 +70,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.PersistedHermesRelayTheme
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -131,7 +131,7 @@ private class HermesVoiceInteractionSession(
         setViewTreeViewModelStoreOwner(viewOwner)
         setViewTreeSavedStateRegistryOwner(viewOwner)
         setContent {
-            HermesRelayTheme {
+            PersistedHermesRelayTheme {
                 AssistantSessionSurface(
                     expanded = surfaceExpanded,
                     onExpandedChange = { surfaceExpanded = it },
