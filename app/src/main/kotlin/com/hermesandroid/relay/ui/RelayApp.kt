@@ -1834,6 +1834,11 @@ fun RelayApp() {
                                     .InteractionRequestNotifier.DEFAULT_PROFILE_ROUTE_VALUE
                             }
                             if (!profileSelectionSettled) return@LaunchedEffect
+                            if (!connectionViewModel.isProfileSelectionAllowed(targetProfile)) {
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                                return@LaunchedEffect
+                            }
                             if (effectiveSessionProfileName != targetProfile) {
                                 val selection = targetProfile?.let { name ->
                                     agentProfiles.firstOrNull { it.name == name }
