@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.11.0",
+   "title": "Access with clear boundaries",
+   "date": "2026-08-20",
+   "sections": [
+    {
+     "header": "Choose what Bridge can do",
+     "bullets": [
+      "Use read-only, read-and-confirm, or custom capability presets for the active connection in sideload builds.",
+      "Allow screen inspection and control for a bounded period or explicitly keep access unlimited."
+     ]
+    },
+    {
+     "header": "Recover without losing context",
+     "bullets": [
+      "Keep stored-session failures visible with route-aware details and clear retry or dismiss actions.",
+      "Insert newlines across more software keyboards and retain Stopped status when answer recovery is cancelled."
+     ]
+    },
+    {
+     "header": "Use less power while idle",
+     "bullets": [
+      "Pause invisible Sphere, waveform, and drawer animation loops when no motion is needed.",
+      "Attach capture surfaces only for requested frames and release audio or wake-lock resources at their lifecycle boundaries."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.10.0",
    "title": "Chat that stays put",
    "date": "2026-08-18",
