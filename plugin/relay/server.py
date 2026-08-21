@@ -93,6 +93,7 @@ from .model_capabilities import (
     ModelCapabilityResolver,
     SCHEMA_VERSION as MODEL_CAPABILITIES_SCHEMA_VERSION,
 )
+from .provider_usage import collect_provider_usage, resolve_profile_home
 from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
@@ -1172,96 +1173,20 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
     )
 
 
-# ── OpenCode Go subscription usage proxy ─────────────────────────────────────
-
-# The OpenCode Go upstream usage endpoint returns, per window, only the used
-# fraction (`percent`) and the reset time (`resetsAt`). The dollar caps for the
-# three subscription windows live in the product ($12 / $30 / $60) but are not
-# echoed back, so we carry them here — single source of truth shared with the
-# phone — so the client can render "$X of $Y used" without hardcoding numbers.
-_OPENCODE_GO_USAGE_WINDOWS: dict[str, dict[str, Any]] = {
-    "rolling": {"label": "5h", "limit": 12.0},
-    "weekly": {"label": "weekly", "limit": 30.0},
-    "monthly": {"label": "monthly", "limit": 60.0},
-}
-_OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
-# The upstream endpoint 403s on non-curl User-Agents (blocked for everyone
-# except curl-like clients) — mirror the skill's documented workaround.
-_OPENCODE_GO_UA = "curl/8.4.0"
-
-
-async def handle_opencode_usage(request: web.Request) -> web.Response:
-    """Proxy the OpenCode Go subscription usage endpoint for the phone.
-
-    GET /usage/opencode
-      → 200 {"usage": {"rolling": {...}, "weekly": {...}, "monthly": {...}},
-             "limits": {...}}
-      → 401 missing/invalid bearer
-      → 404 OpenCode Go not configured on this host (normal — feature N/A)
-      → 502 upstream unreachable / non-200 / malformed payload
-
-    The phone never sees the OpenCode Go API key — it stays in
-    ``~/.hermes/.env`` on this host (loaded at bootstrap) and is used only to
-    authenticate the upstream ``GET <base>/usage`` call. The response mirrors
-    the upstream per-window shape (``{status, percent, resetsAt}``) and augments
-    it with ``limits`` (the dollar caps + human labels) so the client can render
-    progress bars without coupling to subscription pricing.
-    """
-    # Only a paired/authenticated relay session may read usage.
+async def handle_provider_usage(request: web.Request) -> web.Response:
+    """Return provider-neutral account usage to an authenticated paired device."""
     _require_bearer_session(request)
-
-    api_key = os.environ.get("OPENCODE_GO_API_KEY")
-    if not api_key:
-        # This host doesn't run OpenCode Go (no key configured), so the quota
-        # endpoint is simply not applicable here — a clean 404 (matching the
-        # "optional feature not supported on this host" convention used by
-        # e.g. /chat/image-activity), NOT a 500. The phone renders this as a
-        # quiet "not available" state instead of an error.
-        raise web.HTTPNotFound(text="opencode-go not configured on this host")
-
-    base_url = (
-        os.environ.get("OPENCODE_GO_BASE_URL") or _OPENCODE_GO_DEFAULT_BASE_URL
-    ).rstrip("/")
-    url = f"{base_url}/usage"
-
+    server: RelayServer = request.app["server"]
+    if not server.config.provider_usage_enabled:
+        raise web.HTTPNotFound(text="provider usage is not enabled on this host")
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "User-Agent": _OPENCODE_GO_UA,
-                },
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    body = (await resp.text()).strip()[:200]
-                    logger.warning(
-                        "OpenCode Go usage upstream HTTP %s: %s", resp.status, body
-                    )
-                    return web.json_response(
-                        {"ok": False, "error": f"upstream HTTP {resp.status}"},
-                        status=502,
-                    )
-                payload = await resp.json()
-    except asyncio.TimeoutError:
-        return web.json_response({"ok": False, "error": "upstream timeout"}, status=502)
-    except (aiohttp.ClientError, ValueError, json.JSONDecodeError) as exc:
-        logger.warning("OpenCode Go usage upstream error: %s", exc)
-        return web.json_response({"ok": False, "error": "upstream unreachable"}, status=502)
-
-    usage = payload.get("usage")
-    if not isinstance(usage, dict):
-        return web.json_response(
-            {"ok": False, "error": "unexpected upstream payload"}, status=502
+        profile_home = resolve_profile_home(
+            server.config.hermes_config_path,
+            request.query.get("profile"),
         )
-
-    return web.json_response(
-        {
-            "usage": usage,
-            "limits": _OPENCODE_GO_USAGE_WINDOWS,
-        }
-    )
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc)) from exc
+    return web.json_response(await collect_provider_usage(profile_home=profile_home))
 
 
 # ── Desktop tool dispatch (loopback HTTP shim for desktop_tool.py) ──────────
@@ -4774,7 +4699,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
-    app.router.add_get("/usage/opencode", handle_opencode_usage)
+    app.router.add_get("/usage/providers", handle_provider_usage)
     app.router.add_get("/chat/image-activity", handle_image_activity)
     # Desktop tool dispatch — HTTP shim called by `plugin/tools/desktop_tool.py`
     # running inside hermes-gateway. Both endpoints loopback-only.

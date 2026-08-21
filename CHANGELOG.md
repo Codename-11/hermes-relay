@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android shows OpenCode Go subscription usage in Settings.** A new inline card proxies the provider's 5-hour / weekly / monthly quota through the Relay host (`GET /usage/opencode`) and renders each window as a progress bar with dollars used, the window cap, a resets-in countdown, and a refresh control. The provider API key stays in `~/.hermes/.env` on the host and never reaches the device; the card fails soft when the Relay is unconfigured or unpaired.
+- **Android adds top-level provider usage and limit settings.** Codex, Nous, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes. Android prefers the upstream Hermes account-usage contract and can fall back to an explicitly enabled Relay compatibility endpoint without receiving provider credentials.
 
 ## [1.11.0] - 2026-08-20
 

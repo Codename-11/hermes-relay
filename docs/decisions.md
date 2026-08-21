@@ -3559,3 +3559,39 @@ and require fresh consent for each
 It also mirrors MCP authorization's
 [least-privilege scope selection](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 without presenting Android app policy as OAuth scope.
+
+## ADR 64 — Provider account usage is upstream-first, normalized, and user-presented at top level
+
+**Context.** Android had no account-limit surface even though current Hermes
+already models Codex and Nous usage. A proposed OpenCode Go-only Settings card
+introduced a Relay proxy, fixed provider windows, and inferred dollar spend
+from rounded percentages. That shape could not represent multiple providers,
+made changing plans look authoritative, and placed a provider-specific card on
+the Settings landing page for hosts where it did not apply.
+
+**Decision.** Android owns one top-level **Usage & limits** Settings destination,
+parallel to Hermes Management rather than nested inside it. The device-level
+landing presentation is Summary by default, with opt-in Expanded and Hidden
+modes plus per-provider visibility. The full destination remains reachable in
+all three modes.
+
+The client first calls the additive upstream Gateway `account.usage` method and
+decodes a provider-neutral schema. Older gateways may fall back to Relay
+`GET /usage/providers` when paired and when the operator explicitly sets
+`RELAY_PROVIDER_USAGE_ENABLED=1`. Relay reuses Hermes's existing account model
+for Codex and Nous and supplies the missing OpenCode Go adapter. OpenCode Go
+renders only the percentage and reset values returned by the provider; Android
+does not infer dollars or embed plan caps. Provider keys stay host-side.
+The active profile is carried on the compatibility request and validated before
+Hermes's task-local home override scopes every account lookup, so concurrent
+profiles never collapse onto the root account.
+
+xAI and other providers remain absent until their account-level source and
+credential scope can be represented honestly. Per-request or session spend is
+not labeled as an account quota.
+
+**Consequences.** Vanilla/current Hermes can become the canonical source without
+an Android rewrite, older plugin-enabled hosts have a bounded transition path,
+and merely configuring a provider credential does not expose billing metadata
+to paired devices. The Android UI can add providers without adding provider-
+specific screens or silently treating missing data as zero usage.

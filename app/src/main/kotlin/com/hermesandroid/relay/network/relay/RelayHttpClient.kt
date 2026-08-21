@@ -8,6 +8,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -1470,64 +1471,16 @@ class RelayHttpClient(
         return value == "1" || value == "true"
     }
 
-    // ── OpenCode Go subscription usage ───────────────────────────────────
-
-    /** Reply shape of the relay's `GET /usage/opencode` proxy. */
-    @Serializable
-    data class OpenCodeUsageResponse(
-        val usage: OpenCodeUsageWindows = OpenCodeUsageWindows(),
-        /** Per-window dollar caps + human labels echoed from the relay host. */
-        val limits: Map<String, OpenCodeUsageLimit> = emptyMap(),
-    )
-
-    /** The three subscription windows: 5h (rolling), weekly, monthly. */
-    @Serializable
-    data class OpenCodeUsageWindows(
-        val rolling: OpenCodeUsageWindow? = null,
-        val weekly: OpenCodeUsageWindow? = null,
-        val monthly: OpenCodeUsageWindow? = null,
-    )
-
-    @Serializable
-    data class OpenCodeUsageWindow(
-        val status: String? = null,
-        /** Fraction (0–100) of the window's dollar limit already used. */
-        val percent: Int? = null,
-        @SerialName("resetsAt") val resetsAt: String? = null,
-    )
-
-    @Serializable
-    data class OpenCodeUsageLimit(
-        val label: String? = null,
-        val limit: Double? = null,
-    )
-
-    /**
-     * Fetch the OpenCode Go subscription usage via the relay's
-     * `GET /usage/opencode` proxy.
-     *
-     * The OpenCode Go API key lives only in `~/.hermes/.env` on the relay host;
-     * the phone authenticates to the relay with its session token and the relay
-     * does the upstream query on our behalf. The returned payload carries the
-     * three windows (`rolling`, `weekly`, `monthly`), each `{status, percent,
-     * resetsAt}`, plus the dollar caps so the UI can render "$X of $Y used".
-     *
-     * Requires a configured relay URL AND a paired session token — exactly the
-     * same preconditions as [fetchMedia].
-     */
-    suspend fun fetchOpenCodeUsage(): Result<OpenCodeUsageResponse?> =
+    /** Provider-neutral compatibility fetch for gateways without `account.usage`. */
+    suspend fun fetchProviderUsage(profile: String? = null): Result<ProviderUsageResponse?> =
         withContext(Dispatchers.IO) {
             val relayUrl = relayUrlProvider()?.trim().orEmpty()
             if (relayUrl.isEmpty()) {
-                return@withContext Result.failure(
-                    IllegalStateException("Relay URL not configured")
-                )
+                return@withContext Result.success(null)
             }
             val sessionToken = sessionTokenProvider()
             if (sessionToken.isNullOrBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("Relay not paired — session token missing")
-                )
+                return@withContext Result.success(null)
             }
 
             val httpBase = relayUrl
@@ -1535,7 +1488,14 @@ class RelayHttpClient(
                 .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
                 .trimEnd('/')
 
-            val url = "$httpBase/usage/opencode".toHttpUrlOrNull()
+            val url = "$httpBase/usage/providers".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.apply {
+                    profile?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        addQueryParameter("profile", it)
+                    }
+                }
+                ?.build()
                 ?: return@withContext Result.failure(
                     IllegalArgumentException("Invalid relay URL: $httpBase")
                 )
@@ -1550,16 +1510,14 @@ class RelayHttpClient(
             try {
                 okHttpClient.newCall(request).execute().use { response ->
                     if (response.code == 404) {
-                        // Relay host has no OPENCODE_GO_API_KEY configured — the
-                        // feature is simply not applicable on this host. This is
-                        // a normal state (not an error), so callers render a
-                        // quiet "not available" instead of failing.
+                        // Older or operator-disabled hosts simply do not expose
+                        // account usage. This is capability absence, not an error.
                         return@withContext Result.success(null)
                     }
                     if (!response.isSuccessful) {
                         val reason = when (response.code) {
                             401, 403 -> "Unauthorized — re-pair with the relay"
-                            502 -> "OpenCode Go upstream error (HTTP ${response.code})"
+                            502 -> "Provider usage upstream error (HTTP ${response.code})"
                             in 500..599 -> "Relay error (HTTP ${response.code})"
                             else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
                         }
@@ -1571,20 +1529,20 @@ class RelayHttpClient(
                     }
                     val parsed = runCatching {
                         sessionsJson.decodeFromString(
-                            OpenCodeUsageResponse.serializer(),
+                            ProviderUsageResponse.serializer(),
                             body,
                         )
                     }.getOrElse {
-                        Log.w(TAG, "fetchOpenCodeUsage parse error: ${it.message}")
-                        return@withContext Result.failure(IOException("Unrecognized quota payload"))
+                        Log.w(TAG, "fetchProviderUsage parse error: ${it.message}")
+                        return@withContext Result.failure(IOException("Unrecognized usage payload"))
                     }
                     Result.success(parsed)
                 }
             } catch (e: IOException) {
-                Log.w(TAG, "fetchOpenCodeUsage failed: ${e.message}")
+                Log.w(TAG, "fetchProviderUsage failed: ${e.message}")
                 Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
             } catch (e: Exception) {
-                Log.w(TAG, "fetchOpenCodeUsage unexpected error: ${e.message}")
+                Log.w(TAG, "fetchProviderUsage unexpected error: ${e.message}")
                 Result.failure(e)
             }
         }

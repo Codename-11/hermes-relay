@@ -97,11 +97,15 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProviderUsageLandingMode
+import com.hermesandroid.relay.data.ProviderUsagePreferences
+import com.hermesandroid.relay.data.ProviderUsagePreferencesRepository
+import com.hermesandroid.relay.network.usage.ProviderUsageRepository
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.components.AgentAvatarFace
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.LocalAgentIconPath
-import com.hermesandroid.relay.ui.components.OpenCodeQuotaCard
 import com.hermesandroid.relay.ui.components.ProfileInspectorCard
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
@@ -171,6 +175,7 @@ fun SettingsScreen(
     // expandable sections, so there's nothing left to link to twice.
     onNavigateToConnections: () -> Unit,
     onNavigateToManage: () -> Unit,
+    onNavigateToProviderUsage: () -> Unit,
     onNavigateToPlugins: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
@@ -201,9 +206,38 @@ fun SettingsScreen(
     val isDarkTheme = LocalBrand.current.isDark
 
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val providerUsagePreferencesRepository = remember(context) {
+        ProviderUsagePreferencesRepository(context)
+    }
+    val providerUsagePreferences by providerUsagePreferencesRepository.preferences.collectAsState(
+        initial = ProviderUsagePreferences(),
+    )
+    val providerUsageRepository = remember(connectionViewModel) {
+        ProviderUsageRepository(
+            gatewayClientProvider = connectionViewModel::activeGatewayChatClient,
+            relayHttpClient = connectionViewModel.relayHttpClient,
+            profileProvider = { connectionViewModel.selectedProfile.value?.name },
+        )
+    }
+    var providerUsageResponse by remember { mutableStateOf<ProviderUsageResponse?>(null) }
+    var providerUsageLoaded by remember { mutableStateOf(false) }
+    LaunchedEffect(
+        activeConnection?.id,
+        selectedProfile?.name,
+        providerUsagePreferences.landingMode,
+    ) {
+        if (providerUsagePreferences.landingMode == ProviderUsageLandingMode.Hidden) {
+            providerUsageResponse = null
+            providerUsageLoaded = true
+        } else {
+            providerUsageLoaded = false
+            providerUsageResponse = providerUsageRepository.fetch().getOrNull()
+            providerUsageLoaded = true
+        }
+    }
     // Active Agent card inputs — personality + profile drive the title,
     // ring-accent, and subtitle.
-    val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileDisplayAlias by connectionViewModel.profileDisplayAlias.collectAsState()
@@ -452,17 +486,6 @@ fun SettingsScreen(
                 modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
             )
 
-            // ── OpenCode Go subscription usage ──────────────────────────
-            // Inline card that proxies the OpenCode Go quota (5h / weekly /
-            // monthly) through the relay host. The API key stays on the Mac;
-            // the phone just renders what the relay returns. Fetches on
-            // composition + on refresh tap, degrades gracefully when the relay
-            // isn't configured or paired yet.
-            OpenCodeQuotaCard(
-                relayHttpClient = connectionViewModel.relayHttpClient,
-                modifier = Modifier.settingsPetSurface("settings-card:opencode-quota"),
-            )
-
             // (The "Active Connection quick-look card" that used to live
             // here — showing API / Relay / Session status rows with a
             // clickable shortcut into a separate singular-connection
@@ -490,6 +513,75 @@ fun SettingsScreen(
             )
 
             SettingsSectionHeader(stringResource(R.string.settings_hermes))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.provider_usage_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = stringResource(R.string.provider_usage_settings_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = onNavigateToProviderUsage) {
+                    Text(stringResource(R.string.provider_usage_customize))
+                }
+            }
+
+            if (providerUsagePreferences.landingMode == ProviderUsageLandingMode.Hidden) {
+                Text(
+                    text = stringResource(R.string.provider_usage_hidden_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val landingProviders = providerUsageResponse?.providers
+                    ?.filter { it.available && it.id in providerUsagePreferences.visibleProviders }
+                    .orEmpty()
+                when {
+                    !providerUsageLoaded -> Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.provider_usage_loading),
+                            modifier = Modifier.padding(16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    landingProviders.isEmpty() -> Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.provider_usage_not_available_compact),
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    else -> landingProviders.forEach { provider ->
+                        ProviderUsageCard(
+                            provider = provider,
+                            detailed = providerUsagePreferences.landingMode == ProviderUsageLandingMode.Expanded,
+                            modifier = Modifier.settingsPetSurface("settings-card:usage-${provider.id}"),
+                        )
+                    }
+                }
+            }
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
