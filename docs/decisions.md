@@ -3570,3 +3570,84 @@ and require fresh consent for each
 It also mirrors MCP authorization's
 [least-privilege scope selection](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 without presenting Android app policy as OAuth scope.
+
+---
+
+## ADR 64 — Android settles missing Gateway terminal frames from authoritative session state
+
+**Status:** Accepted (2026-08-20).
+
+**Context.** A Gateway turn ordinarily ends with `message.complete`, but a
+replacement WebSocket does not replay frames emitted while the prior socket was
+detached. Current upstream still closes every accepted turn with a scoped
+`session.info` carrying `running=false`, and `session.activate` returns the same
+authoritative running state for the exact live runtime. Official Desktop uses
+that idle state as its settle backstop when `message.complete` is absent. The
+TUI owns one live session directly and also restores the returned running state;
+API-server SSE has its own explicit `assistant.completed`, `run.completed`, and
+`done` boundaries.
+
+Android previously reactivated the exact live runtime after a mid-turn socket
+loss but continued waiting only for the missing `message.complete`. The turn
+watchdog, streaming placeholder, send queue, and Compose state therefore stayed
+live even when upstream had already persisted the final answer. The earlier
+visible-chat Idle reattach fix covered a socket that closed after foreground
+prewarm; it did not cover this already-active turn state.
+
+**Decision.** A Gateway turn may settle from `session.activate` or exact-session
+`session.info` only when the turn has already received turn-scoped activity and
+upstream reports `running=false`. Pre-start idle snapshots are ignored because
+they can race prompt admission. This backstop is a successful server-owned
+settle, not cancellation or transport failure: Android completes the local
+stream, keeps the durable session identity, performs bounded identity-fenced
+history reconciliation, and never resubmits through API fallback. Cold open
+continues to use `session.resume`; an authoritative resume rejection remains
+visible and cannot create or switch to a replacement context.
+
+The recovery writes one bounded content-free diagnostic containing only route,
+missing-terminal phase, and reconciliation action. It records no prompt or
+message text, credentials, hostnames, URLs, profile names, session identifiers,
+or filesystem paths.
+
+**Consequences.** Foreground-open and reconnected chats recover without leaving
+the session, duplicate submission, wrong-session events, or an arbitrary timer.
+Normal terminal delivery is unchanged, queued turns retain their existing
+ownership, Relay remains optional, and unmodified upstream compatibility is
+preserved. Physical certification across the reported device/network matrix
+remains tracked in `TODO.md`.
+
+---
+
+## ADR 65 — Gateway client contracts use reusable on-demand scenario fixtures
+
+**Status:** Accepted (2026-08-21).
+
+**Context.** Android, official Desktop, the TUI, and API fallback expose related
+but non-identical chat lifecycles. Existing tests grew around individual event
+mappers, client harnesses, and source markers. They proved many local behaviors
+but did not provide one reusable scenario for a real socket gap, exact-session
+activation, authoritative history, lifecycle-aware rendering, and physical
+device evidence. Issue #365 crossed all of those boundaries.
+
+**Decision.** Hermes-Relay keeps a client-neutral vanilla Gateway fixture with
+real HTTP/WebSocket JSON-RPC and declarative scenarios. Scenario manifests may
+declare current-upstream requirements; a separate non-provider source check
+validates those requirements against a clean unmodified upstream checkout.
+Android uses both a standalone real-socket instrumentation regression and an
+external-fixture adapter built from production Gateway, ViewModel, handler,
+main-looper, lifecycle, and Compose collection paths. A separate opt-in ADB
+runner owns APK identity, port reversal, instrumentation execution, optional
+app lifecycle smoke, and bounded privacy-safe evidence.
+
+The lanes are manual and on demand. No cron, scheduled workflow, nightly run,
+device farm, provider call, real conversation, or automatic radio mutation is
+created. Device-wide radio changes require an explicit dry-run receipt and a
+second exact confirmation. Relay-only routes, OAuth browser flows, Desktop/TUI
+client adapters, hosted devices, and scheduled execution remain future work.
+
+**Consequences.** Protocol regressions gain a deterministic cross-client
+vocabulary while client-specific assertions remain with each client. Current
+upstream drift, Android state-machine defects, rendered lifecycle failures, and
+physical-device failures are reported as distinct evidence lanes. A physical
+pass is never inferred from JVM or source checks, and scheduled execution can
+be considered later without being silently introduced now.

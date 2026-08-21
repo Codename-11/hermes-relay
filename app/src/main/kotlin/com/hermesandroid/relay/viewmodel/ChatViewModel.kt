@@ -7491,6 +7491,10 @@ class ChatViewModel : ViewModel() {
         var dispatchedSseEndpoint: String? = null
         var gatewayHistoryReconcileRequired = false
 
+        val gatewayAssistantBaselineCount = handler.messages.value.count {
+            it.role == MessageRole.ASSISTANT && !it.clientOnly
+        }
+
         val assistantTimestamp = System.currentTimeMillis()
         beginTurnCheckpoint(
             handler = handler,
@@ -7732,8 +7736,18 @@ class ChatViewModel : ViewModel() {
             // regression). Skip the message reconcile for errored turns — keep the
             // local error visible — but still refresh the drawer + drain the queue.
             if (sid != null && (completedTransport == "sessions" || completedTransport == "gateway")) {
+                if (completedTransport == "gateway" && gatewayHistoryReconcileRequired) {
+                    // The authoritative idle boundary can arrive before the
+                    // persisted final row is visible. Reuse the bounded,
+                    // identity-fenced history retry instead of trusting one
+                    // immediate read after a missing terminal frame.
+                    scheduleGatewayHistoryReconcile(
+                        storedSessionId = sid,
+                        baselineAssistantCount = gatewayAssistantBaselineCount,
+                    )
+                }
                 viewModelScope.launch {
-                    if (!turnErrored) {
+                    if (!turnErrored && !gatewayHistoryReconcileRequired) {
                         // Profile-aware read: a gateway turn on a non-default profile
                         // persists into THAT profile's own state.db, so the bare
                         // api_server `/api/sessions/{id}/messages` 404s → emptyList()
@@ -8244,6 +8258,12 @@ class ChatViewModel : ViewModel() {
                         onTurnComplete = onTurnCompleteCb,
                         onReconcileRequired = {
                             gatewayHistoryReconcileRequired = true
+                            DiagnosticsLog.record(
+                                category = DiagnosticCategory.Session,
+                                title = "Recovered a Gateway stream gap",
+                                detail = "route=gateway; terminal=missing; action=history_reconcile",
+                                operation = "chat_stream_reconcile",
+                            )
                         },
                         onComplete = onCompleteCb,
                         onUsage = onUsageCb,

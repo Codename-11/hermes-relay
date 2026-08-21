@@ -411,6 +411,15 @@ Implementation references:
 - **Release:** Tag-triggered → version validation → signed APK → GitHub Release
 - **Patterns from ARC:** Concurrency groups, matrix builds, version sync check
 
+### Gateway contract certification (on demand)
+
+Gateway/session/streaming/reconnect behavior uses the client-neutral scenario
+fixture, current-upstream source conformance, Android instrumentation, and
+optional physical ADB evidence described in
+[`docs/gateway-contract-testing.md`](gateway-contract-testing.md). The layers
+separate protocol, client state, rendered lifecycle, and device/runtime proof.
+They are not scheduled automatically.
+
 ---
 
 ## 5. App Layout
