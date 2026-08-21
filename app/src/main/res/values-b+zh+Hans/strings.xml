@@ -4190,7 +4190,7 @@
     <string name="provider_usage_back">返回</string>
     <string name="provider_usage_refresh">刷新用量</string>
     <string name="provider_usage_intro">此 Hermes 连接中已配置提供商的账户限额。</string>
-    <string name="provider_usage_not_available">此主机尚未提供提供商用量。请更新 Hermes，或在 Relay 中启用提供商用量。</string>
+    <string name="provider_usage_not_available">此 Hermes 连接未提供服务商用量。请更新 Hermes，或安装／更新 Relay 插件。</string>
     <string name="provider_usage_none_configured">当前显示的提供商均无可用账户用量。</string>
     <string name="provider_usage_loading">正在加载提供商用量…</string>
     <string name="provider_usage_error">无法加载提供商用量。</string>
@@ -4205,9 +4205,11 @@
     <string name="provider_usage_providers_title">在主设置页显示</string>
     <string name="provider_usage_providers_desc">选择要在主设置页显示的提供商卡片。此处仍会显示所有提供商。</string>
     <string name="provider_usage_settings_desc">账户用量和提供商限额</string>
+    <string name="provider_usage_settings_desc_relay">由 Relay 插件增强的用量和限额</string>
+    <string name="provider_usage_settings_desc_basic">Hermes 基础用量 · Relay 可增加凭据池等功能</string>
     <string name="provider_usage_customize">显示</string>
     <string name="provider_usage_hidden_hint">设置页已隐藏用量卡片。</string>
-    <string name="provider_usage_not_available_compact">此主机尚未提供提供商用量。</string>
+    <string name="provider_usage_not_available_compact">服务商用量不可用。请更新 Hermes 或 Relay 插件。</string>
     <string name="provider_usage_provider_not_configured">此主机未配置</string>
     <string name="provider_usage_provider_unavailable">用量暂时不可用</string>
     <string name="provider_usage_active_unknown">此会话尚无当前凭据。</string>
@@ -4219,4 +4221,8 @@
     <string name="provider_usage_unavailable_status">不可用</string>
     <string name="provider_usage_renews_on">续期日期：%1$s</string>
     <string name="provider_usage_manage_credits">管理额度</string>
+    <string name="provider_usage_capability_relay_title">已由 Relay 插件增强</string>
+    <string name="provider_usage_capability_relay_body">凭据池、结构化 Nous 余额和 OpenCode Go 由 Relay 插件提供。</string>
+    <string name="provider_usage_capability_basic_title">Hermes 基础用量</string>
+    <string name="provider_usage_capability_basic_body">安装或更新 Relay 插件即可使用凭据池、结构化 Nous 余额和 OpenCode Go。</string>
 </resources>

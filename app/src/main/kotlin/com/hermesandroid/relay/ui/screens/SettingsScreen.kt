@@ -1373,7 +1373,13 @@ private fun ProviderUsageLandingCard(
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     Text(
-                        text = stringResource(R.string.provider_usage_settings_desc),
+                        text = stringResource(
+                            when (response?.relayEnhanced) {
+                                true -> R.string.provider_usage_settings_desc_relay
+                                false -> R.string.provider_usage_settings_desc_basic
+                                null -> R.string.provider_usage_settings_desc
+                            },
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

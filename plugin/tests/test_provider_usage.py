@@ -176,6 +176,10 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["schema_version"], 2)
         self.assertEqual(
+            result["capabilities"],
+            ["credential_pools", "structured_balances", "opencode_go"],
+        )
+        self.assertEqual(
             [row["id"] for row in result["providers"]],
             ["openai-codex", "nous", "opencode-go"],
         )

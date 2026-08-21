@@ -4265,7 +4265,7 @@
     <string name="provider_usage_back">Zurück</string>
     <string name="provider_usage_refresh">Nutzung aktualisieren</string>
     <string name="provider_usage_intro">Kontolimits der Anbieter, die für diese Hermes-Verbindung konfiguriert sind.</string>
-    <string name="provider_usage_not_available">Dieser Host stellt die Anbieternutzung noch nicht bereit. Aktualisieren Sie Hermes oder aktivieren Sie die Anbieternutzung in Relay.</string>
+    <string name="provider_usage_not_available">Diese Hermes-Verbindung stellt keine Anbieternutzung bereit. Aktualisieren Sie Hermes oder installieren/aktualisieren Sie das Relay-Plugin.</string>
     <string name="provider_usage_none_configured">Für keinen sichtbaren Anbieter sind Kontonutzungsdaten verfügbar.</string>
     <string name="provider_usage_loading">Anbieternutzung wird geladen…</string>
     <string name="provider_usage_error">Anbieternutzung konnte nicht geladen werden.</string>
@@ -4280,9 +4280,11 @@
     <string name="provider_usage_providers_title">In den Haupteinstellungen anzeigen</string>
     <string name="provider_usage_providers_desc">Wählen Sie, welche Anbieterkarten in den Haupteinstellungen erscheinen. Hier bleiben alle Anbieter sichtbar.</string>
     <string name="provider_usage_settings_desc">Kontonutzung und Anbieterlimits</string>
+    <string name="provider_usage_settings_desc_relay">Durch Relay-Plugin erweiterte Nutzung und Limits</string>
+    <string name="provider_usage_settings_desc_basic">Hermes-Basisnutzung · Relay-Plugin ergänzt Pools und mehr</string>
     <string name="provider_usage_customize">Anzeige</string>
     <string name="provider_usage_hidden_hint">Nutzungskarten sind in den Einstellungen ausgeblendet.</string>
-    <string name="provider_usage_not_available_compact">Anbieternutzung ist von diesem Host noch nicht verfügbar.</string>
+    <string name="provider_usage_not_available_compact">Anbieternutzung ist nicht verfügbar. Aktualisieren Sie Hermes oder das Relay-Plugin.</string>
     <string name="provider_usage_provider_not_configured">Auf diesem Host nicht konfiguriert</string>
     <string name="provider_usage_provider_unavailable">Nutzung ist vorübergehend nicht verfügbar</string>
     <string name="provider_usage_active_unknown">Für diese Sitzung gibt es noch keine aktiven Anmeldedaten.</string>
@@ -4294,4 +4296,8 @@
     <string name="provider_usage_unavailable_status">Nicht verfügbar</string>
     <string name="provider_usage_renews_on">Verlängert sich am %1$s</string>
     <string name="provider_usage_manage_credits">Guthaben verwalten</string>
+    <string name="provider_usage_capability_relay_title">Durch Relay-Plugin erweitert</string>
+    <string name="provider_usage_capability_relay_body">Anmeldedaten-Pools, strukturierte Nous-Guthaben und OpenCode Go werden vom Relay-Plugin bereitgestellt.</string>
+    <string name="provider_usage_capability_basic_title">Basisnutzung von Hermes</string>
+    <string name="provider_usage_capability_basic_body">Installieren oder aktualisieren Sie das Relay-Plugin für Anmeldedaten-Pools, strukturierte Nous-Guthaben und OpenCode Go.</string>
 </resources>

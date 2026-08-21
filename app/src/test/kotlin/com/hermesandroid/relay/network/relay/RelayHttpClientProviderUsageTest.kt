@@ -32,6 +32,7 @@ class RelayHttpClientProviderUsageTest {
                 """
                 {
                   "schema_version": 2,
+                  "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
                   "providers": [
                     {
                       "id": "openai-codex",
@@ -71,6 +72,7 @@ class RelayHttpClientProviderUsageTest {
         assertEquals(42.5, response.providers.single().windows.single().usedPercent!!, 0.001)
         assertEquals("Work", response.providers.single().credentials.single().label)
         assertTrue(response.providers.single().credentials.single().active)
+        assertTrue(response.relayEnhanced)
     }
 
     @Test

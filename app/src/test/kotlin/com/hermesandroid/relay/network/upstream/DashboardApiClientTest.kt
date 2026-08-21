@@ -131,6 +131,7 @@ class DashboardApiClientTest {
                 """
                 {
                   "schema_version": 2,
+                  "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
                   "providers": [{
                     "id": "openai-codex",
                     "display_name": "Codex",
@@ -158,6 +159,7 @@ class DashboardApiClientTest {
         assertEquals("session/42", request.queryParameter("session_id"))
         assertEquals("bailey", usage.providers.single().credentials.single().label)
         assertTrue(usage.providers.single().credentials.single().active)
+        assertTrue(usage.relayEnhanced)
     }
 
     @Test

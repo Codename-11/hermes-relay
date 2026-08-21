@@ -20,6 +20,11 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 SCHEMA_VERSION = 2
+RELAY_CAPABILITIES = (
+    "credential_pools",
+    "structured_balances",
+    "opencode_go",
+)
 _OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 _OPENCODE_GO_USER_AGENT = "curl/8.4.0"
 _MAX_DETAIL_LENGTH = 240
@@ -521,5 +526,6 @@ async def collect_provider_usage(
     return {
         "schema_version": SCHEMA_VERSION,
         "fetched_at": _now_iso(),
+        "capabilities": list(RELAY_CAPABILITIES),
         "providers": providers,
     }

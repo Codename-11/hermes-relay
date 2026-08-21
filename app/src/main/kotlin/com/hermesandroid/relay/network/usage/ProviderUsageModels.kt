@@ -7,8 +7,20 @@ import kotlinx.serialization.Serializable
 data class ProviderUsageResponse(
     @SerialName("schema_version") val schemaVersion: Int = 1,
     @SerialName("fetched_at") val fetchedAt: String? = null,
+    val capabilities: Set<String> = emptySet(),
     val providers: List<ProviderUsageProvider> = emptyList(),
-)
+) {
+    val relayEnhanced: Boolean
+        get() = capabilities.containsAll(RELAY_ENHANCED_CAPABILITIES)
+
+    companion object {
+        val RELAY_ENHANCED_CAPABILITIES = setOf(
+            "credential_pools",
+            "structured_balances",
+            "opencode_go",
+        )
+    }
+}
 
 @Serializable
 data class ProviderUsageProvider(

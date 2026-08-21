@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. Provider credentials remain host-side.
+- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. The UI identifies Relay-plugin-enhanced data and explains which capabilities require the matching plugin. Provider credentials remain host-side.
 
 ## [1.11.0] - 2026-08-20
 

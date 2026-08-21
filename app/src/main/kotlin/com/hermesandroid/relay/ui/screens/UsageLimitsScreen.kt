@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -185,6 +186,7 @@ fun UsageLimitsScreen(
                 )
                 UsageLoadState.Error -> ProviderUsageError(onRetry = { refreshKey++ })
                 is UsageLoadState.Loaded -> {
+                    ProviderUsageCapabilityNotice(relayEnhanced = current.response.relayEnhanced)
                     val providers = current.response.providers
                     if (providers.none { it.available }) {
                         ProviderUsageMessage(
@@ -212,6 +214,46 @@ fun UsageLimitsScreen(
                     }
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun ProviderUsageCapabilityNotice(relayEnhanced: Boolean) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = stringResource(
+                        if (relayEnhanced) R.string.provider_usage_capability_relay_title
+                        else R.string.provider_usage_capability_basic_title,
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(
+                        if (relayEnhanced) R.string.provider_usage_capability_relay_body
+                        else R.string.provider_usage_capability_basic_body,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
