@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-08-16
+Updated: 2026-08-20
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is vanilla upstream
@@ -9,11 +9,16 @@ Hermes, what belongs to the Relay plugin, and what is only legacy compatibility.
 Verified upstream source snapshot:
 
 - Repository: `NousResearch/hermes-agent`
-- Commit: `7095e23eb2066fe9a2f93b99cdbfe0e2b5ece397`
+- Commit: `8794e5a21c980a0f26532cb4883284b786cb3f25`
 - Primary files checked: `gateway/platforms/api_server.py`,
   `hermes_cli/web_routers/sessions.py`, `apps/desktop/src/store/session-pin-sync.ts`,
   `hermes_cli/web_server.py`, `hermes_cli/dashboard_auth/routes.py`,
   `tui_gateway/server.py`, `tui_gateway/methods_session.py`,
+  `tui_gateway/ws.py`,
+  `apps/desktop/src/app/session/hooks/use-message-stream/gateway-event/session-info.ts`,
+  `apps/desktop/src/app/session/hooks/use-route-resume.ts`,
+  `ui-tui/src/app/createGatewayEventHandler.ts`,
+  `ui-tui/src/app/useSessionLifecycle.ts`,
   `apps/desktop/src/store/pet.ts`, `agent/pet/`, `hermes_cli/plugins.py`,
   `hermes_cli/plugins_cmd.py`
 - Additive Manage contracts were rechecked at upstream MCP hosted-OAuth commits
@@ -29,7 +34,7 @@ Verified upstream source snapshot:
 | `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary Gateway session control or optional SSE fallback | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Authenticated read-only API-server skill/toolset inventory; Android Diagnostics summarizes enabled toolsets and Relay tool visibility. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity and profile/gateway topology; these do not gate transport selection. |
-| Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. |
+| Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. `message.complete` is the ordinary terminal event; `session.info {running:false}` is the authoritative settle backstop when a replacement socket missed that terminal frame. A reconnect reactivates the exact live runtime with `session.activate`; durable `session.resume` remains the cold-open path and an explicit rejection never creates a replacement context. |
 | Dashboard `model.options` / `/api/model/*` | Upstream dashboard/tui_gateway | No | Provider/model inventory and selection | Source of truth for coherent provider/model identities. A reasoning boolean or exact effort list is consumed when present; clients do not infer provider identity from a model string alone. |
 | Gateway `pet.info`, `pet.gallery`, `pet.select`, `pet.disable` | Upstream tui_gateway | No | Profile-scoped animated companion | `pet.info` supplies bounded PNG/WebP sheet bytes, revision, geometry, real frame counts, loop timing, scale, and row taxonomy. Android passes `knownRevision` to avoid duplicate sheet transfer, renders the active pet through its native activity-aware companion, and keeps phone-local pet packs separate. All four RPCs carry the effective profile. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak-stream`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. Assistant text streams into upstream speech when available; older hosts fall back to whole-request speech before audio starts. API server has no `/v1/audio/*` route today. |

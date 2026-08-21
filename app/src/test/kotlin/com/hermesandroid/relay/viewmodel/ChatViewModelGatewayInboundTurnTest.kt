@@ -1565,6 +1565,48 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun foregroundMultiTurnRecoversWhenReconnectReportsSettledWithoutMessageComplete() {
+        viewModel.setChatVisible(true)
+        viewModel.sendMessage("Run a long foreground task")
+        gatewayHarness.awaitRpc("prompt.submit")
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "tool.start",
+                buildJsonObject {
+                    put("tool_id", "tool-foreground")
+                    put("name", "terminal")
+                },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial foreground answer") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        // The authoritative turn is already persisted when the replacement
+        // socket activates. No message.complete is replayed to that socket.
+        persistedHistory = persistedAnswerHistory()
+        gatewayHarness.recoveryRunning = false
+        serverWs.close(1011, "foreground network gap")
+        gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpc("session.activate")
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.id == "persisted-background-answer"
+        }
+        assertEquals(BACKGROUND_ANSWER, handler.messages.value.single().content)
+        assertEquals(0, apiCompletionsRequestCount.get())
+    }
+
+    @Test
     fun gatewayVoiceTurnDoesNotRequireApiFallback() {
         viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
         val params = gatewayHarness.awaitRpc("prompt.submit")

@@ -1655,6 +1655,100 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `settled activation after a streamed socket gap completes without a terminal frame`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws1 = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        // The turn is known-live and has produced content, but the socket dies
+        // before message.complete. Current upstream session.activate reports
+        // running=false after the turn's finally block; it does not replay the
+        // terminal frame that was emitted while this socket was detached.
+        ws1.send(harness.eventFrame("message.start", null, "live-1"))
+        ws1.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "partial") },
+                "live-1",
+            ),
+        )
+        awaitCondition { r.textDeltas.contains("partial") }
+        harness.recoveryRunning = false
+        ws1.close(1011, "terminal frame lost")
+
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.activate")
+
+        assertTrue(
+            "authoritative running=false must settle the recovered turn",
+            r.completeLatch.await(5, TimeUnit.SECONDS),
+        )
+        assertEquals(1, r.reconcileRequests.get())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.resume" })
+    }
+
+    @Test
+    fun `settled session info completes a live turn when message complete is absent`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        ws.send(harness.eventFrame("message.start", null, "live-1"))
+        ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "persisted answer") },
+                "live-1",
+            ),
+        )
+        ws.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("running", false) },
+                "live-1",
+            ),
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("persisted answer"), r.textDeltas.toList())
+        assertEquals(1, r.reconcileRequests.get())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `unscoped idle session info cannot settle an active turn`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        ws.send(harness.eventFrame("message.start", null, "live-1"))
+        ws.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("running", false) },
+                null,
+            ),
+        )
+
+        assertFalse(r.completeLatch.await(250, TimeUnit.MILLISECONDS))
+        ws.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "done") },
+                "live-1",
+            ),
+        )
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(0, r.reconcileRequests.get())
+    }
+
+    @Test
     fun `mid-turn activate method-not-found keeps legacy socket recovery`() {
         harness.methodNotFound += "session.activate"
         val r = Recorder()
@@ -2726,7 +2820,9 @@ class GatewayChatClientTest {
             ),
         )
 
-        waitUntil { client.serverModel.value == "agnes-2" }
+        waitUntil {
+            client.serverModel.value == "agnes-2" && client.serverProvider.value == null
+        }
         assertNull(client.serverProvider.value)
         assertNull(client.serverModelIdentity.value)
     }

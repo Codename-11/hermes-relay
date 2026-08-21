@@ -12,6 +12,7 @@ route *surface* — which is the thing that drifts when upstream renames or drop
 an endpoint — is declared as literal strings:
 
     api_server (aiohttp):   self._app.router.add_get("/v1/capabilities", ...)
+                            ("GET", "/v1/capabilities", handler)
     dashboard  (FastAPI):   @app.post("/api/audio/transcribe")  /  @app.websocket("/api/ws")
 
 so parsing them is deterministic, dependency-free, framework-agnostic, and
@@ -39,6 +40,12 @@ WEB_SERVER = "hermes_cli/web_server.py"
 # aiohttp:  .router.add_get("/path"   /   .add_post('/path'
 _AIOHTTP_RE = re.compile(
     r"""\.(?:router\.)?add_(get|post|patch|delete|put|head|route)\(\s*["']([^"']+)["']"""
+)
+# Current upstream declares the same aiohttp surface as a compact route table
+# consumed by `add_routes()`: ("GET", "/path", handler). Keep both shapes so
+# this gate validates the public contract instead of one registration style.
+_AIOHTTP_TABLE_RE = re.compile(
+    r"""\(\s*["'](GET|POST|PATCH|DELETE|PUT|HEAD)["']\s*,\s*["']([^"']+)["']\s*,"""
 )
 # FastAPI/Starlette decorators:  @app.get("/path")  @app.websocket("/path")
 _FASTAPI_RE = re.compile(
@@ -113,7 +120,11 @@ def main() -> int:
               "with no bootstrap .pth loaded.")
         return 1
 
-    found = extract_routes(api_path, _AIOHTTP_RE) | extract_routes(web_path, _FASTAPI_RE)
+    found = (
+        extract_routes(api_path, _AIOHTTP_RE)
+        | extract_routes(api_path, _AIOHTTP_TABLE_RE)
+        | extract_routes(web_path, _FASTAPI_RE)
+    )
 
     missing_required = sorted(REQUIRED - found)
     missing_advisory = sorted(ADVISORY - found)

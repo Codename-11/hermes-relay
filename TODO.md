@@ -6,6 +6,25 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify Android Gateway missing-terminal recovery on physical devices
+
+Deterministic fake-Gateway coverage now proves that a foreground turn with
+rapid deltas and tool activity can lose its WebSocket before
+`message.complete`, reactivate the exact live runtime, observe authoritative
+`running=false`, and reconcile persisted history without navigation, API
+fallback, duplicate submission, or a silent streaming latch. Complete the
+remaining hardware matrix before treating issue #365 as device-certified:
+
+- Re-run long multi-turn/tool-heavy chats against current vanilla upstream on
+  the originally reported Android/device family and one Android 14+ device.
+- Exercise foreground-open chat, background/foreground, Wi-Fi/cellular loss,
+  socket replacement, queued follow-ups, profile/session switches, and process
+  recreation while capturing the content-free Gateway recovery diagnostic.
+- Confirm selection, user-owned scrollback, streaming Markdown, and follow
+  behavior remain stable while authoritative history catches up.
+
+---
+
 ## Certify Android power fixes across the reported device matrix
 
 Issue #377's static estimates are not device measurements. The code now keeps

@@ -3559,3 +3559,48 @@ and require fresh consent for each
 It also mirrors MCP authorization's
 [least-privilege scope selection](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 without presenting Android app policy as OAuth scope.
+
+---
+
+## ADR 64 — Android settles missing Gateway terminal frames from authoritative session state
+
+**Status:** Accepted (2026-08-20).
+
+**Context.** A Gateway turn ordinarily ends with `message.complete`, but a
+replacement WebSocket does not replay frames emitted while the prior socket was
+detached. Current upstream still closes every accepted turn with a scoped
+`session.info` carrying `running=false`, and `session.activate` returns the same
+authoritative running state for the exact live runtime. Official Desktop uses
+that idle state as its settle backstop when `message.complete` is absent. The
+TUI owns one live session directly and also restores the returned running state;
+API-server SSE has its own explicit `assistant.completed`, `run.completed`, and
+`done` boundaries.
+
+Android previously reactivated the exact live runtime after a mid-turn socket
+loss but continued waiting only for the missing `message.complete`. The turn
+watchdog, streaming placeholder, send queue, and Compose state therefore stayed
+live even when upstream had already persisted the final answer. The earlier
+visible-chat Idle reattach fix covered a socket that closed after foreground
+prewarm; it did not cover this already-active turn state.
+
+**Decision.** A Gateway turn may settle from `session.activate` or exact-session
+`session.info` only when the turn has already received turn-scoped activity and
+upstream reports `running=false`. Pre-start idle snapshots are ignored because
+they can race prompt admission. This backstop is a successful server-owned
+settle, not cancellation or transport failure: Android completes the local
+stream, keeps the durable session identity, performs bounded identity-fenced
+history reconciliation, and never resubmits through API fallback. Cold open
+continues to use `session.resume`; an authoritative resume rejection remains
+visible and cannot create or switch to a replacement context.
+
+The recovery writes one bounded content-free diagnostic containing only route,
+missing-terminal phase, and reconciliation action. It records no prompt or
+message text, credentials, hostnames, URLs, profile names, session identifiers,
+or filesystem paths.
+
+**Consequences.** Foreground-open and reconnected chats recover without leaving
+the session, duplicate submission, wrong-session events, or an arbitrary timer.
+Normal terminal delivery is unchanged, queued turns retain their existing
+ownership, Relay remains optional, and unmodified upstream compatibility is
+preserved. Physical certification across the reported device/network matrix
+remains tracked in `TODO.md`.
