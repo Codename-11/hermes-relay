@@ -4128,6 +4128,7 @@
     <string name="custom_theme_mode">Modo</string>
     <string name="custom_theme_fixed_dark">%1$s aceita apenas Escuro.</string>
     <string name="custom_theme_fixed_light">%1$s aceita apenas Claro.</string>
+    <string name="custom_theme_mode_summary">Escolha Claro ou Escuro. Automático exige paletas clara e escura separadas.</string>
     <string name="custom_theme_style_summary">A forma é salva com este tema. A tipografia continua seguindo a fonte geral do aplicativo.</string>
     <string name="custom_theme_preview_name">Prévia · %1$s</string>
     <string name="custom_theme_preview_user">Mostre como este tema se comporta.</string>

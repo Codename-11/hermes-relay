@@ -297,13 +297,6 @@ fun AppearanceSettingsScreen(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                AppThemes.ALL.forEach { appTheme ->
-                    ThemeSwatchChip(
-                        appTheme = appTheme,
-                        selected = activeCustomTheme == null && appTheme.id == selectedTheme.id,
-                        onClick = { connectionViewModel.setAppTheme(appTheme.id) },
-                    )
-                }
                 val customSwatch = activeCustomTheme?.toAppTheme() ?: AppTheme(
                     id = CustomThemePreset.APP_THEME_PREFIX,
                     label = stringResource(R.string.custom_theme_title),
@@ -322,13 +315,31 @@ fun AppearanceSettingsScreen(
                     selected = activeCustomTheme != null,
                     onClick = onOpenCustomTheme,
                 )
+                AppThemes.ALL.forEach { appTheme ->
+                    ThemeSwatchChip(
+                        appTheme = appTheme,
+                        selected = activeCustomTheme == null && appTheme.id == selectedTheme.id,
+                        onClick = { connectionViewModel.setAppTheme(appTheme.id) },
+                    )
+                }
             }
 
             AppearanceModeControl(
-                theme = theme,
+                theme = activeCustomTheme?.mode ?: theme,
                 selectedTheme = selectedTheme,
                 isDarkTheme = isDarkTheme,
-                onThemeModeSelected = connectionViewModel::setTheme,
+                enabledModes = activeCustomTheme?.let { setOf("light", "dark") },
+                description = activeCustomTheme?.let {
+                    stringResource(R.string.custom_theme_mode_summary)
+                },
+                onThemeModeSelected = { mode ->
+                    val customTheme = activeCustomTheme
+                    if (customTheme == null) {
+                        connectionViewModel.setTheme(mode)
+                    } else {
+                        connectionViewModel.saveCustomTheme(customTheme.copy(mode = mode))
+                    }
+                },
             )
 
             if (activeCustomTheme == null) {
@@ -1231,6 +1242,8 @@ private fun AppearanceModeControl(
     theme: String,
     selectedTheme: AppTheme,
     isDarkTheme: Boolean,
+    enabledModes: Set<String>? = null,
+    description: String? = null,
     onThemeModeSelected: (String) -> Unit,
 ) {
     val options = listOf("auto", "light", "dark")
@@ -1250,6 +1263,7 @@ private fun AppearanceModeControl(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
             options.forEachIndexed { index, option ->
+                val optionEnabled = enabledModes?.contains(option) ?: modeApplies
                 if (index > 0) {
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
                 }
@@ -1261,15 +1275,15 @@ private fun AppearanceModeControl(
                             if (option == displayedMode) MaterialTheme.colorScheme.surfaceContainerHigh
                             else Color.Transparent,
                         )
-                        .alpha(if (modeApplies || option == displayedMode) 1f else 0.38f)
-                        .clickable(enabled = modeApplies) { onThemeModeSelected(option) },
+                        .alpha(if (optionEnabled || option == displayedMode) 1f else 0.38f)
+                        .clickable(enabled = optionEnabled) { onThemeModeSelected(option) },
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (option == displayedMode) {
                         Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(5.dp))
-                    } else if (!modeApplies) {
+                    } else if (!optionEnabled) {
                         Icon(Icons.Filled.Lock, null, Modifier.size(14.dp))
                         Spacer(Modifier.width(5.dp))
                     }
@@ -1278,9 +1292,9 @@ private fun AppearanceModeControl(
             }
             }
         }
-        if (!modeApplies) {
+        if (description != null || !modeApplies) {
             Text(
-                text = if (selectedTheme.mode == ThemeMode.LIGHT_ONLY) {
+                text = description ?: if (selectedTheme.mode == ThemeMode.LIGHT_ONLY) {
                     stringResource(R.string.appearance_fixed_light, selectedTheme.label)
                 } else {
                     stringResource(R.string.appearance_fixed_dark, selectedTheme.label)

@@ -229,12 +229,12 @@ final result: blocked
 - Combined evidence: `app/build/ui-evidence/custom-theme-preset-workshop-comparison.png` and `app/build/ui-evidence/custom-theme-preset-workshop-focused-comparison.png`
 - Viewport: Android Compose at `390dp x 844dp`, Robolectric qualifier `w390dp-h844dp-432dpi`
 - Pixels and normalization: source `852 x 1846`; implementation captures `1053 x 2278` at Android density `2.7`. Comparisons downsample the implementation to `852 x 1846` so both panels have the same visible bounds. The generated source is a conceptual phone mock rather than a CSS viewport, so no CSS pixel size or device-scale factor applies to it.
-- State: Aurora selected, dark fixed mode, Balanced shape, four editable color roles. The full-view implementation capture keeps the preset menu closed for a stable top-of-screen comparison; the focused capture proves the open overflow menu and the scrolled mode/shape state separately.
+- State: Aurora selected, Dark selected with Light available and Auto disabled, Balanced shape, visible name editor, and four editable color roles. The full-view implementation capture keeps the preset menu closed for a stable top-of-screen comparison; the focused capture proves the open overflow menu and the scrolled mode/shape state separately.
 
 **Findings**
 
 - No actionable P0, P1, or P2 differences remain.
-- The implementation preserves the selected direction: a dedicated Custom screen, saved preset rail, live preview, Colors/Style tabs, direct color-role editing, fixed-mode disclosure, shape selection, and persistent Revert/Save actions.
+- The implementation preserves the selected direction: a dedicated Custom screen, saved preset rail, directly editable name, live preview, Colors/Style tabs, direct color-role editing, selectable Light/Dark ownership, shape selection, and persistent Revert/Save actions.
 - Fonts and typography: the implementation intentionally uses Hermes' existing Material typography instead of the mock's denser generated type. Preset labels use `labelMedium` and now fit Aurora while allowing Terminal Green and Warm Mono to wrap to two readable lines.
 - Spacing and layout rhythm: the native screen scrolls rather than shrinking type or touch targets to fit every control above the fold. The partially visible Add card is an intentional horizontal-scroll affordance. Sticky actions remain visible.
 - Colors and visual tokens: the rendered Aurora roles match the source values (`#0B0B0F`, `#141421`, `#5B6CFF`, `#F5F6F7`), with app-native semantic derivation for secondary roles and a visible WCAG AA contrast result.
@@ -246,6 +246,7 @@ final result: blocked
 1. Initial comparison found a P2 label-density issue: `90dp` preset cards forced Aurora to wrap and over-truncated Terminal Green.
 2. Fixed by widening preset cards to `104dp`, using the established `labelMedium` type, and retaining horizontal scrolling.
 3. Post-fix evidence in `custom-theme-preset-workshop-comparison.png` shows readable two-line maximum labels and the intended rail rhythm. No P0/P1/P2 issue remains.
+4. Usability follow-up moved Custom to the first gallery position, exposed Theme name in the editor, and enabled Light/Dark selection while leaving unsupported Auto visibly locked. Updated `05_themes.png`, `custom-theme-preset-workshop.png`, and `custom-theme-preset-workshop-style.png` verify the integrated states.
 
 **Open Questions**
 

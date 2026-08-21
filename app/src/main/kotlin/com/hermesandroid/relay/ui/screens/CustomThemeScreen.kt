@@ -362,6 +362,15 @@ fun CustomThemeScreen(
                 )
             }
             draft?.let { current ->
+                OutlinedTextField(
+                    value = current.name,
+                    onValueChange = {
+                        draft = current.copy(name = it.take(CustomThemePreset.MAX_NAME_LENGTH))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.custom_theme_name)) },
+                    singleLine = true,
+                )
                 CustomThemePreview(current)
                 CustomThemeTabs(selectedTab = selectedTab, onSelect = { selectedTab = it })
                 when (selectedTab) {
@@ -421,7 +430,10 @@ fun CustomThemeScreen(
                     }
                 }
 
-                FixedModeControl(current)
+                CustomModeControl(
+                    preset = current,
+                    onModeSelected = { draft = current.copy(mode = it) },
+                )
                 ShapeControl(
                     selected = AppearanceShape.fromId(current.shapeId),
                     onSelected = { draft = current.copy(shapeId = it.id) },
@@ -662,7 +674,10 @@ private fun StyleEditor() {
 }
 
 @Composable
-private fun FixedModeControl(preset: CustomThemePreset) {
+private fun CustomModeControl(
+    preset: CustomThemePreset,
+    onModeSelected: (String) -> Unit,
+) {
     val selectedMode = if (preset.isDark) CustomThemePreset.MODE_DARK else CustomThemePreset.MODE_LIGHT
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(stringResource(R.string.custom_theme_mode), style = MaterialTheme.typography.titleSmall)
@@ -672,11 +687,12 @@ private fun FixedModeControl(preset: CustomThemePreset) {
         ) {
             listOf("auto", CustomThemePreset.MODE_LIGHT, CustomThemePreset.MODE_DARK).forEach { mode ->
                 val selected = mode == selectedMode
-                val enabled = selected
+                val enabled = mode != "auto"
                 Row(
                     modifier = Modifier.weight(1f).height(44.dp)
                         .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                         .alpha(if (enabled) 1f else 0.38f)
+                        .clickable(enabled = enabled) { onModeSelected(mode) }
                         .then(
                             Modifier.semantics(mergeDescendants = true) {
                                 if (!enabled) disabled()
@@ -687,8 +703,8 @@ private fun FixedModeControl(preset: CustomThemePreset) {
                 ) {
                     if (selected) Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
                     if (selected) Spacer(Modifier.width(5.dp))
-                    if (!selected) Icon(Icons.Filled.Lock, null, Modifier.size(14.dp))
-                    if (!selected) Spacer(Modifier.width(5.dp))
+                    if (!enabled) Icon(Icons.Filled.Lock, null, Modifier.size(14.dp))
+                    if (!enabled) Spacer(Modifier.width(5.dp))
                     Text(
                         stringResource(
                             when (mode) {
@@ -702,10 +718,7 @@ private fun FixedModeControl(preset: CustomThemePreset) {
             }
         }
         Text(
-            stringResource(
-                if (preset.isDark) R.string.custom_theme_fixed_dark else R.string.custom_theme_fixed_light,
-                preset.name,
-            ),
+            stringResource(R.string.custom_theme_mode_summary),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
