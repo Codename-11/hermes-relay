@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -230,6 +231,39 @@ class SessionDrawerTest {
 
         compose.onNodeWithText("Mizu chat").assertIsDisplayed()
         compose.onNodeWithText("X Bot Sessions").assertDoesNotExist()
+        compose.onNodeWithText("2 profiles · 2 sessions").assertIsDisplayed()
+    }
+
+    @Test
+    fun `all profiles scope survives activity state restoration`() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("m", "Mizu chat", null)),
+                    currentSessionId = null,
+                    activeProfileName = "mizu",
+                    allProfilesSupported = true,
+                    allProfileSessions = listOf(
+                        ProfileSessionRow("mizu", ChatSession("m", "Mizu chat", null)),
+                        ProfileSessionRow("x-bot", ChatSession("x", "X Bot chat", null)),
+                    ),
+                    onRefreshAllProfiles = {},
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All Profiles").performClick()
+        compose.onNodeWithText("X Bot chat").assertIsDisplayed()
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        compose.onNodeWithText("X Bot chat").assertIsDisplayed()
         compose.onNodeWithText("2 profiles · 2 sessions").assertIsDisplayed()
     }
 

@@ -198,6 +198,137 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun lifecycleReconciliationKeepsExplicitOwnerAndScopesDrawerRefreshToIt() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var listedProfile: String? = null
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+        viewModel.setProfileSessionLister { profileName ->
+            listedProfile = profileName
+            Result.success(emptyList())
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.refreshSessions()
+
+        awaitCondition { listedProfile == owner.name }
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.switchSession("x-bot-sibling")
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals("unchanged", persistedSession)
+    }
+
+    @Test
+    fun lifecycleReconciliationDuringHydrationCannotMoveOrEraseExplicitSession() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val loadStarted = CompletableDeferred<Unit>()
+        val releaseLoad = CompletableDeferred<Unit>()
+        var loadedProfile: String? = null
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            loadedProfile = profileName
+            loadStarted.complete(Unit)
+            releaseLoad.await()
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "owned-answer",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Owned transcript"),
+                    ),
+                ),
+            )
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        awaitCondition { loadStarted.isCompleted }
+
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        releaseLoad.complete(Unit)
+
+        awaitCondition { handler.messages.value.any { it.content == "Owned transcript" } }
+        assertEquals(owner.name, loadedProfile)
+        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun explicitOwnerScopesSessionMetadataWritesAfterLifecycleReconciliation() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val writtenProfiles = java.util.Collections.synchronizedList(mutableListOf<String?>())
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.profileSessionRenamer = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionPinner = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionArchiver = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionDeleter = { profileName, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "x-bot-session",
+                title = "Owned session",
+                model = null,
+            ),
+        )
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.renameSession("x-bot-session", "Renamed")
+        viewModel.setSessionPinned("x-bot-session", true)
+        viewModel.setSessionArchived("x-bot-session", true)
+        viewModel.deleteSession("x-bot-session")
+
+        awaitCondition { writtenProfiles.size == 4 }
+        assertEquals(listOf(owner.name, owner.name, owner.name, owner.name), writtenProfiles)
+    }
+
+    @Test
     fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
         val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
         val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
@@ -1462,7 +1593,7 @@ class ChatViewModelGatewayInboundTurnTest {
                 updatedAt = System.currentTimeMillis(),
             ),
         )
-        viewModel.profileSessionDeleter = { true }
+        viewModel.profileSessionDeleter = { _, _, _ -> true }
 
         viewModel.sendMessage("Run before delete")
         gatewayHarness.awaitRpc("prompt.submit")

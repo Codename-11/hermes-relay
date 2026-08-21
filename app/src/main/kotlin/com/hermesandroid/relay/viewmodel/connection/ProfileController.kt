@@ -739,9 +739,16 @@ class ProfileController(
      * dashboard URL, so the caller falls back to the shared api_server list.
      */
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? {
+        return listProfileScopedSessions(resolveSessionProfileName(), limit)
+    }
+
+    /** List the exact profile namespace owned by the visible chat binding. */
+    suspend fun listProfileScopedSessions(
+        profileName: String?,
+        limit: Int = 200,
+    ): Result<List<SessionItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
-        val profileName = resolveSessionProfileName()
         return dashboardClientFactory(connectionId, dashboardUrl)
             .listSessions(profile = profileName, limit = limit, archived = "include")
     }
@@ -752,33 +759,68 @@ class ProfileController(
         return dashboardClientFactory(connectionId, dashboardUrl).listAllProfileSessions(limit)
     }
 
-    suspend fun deleteSession(profileName: String, sessionId: String): Boolean {
+    suspend fun deleteSession(
+        profileName: String?,
+        sessionId: String,
+        expectedContextKey: String? = null,
+    ): Boolean {
         val connectionId = activeConnectionId.value ?: return false
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
         return dashboardClientFactory(connectionId, dashboardUrl)
             .deleteSession(sessionId, profileName)
             .isSuccess
     }
 
-    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean {
+    suspend fun renameSession(
+        profileName: String?,
+        sessionId: String,
+        title: String,
+        expectedContextKey: String? = null,
+    ): Boolean {
         val connectionId = activeConnectionId.value ?: return false
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
         return dashboardClientFactory(connectionId, dashboardUrl)
             .renameSession(sessionId, title, profileName)
             .isSuccess
     }
 
-    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean {
+    suspend fun setSessionPinned(
+        profileName: String?,
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean {
         val connectionId = activeConnectionId.value ?: return false
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
         return dashboardClientFactory(connectionId, dashboardUrl)
             .setSessionPinned(sessionId, pinned, profileName)
             .isSuccess
     }
 
-    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean {
+    suspend fun setSessionArchived(
+        profileName: String?,
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean {
         val connectionId = activeConnectionId.value ?: return false
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
+        if (
+            expectedContextKey != null &&
+            AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
+        ) return false
         return dashboardClientFactory(connectionId, dashboardUrl)
             .setSessionArchived(sessionId, archived, profileName)
             .isSuccess

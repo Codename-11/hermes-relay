@@ -175,15 +175,17 @@ internal class HermesRuntimeBinder(
         }
         chat.setDisplayProfileProvider { connection.effectiveDisplayProfile.value }
         chat.setDisplayAliasProvider { connection.profileDisplayAlias.value }
-        chat.setProfileSessionLister { connection.listProfileScopedSessions() }
+        chat.setProfileSessionLister { profileName ->
+            connection.listProfileScopedSessions(profileName)
+        }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
-        chat.profileSessionDeleter = connection::deleteProfileScopedSession
-        chat.profileSessionRenamer = connection::renameProfileScopedSession
-        chat.profileSessionPinner = connection::setProfileScopedSessionPinned
-        chat.profileSessionArchiver = connection::setProfileScopedSessionArchived
+        chat.profileSessionDeleter = connection::deleteSession
+        chat.profileSessionRenamer = connection::renameSession
+        chat.profileSessionPinner = connection::setSessionPinned
+        chat.profileSessionArchiver = connection::setSessionArchived
         chat.onSessionChanged = connection::saveLastSessionId
         chat.setDemoModeWiring(
             isDemo = { connection.isDemoMode.value },
@@ -290,7 +292,7 @@ internal class HermesRuntimeBinder(
                 if (!inputs.chatReady) return@collectLatest
                 if (!inputs.profileSelectionSettled) delay(PROFILE_SETTLE_BACKSTOP_MS)
                 else delay(PROFILE_CONTEXT_COALESCE_MS)
-                chat.switchProfileContext(
+                chat.reconcileProfileContext(
                     contextKey = AgentDisplay.profileContextKey(
                         connectionId = inputs.connectionId,
                         profileName = inputs.profileName,
