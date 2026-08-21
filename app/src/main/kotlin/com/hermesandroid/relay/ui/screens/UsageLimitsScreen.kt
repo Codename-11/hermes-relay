@@ -16,7 +16,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
@@ -50,12 +50,22 @@ import com.hermesandroid.relay.data.ProviderUsageLandingMode
 import com.hermesandroid.relay.data.ProviderUsagePreferences
 import com.hermesandroid.relay.data.ProviderUsagePreferencesRepository
 import com.hermesandroid.relay.network.usage.ProviderUsageProvider
+import com.hermesandroid.relay.network.usage.ProviderUsageCredential
+import com.hermesandroid.relay.network.usage.ProviderUsageBalance
 import com.hermesandroid.relay.network.usage.ProviderUsageRepository
 import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.usage.ProviderUsageWindow
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.ui.components.RelaySkeletonLine
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.text.NumberFormat
+import java.util.Currency
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -70,11 +80,13 @@ private sealed interface UsageLoadState {
 @Composable
 fun UsageLimitsScreen(
     connectionViewModel: ConnectionViewModel,
+    chatViewModel: ChatViewModel,
     onBack: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
+    val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val preferencesRepository = remember(context) { ProviderUsagePreferencesRepository(context) }
     val preferences by preferencesRepository.preferences.collectAsState(
         initial = ProviderUsagePreferences(),
@@ -82,22 +94,38 @@ fun UsageLimitsScreen(
     val repository = remember(connectionViewModel) {
         ProviderUsageRepository(
             gatewayClientProvider = connectionViewModel::activeGatewayChatClient,
+            dashboardClientProvider = {
+                connectionViewModel.activeDashboardUrl()?.let(
+                    connectionViewModel::dashboardClientForActive,
+                )
+            },
             relayHttpClient = connectionViewModel.relayHttpClient,
             profileProvider = { connectionViewModel.selectedProfile.value?.name },
+            sessionProvider = { chatViewModel.currentSessionId.value },
         )
     }
     var refreshKey by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<UsageLoadState>(UsageLoadState.Loading) }
+    var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(activeConnection?.id, selectedProfile?.name, refreshKey) {
-        state = UsageLoadState.Loading
-        state = repository.fetch().fold(
+    LaunchedEffect(activeConnection?.id, selectedProfile?.name, currentSessionId, refreshKey) {
+        val hadContent = state is UsageLoadState.Loaded
+        if (!hadContent) state = UsageLoadState.Loading else refreshing = true
+        val next = repository.fetch().fold(
             onSuccess = { result ->
                 result?.let(UsageLoadState::Loaded) ?: UsageLoadState.Unsupported
             },
             onFailure = { UsageLoadState.Error },
         )
+        if (!hadContent || next is UsageLoadState.Loaded) state = next
+        refreshing = false
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(300_000)
+            refreshKey++
+        }
     }
 
     Scaffold(
@@ -114,7 +142,7 @@ fun UsageLimitsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { refreshKey++ }) {
+                    IconButton(onClick = { refreshKey++ }, enabled = !refreshing) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
                             contentDescription = stringResource(R.string.provider_usage_refresh),
@@ -157,18 +185,16 @@ fun UsageLimitsScreen(
                 )
                 UsageLoadState.Error -> ProviderUsageError(onRetry = { refreshKey++ })
                 is UsageLoadState.Loaded -> {
-                    val visible = current.response.providers.filter {
-                        it.id in preferences.visibleProviders
-                    }
-                    if (visible.none { it.available }) {
+                    val providers = current.response.providers
+                    if (providers.none { it.available }) {
                         ProviderUsageMessage(
                             text = stringResource(R.string.provider_usage_none_configured),
                         )
                     }
-                    visible.forEach { provider ->
+                    providers.forEach { provider ->
                         ProviderUsageCard(
                             provider = provider,
-                            detailed = preferences.landingMode == ProviderUsageLandingMode.Expanded,
+                            detailed = true,
                         )
                     }
                 }
@@ -192,17 +218,31 @@ fun UsageLimitsScreen(
 
 @Composable
 private fun ProviderUsageLoading() {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-        Spacer(modifier = Modifier.size(12.dp))
-        Text(
-            text = stringResource(R.string.provider_usage_loading),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(2) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    RelaySkeletonLine(width = 112.dp, height = 18.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        RelaySkeletonLine(width = 92.dp)
+                        RelaySkeletonLine(width = 62.dp)
+                    }
+                    RelaySkeletonLine(width = 280.dp, height = 6.dp)
+                    RelaySkeletonLine(width = 98.dp, height = 10.dp)
+                }
+            }
+        }
     }
 }
 
@@ -253,10 +293,24 @@ fun ProviderUsageCard(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Column(
+        ProviderUsageContent(
+            provider = provider,
+            detailed = detailed,
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        )
+    }
+}
+
+@Composable
+fun ProviderUsageContent(
+    provider: ProviderUsageProvider,
+    detailed: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -283,9 +337,30 @@ fun ProviderUsageCard(
                 )
                 return@Column
             }
-            val windows = if (detailed) provider.windows else provider.windows.take(1)
-            windows.forEach { ProviderUsageWindowRow(it) }
-            if (detailed) {
+            if (provider.balances.isNotEmpty()) {
+                ProviderBalanceUsage(provider, detailed)
+            } else if (provider.credentials.isNotEmpty()) {
+                val shownCredentials = if (detailed) {
+                    provider.credentials
+                } else {
+                    provider.credentials.filter { it.active }.take(1)
+                }
+                if (shownCredentials.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.provider_usage_active_unknown),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    shownCredentials.forEach { credential ->
+                        ProviderCredentialUsage(credential, detailed)
+                    }
+                }
+            } else {
+                val windows = if (detailed) provider.windows else provider.windows.take(1)
+                windows.forEach { ProviderUsageWindowRow(it) }
+            }
+            if (detailed && provider.credentials.isEmpty() && provider.balances.isEmpty()) {
                 provider.details.forEach { detail ->
                     Text(
                         text = detail,
@@ -293,6 +368,122 @@ fun ProviderUsageCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+    }
+}
+
+@Composable
+private fun ProviderBalanceUsage(
+    provider: ProviderUsageProvider,
+    detailed: Boolean,
+) {
+    val uriHandler = LocalUriHandler.current
+    val total = provider.balances.firstOrNull { it.id == "total" }
+        ?: provider.balances.first()
+    val supporting = provider.balances.filterNot { it.id == total.id }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = formatBalance(total),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = total.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (detailed) {
+            supporting.forEach { balance ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = balance.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = formatBalance(balance),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
+        formatRenewal(provider.renewsAt)?.let { renewal ->
+            Text(
+                text = stringResource(R.string.provider_usage_renews_on, renewal),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (detailed && !provider.actionUrl.isNullOrBlank()) {
+            TextButton(onClick = { uriHandler.openUri(provider.actionUrl) }) {
+                Text(stringResource(R.string.provider_usage_manage_credits))
+            }
+        }
+        if (detailed) {
+            provider.details.forEach { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderCredentialUsage(
+    credential: ProviderUsageCredential,
+    detailed: Boolean,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = credential.label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (credential.active) FontWeight.SemiBold else FontWeight.Normal,
+            )
+            Text(
+                text = when {
+                    credential.active && credential.status == ProviderUsageCredential.STATUS_AVAILABLE ->
+                        stringResource(R.string.provider_usage_active_available)
+                    credential.active && credential.status == ProviderUsageCredential.STATUS_AT_LIMIT ->
+                        stringResource(R.string.provider_usage_active_at_limit)
+                    credential.active -> stringResource(R.string.provider_usage_active)
+                    credential.status == ProviderUsageCredential.STATUS_AVAILABLE ->
+                        stringResource(R.string.provider_usage_available)
+                    credential.status == ProviderUsageCredential.STATUS_AT_LIMIT ->
+                        stringResource(R.string.provider_usage_at_limit)
+                    else -> stringResource(R.string.provider_usage_unavailable_status)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = when (credential.status) {
+                    ProviderUsageCredential.STATUS_AT_LIMIT -> MaterialTheme.colorScheme.error
+                    ProviderUsageCredential.STATUS_AVAILABLE -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        val windows = if (detailed) credential.windows else credential.windows.take(1)
+        windows.forEach { ProviderUsageWindowRow(it) }
+        if (detailed) {
+            credential.details.forEach { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -399,6 +590,11 @@ private fun ProviderUsageDisplaySettings(
                 text = stringResource(R.string.provider_usage_providers_title),
                 style = MaterialTheme.typography.labelLarge,
             )
+            Text(
+                text = stringResource(R.string.provider_usage_providers_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             val rows = if (providers.isEmpty()) {
                 listOf(
                     "openai-codex" to "Codex",
@@ -445,4 +641,18 @@ private fun formatReset(raw: String?, now: Instant): String? = runCatching {
         hours > 0 -> "${hours}h ${minutes}m"
         else -> "${minutes}m"
     }
+}.getOrNull()
+
+private fun formatBalance(balance: ProviderUsageBalance): String = runCatching {
+    NumberFormat.getCurrencyInstance().apply {
+        currency = Currency.getInstance(balance.currency)
+    }.format(balance.amount)
+}.getOrElse { "${balance.amount} ${balance.currency}" }
+
+private fun formatRenewal(raw: String?): String? = runCatching {
+    val instant = Instant.parse(raw ?: return null)
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+        .withLocale(Locale.getDefault())
+        .withZone(ZoneId.systemDefault())
+        .format(instant)
 }.getOrNull()

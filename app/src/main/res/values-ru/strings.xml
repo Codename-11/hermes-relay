@@ -4004,11 +4004,21 @@
     <string name="provider_usage_mode_summary">Сводка</string>
     <string name="provider_usage_mode_expanded">Развёрнуто</string>
     <string name="provider_usage_mode_hidden">Скрыто</string>
-    <string name="provider_usage_providers_title">Поставщики</string>
+    <string name="provider_usage_providers_title">Показывать в основных настройках</string>
+    <string name="provider_usage_providers_desc">Выберите карточки поставщиков для главного экрана настроек. Здесь всегда видны все поставщики.</string>
     <string name="provider_usage_settings_desc">Использование учётной записи и лимиты поставщиков</string>
     <string name="provider_usage_customize">Отображение</string>
     <string name="provider_usage_hidden_hint">Карточки использования скрыты в настройках.</string>
     <string name="provider_usage_not_available_compact">Этот хост пока не предоставляет данные поставщиков.</string>
     <string name="provider_usage_provider_not_configured">Не настроено на этом хосте</string>
     <string name="provider_usage_provider_unavailable">Данные временно недоступны</string>
+    <string name="provider_usage_active_unknown">Для этого сеанса ещё нет активных учётных данных.</string>
+    <string name="provider_usage_active_available">Активно · Доступно</string>
+    <string name="provider_usage_active_at_limit">Активно · Лимит исчерпан</string>
+    <string name="provider_usage_active">Активно</string>
+    <string name="provider_usage_available">Доступно</string>
+    <string name="provider_usage_at_limit">Лимит исчерпан</string>
+    <string name="provider_usage_unavailable_status">Недоступно</string>
+    <string name="provider_usage_renews_on">Продление: %1$s</string>
+    <string name="provider_usage_manage_credits">Управление кредитами</string>
 </resources>

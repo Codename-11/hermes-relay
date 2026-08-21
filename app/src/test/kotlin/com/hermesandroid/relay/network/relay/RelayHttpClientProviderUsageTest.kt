@@ -31,13 +31,22 @@ class RelayHttpClientProviderUsageTest {
             MockResponse().setResponseCode(200).setBody(
                 """
                 {
-                  "schema_version": 1,
+                  "schema_version": 2,
                   "providers": [
                     {
                       "id": "openai-codex",
                       "display_name": "Codex",
                       "status": "available",
                       "plan": "Plus",
+                      "active_credential_id": "abc123",
+                      "active_credential_state": "known",
+                      "credentials": [{
+                        "id": "abc123",
+                        "label": "Work",
+                        "active": true,
+                        "status": "available",
+                        "windows": []
+                      }],
                       "windows": [{
                         "id": "session",
                         "label": "Session",
@@ -51,13 +60,17 @@ class RelayHttpClientProviderUsageTest {
             ),
         )
 
-        val response = client(token = "paired-token").fetchProviderUsage("victor").getOrThrow()!!
+        val response = client(token = "paired-token")
+            .fetchProviderUsage(profile = "victor", sessionId = "session-42")
+            .getOrThrow()!!
         val request = server.takeRequest()
 
-        assertEquals("/usage/providers?profile=victor", request.path)
+        assertEquals("/usage/providers?profile=victor&session_id=session-42", request.path)
         assertEquals("Bearer paired-token", request.getHeader("Authorization"))
         assertEquals("Codex", response.providers.single().displayName)
         assertEquals(42.5, response.providers.single().windows.single().usedPercent!!, 0.001)
+        assertEquals("Work", response.providers.single().credentials.single().label)
+        assertTrue(response.providers.single().credentials.single().active)
     }
 
     @Test

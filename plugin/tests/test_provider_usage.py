@@ -15,11 +15,14 @@ from aiohttp.test_utils import AioHTTPTestCase
 from plugin.relay.config import RelayConfig
 from plugin.relay.provider_usage import (
     collect_provider_usage,
+    fetch_codex_usage,
+    fetch_nous_usage,
     fetch_opencode_go_usage,
     resolve_profile_home,
     serialize_account_snapshot,
     unavailable_provider,
 )
+from plugin.relay.active_credentials import record_active_credential
 from plugin.relay.server import create_app
 
 
@@ -97,6 +100,42 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["id"], "opencode-go")
         self.assertEqual(result["status"], "not_configured")
 
+    async def test_nous_exposes_structured_balances_without_raw_mobile_details(self) -> None:
+        account = SimpleNamespace(
+            logged_in=True,
+            paid_service_access=True,
+            paid_service_access_info=SimpleNamespace(
+                subscription_credits_remaining=31.98,
+                purchased_credits_remaining=0.0,
+                total_usable_credits=31.98,
+            ),
+            subscription=SimpleNamespace(
+                plan="Plus",
+                monthly_credits=None,
+                credits_remaining=31.98,
+                rollover_credits=10.0,
+                current_period_end="2026-09-18T00:11:42.000Z",
+            ),
+            portal_base_url="https://portal.nousresearch.com",
+            org_slug="example",
+        )
+
+        result = await fetch_nous_usage(
+            account_fetcher=lambda **_kwargs: account,
+        )
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["plan"], "Plus")
+        self.assertEqual(result["balances"][0], {
+            "id": "total",
+            "label": "Total usable",
+            "amount": 31.98,
+            "currency": "USD",
+        })
+        self.assertEqual(result["renews_at"], "2026-09-18T00:11:42.000Z")
+        self.assertTrue(result["action_url"].endswith("/orgs/example/billing?topup=open"))
+        self.assertEqual(result["details"], [])
+
     async def test_opencode_normalizes_windows_without_inventing_dollars(self) -> None:
         fake = _FakeSession(
             _FakeResponse(
@@ -121,7 +160,7 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake.headers["Authorization"], "Bearer secret")
 
     async def test_collection_keeps_provider_order_and_schema(self) -> None:
-        async def codex(_home):
+        async def codex(_home, **_kwargs):
             return unavailable_provider("openai-codex", "Codex")
 
         async def nous(_home):
@@ -135,11 +174,66 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
             nous_fetcher=nous,
             opencode_fetcher=opencode,
         )
-        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["schema_version"], 2)
         self.assertEqual(
             [row["id"] for row in result["providers"]],
             ["openai-codex", "nous", "opencode-go"],
         )
+
+    async def test_codex_pool_marks_exact_live_session_credential_active(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            record_active_credential(
+                home,
+                session_id="session-2",
+                provider_id="openai-codex",
+                credential_id="entry-2",
+            )
+            entries = [
+                SimpleNamespace(
+                    id=f"entry-{index}",
+                    label=f"Account {index}",
+                    last_status="ok",
+                    last_status_at=None,
+                    last_error_reset_at=None,
+                    runtime_base_url="https://chatgpt.com/backend-api/codex",
+                    runtime_api_key=f"secret-{index}",
+                )
+                for index in (1, 2)
+            ]
+            snapshots = {
+                "secret-1": SimpleNamespace(
+                    available=True,
+                    source="usage_api",
+                    fetched_at=datetime(2026, 8, 21, tzinfo=timezone.utc),
+                    plan="Pro",
+                    windows=(SimpleNamespace(label="Session", used_percent=100, reset_at=None, detail=None),),
+                    details=(),
+                ),
+                "secret-2": SimpleNamespace(
+                    available=True,
+                    source="usage_api",
+                    fetched_at=datetime(2026, 8, 21, tzinfo=timezone.utc),
+                    plan="Pro",
+                    windows=(SimpleNamespace(label="Session", used_percent=24, reset_at=None, detail=None),),
+                    details=(),
+                ),
+            }
+
+            result = await fetch_codex_usage(
+                home,
+                session_id="session-2",
+                pool_loader=lambda _provider: SimpleNamespace(entries=lambda: entries),
+                snapshot_fetcher=lambda *, api_key, base_url: snapshots[api_key],
+            )
+
+        self.assertEqual(result["active_credential_state"], "known")
+        active = next(row for row in result["credentials"] if row["active"])
+        self.assertEqual(active["label"], "Account 2")
+        self.assertEqual(active["windows"][0]["used_percent"], 24.0)
+        limited = next(row for row in result["credentials"] if row["label"] == "Account 1")
+        self.assertEqual(limited["status"], "at_limit")
+        self.assertNotIn("secret-2", str(result))
 
 
 class ProviderUsageEndpointTests(AioHTTPTestCase):

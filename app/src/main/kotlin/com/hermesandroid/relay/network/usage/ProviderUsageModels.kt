@@ -20,6 +20,13 @@ data class ProviderUsageProvider(
     val plan: String? = null,
     val windows: List<ProviderUsageWindow> = emptyList(),
     val details: List<String> = emptyList(),
+    val balances: List<ProviderUsageBalance> = emptyList(),
+    @SerialName("renews_at") val renewsAt: String? = null,
+    @SerialName("action_url") val actionUrl: String? = null,
+    val credentials: List<ProviderUsageCredential> = emptyList(),
+    @SerialName("active_credential_id") val activeCredentialId: String? = null,
+    @SerialName("active_credential_state") val activeCredentialState: String = "unknown",
+    @SerialName("active_observed_at") val activeObservedAt: String? = null,
     val message: String? = null,
 ) {
     val available: Boolean get() = status == STATUS_AVAILABLE
@@ -27,6 +34,35 @@ data class ProviderUsageProvider(
     companion object {
         const val STATUS_AVAILABLE = "available"
         const val STATUS_NOT_CONFIGURED = "not_configured"
+        const val STATUS_UNAVAILABLE = "unavailable"
+    }
+}
+
+@Serializable
+data class ProviderUsageBalance(
+    val id: String,
+    val label: String,
+    val amount: Double,
+    val currency: String = "USD",
+)
+
+@Serializable
+data class ProviderUsageCredential(
+    val id: String,
+    val label: String,
+    val active: Boolean = false,
+    val status: String,
+    @SerialName("pool_status") val poolStatus: String? = null,
+    @SerialName("last_status_at") val lastStatusAt: String? = null,
+    @SerialName("reset_at") val resetAt: String? = null,
+    val plan: String? = null,
+    val windows: List<ProviderUsageWindow> = emptyList(),
+    val details: List<String> = emptyList(),
+    val message: String? = null,
+) {
+    companion object {
+        const val STATUS_AVAILABLE = "available"
+        const val STATUS_AT_LIMIT = "at_limit"
         const val STATUS_UNAVAILABLE = "unavailable"
     }
 }

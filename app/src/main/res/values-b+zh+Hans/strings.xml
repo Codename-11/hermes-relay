@@ -4202,11 +4202,21 @@
     <string name="provider_usage_mode_summary">摘要</string>
     <string name="provider_usage_mode_expanded">展开</string>
     <string name="provider_usage_mode_hidden">隐藏</string>
-    <string name="provider_usage_providers_title">提供商</string>
+    <string name="provider_usage_providers_title">在主设置页显示</string>
+    <string name="provider_usage_providers_desc">选择要在主设置页显示的提供商卡片。此处仍会显示所有提供商。</string>
     <string name="provider_usage_settings_desc">账户用量和提供商限额</string>
     <string name="provider_usage_customize">显示</string>
     <string name="provider_usage_hidden_hint">设置页已隐藏用量卡片。</string>
     <string name="provider_usage_not_available_compact">此主机尚未提供提供商用量。</string>
     <string name="provider_usage_provider_not_configured">此主机未配置</string>
     <string name="provider_usage_provider_unavailable">用量暂时不可用</string>
+    <string name="provider_usage_active_unknown">此会话尚无当前凭据。</string>
+    <string name="provider_usage_active_available">当前 · 可用</string>
+    <string name="provider_usage_active_at_limit">当前 · 已达上限</string>
+    <string name="provider_usage_active">当前</string>
+    <string name="provider_usage_available">可用</string>
+    <string name="provider_usage_at_limit">已达上限</string>
+    <string name="provider_usage_unavailable_status">不可用</string>
+    <string name="provider_usage_renews_on">续期日期：%1$s</string>
+    <string name="provider_usage_manage_credits">管理额度</string>
 </resources>

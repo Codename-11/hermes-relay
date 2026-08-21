@@ -1472,7 +1472,10 @@ class RelayHttpClient(
     }
 
     /** Provider-neutral compatibility fetch for gateways without `account.usage`. */
-    suspend fun fetchProviderUsage(profile: String? = null): Result<ProviderUsageResponse?> =
+    suspend fun fetchProviderUsage(
+        profile: String? = null,
+        sessionId: String? = null,
+    ): Result<ProviderUsageResponse?> =
         withContext(Dispatchers.IO) {
             val relayUrl = relayUrlProvider()?.trim().orEmpty()
             if (relayUrl.isEmpty()) {
@@ -1493,6 +1496,9 @@ class RelayHttpClient(
                 ?.apply {
                     profile?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         addQueryParameter("profile", it)
+                    }
+                    sessionId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        addQueryParameter("session_id", it)
                     }
                 }
                 ?.build()

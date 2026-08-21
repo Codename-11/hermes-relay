@@ -4284,11 +4284,21 @@
     <string name="provider_usage_mode_summary">Summary</string>
     <string name="provider_usage_mode_expanded">Expanded</string>
     <string name="provider_usage_mode_hidden">Hidden</string>
-    <string name="provider_usage_providers_title">Providers</string>
+    <string name="provider_usage_providers_title">Show on main Settings</string>
+    <string name="provider_usage_providers_desc">Choose which provider cards appear on the main Settings page. All providers remain visible here.</string>
     <string name="provider_usage_settings_desc">Account usage and provider limits</string>
     <string name="provider_usage_customize">Display</string>
     <string name="provider_usage_hidden_hint">Usage cards are hidden on Settings.</string>
     <string name="provider_usage_not_available_compact">Provider usage is not available from this host yet.</string>
     <string name="provider_usage_provider_not_configured">Not configured on this host</string>
     <string name="provider_usage_provider_unavailable">Usage is temporarily unavailable</string>
+    <string name="provider_usage_active_unknown">No active credential yet for this session.</string>
+    <string name="provider_usage_active_available">Active · Available</string>
+    <string name="provider_usage_active_at_limit">Active · At limit</string>
+    <string name="provider_usage_active">Active</string>
+    <string name="provider_usage_available">Available</string>
+    <string name="provider_usage_at_limit">At limit</string>
+    <string name="provider_usage_unavailable_status">Unavailable</string>
+    <string name="provider_usage_renews_on">Renews %1$s</string>
+    <string name="provider_usage_manage_credits">Manage credits</string>
 </resources>

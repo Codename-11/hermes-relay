@@ -2239,6 +2239,7 @@ fun RelayApp() {
                 composable(Screen.ProviderUsage.route) {
                     UsageLimitsScreen(
                         connectionViewModel = connectionViewModel,
+                        chatViewModel = chatViewModel,
                         onBack = { navController.popBackStack() },
                     )
                 }

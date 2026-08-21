@@ -1186,7 +1186,12 @@ async def handle_provider_usage(request: web.Request) -> web.Response:
         )
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc)) from exc
-    return web.json_response(await collect_provider_usage(profile_home=profile_home))
+    return web.json_response(
+        await collect_provider_usage(
+            profile_home=profile_home,
+            session_id=request.query.get("session_id"),
+        )
+    )
 
 
 # ── Desktop tool dispatch (loopback HTTP shim for desktop_tool.py) ──────────

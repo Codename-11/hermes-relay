@@ -4275,11 +4275,21 @@
     <string name="provider_usage_mode_summary">概要</string>
     <string name="provider_usage_mode_expanded">展開</string>
     <string name="provider_usage_mode_hidden">非表示</string>
-    <string name="provider_usage_providers_title">プロバイダー</string>
+    <string name="provider_usage_providers_title">メイン設定に表示</string>
+    <string name="provider_usage_providers_desc">メイン設定に表示するプロバイダーカードを選びます。ここではすべて表示されます。</string>
     <string name="provider_usage_settings_desc">アカウント使用量とプロバイダー上限</string>
     <string name="provider_usage_customize">表示</string>
     <string name="provider_usage_hidden_hint">設定では使用量カードが非表示です。</string>
     <string name="provider_usage_not_available_compact">このホストではまだプロバイダー使用量を利用できません。</string>
     <string name="provider_usage_provider_not_configured">このホストでは未設定です</string>
     <string name="provider_usage_provider_unavailable">使用量は一時的に利用できません</string>
+    <string name="provider_usage_active_unknown">このセッションにはまだ使用中の認証情報がありません。</string>
+    <string name="provider_usage_active_available">使用中 · 利用可能</string>
+    <string name="provider_usage_active_at_limit">使用中 · 上限到達</string>
+    <string name="provider_usage_active">使用中</string>
+    <string name="provider_usage_available">利用可能</string>
+    <string name="provider_usage_at_limit">上限到達</string>
+    <string name="provider_usage_unavailable_status">利用不可</string>
+    <string name="provider_usage_renews_on">%1$s に更新</string>
+    <string name="provider_usage_manage_credits">クレジットを管理</string>
 </resources>

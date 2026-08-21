@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android adds top-level provider usage and limit settings.** Codex, Nous, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes. Android prefers the upstream Hermes account-usage contract and can fall back to an explicitly enabled Relay compatibility endpoint without receiving provider credentials.
+- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. Provider credentials remain host-side.
 
 ## [1.11.0] - 2026-08-20
 

@@ -4117,11 +4117,21 @@
     <string name="provider_usage_mode_summary">Resumo</string>
     <string name="provider_usage_mode_expanded">Expandido</string>
     <string name="provider_usage_mode_hidden">Oculto</string>
-    <string name="provider_usage_providers_title">Provedores</string>
+    <string name="provider_usage_providers_title">Mostrar nas Configurações principais</string>
+    <string name="provider_usage_providers_desc">Escolha quais cartões de provedores aparecem nas Configurações principais. Todos continuam visíveis aqui.</string>
     <string name="provider_usage_settings_desc">Uso da conta e limites dos provedores</string>
     <string name="provider_usage_customize">Exibição</string>
     <string name="provider_usage_hidden_hint">Os cartões de uso estão ocultos nas Configurações.</string>
     <string name="provider_usage_not_available_compact">O uso dos provedores ainda não está disponível neste host.</string>
     <string name="provider_usage_provider_not_configured">Não configurado neste host</string>
     <string name="provider_usage_provider_unavailable">Uso temporariamente indisponível</string>
+    <string name="provider_usage_active_unknown">Esta sessão ainda não tem uma credencial ativa.</string>
+    <string name="provider_usage_active_available">Ativa · Disponível</string>
+    <string name="provider_usage_active_at_limit">Ativa · Limite atingido</string>
+    <string name="provider_usage_active">Ativa</string>
+    <string name="provider_usage_available">Disponível</string>
+    <string name="provider_usage_at_limit">Limite atingido</string>
+    <string name="provider_usage_unavailable_status">Indisponível</string>
+    <string name="provider_usage_renews_on">Renova em %1$s</string>
+    <string name="provider_usage_manage_credits">Gerenciar créditos</string>
 </resources>

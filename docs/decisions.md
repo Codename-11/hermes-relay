@@ -777,7 +777,13 @@ Four sub-decisions captured together:
    contains no tokens, secrets, config contents, or filesystem paths;
    `/bridge/activity` and `/media/inspect` remain loopback-only.
 
-4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. No business logic — the plugin never maintains its own state, never caches, never retries. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The one exception is `/push` — since FCM isn't wired, this route is a static stub returning `{configured: false, reason: "FCM not yet wired; …"}` with no network call. Keeps the four-tab nav layout correct for when FCM lands; swapping in real data only touches `PushConsole.jsx` + `plugin_api.py::get_push`.
+4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. It does not cache or retry. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The `/push` route is a static stub until FCM is wired.
+
+   **2026-08-21 amendment:** the authenticated `/provider-usage` route is a
+   deliberate process-local exception. The Dashboard process owns the live
+   Gateway session, so this Relay-plugin route resolves its active credential
+   on demand and feeds the same provider-neutral Relay adapter without waiting
+   for another turn. It stores no provider secret or additional Dashboard state.
 
 **Consequences:**
 
@@ -3560,7 +3566,7 @@ It also mirrors MCP authorization's
 [least-privilege scope selection](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 without presenting Android app policy as OAuth scope.
 
-## ADR 64 — Provider account usage is upstream-first, normalized, and user-presented at top level
+## ADR 64 — Provider account usage is Relay-enhanced, normalized, and user-presented at top level
 
 **Context.** Android had no account-limit surface even though current Hermes
 already models Codex and Nous usage. A proposed OpenCode Go-only Settings card
@@ -3575,23 +3581,35 @@ landing presentation is Summary by default, with opt-in Expanded and Hidden
 modes plus per-provider visibility. The full destination remains reachable in
 all three modes.
 
-The client first calls the additive upstream Gateway `account.usage` method and
-decodes a provider-neutral schema. Older gateways may fall back to Relay
-`GET /usage/providers` when paired and when the operator explicitly sets
-`RELAY_PROVIDER_USAGE_ENABLED=1`. Relay reuses Hermes's existing account model
-for Codex and Nous and supplies the missing OpenCode Go adapter. OpenCode Go
+When Dashboard auth is available, the client first calls the Relay-owned
+Dashboard-plugin usage route so the live session's active credential can be
+resolved directly. Paired standalone clients fall back to Relay
+`GET /usage/providers`, which requires the operator to set
+`RELAY_PROVIDER_USAGE_ENABLED=1`; additive upstream Gateway `account.usage`
+remains the bounded single-account fallback. Relay reuses Hermes's existing
+account model for Codex and Nous and supplies the missing OpenCode Go adapter. OpenCode Go
 renders only the percentage and reset values returned by the provider; Android
 does not infer dollars or embed plan caps. Provider keys stay host-side.
 The active profile is carried on the compatibility request and validated before
 Hermes's task-local home override scopes every account lookup, so concurrent
 profiles never collapse onto the root account.
 
+For Codex pools, Android also carries its current Gateway session id. The
+authenticated Relay Dashboard-plugin route runs in the process that owns the
+live agent, reads its authoritative stable pool-entry id on demand, and returns
+the provider-neutral usage response without waiting for another turn. Relay
+fetches each pool entry's usage host-side, returns safe labels and hashed opaque
+ids, and marks the exact active entry. Turn hooks retain a secret-free
+profile-local snapshot only for standalone Relay clients without Dashboard
+access. Missing live-agent/session evidence is rendered as active unknown; it
+is never inferred from the first credential or from the legacy singleton.
+
 xAI and other providers remain absent until their account-level source and
 credential scope can be represented honestly. Per-request or session spend is
 not labeled as an account quota.
 
-**Consequences.** Vanilla/current Hermes can become the canonical source without
-an Android rewrite, older plugin-enabled hosts have a bounded transition path,
-and merely configuring a provider credential does not expose billing metadata
-to paired devices. The Android UI can add providers without adding provider-
-specific screens or silently treating missing data as zero usage.
+**Consequences.** Relay can evolve richer provider adapters without requiring
+an upstream Hermes change, while vanilla/current Hermes retains a bounded
+single-account fallback. Merely configuring a provider credential does not
+expose tokens to paired devices. The Android UI can add providers without
+adding provider-specific screens or silently treating missing data as zero usage.

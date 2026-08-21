@@ -196,6 +196,12 @@ python -m plugin.relay --no-ssl
 | `RELAY_MEDIA_LRU_CAP` | `500` | Max entries in the media registry before oldest-eviction kicks in |
 | `RELAY_MEDIA_ALLOWED_ROOTS` | — | Additional absolute directory roots allowed on `/media/register` (colon-separated on Unix, `os.pathsep` on other platforms). Extends the auto-derived defaults (`tempfile.gettempdir()` + `HERMES_WORKSPACE` or `~/.hermes/workspace/`). |
 
+The authenticated Relay Dashboard plugin can also return provider usage to a
+signed-in Dashboard client and resolve the active Codex pool credential from
+the live session. `RELAY_PROVIDER_USAGE_ENABLED` controls only the standalone
+paired-device `/usage/providers` fallback; neither surface returns provider
+credentials.
+
 **Pairing alphabet:** As of 2026-04-11, the relay accepts any 6-character code from `A-Z / 0-9` (36 chars). The earlier "no ambiguous 0/O/1/I" 32-char restriction was dropped once the pairing flow became QR + HTTP — the phone-side generator in `AuthManager.kt` uses the full alphabet, and the restriction silently rejected roughly one in eight valid codes.
 
 For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/relay-server.md).

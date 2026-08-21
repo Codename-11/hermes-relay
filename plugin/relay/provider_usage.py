@@ -1,23 +1,25 @@
 """Provider-neutral account usage snapshots for paired mobile clients.
 
 Hermes already owns provider credentials and the canonical account-usage model.
-Relay reuses that model for older gateways which do not yet expose a structured
-``account.usage`` RPC, and supplies the missing OpenCode Go adapter.  Provider
-keys remain host-side and are never serialized into the response.
+Relay reuses that model, adds credential-pool and balance structure for Android,
+and supplies the missing OpenCode Go adapter. Provider keys remain host-side
+and are never serialized into the response.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import re
+from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 import aiohttp
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 _OPENCODE_GO_USER_AGENT = "curl/8.4.0"
 _MAX_DETAIL_LENGTH = 240
@@ -80,6 +82,15 @@ def _iso(value: Any) -> str | None:
     return _bounded_text(value, 80)
 
 
+def _iso_epoch(value: Any) -> str | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return _iso(datetime.fromtimestamp(float(value), timezone.utc))
+        except (OverflowError, OSError, ValueError):
+            return None
+    return _iso(value)
+
+
 def unavailable_provider(
     provider_id: str,
     display_name: str,
@@ -96,6 +107,12 @@ def unavailable_provider(
         "plan": None,
         "windows": [],
         "details": [],
+        "balances": [],
+        "renews_at": None,
+        "action_url": None,
+        "credentials": [],
+        "active_credential_id": None,
+        "active_credential_state": "unknown",
         "message": _bounded_text(message),
     }
 
@@ -142,21 +159,48 @@ def serialize_account_snapshot(
         "plan": _bounded_text(getattr(snapshot, "plan", None), 80),
         "windows": windows,
         "details": details,
+        "balances": [],
+        "renews_at": None,
+        "action_url": None,
+        "credentials": [],
+        "active_credential_id": None,
+        "active_credential_state": "unknown",
         "message": None,
     }
 
 
-async def fetch_codex_usage(profile_home: Path | None = None) -> dict[str, Any]:
+def _public_credential_id(credential_id: str) -> str:
+    return hashlib.sha256(credential_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _effective_credential_status(entry: Any, snapshot: Any) -> str:
+    pool_status = str(getattr(entry, "last_status", "") or "").lower()
+    if pool_status in {"dead", "invalid"}:
+        return "unavailable"
+    if pool_status in {"exhausted", "rate_limited", "cooldown"}:
+        return "at_limit"
+    windows = tuple(getattr(snapshot, "windows", ()) or ()) if snapshot is not None else ()
+    if any(float(getattr(window, "used_percent", 0) or 0) >= 100 for window in windows):
+        return "at_limit"
+    return "available" if bool(getattr(snapshot, "available", False)) else "unavailable"
+
+
+async def fetch_codex_usage(
+    profile_home: Path | None = None,
+    *,
+    session_id: str | None = None,
+    active_credential_id: str | None = None,
+    snapshot_fetcher: Callable[..., Any] | None = None,
+    pool_loader: Callable[[str], Any] | None = None,
+) -> dict[str, Any]:
     token = _set_home(profile_home)
     try:
-        from agent.account_usage import fetch_account_usage
+        if pool_loader is None:
+            from agent.credential_pool import load_pool
 
-        snapshot = await asyncio.to_thread(fetch_account_usage, "openai-codex")
-        return serialize_account_snapshot(
-            snapshot,
-            provider_id="openai-codex",
-            display_name="Codex",
-        )
+            pool_loader = load_pool
+
+        entries = pool_loader("openai-codex").entries()[:8]
     except Exception:
         return unavailable_provider(
             "openai-codex",
@@ -167,20 +211,178 @@ async def fetch_codex_usage(profile_home: Path | None = None) -> dict[str, Any]:
     finally:
         _reset_home(token)
 
+    if not entries:
+        return unavailable_provider("openai-codex", "Codex")
+    if snapshot_fetcher is None:
+        from agent.account_usage import _fetch_codex_account_usage
 
-async def fetch_nous_usage(profile_home: Path | None = None) -> dict[str, Any]:
+        snapshot_fetcher = _fetch_codex_account_usage
+
+    def fetch_entry_snapshot(entry: Any) -> Any:
+        entry_token = _set_home(profile_home)
+        try:
+            return snapshot_fetcher(
+                base_url=getattr(entry, "runtime_base_url", None),
+                api_key=entry.runtime_api_key,
+            )
+        finally:
+            _reset_home(entry_token)
+
+    async def fetch_entry(entry: Any) -> tuple[Any, Any]:
+        try:
+            snapshot = await asyncio.to_thread(fetch_entry_snapshot, entry)
+            return entry, snapshot
+        except Exception:
+            return entry, None
+
+    fetched = await asyncio.gather(*(fetch_entry(entry) for entry in entries))
+    active_mapping = None
+    if active_credential_id:
+        active_raw_id = str(active_credential_id).strip()
+    elif profile_home is not None:
+        from .active_credentials import read_active_credential
+
+        active_mapping = read_active_credential(
+            profile_home,
+            session_id=session_id,
+            provider_id="openai-codex",
+        )
+        active_raw_id = active_mapping["credential_id"] if active_mapping else None
+    else:
+        active_raw_id = None
+    if active_raw_id not in {str(getattr(entry, "id", "")) for entry, _ in fetched}:
+        active_raw_id = None
+
+    active_state = "known" if active_raw_id else "unknown"
+    if len(fetched) == 1 and active_raw_id is None:
+        active_raw_id = str(getattr(fetched[0][0], "id", ""))
+        active_state = "single_credential"
+
+    credentials: list[dict[str, Any]] = []
+    active_provider: dict[str, Any] | None = None
+    for index, (entry, snapshot) in enumerate(fetched):
+        raw_id = str(getattr(entry, "id", ""))
+        public_id = _public_credential_id(raw_id)
+        serialized = serialize_account_snapshot(
+            snapshot,
+            provider_id="openai-codex",
+            display_name="Codex",
+        )
+        status = _effective_credential_status(entry, snapshot)
+        credential = {
+            "id": public_id,
+            "label": _bounded_text(getattr(entry, "label", None), 80) or f"Credential {index + 1}",
+            "active": raw_id == active_raw_id,
+            "status": status,
+            "pool_status": _bounded_text(getattr(entry, "last_status", None), 40),
+            "last_status_at": _iso_epoch(getattr(entry, "last_status_at", None)),
+            "reset_at": _iso_epoch(getattr(entry, "last_error_reset_at", None)),
+            "plan": serialized["plan"],
+            "windows": serialized["windows"],
+            "details": serialized["details"],
+            "message": serialized["message"],
+        }
+        credentials.append(credential)
+        if credential["active"]:
+            active_provider = serialized
+
+    available_count = sum(row["status"] == "available" for row in credentials)
+    limited_count = sum(row["status"] == "at_limit" for row in credentials)
+    summary = active_provider or {
+        "source": "credential_pool",
+        "fetched_at": _now_iso(),
+        "plan": None,
+        "windows": [],
+        "details": [],
+    }
+    return {
+        "id": "openai-codex",
+        "display_name": "Codex",
+        "status": "available",
+        "source": summary.get("source") or "credential_pool",
+        "fetched_at": summary.get("fetched_at") or _now_iso(),
+        "plan": summary.get("plan"),
+        "windows": summary.get("windows", []),
+        "details": [
+            f"{available_count} available · {limited_count} at limit · {len(credentials)} total"
+        ],
+        "credentials": credentials,
+        "active_credential_id": (
+            _public_credential_id(active_raw_id) if active_raw_id else None
+        ),
+        "active_credential_state": active_state,
+        "active_observed_at": (
+            _iso(datetime.fromtimestamp(active_mapping["observed_at"], timezone.utc))
+            if active_mapping and active_state == "known"
+            else None
+        ),
+        "message": None,
+    }
+
+
+async def fetch_nous_usage(
+    profile_home: Path | None = None,
+    *,
+    account_fetcher: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     token = _set_home(profile_home)
     try:
         from agent.account_usage import build_nous_credits_snapshot
-        from hermes_cli.nous_account import get_nous_portal_account_info
+        from hermes_cli.nous_account import get_nous_portal_account_info, nous_portal_topup_url
 
-        account = await asyncio.to_thread(get_nous_portal_account_info, force_fresh=True)
+        if account_fetcher is None:
+            account_fetcher = get_nous_portal_account_info
+
+        account = await asyncio.to_thread(account_fetcher, force_fresh=True)
         snapshot = build_nous_credits_snapshot(account)
-        return serialize_account_snapshot(
+        result = serialize_account_snapshot(
             snapshot,
             provider_id="nous",
             display_name="Nous",
         )
+        if not result["status"] == "available":
+            return result
+
+        def balance(balance_id: str, label: str, value: Any) -> dict[str, Any] | None:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return None
+            amount = float(value)
+            if not math.isfinite(amount):
+                return None
+            return {"id": balance_id, "label": label, "amount": amount, "currency": "USD"}
+
+        access = getattr(account, "paid_service_access_info", None)
+        subscription = getattr(account, "subscription", None)
+        result["balances"] = [
+            item
+            for item in (
+                balance("total", "Total usable", getattr(access, "total_usable_credits", None)),
+                balance(
+                    "subscription",
+                    "Subscription",
+                    getattr(access, "subscription_credits_remaining", None),
+                ),
+                balance(
+                    "top_up",
+                    "Top-up",
+                    getattr(access, "purchased_credits_remaining", None),
+                ),
+                balance("rollover", "Rollover", getattr(subscription, "rollover_credits", None)),
+            )
+            if item is not None
+        ]
+        result["renews_at"] = _iso(getattr(subscription, "current_period_end", None))
+        action_url = _bounded_text(nous_portal_topup_url(account), 500)
+        parsed_action = urlparse(action_url or "")
+        result["action_url"] = (
+            action_url if parsed_action.scheme in {"http", "https"} and parsed_action.netloc else None
+        )
+        # Structured fields own mobile presentation. Preserve only genuinely
+        # additional status lines; never render raw URLs or ISO timestamps.
+        result["details"] = [
+            detail for detail in result["details"] if detail.startswith("Status:")
+        ]
+        return result
     except Exception:
         return unavailable_provider(
             "nous",
@@ -301,12 +503,18 @@ async def fetch_opencode_go_usage(
 async def collect_provider_usage(
     *,
     profile_home: Path | None = None,
-    codex_fetcher: Callable[[Path | None], Awaitable[dict[str, Any]]] = fetch_codex_usage,
+    session_id: str | None = None,
+    active_credential_id: str | None = None,
+    codex_fetcher: Callable[..., Awaitable[dict[str, Any]]] = fetch_codex_usage,
     nous_fetcher: Callable[[Path | None], Awaitable[dict[str, Any]]] = fetch_nous_usage,
     opencode_fetcher: Callable[..., Awaitable[dict[str, Any]]] = fetch_opencode_go_usage,
 ) -> dict[str, Any]:
     providers = await asyncio.gather(
-        codex_fetcher(profile_home),
+        codex_fetcher(
+            profile_home,
+            session_id=session_id,
+            active_credential_id=active_credential_id,
+        ),
         nous_fetcher(profile_home),
         opencode_fetcher(profile_home=profile_home),
     )
