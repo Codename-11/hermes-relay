@@ -89,6 +89,70 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `pair setup permits explicitly authorized duplicate renew handoff`() {
+        val initiallyReady = resolvePairSetupReady(
+            storeHydrated = true,
+            connectionId = "placeholder",
+            authorizedHandoffId = null,
+            activeConnectionId = "placeholder",
+            connectionIds = setOf("placeholder", "existing"),
+        )
+
+        assertTrue(initiallyReady)
+        assertTrue(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "placeholder",
+                authorizedHandoffId = "existing",
+                activeConnectionId = "existing",
+                connectionIds = setOf("placeholder", "existing"),
+            ),
+        )
+    }
+
+    @Test
+    fun `pair setup waits for its exact route target`() {
+        assertFalse(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "new-placeholder",
+                authorizedHandoffId = null,
+                activeConnectionId = "stale-placeholder",
+                connectionIds = setOf("stale-placeholder"),
+            ),
+        )
+    }
+
+    @Test
+    fun `pair setup never trusts a prior latch before store hydration`() {
+        assertFalse(
+            resolvePairSetupReady(
+                storeHydrated = false,
+                connectionId = "placeholder",
+                authorizedHandoffId = "existing",
+                activeConnectionId = "existing",
+                connectionIds = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `pair setup retry replaces a still active preparation attempt`() {
+        assertFalse(shouldStartPairPreparation(hasActiveJob = true, retryRequested = false))
+        assertTrue(shouldStartPairPreparation(hasActiveJob = true, retryRequested = true))
+        assertTrue(shouldStartPairPreparation(hasActiveJob = false, retryRequested = false))
+    }
+
+    @Test
+    fun `replaced pair preparation completion does not evict current job`() {
+        val oldJob = Any()
+        val replacementJob = Any()
+
+        assertFalse(isCurrentPairPreparation(replacementJob, oldJob))
+        assertTrue(isCurrentPairPreparation(replacementJob, replacementJob))
+    }
+
+    @Test
     fun `dashboard-only connection counts as configured startup chat`() {
         assertTrue(hasConfiguredStartupChat(connection(dashboardUrl = "https://host.ts.net:9119")))
         assertFalse(hasConfiguredStartupChat(connection(relayUrl = "wss://host.ts.net:8767")))

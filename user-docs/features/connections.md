@@ -10,6 +10,9 @@ independent capabilities:
 - Dashboard/Gateway URL (`http(s)://host:9119`) and dashboard session for primary Chat, sessions, Manage, and standard voice
 - Optional API server URL (`http(s)://host:8642`) and API key for automatic chat fallback or advanced headless compatibility
 - Optional Relay URL (`ws(s)://host:8767`) and pairing record for Terminal, Bridge, and relay-only power tools
+- Connection-scoped Dashboard cookies or native sign-in tokens, API credentials,
+  and Relay session credentials; authentication never carries into another
+  saved connection
 - Its own sessions, memory, personalities, and skill list (fetched from that server)
 - Last-active session ID and explicit profile pick, so switching back takes you where you left off
 

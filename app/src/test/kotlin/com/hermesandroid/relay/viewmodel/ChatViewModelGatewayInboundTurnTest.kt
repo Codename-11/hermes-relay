@@ -13,6 +13,8 @@ import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -80,6 +82,7 @@ class ChatViewModelGatewayInboundTurnTest {
     @Volatile
     private var holdCompletionsStream = false
     private val apiCompletionsRequestCount = AtomicInteger(0)
+    private val apiMessageRequestCount = AtomicInteger(0)
 
     @Before
     fun setUp() {
@@ -89,6 +92,9 @@ class ChatViewModelGatewayInboundTurnTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.path == "/v1/chat/completions") {
                         apiCompletionsRequestCount.incrementAndGet()
+                    }
+                    if (request.path?.contains("/messages") == true) {
+                        apiMessageRequestCount.incrementAndGet()
                     }
                     return if (holdCompletionsStream && request.path == "/v1/chat/completions") {
                         MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
@@ -117,6 +123,7 @@ class ChatViewModelGatewayInboundTurnTest {
         persistedHistory = emptyList()
         holdCompletionsStream = false
         apiCompletionsRequestCount.set(0)
+        apiMessageRequestCount.set(0)
         viewModel = ChatViewModel().also {
             it.initialize(
                 HermesApiClient(apiServer.url("/").toString(), "test-key"),
@@ -133,8 +140,157 @@ class ChatViewModelGatewayInboundTurnTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
+    @Test
+    fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
+        DiagnosticsLog.clear()
+        viewModel.updateGatewayClient(null)
+        viewModel.initialize(null, handler)
+        viewModel.streamingEndpoint = "gateway"
+
+        viewModel.sendMessage("Retry this after reconnect")
+
+        val failure = viewModel.chatFailure.value
+        assertEquals(STORED_SESSION_ID, failure?.sessionId)
+        assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
+        assertTrue(failure?.recoverable == true)
+        assertTrue(failure?.rawError.orEmpty().contains("no API fallback"))
+        assertEquals("Retry this after reconnect", handler.lastSentMessage.value)
+        assertTrue(handler.messages.value.isEmpty())
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
+        assertEquals("gateway", diagnostic.endpointRole)
+        assertEquals("chat response", diagnostic.operation)
+    }
+
+    @Test
+    fun explicitProfileHistoryFailureSurfacesAndNeverFallsBackAcrossProfiles() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val owner = Profile(name = "owner", model = "model-a", description = "Owner")
+        viewModel.setSelectedProfileProvider { owner }
+        viewModel.setSessionProfileNameProvider { owner.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            assertEquals(owner.name, profileName)
+            assertEquals("owner-session", sessionId)
+            Result.failure(IllegalStateException("profile history unavailable"))
+        }
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = owner.name,
+                profile = owner,
+                contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+                sessionId = "owner-session",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.turnId == "history-owner-session" }
+        val failure = viewModel.chatFailure.value
+        assertEquals("owner-session", failure?.sessionId)
+        assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
+        assertFalse(failure?.recoverable ?: true)
+        assertTrue(failure?.rawError.orEmpty().contains("profile history unavailable"))
+        assertEquals(0, apiMessageRequestCount.get())
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
+        assertEquals("Hermes chat history failed", diagnostic.title)
+        assertEquals("load chat history", diagnostic.operation)
+        assertEquals("gateway", diagnostic.endpointRole)
+    }
+
+    @Test
+    fun missingRequiredProfileHistoryLoaderFailsClosedWithoutApiRead() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val owner = Profile(name = "owner", model = "model-a", description = "Owner")
+        viewModel.setSelectedProfileProvider { owner }
+        viewModel.setSessionProfileNameProvider { owner.name }
+        viewModel.clearProfileMessageLoader()
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = owner.name,
+                profile = owner,
+                contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+                sessionId = "missing-loader-session",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.sessionId == "missing-loader-session" }
+        assertFalse(viewModel.chatFailure.value?.recoverable ?: true)
+        assertTrue(
+            viewModel.chatFailure.value?.rawError.orEmpty()
+                .contains("Profile-scoped conversation history is unavailable"),
+        )
+        assertEquals(0, apiMessageRequestCount.get())
+    }
+
+    @Test
+    fun ordinarySessionSwitchFailureSettlesLoadingAndSurfacesError() {
+        DiagnosticsLog.clear()
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            Result.failure(IllegalStateException("history failed for $sessionId"))
+        }
+
+        viewModel.switchSession("failed-switch-session")
+
+        awaitCondition {
+            !viewModel.isLoadingHistory.value &&
+                viewModel.chatFailure.value?.sessionId == "failed-switch-session"
+        }
+        val failure = viewModel.chatFailure.value
+        assertFalse(failure?.recoverable ?: true)
+        assertTrue(failure?.rawError.orEmpty().contains("failed-switch-session"))
+        assertEquals("failed-switch-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun supersededHistoryFailureCannotClearOrErrorNewerSession() {
+        DiagnosticsLog.clear()
+        val oldLoadStarted = CompletableDeferred<Unit>()
+        val releaseOldLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            when (sessionId) {
+                "old-session" -> {
+                    oldLoadStarted.complete(Unit)
+                    releaseOldLoad.await()
+                    Result.failure(IllegalStateException("stale history failure"))
+                }
+                "new-session" -> Result.success(
+                    listOf(
+                        MessageItem(
+                            id = "new-answer",
+                            sessionId = sessionId,
+                            role = "assistant",
+                            content = JsonPrimitive("New session transcript"),
+                        ),
+                    ),
+                )
+                else -> Result.success(emptyList())
+            }
+        }
+
+        viewModel.switchSession("old-session")
+        awaitCondition { oldLoadStarted.isCompleted }
+        viewModel.switchSession("new-session")
+        awaitCondition {
+            !viewModel.isLoadingHistory.value &&
+                handler.messages.value.any { it.content == "New session transcript" }
+        }
+
+        releaseOldLoad.complete(Unit)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+
+        assertEquals("new-session", handler.currentSessionId.value)
+        assertTrue(handler.messages.value.any { it.content == "New session transcript" })
+        assertNull(viewModel.chatFailure.value)
+        assertTrue(
+            DiagnosticsLog.recent(setOf(DiagnosticCategory.Session))
+                .none { it.detail.orEmpty().contains("stale history failure") },
+        )
+    }
+
     @After
     fun tearDown() {
+        DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
         gatewayClient.shutdown()
         gatewayScope.cancel()
