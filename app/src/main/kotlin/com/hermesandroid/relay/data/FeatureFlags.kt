@@ -139,5 +139,5 @@ object BuildFlavor {
             GOOGLE_PLAY -> "Google Play"
             SIDELOAD -> "Sideload"
             else -> current.ifBlank { "Unknown" }
-        }
+        } + if (CandidateBuild.isCandidate) " Candidate" else ""
 }

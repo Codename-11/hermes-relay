@@ -101,6 +101,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -505,7 +506,7 @@ fun VoiceModeOverlay(
                 .padding(top = 64.dp, start = 16.dp, end = 16.dp),
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 tonalElevation = 2.dp,
             ) {
@@ -1014,7 +1015,7 @@ private fun VoiceSessionPill(
     val profileText = profileName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_overlay_default_profile)
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
+        shape = appearanceRoundedCornerShape(24.dp),
         // Fully opaque panel — the overlay floats over live chat/sphere, so a
         // translucent surface let the background bleed through and made the
         // dropdown text hard to read.
@@ -1339,7 +1340,7 @@ private fun VoiceRouteSummary(
     val providerLine = provider.replace(" / ", " · ")
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
@@ -1396,7 +1397,7 @@ private fun VoiceHandoffStrip(
     }
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .background(containerColor)
             .padding(horizontal = 10.dp, vertical = if (compact) 6.dp else 8.dp),
         verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
@@ -1665,7 +1666,7 @@ private fun VoiceRichResultAffordance(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onViewConversation),
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f),
     ) {
         Row(
@@ -1680,7 +1681,7 @@ private fun VoiceRichResultAffordance(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+                        .clip(appearanceRoundedCornerShape(8.dp)),
                 )
             } else {
                 Icon(
@@ -1756,7 +1757,7 @@ private fun VoiceToolStatusRow(toolCall: ToolCall) {
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
     ) {
         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
@@ -1820,7 +1821,7 @@ private fun HermesConfirmationCard(
     ) {
         confirmation?.let { state ->
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.tertiaryContainer,
                 tonalElevation = 2.dp,
             ) {
@@ -2004,7 +2005,7 @@ private fun BackgroundRunChip(
         }.joinToString(" · ")
 
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = appearanceRoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.secondaryContainer,
             // Tap on a settled chip = respeak the delivered answer (the VM
             // no-ops the tap for live phases).
@@ -2091,7 +2092,7 @@ private fun PermissionDeniedChip(
         val current = callout ?: lastShown
         if (current != null) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier

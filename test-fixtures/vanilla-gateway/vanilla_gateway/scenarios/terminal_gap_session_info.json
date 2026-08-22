@@ -1,0 +1,26 @@
+{
+  "name": "terminal_gap_session_info",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.settled_session_info"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Persisted before authoritative idle."}},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Exercise authoritative idle.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "Persisted before authoritative idle.", "timestamp": 2.0, "finish_reason": "stop"}
+          ]
+        },
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "session.info", "payload": {"running": false}}
+      ]
+    }
+  ]
+}

@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.ProfileConfigResponse
 import com.hermesandroid.relay.data.ProfileMemoryEntry
 import com.hermesandroid.relay.data.ProfileSkillEntry
@@ -952,7 +953,7 @@ private fun SoulPane(
                         .weight(1f)
                         .background(
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = appearanceRoundedCornerShape(8.dp),
                         )
                         .padding(12.dp),
                 ) {
@@ -1013,7 +1014,7 @@ private fun MonospaceEditor(
         modifier = modifier
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(8.dp),
+                shape = appearanceRoundedCornerShape(8.dp),
             )
             .padding(8.dp),
     ) {
@@ -2006,7 +2007,7 @@ private fun TruncatedBanner() {
             .fillMaxWidth()
             .background(
                 color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(6.dp),
+                shape = appearanceRoundedCornerShape(6.dp),
             )
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

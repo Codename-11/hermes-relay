@@ -1,0 +1,29 @@
+{
+  "name": "terminal_gap_activate",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete",
+    "gateway.settled_session_info",
+    "gateway.session_activate_live"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Persisted after the socket gap."}},
+        {"op": "sleep", "milliseconds": 2000},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Exercise terminal gap.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "Persisted after the socket gap.", "timestamp": 2.0, "finish_reason": "stop"}
+          ]
+        },
+        {"op": "set_running", "value": false},
+        {"op": "close", "code": 1011}
+      ]
+    }
+  ]
+}

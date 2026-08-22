@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
@@ -715,7 +716,7 @@ private fun DeviceCard(
 private fun CurrentBadge() {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(appearanceRoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -772,7 +773,7 @@ private fun GrantChip(
 
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(bg)
             .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -913,7 +914,7 @@ private fun EndpointsSubList(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(appearanceRoundedCornerShape(6.dp))
                     .background(
                         if (isActive) {
                             MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)

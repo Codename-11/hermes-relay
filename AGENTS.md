@@ -12,6 +12,7 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Gateway/session/reconnect testing → **[docs/gateway-contract-testing.md](docs/gateway-contract-testing.md)**
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
 - Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
@@ -21,7 +22,8 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 |---|---|
 | Integration branch | `dev`; normal feature, fix, docs, and chore PRs target `dev` |
 | Release branch | `main`; release history and hotfix integration only |
-| Tag source | The new `main` tip after an approved `dev` → `main` release PR, or after an approved hotfix PR to `main` |
+| Production tag source | The new `main` tip after an approved `dev` → `main` release PR, or after an approved hotfix PR to `main` |
+| Candidate tag source | An exact release-prepared and tested `dev` SHA; prerelease suffix required (`-alpha`, `-beta`, or `-rc.N`) |
 | Staging source | An exact tested `dev` SHA or release-candidate tag; staging is an environment, never a branch |
 | Production source | Immutable `android-v*`, `server-v*`, or `desktop-v*` tags, selected by surface |
 | Hotfix base | The immutable production tag for the affected surface |
@@ -44,6 +46,15 @@ a staging branch.
   through upstream PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /
   `tui_gateway/server.py` in hermes-agent) before assuming a route exists.
+- **Use the Gateway contract lab when its boundary changes.** Changes to
+  Gateway chat events, session identity/resume/activation, streaming completion,
+  queue ownership, reconnect/lifecycle recovery, or authoritative history must
+  reuse or extend the declarative fixture scenarios, run the relevant Android
+  instrumentation when rendered/lifecycle behavior is affected, and run the
+  scenario manifest through current-upstream conformance. Physical ADB
+  certification is required only when device/runtime behavior is claimed. All
+  of these lanes are on demand; do not add scheduled execution without explicit
+  approval.
 - **Conventional Commits + `main`/`dev` branching.** Normal branches start at
   `dev` and PR back to `dev`; merge commits/no-ff are the repository policy.
   Version bumps happen only during release preparation on `dev`, and production

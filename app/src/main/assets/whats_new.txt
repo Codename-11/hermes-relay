@@ -1,8 +1,8 @@
-v1.11.0 - Access with clear boundaries
+v1.12.0 - Themes and identity that stay put
 
-* Choose explicit Bridge capability presets in sideload builds.
-* Allow screen inspection and control for a set time or explicitly keep access unlimited.
-* Keep stored-session failures visible with route-aware retry details.
-* Use Return for multiline prompts across more software keyboards.
-* Preserve Stopped status when cancelling answer recovery.
-* Reduce idle redraws and release capture and audio resources sooner.
+* Create and save custom themes with full palette and shape controls.
+* Apply Soft, Balanced, or Sharp styling consistently throughout the app.
+* Switch All Profiles sessions with the correct owning agent, icon, and transcript.
+* Preserve the active profile and session through app-language changes.
+* Recover Gateway chats when a terminal completion frame is missed.
+* Accept Relay base, /ws, and /health endpoint forms without invalid routes.

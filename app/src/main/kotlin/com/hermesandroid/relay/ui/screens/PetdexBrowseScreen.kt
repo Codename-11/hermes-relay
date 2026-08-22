@@ -67,6 +67,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.petdex.PetdexCatalogClient
 import com.hermesandroid.relay.petdex.PetdexInstallResult
@@ -437,7 +438,7 @@ private fun PetdexPetCard(
     onUse: () -> Unit,
     onInstall: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = appearanceRoundedCornerShape(16.dp)
     Card(
         modifier = Modifier
             .fillMaxWidth()

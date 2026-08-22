@@ -151,7 +151,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun allProfilesOpenKeepsGlobalSelectionButScopesHistoryResumeAndSendToOwner() {
+    fun allProfilesOpenScopesHistoryResumeAndSendToSelectedOwner() {
         val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
         val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
         var loadedProfile: String? = null
@@ -172,16 +172,16 @@ class ChatViewModelGatewayInboundTurnTest {
         )
 
         awaitCondition { loadedProfile == owner.name }
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals(owner.name, gatewayClient.sessionProfileProvider())
         assertEquals("X-bot", handler.activeAgentName)
-        assertEquals("unchanged", persistedSession)
+        assertEquals("x-bot-session", persistedSession)
 
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", global.name),
             sessionId = null,
         )
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
 
         viewModel.openProfileSession(
@@ -190,15 +190,208 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
             sessionId = "x-bot-session",
         )
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
 
         viewModel.createNewChat()
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
     }
 
     @Test
-    fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
+    fun allProfilesSwitchBetweenDifferentOwnersReplacesVisibleIdentity() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        var selected = beta
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = requireNotNull(profile)
+            true
+        }
+
+        viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+        assertEquals(alpha, selected)
+        assertEquals(alpha.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("Alpha", handler.activeAgentName)
+
+        viewModel.openProfileSession(
+            profileName = beta.name,
+            profile = beta,
+            contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            sessionId = "beta-session",
+        )
+
+        assertEquals(beta, selected)
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
+        assertEquals(beta.name, gatewayClient.sessionProfileProvider())
+        assertEquals("Beta", handler.activeAgentName)
+        assertEquals("beta-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun profileLockRejectsCrossProfileOpenBeforeSelectionOrChatStateChanges() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        var selectionCalls = 0
+        viewModel.setSelectedProfileProvider { beta }
+        viewModel.setSessionProfileNameProvider { beta.name }
+        viewModel.setLockedProfileNameProvider { beta.name }
+        viewModel.setProfileSelectionHandler {
+            selectionCalls += 1
+            true
+        }
+
+        val opened = viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+
+        assertFalse(opened)
+        assertEquals(0, selectionCalls)
+        assertFalse(viewModel.conversationBinding.value.isBound)
+        assertEquals(STORED_SESSION_ID, handler.currentSessionId.value)
+    }
+
+    @Test
+    fun lifecycleReconciliationKeepsExplicitOwnerAndScopesDrawerRefreshToIt() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var listedProfile: String? = null
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+        viewModel.setProfileSessionLister { profileName ->
+            listedProfile = profileName
+            Result.success(emptyList())
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.refreshSessions()
+
+        awaitCondition { listedProfile == owner.name }
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.switchSession("x-bot-sibling")
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-sibling", persistedSession)
+    }
+
+    @Test
+    fun lifecycleReconciliationDuringHydrationCannotMoveOrEraseExplicitSession() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val loadStarted = CompletableDeferred<Unit>()
+        val releaseLoad = CompletableDeferred<Unit>()
+        var loadedProfile: String? = null
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            loadedProfile = profileName
+            loadStarted.complete(Unit)
+            releaseLoad.await()
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "owned-answer",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Owned transcript"),
+                    ),
+                ),
+            )
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        awaitCondition { loadStarted.isCompleted }
+
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        releaseLoad.complete(Unit)
+
+        awaitCondition { handler.messages.value.any { it.content == "Owned transcript" } }
+        assertEquals(owner.name, loadedProfile)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun explicitOwnerScopesSessionMetadataWritesAfterLifecycleReconciliation() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val writtenProfiles = java.util.Collections.synchronizedList(mutableListOf<String?>())
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.profileSessionRenamer = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionPinner = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionArchiver = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionDeleter = { profileName, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "x-bot-session",
+                title = "Owned session",
+                model = null,
+            ),
+        )
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.renameSession("x-bot-session", "Renamed")
+        viewModel.setSessionPinned("x-bot-session", true)
+        viewModel.setSessionArchived("x-bot-session", true)
+        viewModel.deleteSession("x-bot-session")
+
+        awaitCondition { writtenProfiles.size == 4 }
+        assertEquals(listOf(owner.name, owner.name, owner.name, owner.name), writtenProfiles)
+    }
+
+    @Test
+    fun explicitDefaultDraftUsesLiteralDefaultProfile() {
         val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
         val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
         var persistedSession = "unchanged"
@@ -212,7 +405,7 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
         )
 
-        assertEquals("default", viewModel.openedSessionProfileName.value)
+        assertEquals("default", viewModel.conversationBinding.value.profileName)
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
         assertEquals("Hermes", handler.activeAgentName)
@@ -1462,7 +1655,7 @@ class ChatViewModelGatewayInboundTurnTest {
                 updatedAt = System.currentTimeMillis(),
             ),
         )
-        viewModel.profileSessionDeleter = { true }
+        viewModel.profileSessionDeleter = { _, _, _ -> true }
 
         viewModel.sendMessage("Run before delete")
         gatewayHarness.awaitRpc("prompt.submit")
@@ -1562,6 +1755,48 @@ class ChatViewModelGatewayInboundTurnTest {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
         }
         assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun foregroundMultiTurnRecoversWhenReconnectReportsSettledWithoutMessageComplete() {
+        viewModel.setChatVisible(true)
+        viewModel.sendMessage("Run a long foreground task")
+        gatewayHarness.awaitRpc("prompt.submit")
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "tool.start",
+                buildJsonObject {
+                    put("tool_id", "tool-foreground")
+                    put("name", "terminal")
+                },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial foreground answer") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        // The authoritative turn is already persisted when the replacement
+        // socket activates. No message.complete is replayed to that socket.
+        persistedHistory = persistedAnswerHistory()
+        gatewayHarness.recoveryRunning = false
+        serverWs.close(1011, "foreground network gap")
+        gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpc("session.activate")
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.id == "persisted-background-answer"
+        }
+        assertEquals(BACKGROUND_ANSWER, handler.messages.value.single().content)
+        assertEquals(0, apiCompletionsRequestCount.get())
     }
 
     @Test

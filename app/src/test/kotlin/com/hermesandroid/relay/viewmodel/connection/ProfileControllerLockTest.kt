@@ -152,6 +152,8 @@ class ProfileControllerLockTest {
         assertEquals("mizu", awaitLocked("mizu"))
         assertEquals(mizu, awaitSelected("mizu"))
         assertTrue("should report locked", awaitFlow(controller.isProfileLocked) { it })
+        assertTrue(controller.isProfileSelectionAllowed("mizu"))
+        assertFalse(controller.isProfileSelectionAllowed("coder"))
     }
 
     @Test

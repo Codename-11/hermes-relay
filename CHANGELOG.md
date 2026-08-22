@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.12.0] - 2026-08-21
+
+### Added
+
+- **Android can create and save custom themes.** The Custom workshop provides a live chat preview, editable Background, Surface, Accent, and Text roles, Light or Dark ownership, saved Soft/Balanced/Sharp shape, and bounded rename, duplicate, and delete actions. Up to 20 presets remain local to the device.
+- **Maintainers can build matched Android and Relay review candidates without cutting a release.** Candidate artifacts share exact source provenance and checksums, install beside stable builds with isolated data, and remain excluded from stable update prompts.
+
+### Changed
+
+- **Appearance shape now applies consistently across the app.** Soft, Balanced, and Sharp styling reaches chat, settings, sheets, dialogs, terminal, voice, Bridge, and other shared surfaces, while accent and shape changes apply immediately. (#385)
+- **Selecting an All Profiles session now activates its owning agent.** Header identity, avatar, transcript, drafts, routing, and persistence move together. Merely browsing All Profiles changes nothing, and a profile lock hides All Profiles and rejects cross-profile opens.
+
+### Fixed
+
+- **Language changes preserve the active profile and session.** Activity recreation retains the exact connection, agent, session, and All Profiles browser state without replacing them with stale persisted values. The persistent connection notification also relocalizes without reconnecting. (#381)
+- **Gateway chats recover when a terminal frame is missed.** An authoritative idle state settles the active turn, retains its durable session, and reconciles history without resubmitting through fallback transport. (#365)
+- **Relay endpoint forms normalize to the correct sibling routes.** Saved base, `/ws`, and `/health` URLs resolve idempotently without producing paths such as `/relay/ws/health`; malformed or ambiguous routes still fail closed. (#380)
+
+## [Server 1.9.0] - 2026-08-21
+
+### Added
+
+- **Reconnect-delivered phone messages carry explicit backlog context.** Relay marks messages flushed from its bounded offline queue and emits one ordered completion event so compatible clients can label delayed messages and summarize the batch without generating one banner per item.
+- **Phone status reports granular Bridge capability grants.** Human-readable status and the `android_phone_status` tool distinguish permanent, timed, and unlimited capabilities while retaining the existing Android permission and safety state.
+
 ## [1.11.0] - 2026-08-20
 
 ### Added

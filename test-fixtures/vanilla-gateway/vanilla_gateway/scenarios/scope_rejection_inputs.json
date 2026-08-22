@@ -1,0 +1,24 @@
+{
+  "name": "scope_rejection_inputs",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "scope": "unscoped", "payload": {"text": "Unscoped input."}},
+        {"op": "event", "type": "session.info", "scope": "unscoped", "payload": {"running": false}},
+        {"op": "event", "type": "message.delta", "scope": "foreign", "payload": {"text": "Foreign input."}},
+        {"op": "event", "type": "message.complete", "scope": "foreign", "payload": {"text": "Foreign completion."}},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Exact-session response."}},
+        {"op": "persist", "messages": [{"id": 1, "role": "assistant", "content": "Exact-session response.", "timestamp": 1.0}]},
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "Exact-session response."}}
+      ]
+    }
+  ]
+}

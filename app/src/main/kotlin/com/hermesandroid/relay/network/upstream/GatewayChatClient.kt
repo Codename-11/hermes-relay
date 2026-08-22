@@ -2950,6 +2950,18 @@ class GatewayChatClient(
             // yolo / fast / usage) — shared with the session.resume result via
             // applySessionInfo so both paths stay in lockstep.
             payload?.let { applySessionInfo(it) }
+            val ownedTurn = activeTurn
+            if (!eventSessionId.isNullOrBlank() &&
+                eventSessionId == liveSessionId &&
+                ownedTurn?.settleFromAuthoritativeSessionState(
+                    running = payload?.booleanField("running"),
+                    source = "session.info",
+                ) == true
+            ) {
+                if (activeTurn === ownedTurn) activeTurn = null
+                if (!AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
+                return
+            }
         }
 
         // Foreign-session events (another client's chat on the same gateway) are not ours.
@@ -3190,7 +3202,13 @@ class GatewayChatClient(
                     )
                     when {
                         activated.isSuccess -> {
-                            activated.getOrNull()?.let(::applySessionResultInfo)
+                            activated.getOrNull()?.let { result ->
+                                applySessionResultInfo(result)
+                                turn.settleFromAuthoritativeSessionState(
+                                    running = result.booleanField("running"),
+                                    source = "session.activate",
+                                )
+                            }
                             true
                         }
                         activated.exceptionOrNull().isMethodNotFound() -> {
@@ -3474,6 +3492,15 @@ class GatewayChatClient(
         private var reconcileRequired = false
 
         /**
+         * A replacement WebSocket does not replay a `message.complete` frame
+         * emitted while the old socket was detached. This is distinct from
+         * cancellation: the server finished the turn and authoritative history
+         * must settle it without routing through a transport error.
+         */
+        @Volatile
+        private var settledWithoutTerminalFrame = false
+
+        /**
          * True if this socket loss should be answered with a rejoin attempt.
          * Mark reconciliation before reconnecting so a terminal event arriving
          * immediately after `gateway.ready` cannot race ahead of the signal.
@@ -3498,7 +3525,7 @@ class GatewayChatClient(
 
         private var watchdog: Job? = null
 
-        val ended: Boolean get() = mapper.turnEnded || cancelled
+        val ended: Boolean get() = mapper.turnEnded || cancelled || settledWithoutTerminalFrame
 
         /**
          * True once any turn-scoped event has arrived — proof the server
@@ -3527,6 +3554,7 @@ class GatewayChatClient(
         }
 
         private fun processEvent(type: String, payload: JsonObject?) {
+            if (settledWithoutTerminalFrame) return
             if (type != "session.info") started = true
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
@@ -3548,6 +3576,33 @@ class GatewayChatClient(
                 tracer.done()
                 handoffQueuedSuccessor()
             }
+        }
+
+        /**
+         * Use upstream's session state as a terminal backstop only after this
+         * exact turn has proved it went live. A pre-start `running=false`
+         * heartbeat can race `prompt.submit` and is not a completion boundary.
+         */
+        fun settleFromAuthoritativeSessionState(running: Boolean?, source: String): Boolean {
+            if (running != false || !started) return false
+            val settled = synchronized(deferredEventLock) {
+                if (ended) {
+                    false
+                } else {
+                    settledWithoutTerminalFrame = true
+                    reconcileRequired = true
+                    true
+                }
+            }
+            if (!settled) return false
+
+            disarmWatchdog()
+            Log.i(TAG, "Gateway turn settled from $source after missing terminal frame")
+            callbacks.onReconcileRequired()
+            callbacks.onComplete()
+            tracer.done("history-reconcile")
+            handoffQueuedSuccessor()
+            return true
         }
 
         /**

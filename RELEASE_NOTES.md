@@ -1,10 +1,10 @@
-# Hermes-Relay-Android v1.11.0
+# Hermes-Relay-Android v1.12.0
 
-**Release Date:** August 20, 2026
+**Release Date:** August 21, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.11.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.12.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,29 +12,27 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This release makes Android control more explicit and chat recovery more honest. Sideload users can grant only the Bridge capabilities they intend, including bounded or unlimited screen access, while every build gains clearer stored-session failures, complete multiline keyboard behavior, persistent cancellation status, and lower idle power use.
+This release adds saved custom themes and makes appearance shape consistent throughout Android. It also keeps profile and session identity intact across All Profiles navigation and language changes, recovers Gateway chats when a completion frame is missed, and accepts common Relay endpoint forms without producing invalid routes.
 
 ## Added
 
-- Choose read-only, read-and-confirm, or custom Bridge capability presets for the active connection in sideload builds.
-- Grant screen inspection and control for a bounded duration or explicitly keep them unlimited, with the active policy reflected in Relay status.
+- Create up to 20 local custom themes with editable palette roles, Light or Dark ownership, saved shape, live chat preview, rename, duplicate, and delete controls.
 
 ## Changed
 
-- Use a summary-first Bridge screen that separates Agent access, unattended mode, Android readiness, and advanced safety without removing the full permission matrix.
+- Apply Soft, Balanced, or Sharp styling consistently across chat, settings, sheets, dialogs, terminal, voice, Bridge, and other shared surfaces.
+- Activate a session's owning agent when selecting it from All Profiles; profile locks hide that browser and reject cross-profile opens.
 
 ## Fixed
 
-- Keep stored-session resume failures in the conversation with route-aware details and explicit retry or dismiss actions instead of silently switching context.
-- Insert newlines from both direct-text and synthesized-Enter software keyboards while preserving physical Enter, Shift+Enter, and Ctrl/Cmd+Enter behavior.
-- Retain the Stopped status when a blank recovery placeholder is cancelled.
-- Stop idle Sphere, waveform, and closed-drawer redraw loops when no motion is visible.
-- Attach screen-capture surfaces only for requested frames, release unattended wake locks at command completion, and bind audio effects to the capture session.
-- Reuse wake-word normalization buffers during continuous opt-in listening.
+- Preserve the exact connection, agent, session, transcript, draft, and All Profiles state through an app-language change.
+- Relocalize the persistent connection notification without restarting the active connection.
+- Settle and reconcile active Gateway turns when the terminal completion frame was missed.
+- Normalize Relay base, `/ws`, and `/health` endpoint forms without producing duplicate route segments.
 
 ## Install / Verify
 
-- App version: **1.11.0** (versionCode **46**).
-- Standard Chat, sessions, Manage, stored-session recovery, software-keyboard multiline input, and Vanilla Hermes voice continue to work against unmodified upstream Hermes.
-- Granular Device Control grants and screen-access durations are sideload-only; the Google Play build continues to ship Hermes Bridge Core without AccessibilityService Device Control.
-- The optional Relay plugin is not required for standard Android chat, session recovery, or multiline composition.
+- App version: **1.12.0** (versionCode **47**).
+- Standard Chat, sessions, Manage, profile switching, custom themes, and Vanilla Hermes voice continue to work against unmodified upstream Hermes.
+- Granular Device Control remains sideload-only; the Google Play build continues to ship Hermes Bridge Core without AccessibilityService Device Control.
+- The optional Relay plugin is not required for standard Android chat, session continuity, themes, or Gateway recovery.

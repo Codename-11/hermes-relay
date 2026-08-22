@@ -193,6 +193,10 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 ### Testing
 
 - **Android:** JUnit + Compose testing for UI, MockK for mocks
+- **Gateway/session/reconnect work:** follow the on-demand scenario,
+  current-upstream conformance, Android instrumentation, and physical-proof
+  routing in `docs/gateway-contract-testing.md`; do not infer device behavior
+  from fixture or source checks.
 - **Python:** `python -m unittest plugin.tests.test_<name>` — avoid bare `pytest` (conftest imports `responses` which may not be installed in the venv)
 - **CI and release gates:** follow the repository-wide requirements in
   `AGENTS.md` and `RELEASE.md`; Claude-specific guidance does not redefine them.
@@ -204,6 +208,7 @@ This is a **public, distributed repo** — every committed file (CHANGELOG, DEVL
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docs/spec.md`                                              | Full specification — protocol, UI layouts, phases, dependencies                                                                                                                                                                                                                                     |
 | `docs/decisions.md`                                         | Architecture decisions — framework choice, channel design, auth model                                                                                                                                                                                                                               |
+| `docs/gateway-contract-testing.md`                          | On-demand reusable Gateway scenarios, upstream conformance, Android instrumentation, and ADB certification                                                                                                                                                                                         |
 | `AGENTS.md`                                                 | Universal agent entry point — points here + the non-negotiables (standard-path, commits, writing hygiene)                                                                                                                                                                                           |
 | `docs/mcp-tooling.md`                                       | MCP server setup — android-tools-mcp + mobile-mcp; `android_*` tool usage patterns                                                                                                                                                                                                                  |
 | **App — Core**                                              |                                                                                                                                                                                                                                                                                                     |

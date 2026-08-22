@@ -6,6 +6,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
+import com.hermesandroid.relay.data.RelayEndpointContract
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -2616,13 +2617,7 @@ class RelayVoiceClient(
     private fun resolveHttpBase(): String? {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) return null
-        val normalized = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
-        // Reject a malformed base up front so callers' url("$base/…") can't throw
-        // IllegalArgumentException on the IO dispatcher (relay half of #131).
-        return if (normalized.toHttpUrlOrNull() != null) normalized else null
+        return RelayEndpointContract.parseOrNull(relayUrl)?.httpBaseUrl
     }
 
     private fun resolveWebSocketBase(): String? {
@@ -2633,10 +2628,7 @@ class RelayVoiceClient(
     private fun toWebSocketBase(relayUrl: String?): String? {
         val trimmed = relayUrl?.trim().orEmpty()
         if (trimmed.isEmpty()) return null
-        return trimmed
-            .replace(Regex("^https://", RegexOption.IGNORE_CASE), "wss://")
-            .replace(Regex("^http://", RegexOption.IGNORE_CASE), "ws://")
-            .trimEnd('/')
+        return RelayEndpointContract.parseOrNull(trimmed)?.webSocketBaseUrl
     }
 
     private suspend fun resolveBearerToken(): String? {

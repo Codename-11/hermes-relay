@@ -29,6 +29,20 @@ scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ```
 
+### Review bundles
+
+Maintainers can produce a matched Android + Relay handoff for one pull request
+without cutting a release. Run **Actions → Build Review Bundle** with the PR
+number or an exact 40-character SHA. The short-lived artifact contains a
+side-by-side Candidate APK, Relay packages/source from the same commit,
+provenance, checksums, and install/rollback guidance.
+
+Review bundles never bump versions, create tags, upload to Play, or replace the
+stable Android app. Relay review still requires a staging Hermes instance or an
+explicit immutable snapshot/rollback window because two Relay plugins cannot
+own the same tools and hooks in one Hermes process. See
+[Review builds and release candidates](docs/review-candidates.md).
+
 Linux/macOS equivalent lives at `scripts/dev.sh`.
 
 ### Fast Android iteration
@@ -200,6 +214,10 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
   cycle; hosted CI remains the exhaustive all-variant gate.
 - **Focused Android unit test:** `scripts/dev.bat test-one "<fully-qualified-class-or-pattern>"`
 - **Android unit tests:** `scripts/dev.bat test` (runs the sideload debug JUnit + MockK + Compose suite)
+- **Gateway contract lab:** [`docs/gateway-contract-testing.md`](docs/gateway-contract-testing.md)
+  covers the on-demand vanilla-Gateway fixture, Android instrumentation,
+  upstream conformance, and physical-device ADB certification. No contract or
+  device lane is scheduled automatically.
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
 CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.

@@ -47,6 +47,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.appearanceTopRoundedCornerShape
 /**
  * A slash command entry — built-in, personality, server skill, or (on the
  * gateway transport) a server-catalog command from `commands.catalog`.
@@ -128,7 +130,7 @@ fun CommandPalette(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        shape = appearanceTopRoundedCornerShape(20.dp)
     ) {
         Column(
             modifier = Modifier
@@ -184,7 +186,7 @@ fun CommandPalette(
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp)
+                shape = appearanceRoundedCornerShape(12.dp)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -362,7 +364,7 @@ fun InlineAutocomplete(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         shadowElevation = 4.dp,
         tonalElevation = 2.dp
     ) {

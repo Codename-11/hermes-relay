@@ -76,6 +76,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceComposerShape
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.purpleGlow
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import kotlinx.coroutines.delay
@@ -94,8 +96,6 @@ import kotlinx.coroutines.delay
  */
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
-private val ChatComposerShape = RoundedCornerShape(26.dp)
-private val ChatInputChipShape = RoundedCornerShape(12.dp)
 internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
 data class ChatInputPickerOption(
@@ -320,7 +320,7 @@ fun ChatInputBar(
         }
 
         Surface(
-            shape = ChatComposerShape,
+            shape = appearanceComposerShape(),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
@@ -699,12 +699,12 @@ private fun ChatInputPickerChip(
 
     Box(modifier = modifier) {
         Surface(
-            shape = ChatInputChipShape,
+            shape = appearanceRoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.32f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
             modifier = Modifier
                 .heightIn(min = 32.dp)
-                .clip(ChatInputChipShape)
+                .clip(appearanceRoundedCornerShape(12.dp))
                 .clickable(enabled = enabled) {
                     if (onClickOverride != null) onClickOverride() else expanded = true
                 },

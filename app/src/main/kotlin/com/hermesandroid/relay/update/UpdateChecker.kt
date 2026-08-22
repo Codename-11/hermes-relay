@@ -2,6 +2,7 @@ package com.hermesandroid.relay.update
 
 import com.hermesandroid.relay.BuildConfig
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.CandidateBuild
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -53,7 +54,7 @@ object UpdateChecker {
      * sideload banner showing up on Play installs.
      */
     suspend fun check(): UpdateCheckResult = withContext(Dispatchers.IO) {
-        if (!BuildFlavor.isSideload) {
+        if (!shouldQueryStableReleases(BuildFlavor.isSideload, CandidateBuild.isCandidate)) {
             return@withContext UpdateCheckResult.UpToDate
         }
 
@@ -107,6 +108,11 @@ object UpdateChecker {
             )
         }
     }
+
+    internal fun shouldQueryStableReleases(
+        isSideload: Boolean,
+        isCandidate: Boolean,
+    ): Boolean = isSideload && !isCandidate
 
     private fun isAndroidReleaseTag(tagName: String): Boolean {
         return tagName.startsWith("android-v") || LEGACY_ANDROID_TAG.matches(tagName)

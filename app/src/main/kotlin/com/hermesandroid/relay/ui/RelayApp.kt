@@ -75,6 +75,7 @@ import androidx.navigation.navArgument
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.CandidateBuildBanner
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.MessageBannerHost
@@ -125,6 +126,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
@@ -141,6 +143,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.CustomThemeScreen
 import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
 import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
@@ -477,6 +480,7 @@ sealed class Screen(
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
     data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
     data object CustomPetGuide : Screen("settings/appearance/custom-pet", "Create a pet", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
@@ -704,6 +708,7 @@ fun RelayApp() {
     val appFontId by connectionViewModel.appFont.collectAsState()
     val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
+    val activeCustomTheme by connectionViewModel.activeCustomTheme.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -864,6 +869,7 @@ fun RelayApp() {
         appFontId = appFontId,
         accentHex = appearanceAccent,
         shapeId = appearanceShape,
+        customTheme = activeCustomTheme,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -1406,6 +1412,9 @@ fun RelayApp() {
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
+        val showCandidateBanner = CandidateBuild.isCandidate &&
+            !voiceUiState.voiceMode &&
+            !showStartupSphere
         // Persistent Demo-mode strip — visible on every demo surface so the
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
@@ -1594,7 +1603,8 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure || connectionChipVisible ||
+                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure ||
+                        connectionChipVisible ||
                         showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
@@ -1824,12 +1834,18 @@ fun RelayApp() {
                                     .InteractionRequestNotifier.DEFAULT_PROFILE_ROUTE_VALUE
                             }
                             if (!profileSelectionSettled) return@LaunchedEffect
+                            if (!connectionViewModel.isProfileSelectionAllowed(targetProfile)) {
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                                return@LaunchedEffect
+                            }
                             if (effectiveSessionProfileName != targetProfile) {
                                 val selection = targetProfile?.let { name ->
                                     agentProfiles.firstOrNull { it.name == name }
                                 }
                                 if (targetProfile == null || selection != null) {
                                     connectionViewModel.selectProfile(selection)
+                                    chatViewModel.activateGatewayProfile(selection)
                                 }
                                 return@LaunchedEffect
                             }
@@ -2604,6 +2620,13 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
                         onCreatePet = { navController.navigate(Screen.CustomPetGuide.route) },
+                        onOpenCustomTheme = { navController.navigate(Screen.CustomTheme.route) },
+                    )
+                }
+                composable(Screen.CustomTheme.route) {
+                    CustomThemeScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.PetdexBrowse.route) {
@@ -2845,6 +2868,13 @@ fun RelayApp() {
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars),
         ) {
+            AnimatedVisibility(
+                visible = showCandidateBanner,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                CandidateBuildBanner()
+            }
             AnimatedVisibility(
                 visible = availableUpdateStatus != null && !suppressGlobalChrome &&
                     !showStartupSphere && !voiceUiState.voiceMode,

@@ -175,15 +175,26 @@ internal class HermesRuntimeBinder(
         }
         chat.setDisplayProfileProvider { connection.effectiveDisplayProfile.value }
         chat.setDisplayAliasProvider { connection.profileDisplayAlias.value }
-        chat.setProfileSessionLister { connection.listProfileScopedSessions() }
+        chat.setLockedProfileNameProvider { connection.lockedProfileName.value }
+        chat.setProfileSelectionHandler { profile ->
+            if (!connection.isProfileSelectionAllowed(profile?.name)) {
+                false
+            } else {
+                connection.selectProfile(profile)
+                true
+            }
+        }
+        chat.setProfileSessionLister { profileName ->
+            connection.listProfileScopedSessions(profileName)
+        }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
-        chat.profileSessionDeleter = connection::deleteProfileScopedSession
-        chat.profileSessionRenamer = connection::renameProfileScopedSession
-        chat.profileSessionPinner = connection::setProfileScopedSessionPinned
-        chat.profileSessionArchiver = connection::setProfileScopedSessionArchived
+        chat.profileSessionDeleter = connection::deleteSession
+        chat.profileSessionRenamer = connection::renameSession
+        chat.profileSessionPinner = connection::setSessionPinned
+        chat.profileSessionArchiver = connection::setSessionArchived
         chat.onSessionChanged = connection::saveLastSessionId
         chat.setDemoModeWiring(
             isDemo = { connection.isDemoMode.value },
@@ -283,20 +294,29 @@ internal class HermesRuntimeBinder(
             ) { ready, connectionId, profileName, sessionId ->
                 ProfileContextInputs(ready, connectionId, profileName, sessionId)
             }
-            combine(contextInputs, connection.profileSelectionSettled) { inputs, settled ->
-                inputs.copy(profileSelectionSettled = settled)
+            combine(
+                contextInputs,
+                connection.profileSelectionSettled,
+                connection.lockedProfileName,
+            ) { inputs, settled, lockedProfileName ->
+                inputs.copy(
+                    profileSelectionSettled = settled,
+                    profileLocked = lockedProfileName != null,
+                )
             }.collectLatest { inputs ->
                 profileContextReady.value = false
                 if (!inputs.chatReady) return@collectLatest
                 if (!inputs.profileSelectionSettled) delay(PROFILE_SETTLE_BACKSTOP_MS)
                 else delay(PROFILE_CONTEXT_COALESCE_MS)
-                chat.switchProfileContext(
-                    contextKey = AgentDisplay.profileContextKey(
-                        connectionId = inputs.connectionId,
-                        profileName = inputs.profileName,
-                    ),
-                    sessionId = inputs.sessionId,
+                val contextKey = AgentDisplay.profileContextKey(
+                    connectionId = inputs.connectionId,
+                    profileName = inputs.profileName,
                 )
+                if (inputs.profileLocked) {
+                    chat.switchProfileContext(contextKey, inputs.sessionId)
+                } else {
+                    chat.reconcileProfileContext(contextKey, inputs.sessionId)
+                }
                 chat.refreshSessions()
                 profileContextReady.value = true
             }
@@ -438,6 +458,7 @@ internal class HermesRuntimeBinder(
         val profileName: String?,
         val sessionId: String?,
         val profileSelectionSettled: Boolean = false,
+        val profileLocked: Boolean = false,
     )
 
     private companion object {

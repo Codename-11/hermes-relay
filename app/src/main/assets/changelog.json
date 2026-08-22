@@ -1,6 +1,34 @@
 {
  "versions": [
   {
+   "version": "1.12.0",
+   "title": "Themes and identity that stay put",
+   "date": "2026-08-21",
+   "sections": [
+    {
+     "header": "Make the app yours",
+     "bullets": [
+      "Create and save custom themes with editable palette roles, Light or Dark ownership, shape, and a live chat preview.",
+      "Apply Soft, Balanced, or Sharp styling consistently across chat, settings, sheets, dialogs, terminal, voice, and Bridge."
+     ]
+    },
+    {
+     "header": "Keep the right agent active",
+     "bullets": [
+      "Selecting a session from All Profiles activates its owning agent with the correct header, avatar, transcript, draft, and routing.",
+      "Language changes preserve the exact active profile and session while relocalizing the persistent connection notification without reconnecting."
+     ]
+    },
+    {
+     "header": "Recover cleanly",
+     "bullets": [
+      "Settle and reconcile Gateway turns when a terminal completion frame is missed without resubmitting through fallback transport.",
+      "Normalize Relay base, /ws, and /health endpoint forms without producing duplicate route segments."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.11.0",
    "title": "Access with clear boundaries",
    "date": "2026-08-20",

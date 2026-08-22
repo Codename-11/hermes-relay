@@ -472,6 +472,30 @@ class EndpointResolverTest {
     }
 
     @Test
+    fun relayProbeUsesCanonicalSiblingHealthRoute() {
+        val resolver = EndpointResolver(fastClient)
+        val cases = mapOf(
+            "wss://relay.example.test" to "https://relay.example.test/health",
+            "wss://relay.example.test/ws" to "https://relay.example.test/health",
+            "wss://relay.example.test/relay" to "https://relay.example.test/relay/health",
+            "wss://relay.example.test/relay/ws/" to "https://relay.example.test/relay/health",
+            "https://relay.example.test/custom/health" to "https://relay.example.test/custom/health",
+        )
+
+        cases.forEach { (configured, expected) ->
+            val candidate = EndpointCandidate(
+                role = "custom",
+                relay = RelayEndpoint(configured),
+            )
+            assertEquals(
+                configured,
+                expected,
+                resolver.probeRequestUrlForTest(candidate, EndpointSurface.Relay),
+            )
+        }
+    }
+
+    @Test
     fun secureLinkDoesNotProbeUnadvertisedStandardService() {
         val candidate = EndpointCandidate(
             role = "plugin_proxy",

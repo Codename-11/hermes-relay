@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ManageSearch
@@ -27,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 /**
  * Settings card that opens the Profile Inspector full-screen viewer for
@@ -56,7 +56,7 @@ fun ProfileInspectorCard(
         modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme,
             )
             .alpha(if (enabled) 1f else 0.5f),
