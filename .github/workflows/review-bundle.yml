@@ -6,33 +6,18 @@ on:
       - dev
     types:
       - labeled
-  workflow_dispatch:
-    inputs:
-      source:
-        description: Exact 40-character commit SHA already contained in dev or main
-        required: true
-        type: string
-      retention_days:
-        description: Artifact retention
-        required: true
-        type: choice
-        default: "14"
-        options:
-          - "7"
-          - "14"
-          - "30"
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: review-bundle-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('sha-{0}', inputs.source) }}
+  group: review-bundle-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   resolve:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'review-candidate' }}
+    if: ${{ github.event.label.name == 'review-candidate' }}
     name: Resolve exact source
     runs-on: ubuntu-latest
     outputs:
@@ -49,56 +34,16 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const eventName = process.env.EVENT_NAME;
-            let repository = `${context.repo.owner}/${context.repo.repo}`;
-            let sha;
-            let label;
-            let slug;
-            let kind;
-            let source;
-
-            if (eventName === "pull_request") {
-              kind = "pull_request";
-              source = process.env.PR_NUMBER;
-              repository = process.env.PR_HEAD_REPOSITORY;
-              sha = process.env.PR_HEAD_SHA;
-              if (!repository || !sha) {
-                core.setFailed("the PR head repository is no longer available");
-                return;
-              }
-              label = `PR #${source}`;
-              slug = `pr-${source}`;
-            } else {
-              kind = "exact_sha";
-              source = process.env.SOURCE.trim();
-              if (!/^[0-9a-fA-F]{40}$/.test(source)) {
-                core.setFailed("exact_sha source must be a full 40-character commit SHA");
-                return;
-              }
-              sha = source.toLowerCase();
-              let trusted = false;
-              for (const branch of ["dev", "main"]) {
-                try {
-                  const comparison = await github.rest.repos.compareCommitsWithBasehead({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    basehead: `${sha}...${branch}`,
-                  });
-                  if (["ahead", "identical"].includes(comparison.data.status)) {
-                    trusted = true;
-                    break;
-                  }
-                } catch (error) {
-                  if (error.status !== 404) throw error;
-                }
-              }
-              if (!trusted) {
-                core.setFailed("workflow_dispatch only accepts commits already contained in dev or main");
-                return;
-              }
-              label = `Review ${sha.slice(0, 12)}`;
-              slug = `sha-${sha.slice(0, 12)}`;
+            const kind = "pull_request";
+            const source = process.env.PR_NUMBER;
+            const repository = process.env.PR_HEAD_REPOSITORY;
+            const sha = process.env.PR_HEAD_SHA;
+            if (!repository || !sha) {
+              core.setFailed("the PR head repository is no longer available");
+              return;
             }
+            const label = `PR #${source}`;
+            const slug = `pr-${source}`;
 
             core.setOutput("repository", repository);
             core.setOutput("sha", sha);
@@ -108,8 +53,6 @@ jobs:
             core.setOutput("source_kind", kind);
             core.setOutput("source_value", source);
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          SOURCE: ${{ inputs.source }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -233,7 +176,7 @@ jobs:
           name: hermes-relay-review-${{ needs.resolve.outputs.artifact_slug }}-${{ needs.resolve.outputs.short_sha }}
           path: review-bundle/
           if-no-files-found: error
-          retention-days: ${{ fromJSON(inputs.retention_days) }}
+          retention-days: 14
 
       - name: Review summary
         env:

@@ -21,10 +21,9 @@ For an open PR targeting `dev`, apply the `review-candidate` label. The label
 event runs in the PR's unprivileged workflow context and builds that exact head
 commit, including fork PRs.
 
-For a commit already integrated into a protected release branch, open
-**Actions → Build Review Bundle → Run workflow** and provide its full
-40-character SHA. Manual dispatch rejects commits that are not already
-contained in `dev` or `main`.
+For an integrated `dev` commit, use the release-candidate lane below. Review
+bundles intentionally have no privileged manual-dispatch path that can execute
+an arbitrary source SHA.
 
 The workflow resolves and checks out one immutable commit, then uploads one
 short-lived artifact containing:
