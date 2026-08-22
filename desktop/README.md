@@ -680,6 +680,13 @@ hermes-relay daemon
 
 `status` reads the heartbeat file a running daemon maintains and cross-checks that the pid is alive — it exits non-zero (and says "not running") when the daemon is gone, so scripts can branch on it.
 
+Once authenticated, the daemon automatically reconnects through Relay service
+restarts and repeated transient socket failures using bounded exponential
+backoff. Desktop-tool results are kept below the shared WebSocket message limit;
+oversized results return a bounded-output error rather than terminating the
+daemon. Terminal authentication or policy failures persist a stopped reason in
+the status file before the process exits.
+
 On Windows, keep the tray and normal daemon unelevated for routine operation.
 Use **Restart as Administrator...** only when a desktop action requires
 administrator access. Windows displays UAC consent, and the elevated daemon
