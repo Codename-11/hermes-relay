@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
+- **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
 
 ## [Android 1.12.1] - 2026-08-22
 
