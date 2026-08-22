@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.animation.doOnEnd
+import androidx.core.content.IntentCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -25,8 +26,8 @@ import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
-import com.hermesandroid.relay.util.SharedTextRequest
-import com.hermesandroid.relay.util.extractSharedText
+import com.hermesandroid.relay.util.SharedContentRequest
+import com.hermesandroid.relay.util.extractSharedContent
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
@@ -129,7 +130,7 @@ class MainActivity : AppCompatActivity() {
         // in RelayApp's NavRouteRequest collector — we just pump the request
         // into the SharedFlow here.
         consumeNavRouteIntent(intent)
-        consumeSharedTextIntent(intent)
+        consumeSharedContentIntent(intent)
         val consumedAssistantActivation =
             com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(
                 this,
@@ -156,7 +157,7 @@ class MainActivity : AppCompatActivity() {
         // instead of onCreate. RelayApp's collector handles both cases.
         setIntent(intent)
         consumeNavRouteIntent(intent)
-        consumeSharedTextIntent(intent)
+        consumeSharedContentIntent(intent)
         com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(this, intent)
         // === END PHASE3-safety-rails-followup ===
     }
@@ -167,13 +168,42 @@ class MainActivity : AppCompatActivity() {
         NavRouteRequest.tryRequest(route)
     }
 
-    private fun consumeSharedTextIntent(intent: Intent?) {
-        val sharedText = extractSharedText(
-            action = intent?.action,
-            mimeType = intent?.type,
-            text = intent?.getCharSequenceExtra(Intent.EXTRA_TEXT),
-        ) ?: return
-        SharedTextRequest.tryRequest(sharedText)
+    private fun consumeSharedContentIntent(intent: Intent?) {
+        intent ?: return
+        val streamUris = buildList {
+            if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+                IntentCompat.getParcelableArrayListExtra(
+                    intent,
+                    Intent.EXTRA_STREAM,
+                    android.net.Uri::class.java,
+                )?.let(::addAll)
+            } else {
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    ?.let(::add)
+            }
+        }
+        val clipUris = buildList {
+            val clipData = intent.clipData ?: return@buildList
+            repeat(clipData.itemCount) { index -> clipData.getItemAt(index).uri?.let(::add) }
+        }
+        val clipTexts = buildList {
+            val clip = intent.clipData ?: return@buildList
+            repeat(clip.itemCount) { index -> clip.getItemAt(index).text?.let(::add) }
+        }
+        val sharedTexts = if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT).orEmpty()
+        } else {
+            listOfNotNull(intent.getCharSequenceExtra(Intent.EXTRA_TEXT))
+        }
+        val payload = extractSharedContent(
+            action = intent.action,
+            texts = sharedTexts,
+            subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT),
+            streamUriStrings = streamUris.map(android.net.Uri::toString),
+            clipTexts = clipTexts,
+            clipUriStrings = clipUris.map(android.net.Uri::toString),
+        )
+        SharedContentRequest.tryRequest(payload)
     }
 
     private fun configureAssistantWindow(intent: Intent?) {
@@ -212,6 +242,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        SharedContentRequest.retryFailed()
         // Returning to the app clears the one-slot "Hermes finished
         // responding" notification — the chat surface is the answer.
         TurnCompleteNotifier.cancel(this)

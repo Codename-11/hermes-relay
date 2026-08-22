@@ -49,6 +49,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -1096,19 +1097,44 @@ fun RelayApp() {
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        val shareConnectionId by rememberUpdatedState(
+            activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline"
+        )
+        val shareProfileId by rememberUpdatedState(
+            selectedProfile?.name?.takeIf(String::isNotBlank)
+                ?: com.hermesandroid.relay.data.ChatComposerDraftKey.DEFAULT_PROFILE_ID
+        )
         // Android sharesheet handoff: wait until the configured chat context is
-        // settled, then ask ChatViewModel to own the new draft and composer
-        // prefill. Navigation is presentation-only; no composable writes chat
-        // stores or sends the shared text.
+        // settled, then create a fresh draft. The request remains identity-fenced
+        // until ChatScreen restores that exact draft and ingests its text/files.
         LaunchedEffect(navController, onboardingCompleted, initialChatSettled) {
             if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
-            com.hermesandroid.relay.util.SharedTextRequest.pending.collect { request ->
+            com.hermesandroid.relay.util.SharedContentRequest.pending.collect { request ->
                 request ?: return@collect
-                if (chatViewModel.openSharedTextDraft(request.text)) {
-                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                        launchSingleTop = true
+                val targetConnectionId = shareConnectionId
+                val targetProfileId = shareProfileId
+                if (!request.ready && !request.preparing && !request.failed) {
+                    com.hermesandroid.relay.util.SharedContentRequest.markPreparing(request.id)
+                    val opened = chatViewModel.openSharedContentDraft(
+                        onReady = { sessionId ->
+                            com.hermesandroid.relay.util.SharedContentRequest.markReady(
+                                id = request.id,
+                                targetConnectionId = targetConnectionId,
+                                targetProfileId = targetProfileId,
+                                targetSessionId = sessionId,
+                            )
+                        },
+                        onFailure = {
+                            com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
+                        },
+                    )
+                    if (opened) {
+                        navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                            launchSingleTop = true
+                        }
+                    } else {
+                        com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
                     }
-                    com.hermesandroid.relay.util.SharedTextRequest.consume(request.id)
                 }
             }
         }

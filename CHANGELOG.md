@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android shares open as complete reviewable drafts.** Shared links and text now survive fresh-chat draft restoration, while single or multiple shared images and files enter the same composer attachment flow. Mixed text-and-file shares are supported and nothing is sent automatically.
+
 ## [Android 1.12.0] - 2026-08-21
 
 ### Added

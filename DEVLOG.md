@@ -1,5 +1,33 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-21 — Android sharesheet draft handoff
+
+Android's sharesheet target now accepts single and multiple text, link, image,
+and file shares. Mixed payloads open a fresh reviewable chat draft, preserve the
+shared text items in source order in the composer, and reuse the existing bounded
+attachment ingestion pipeline without sending automatically.
+
+The handoff remains pending until the exact destination session has been created
+and its persisted composer draft has restored. This prevents the draft restore
+introduced for conversation continuity from overwriting a shared link or text,
+and identity fencing prevents an older asynchronous session creation from
+consuming a newer share intent. Attachment ingestion now also preserves coroutine
+cancellation so leaving the destination cannot consume a partially imported share.
+External file payloads accept only grantable `content://` URIs; sender-controlled
+file paths, web URLs, malformed opaque URIs, and custom schemes never reach
+Relay's content resolver. Multi-file shares import at most ten attachments and
+tell the user when additional eligible files were omitted, bounding aggregate
+base64 memory and CPU work on the exported activity path.
+
+API session-creation failures keep the identity-fenced share pending instead of
+consuming it. The existing chat error remains visible, and returning to the app
+explicitly re-arms one retry without creating an immediate failure loop.
+
+Verification covered the focused sideload JVM regression suite, Kotlin compilation
+for both Android flavors, Google Play app lint, the Android and user-doc locale
+validators, the public route contract, sideload APK assembly, and inspection of
+the packaged manifest's `SEND` and `SEND_MULTIPLE` wildcard MIME filters.
+
 ## 2026-08-20 — Android 1.11.0 Bridge access and lower idle power
 
 Hermes-Relay Android 1.11.0 is published from the immutable
