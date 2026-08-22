@@ -2648,19 +2648,17 @@ class ChatViewModel : ViewModel() {
     private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
     val composerPrefill = _composerPrefill.receiveAsFlow()
 
-    /**
-     * Open a fresh draft for text received through Android's sharesheet.
-     * The composer event is queued until Chat is composed and is never routed
-     * through [sendMessage]. Existing new-chat transport and background-turn
-     * ownership remain authoritative.
-     */
-    fun openSharedTextDraft(text: String): Boolean {
-        if (text.isBlank() || chatHandler == null) return false
+    /** Open a fresh, reviewable draft for Android sharesheet content. */
+    fun openSharedContentDraft(
+        onReady: (String?) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean {
+        if (chatHandler == null) return false
         val canCreateDraft =
             (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
         if (!canCreateDraft) return false
-        createNewChat()
-        return _composerPrefill.trySend(text).isSuccess
+        createNewChat(onReady = onReady, onFailure = onFailure)
+        return true
     }
 
     // Navigation-safe draft handoff for explicit in-app workflows (for example,
@@ -4053,7 +4051,10 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun createNewChat() {
+    fun createNewChat(
+        onReady: ((String?) -> Unit)? = null,
+        onFailure: (() -> Unit)? = null,
+    ) {
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
         clearOpenedSessionOwner()
@@ -4090,6 +4091,7 @@ class ChatViewModel : ViewModel() {
             pendingYolo = null
             onSessionChanged?.invoke(null)
             AppAnalytics.onSessionCreated()
+            onReady?.invoke(null)
             return
         }
 
@@ -4132,12 +4134,16 @@ class ChatViewModel : ViewModel() {
                         pendingYolo = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
+                        onReady?.invoke(session.id)
+                    } else {
+                        onFailure?.invoke()
                     }
                 },
                 onFailure = { error ->
                     if (historyLoadGeneration.get() == loadGeneration) {
                         emitError(error, context = "create_session")
                     }
+                    onFailure?.invoke()
                 }
             )
         }
