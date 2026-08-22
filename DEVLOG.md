@@ -1,5 +1,27 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-22 — Android 1.12.1 sharing and recovery patch
+
+Hermes-Relay Android 1.12.1 is published from the immutable
+`android-v1.12.1` tag. Google Play versionCode 48 passed the signed Production
+draft preflight and was submitted to Production review before the public
+GitHub release was created. The release APK and AAB match the published
+`SHA256SUMS.txt` checksums.
+
+Shared links, text, images, files, and mixed or multi-item payloads now open as
+fresh reviewable drafts without sending automatically. Add and Renew connection
+setup retains its exact connection-scoped authentication owner and exposes
+bounded Retry or Cancel recovery instead of an indefinite preparation screen.
+Unavailable chat routes and profile-history failures surface explicit recovery
+guidance, while Diagnostics records secret-free Android Keystore fallback and
+encrypted-store recovery evidence.
+
+Verification included current-base PR checks, combined Play and sideload share
+and connection regression suites, Android lint, release bundle/APK smoke, final
+DEX compatibility scans, public-doc route validation, locale validation, signed
+local release bundles, Play preflight, immutable-tag release CI, and downloaded
+release-asset checksum comparison.
+
 ## 2026-08-21 — Android sharesheet draft handoff
 
 Android's sharesheet target now accepts single and multiple text, link, image,
