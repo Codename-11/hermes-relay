@@ -17,10 +17,14 @@ stable app's encrypted connection state.
 
 ## PR review bundles
 
-Open **Actions → Build Review Bundle → Run workflow** and choose either:
+For an open PR targeting `dev`, apply the `review-candidate` label. The label
+event runs in the PR's unprivileged workflow context and builds that exact head
+commit, including fork PRs.
 
-- `pull_request` plus a PR number; or
-- `exact_sha` plus a full 40-character commit SHA from this repository.
+For a commit already integrated into a protected release branch, open
+**Actions → Build Review Bundle → Run workflow** and provide its full
+40-character SHA. Manual dispatch rejects commits that are not already
+contained in `dev` or `main`.
 
 The workflow resolves and checks out one immutable commit, then uploads one
 short-lived artifact containing:
