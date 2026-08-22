@@ -7,4 +7,5 @@
     <string name="pending_attachment_status_loading">プレビューを準備中</string>
     <string name="pending_attachment_status_ready">準備完了</string>
     <string name="pending_attachment_status_failed">プレビューできません</string>
+    <string name="chat_shared_files_limited">共有されたファイルは最初の%1$d件のみ追加されました。</string>
 </resources>

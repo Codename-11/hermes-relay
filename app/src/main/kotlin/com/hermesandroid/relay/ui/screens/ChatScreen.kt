@@ -1165,6 +1165,52 @@ fun ChatScreen(
         activeComposerDraftKey = composerDraftKey
         restoringComposerDraft = false
     }
+    val sharedContentRequest by com.hermesandroid.relay.util.SharedContentRequest.pending.collectAsState()
+    LaunchedEffect(
+        sharedContentRequest,
+        composerDraftKey,
+        activeComposerDraftKey,
+        maxAttachmentMb,
+        charLimit,
+    ) {
+        val request = sharedContentRequest ?: return@LaunchedEffect
+        if (!com.hermesandroid.relay.util.canApplySharedContent(
+                request = request,
+                composerConnectionId = composerDraftKey.connectionId,
+                composerProfileId = composerDraftKey.profileId,
+                composerSessionId = composerDraftKey.sessionId,
+                draftRestored = activeComposerDraftKey == composerDraftKey,
+            )
+        ) return@LaunchedEffect
+
+        editingMessage = null
+        quotedMessage = null
+        inputText = request.payload.text.orEmpty().take(charLimit)
+        chatViewModel.replacePendingAttachments(emptyList())
+        request.payload.uriStrings.forEach { uriString ->
+            if (!com.hermesandroid.relay.util.isAllowedSharedContentUri(uriString)) {
+                return@forEach
+            }
+            runCatching { Uri.parse(uriString) }
+                .getOrNull()
+                ?.let { uri ->
+                    ingestAttachmentFromUri(context, uri, maxAttachmentMb) {
+                        chatViewModel.addAttachment(it)
+                    }
+                }
+        }
+        if (request.payload.omittedUriCount > 0) {
+            Toast.makeText(
+                context,
+                context.getString(
+                    R.string.chat_shared_files_limited,
+                    com.hermesandroid.relay.util.MAX_SHARED_CONTENT_ATTACHMENTS,
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        com.hermesandroid.relay.util.SharedContentRequest.consume(request.id)
+    }
     LaunchedEffect(
         inputText,
         editingMessage?.id,
@@ -5141,6 +5187,8 @@ private suspend fun ingestAttachmentFromUri(
                 fileSize = source.sizeBytes,
             )
         )
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (_: AttachmentTooLargeException) {
         Toast.makeText(
             context,

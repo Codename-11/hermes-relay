@@ -1,8 +1,6 @@
-v1.12.0 - Themes and identity that stay put
+v1.12.1 - Sharing and recovery that work
 
-* Create and save custom themes with full palette and shape controls.
-* Apply Soft, Balanced, or Sharp styling consistently throughout the app.
-* Switch All Profiles sessions with the correct owning agent, icon, and transcript.
-* Preserve the active profile and session through app-language changes.
-* Recover Gateway chats when a terminal completion frame is missed.
-* Accept Relay base, /ws, and /health endpoint forms without invalid routes.
+* Open shared links, text, images, and files as a reviewable draft without auto-sending.
+* Add or renew a connection without getting stuck during secure setup.
+* See clear recovery guidance when chat or profile history is unavailable.
+* Find secret-free secure-storage fallback and recovery evidence in Diagnostics.

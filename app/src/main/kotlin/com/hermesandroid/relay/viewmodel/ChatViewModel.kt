@@ -2648,19 +2648,17 @@ class ChatViewModel : ViewModel() {
     private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
     val composerPrefill = _composerPrefill.receiveAsFlow()
 
-    /**
-     * Open a fresh draft for text received through Android's sharesheet.
-     * The composer event is queued until Chat is composed and is never routed
-     * through [sendMessage]. Existing new-chat transport and background-turn
-     * ownership remain authoritative.
-     */
-    fun openSharedTextDraft(text: String): Boolean {
-        if (text.isBlank() || chatHandler == null) return false
+    /** Open a fresh, reviewable draft for Android sharesheet content. */
+    fun openSharedContentDraft(
+        onReady: (String?) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean {
+        if (chatHandler == null) return false
         val canCreateDraft =
             (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
         if (!canCreateDraft) return false
-        createNewChat()
-        return _composerPrefill.trySend(text).isSuccess
+        createNewChat(onReady = onReady, onFailure = onFailure)
+        return true
     }
 
     // Navigation-safe draft handoff for explicit in-app workflows (for example,
@@ -2932,6 +2930,11 @@ class ChatViewModel : ViewModel() {
         profileMessageLoader = loader
     }
 
+    /** JVM-test seam for proving that required profile reads fail closed. */
+    internal fun clearProfileMessageLoader() {
+        profileMessageLoader = null
+    }
+
     /**
      * Transcript for [sessionId], preferring the profile-scoped dashboard path on
      * gateway connections (so non-default-profile sessions resolve against their
@@ -2968,6 +2971,11 @@ class ChatViewModel : ViewModel() {
             // the launch/default API database when its scoped read fails: an
             // empty/default transcript is not authoritative for this session.
             return if (requireProfileScope) scoped.getOrThrow() else scoped.getOrElse { emptyList() }
+        }
+        if (requireProfileScope) {
+            throw IllegalStateException(
+                "Profile-scoped conversation history is unavailable for this connection.",
+            )
         }
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
@@ -3234,6 +3242,27 @@ class ChatViewModel : ViewModel() {
     ) {
         _chatFailure.value = failure
         recordChatFailureDiagnostic(failure, liveSessionId)
+    }
+
+    private fun publishHistoryLoadFailure(sessionId: String, error: Throwable) {
+        val rawError = error.message?.takeIf { it.isNotBlank() }
+            ?: "The active profile's conversation history could not be reached."
+        _chatFailure.value = ChatFailureNotice(
+            sessionId = sessionId,
+            turnId = "history-$sessionId",
+            rawError = rawError,
+            route = ChatFailureRoute.GATEWAY,
+            recoverable = false,
+        )
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Session,
+            severity = DiagnosticSeverity.Error,
+            title = "Hermes chat history failed",
+            detail = "stored_session=$sessionId; error=$rawError",
+            operation = "load chat history",
+            endpointRole = "gateway",
+            suggestion = "Reconnect the active profile and retry opening this conversation.",
+        )
     }
 
     /**
@@ -3811,7 +3840,11 @@ class ChatViewModel : ViewModel() {
                     false
                 }
                 if (!recovered) {
-                    val messages = loadSessionHistory(sessionId, profileName = sessionProfileName)
+                    val messages = loadSessionHistory(
+                        sessionId,
+                        requireProfileScope = streamingEndpoint == "gateway",
+                        profileName = sessionProfileName,
+                    )
                     if (stillCurrent()) {
                         handler.loadMessageHistory(messages)
                         if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
@@ -3825,6 +3858,7 @@ class ChatViewModel : ViewModel() {
                 // superseded switch can't wipe a newer one's content).
                 if (stillCurrent()) {
                     handler.clearMessages()
+                    publishHistoryLoadFailure(sessionId, e)
                 }
             } finally {
                 // finally (not tail code) so a throwing fetch can't strand
@@ -4017,7 +4051,10 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun createNewChat() {
+    fun createNewChat(
+        onReady: ((String?) -> Unit)? = null,
+        onFailure: (() -> Unit)? = null,
+    ) {
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
         clearOpenedSessionOwner()
@@ -4054,6 +4091,7 @@ class ChatViewModel : ViewModel() {
             pendingYolo = null
             onSessionChanged?.invoke(null)
             AppAnalytics.onSessionCreated()
+            onReady?.invoke(null)
             return
         }
 
@@ -4096,12 +4134,16 @@ class ChatViewModel : ViewModel() {
                         pendingYolo = null
                         onSessionChanged?.invoke(session.id)
                         AppAnalytics.onSessionCreated()
+                        onReady?.invoke(session.id)
+                    } else {
+                        onFailure?.invoke()
                     }
                 },
                 onFailure = { error ->
                     if (historyLoadGeneration.get() == loadGeneration) {
                         emitError(error, context = "create_session")
                     }
+                    onFailure?.invoke()
                 }
             )
         }
@@ -4300,15 +4342,33 @@ class ChatViewModel : ViewModel() {
                 false
             }
             if (!recovered) {
-                val messages = loadSessionHistory(sessionId, profileName = profileName)
-                if (
-                    historyLoadGeneration.get() == loadGeneration &&
-                    activeProfileContextKey == contextKey &&
-                    currentSessionProfileName() == profileName &&
-                    handler.currentSessionId.value == sessionId
-                ) {
-                    handler.loadMessageHistory(messages)
-                    if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                try {
+                    val messages = loadSessionHistory(
+                        sessionId,
+                        requireProfileScope = streamingEndpoint == "gateway",
+                        profileName = profileName,
+                    )
+                    if (
+                        historyLoadGeneration.get() == loadGeneration &&
+                        activeProfileContextKey == contextKey &&
+                        currentSessionProfileName() == profileName &&
+                        handler.currentSessionId.value == sessionId
+                    ) {
+                        handler.loadMessageHistory(messages)
+                        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (
+                        historyLoadGeneration.get() == loadGeneration &&
+                        activeProfileContextKey == contextKey &&
+                        currentSessionProfileName() == profileName &&
+                        handler.currentSessionId.value == sessionId
+                    ) {
+                        handler.clearMessages()
+                        publishHistoryLoadFailure(sessionId, e)
+                    }
                 }
             }
             if (historyLoadGeneration.get() == loadGeneration) {
@@ -4551,8 +4611,33 @@ class ChatViewModel : ViewModel() {
 
         val handler = chatHandler ?: return
         val client = apiClient
-        if (streamingEndpoint != "gateway" && client == null) return
-        if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
+        if (
+            (streamingEndpoint != "gateway" && client == null) ||
+            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+        ) {
+            val message = if (streamingEndpoint == "gateway") {
+                "Gateway is unavailable and no API fallback is configured for this connection."
+            } else {
+                "API fallback is not configured for this connection."
+            }
+            // The composer clears after invoking Send. Keep its text in the
+            // handler-owned retry slot even though no transport accepted it.
+            handler.setLastSentMessage(text.trim())
+            handler.onStreamError(message)
+            publishChatFailure(
+                ChatFailureNotice(
+                    sessionId = handler.currentSessionId.value,
+                    turnId = "offline-${UUID.randomUUID()}",
+                    rawError = message,
+                    route = if (streamingEndpoint == "gateway") {
+                        ChatFailureRoute.GATEWAY
+                    } else {
+                        ChatFailureRoute.API_FALLBACK
+                    },
+                ),
+            )
+            return
+        }
 
         // A new user action owns the recovery surface. The failed transcript
         // row remains in history; only the composer-attached notice retires.
