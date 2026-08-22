@@ -317,8 +317,10 @@ compatibility choice. Backend selection is fixed when a control session starts,
 so an engine setting change affects only new sessions. CUA lifecycle mutations
 require `--yes` and never run automatically. Hermes verifies the upstream
 release manifest and installer checksum, runs the installer with a sanitized
-environment, and accepts only `>=0.19.3 <0.20.0` under the canonical
-`%USERPROFILE%\.cua-driver\packages\current` package.
+environment, and accepts `>=0.20.0` under the canonical
+`%USERPROFILE%\.cua-driver\packages\current` package when its live manifest,
+daemon/MCP arguments, and required tools remain compatible. On Windows, each
+control session owns the manifest-declared direct standard-mode MCP runtime.
 
 ## `hermes-relay grants`
 
