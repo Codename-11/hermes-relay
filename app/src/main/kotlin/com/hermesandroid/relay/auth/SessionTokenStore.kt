@@ -6,6 +6,9 @@ import android.os.Build
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -40,10 +43,87 @@ internal object SecureStoreCache {
  * the token store and the dashboard cookie store so a given file always yields
  * the SAME backend, via [SecureStoreCache].
  */
-internal fun buildRawTokenStore(context: Context, prefsName: String): SessionTokenStore =
-    KeystoreTokenStore.tryCreate(context, prefsName)
-        ?: runCatching { LegacyEncryptedPrefsTokenStore(context, prefsName) }
-            .getOrElse { InMemoryTokenStore() }
+internal fun buildRawTokenStore(context: Context, prefsName: String): SessionTokenStore {
+    KeystoreTokenStore.tryCreate(context, prefsName)?.let { return it }
+
+    runCatching { LegacyEncryptedPrefsTokenStore(context, prefsName) }
+        .getOrNull()
+        ?.let {
+            SecureStorageDiagnostics.preferredStoreUnavailable()
+            return it
+        }
+
+    SecureStorageDiagnostics.inMemoryStoreOnly()
+    return InMemoryTokenStore()
+}
+
+/** Secret-free diagnostics for credential-store degradation and recovery. */
+internal object SecureStorageDiagnostics {
+    fun preferredStoreUnavailable() {
+        val title = "Secure credential storage fallback activated"
+        recordIfAbsent(title) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = title,
+                detail = "Preferred Android Keystore storage could not initialize; using encrypted compatibility storage.",
+                operation = "Initialize secure credential storage",
+                suggestion = "Re-authenticate if saved credentials are unavailable.",
+            )
+        }
+    }
+
+    fun preferredStoreRecovered() {
+        val title = "Keystore credential storage recovered"
+        recordIfAbsent(title) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = title,
+                detail = "Unreadable Keystore-backed credential storage was cleared and rebuilt; saved sign-in state may need to be restored.",
+                operation = "Recover secure credential storage",
+                suggestion = "Sign in or pair again if this connection no longer has credentials.",
+            )
+        }
+    }
+
+    fun legacyStoreRecovered() {
+        val title = "Encrypted credential storage recovered"
+        recordIfAbsent(title) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = title,
+                detail = "Unreadable encrypted credential storage was cleared and rebuilt; saved sign-in state may need to be restored.",
+                operation = "Recover secure credential storage",
+                suggestion = "Sign in or pair again if this connection no longer has credentials.",
+            )
+        }
+    }
+
+    fun inMemoryStoreOnly() {
+        val title = "Credential storage is temporary"
+        recordIfAbsent(title) {
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Error,
+                title = title,
+                detail = "Persistent encrypted storage is unavailable; credentials will last only until the app process stops.",
+                operation = "Initialize secure credential storage",
+                suggestion = "Restart the device and re-authenticate; include Diagnostics if the problem continues.",
+            )
+        }
+    }
+
+    private inline fun recordIfAbsent(title: String, record: () -> Unit) {
+        synchronized(this) {
+            val alreadyVisible = DiagnosticsLog.entries.value.any {
+                it.category == DiagnosticCategory.Auth && it.title == title
+            }
+            if (!alreadyVisible) record()
+        }
+    }
+}
 
 /**
  * Abstraction over the storage backend for the relay session token + API key
@@ -161,6 +241,7 @@ class KeystoreTokenStore private constructor(
             Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e.message}")
         }
         prefs = buildPrefs()
+        SecureStorageDiagnostics.preferredStoreRecovered()
     }
 
     companion object {
@@ -328,7 +409,9 @@ class LegacyEncryptedPrefsTokenStore(
             } catch (e2: Exception) {
                 Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e2.message}")
             }
-            buildPrefs()
+            buildPrefs().also {
+                SecureStorageDiagnostics.legacyStoreRecovered()
+            }
         }
 
     private fun buildPrefs(): SharedPreferences {
@@ -354,6 +437,7 @@ class LegacyEncryptedPrefsTokenStore(
             Log.w(TAG, "deleteSharedPreferences($prefsName) failed: ${e.message}")
         }
         prefs = buildPrefs()
+        SecureStorageDiagnostics.legacyStoreRecovered()
     }
 
     // AES256_GCM via MasterKey is hardware-backed (TEE) on essentially every

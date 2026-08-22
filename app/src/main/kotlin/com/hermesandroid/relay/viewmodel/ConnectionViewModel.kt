@@ -257,8 +257,43 @@ internal fun isChatTransportReady(
     gatewayAvailability == GatewayAvailability.Ready ||
         (apiClientPresent && apiReachable)
 
+internal fun recordDashboardGatewayFailure(
+    dashboardUrl: String,
+    detail: String,
+) {
+    val now = System.currentTimeMillis()
+    val duplicate = DiagnosticsLog.entries.value.lastOrNull {
+        it.category == DiagnosticCategory.Endpoint &&
+            it.operation == "Probe Dashboard / Gateway status"
+    }?.let { now - it.timestampMs < 60_000L } == true
+    if (duplicate) return
+    DiagnosticsLog.record(
+        category = DiagnosticCategory.Endpoint,
+        severity = DiagnosticSeverity.Error,
+        title = "Dashboard / Gateway is unavailable",
+        detail = detail,
+        operation = "Probe Dashboard / Gateway status",
+        endpointRole = "gateway",
+        configuredUrl = dashboardUrl,
+        requestUrl = "${dashboardUrl.trimEnd('/')}/api/status",
+        suggestion = "Open the active connection and verify its Dashboard route and sign-in state.",
+    )
+}
+
 internal fun hasConfiguredHermesConnection(connection: Connection?): Boolean =
     connection?.capabilities?.anySurfaceConfigured == true
+
+internal fun reusablePlaceholderForAdd(
+    preAllocatedId: String?,
+    connections: List<Connection>,
+): Connection? {
+    if (preAllocatedId != null) return null
+    return connections.firstOrNull { connection ->
+        connection.pairedAt == null &&
+            connection.apiServerUrl.isBlank() &&
+            connection.label == ConnectionViewModel.PLACEHOLDER_LABEL
+    }
+}
 
 /**
  * Resolve the Dashboard/Gateway surface for the route the resolver selected.
@@ -3187,23 +3222,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@withLock existing.id
             }
 
-            val reusable = connectionStore.connections.value.firstOrNull { c ->
-                c.pairedAt == null &&
-                    c.apiServerUrl.isBlank() &&
-                    c.label == PLACEHOLDER_LABEL
-            }
-            if (reusable != null) {
-                android.util.Log.i(
-                    "ConnectionViewModel",
-                    "beginAddConnection: reusing placeholder id=${reusable.id} " +
-                        "instead of pre-allocated id=$preAllocatedId",
-                )
-                if (connectionStore.activeConnectionId.value != reusable.id) {
-                    switchConnection(reusable.id).join()
-                }
-                return@withLock reusable.id
-            }
-
             val placeholder = Connection(
                 id = preAllocatedId,
                 label = PLACEHOLDER_LABEL,
@@ -3228,11 +3246,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // id, the second `switchConnection` is a no-op (coordinator
         // short-circuits when id == activeConnectionId), and we
         // return the same string both times.
-        val existing = connectionStore.connections.value.firstOrNull { c ->
-            c.pairedAt == null &&
-                c.apiServerUrl.isBlank() &&
-                c.label == PLACEHOLDER_LABEL
-        }
+        val existing = reusablePlaceholderForAdd(
+            preAllocatedId = null,
+            connections = connectionStore.connections.value,
+        )
         if (existing != null) {
             android.util.Log.i(
                 "ConnectionViewModel",
@@ -4134,9 +4151,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // at a dead record.
         viewModelScope.launch {
             try {
-                // Let the legacy seed land first — it's a short
-                // writeMutex-guarded path, typically < 50ms.
-                val connections = connectionStore.connections.first()
+                // StateFlow is seeded empty, so reading connections.first()
+                // here can win the initial DataStore read and permanently
+                // miss persisted placeholders. Wait until the store has
+                // completed its initial read before deciding what is orphaned.
+                connectionStore.isHydrated.first { it }
+                val connections = connectionStore.connections.value
                 val orphans = connections.filter {
                     it.pairedAt == null &&
                         it.apiServerUrl.isBlank() &&
@@ -4678,6 +4698,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         try {
             val status = client.getStatus().getOrNull()
             if (status == null) {
+                recordDashboardGatewayFailure(
+                    dashboardUrl = dashboardUrl,
+                    detail = "Dashboard status probe returned no response.",
+                )
                 updateDashboardTopology(connectionId, null)
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
@@ -4723,6 +4747,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // app (see the currentSession() stale-connection crash). A probe
             // failure must only degrade the UI, never be fatal.
             android.util.Log.w("ConnectionVM", "probeStandardVoice failed: ${e.message}")
+            recordDashboardGatewayFailure(
+                dashboardUrl = dashboardUrl,
+                detail = "Dashboard status probe failed (${e.javaClass.simpleName}).",
+            )
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
             _standardAudioApiReachable.value = false
             _hostResourcePressure.value = HostResourcePressureStatus()
