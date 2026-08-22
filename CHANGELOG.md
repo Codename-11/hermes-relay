@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adding or renewing an Android connection no longer stalls during local preparation.** Pair setup keeps its allocated target exact, performs an explicit validated handoff when renewing an existing connection, and continues with that connection's scoped authentication state.
+- **Unavailable Android chat routes now fail visibly.** Send attempts with no usable Gateway or API fallback expose a retryable failure, while required profile-scoped history reads report an error instead of treating the wrong or missing history as an empty conversation.
+- **Android Diagnostics reports secure-storage degradation and recovery without exposing credentials.** Keystore fallback, encrypted-store self-healing, and temporary in-memory storage are recorded with secret-free recovery guidance.
+
 ## [Android 1.12.0] - 2026-08-21
 
 ### Added

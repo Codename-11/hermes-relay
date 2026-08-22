@@ -27,7 +27,12 @@ productFlavors {
 }
 ```
 
-Both flavors can coexist on the same device.
+Both flavors can coexist on the same device. Their distinct application IDs
+also give them completely separate Android app data: saved connections,
+encrypted tokens and keysets, Dashboard cookies, selected profiles and
+sessions, and composer drafts do not cross between the Play and sideload apps.
+A working sideload install therefore does not validate or repair the Play
+install's saved connection state, and vice versa.
 
 ## Source Set Layout
 

@@ -7,19 +7,28 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -31,6 +40,9 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.ConnectionWizard
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.delay
+
+private const val PAIR_SETUP_TIMEOUT_MS = 15_000L
 
 /**
  * Full-screen connection route. Wraps [ConnectionWizard] in a real Scaffold so
@@ -53,6 +65,9 @@ fun PairScreen(
     onManageSignIn: (() -> Unit)? = null,
     autoStart: String? = null,
     setupReady: Boolean = true,
+    onSetupTimeout: (() -> Unit)? = null,
+    onSetupRetry: (() -> Unit)? = null,
+    onConnectionTargetChanged: (String) -> Unit = {},
     /**
      * Optional offline "Try the demo" entry, forwarded to [ConnectionWizard].
      * Wired by [RelayApp] only for the bare Connect entry (no placeholder
@@ -61,6 +76,17 @@ fun PairScreen(
     onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    var setupTimedOut by remember { mutableStateOf(false) }
+    var setupAttempt by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(setupReady, setupAttempt) {
+        setupTimedOut = false
+        if (!setupReady) {
+            delay(PAIR_SETUP_TIMEOUT_MS)
+            setupTimedOut = true
+            onSetupTimeout?.invoke()
+        }
+    }
 
     // Route system back / predictive back through the same discard path
     // the TopAppBar arrow uses. Without this, the NavController just pops
@@ -111,16 +137,36 @@ fun PairScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    CircularProgressIndicator()
+                    if (!setupTimedOut) CircularProgressIndicator()
                     Text(
-                        text = stringResource(R.string.cw_preparing_connection),
+                        text = stringResource(
+                            if (setupTimedOut) R.string.cw_pairing_did_not_complete
+                            else R.string.cw_preparing_connection,
+                        ),
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Text(
-                        text = stringResource(R.string.cw_preparing_connection_hint),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (!setupTimedOut) {
+                        Text(
+                            text = stringResource(R.string.cw_preparing_connection_hint),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onCancel) {
+                                Text(stringResource(R.string.cw_cancel_button))
+                            }
+                            Button(
+                                onClick = {
+                                    setupAttempt += 1
+                                    onSetupRetry?.invoke()
+                                },
+                                enabled = onSetupRetry != null,
+                            ) {
+                                Text(stringResource(R.string.cw_retry))
+                            }
+                        }
+                    }
                 }
             } else {
                 ConnectionWizard(
@@ -134,6 +180,7 @@ fun PairScreen(
                     showSkip = false,
                     autoStart = autoStart,
                     setupReady = true,
+                    onConnectionTargetChanged = onConnectionTargetChanged,
                     onTryDemo = onTryDemo,
                 )
             }
