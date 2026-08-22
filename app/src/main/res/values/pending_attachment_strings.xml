@@ -7,4 +7,5 @@
     <string name="pending_attachment_status_loading">Preparing preview</string>
     <string name="pending_attachment_status_ready">Ready</string>
     <string name="pending_attachment_status_failed">Preview unavailable</string>
+    <string name="chat_shared_files_limited">Only the first %1$d shared files were added.</string>
 </resources>

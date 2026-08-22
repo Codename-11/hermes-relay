@@ -49,6 +49,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -213,6 +215,30 @@ suspend fun SnackbarHostState.showHumanError(err: HumanError): SnackbarResult {
 /** Startup chrome should wait for either standard chat surface, not Relay. */
 internal fun hasConfiguredStartupChat(connection: Connection?): Boolean =
     connection?.capabilities?.chatConfigured == true
+
+/**
+ * A Pair route is allowed to start once its target connection is active and
+ * persisted. Duplicate Renew may authorize one explicit existing-connection
+ * handoff; arbitrary active-id mismatches remain blocked so restored state
+ * cannot bypass connection/auth hydration.
+ */
+internal fun resolvePairSetupReady(
+    storeHydrated: Boolean,
+    connectionId: String?,
+    authorizedHandoffId: String?,
+    activeConnectionId: String?,
+    connectionIds: Set<String>,
+): Boolean = connectionId == null || storeHydrated && activeConnectionId != null &&
+    activeConnectionId in connectionIds &&
+    (activeConnectionId == connectionId || activeConnectionId == authorizedHandoffId)
+
+/** A user retry replaces even a still-active preparation attempt. */
+internal fun shouldStartPairPreparation(hasActiveJob: Boolean, retryRequested: Boolean): Boolean =
+    retryRequested || !hasActiveJob
+
+/** A replaced/canceled attempt must not evict the newer job from the route map. */
+internal fun isCurrentPairPreparation(mappedJob: Any?, completingJob: Any): Boolean =
+    mappedJob === completingJob
 
 /**
  * App-root chat health derived only from the two transports that can carry a
@@ -566,6 +592,26 @@ fun RelayApp() {
     // an instant Back can wait for creation and then discard it safely.
     val pendingAddConnectionJobs = remember {
         mutableMapOf<String, kotlinx.coroutines.Job>()
+    }
+    val prepareAddConnection: (String, Boolean) -> Unit = { id, retryRequested ->
+        val existingJob = pendingAddConnectionJobs[id]
+        if (shouldStartPairPreparation(existingJob?.isActive == true, retryRequested)) {
+            if (retryRequested) {
+                pendingAddConnectionJobs.remove(id)?.cancel()
+            }
+            val job = connectionSwitchScope.launch(
+                start = kotlinx.coroutines.CoroutineStart.LAZY,
+            ) {
+                connectionViewModel.beginAddConnection(preAllocatedId = id)
+            }
+            job.invokeOnCompletion {
+                if (isCurrentPairPreparation(pendingAddConnectionJobs[id], job)) {
+                    pendingAddConnectionJobs.remove(id)
+                }
+            }
+            pendingAddConnectionJobs[id] = job
+            job.start()
+        }
     }
 
     // One-time init: the terminal channel ViewModel registers with the shared
@@ -1096,19 +1142,44 @@ fun RelayApp() {
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        val shareConnectionId by rememberUpdatedState(
+            activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline"
+        )
+        val shareProfileId by rememberUpdatedState(
+            selectedProfile?.name?.takeIf(String::isNotBlank)
+                ?: com.hermesandroid.relay.data.ChatComposerDraftKey.DEFAULT_PROFILE_ID
+        )
         // Android sharesheet handoff: wait until the configured chat context is
-        // settled, then ask ChatViewModel to own the new draft and composer
-        // prefill. Navigation is presentation-only; no composable writes chat
-        // stores or sends the shared text.
+        // settled, then create a fresh draft. The request remains identity-fenced
+        // until ChatScreen restores that exact draft and ingests its text/files.
         LaunchedEffect(navController, onboardingCompleted, initialChatSettled) {
             if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
-            com.hermesandroid.relay.util.SharedTextRequest.pending.collect { request ->
+            com.hermesandroid.relay.util.SharedContentRequest.pending.collect { request ->
                 request ?: return@collect
-                if (chatViewModel.openSharedTextDraft(request.text)) {
-                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                        launchSingleTop = true
+                val targetConnectionId = shareConnectionId
+                val targetProfileId = shareProfileId
+                if (!request.ready && !request.preparing && !request.failed) {
+                    com.hermesandroid.relay.util.SharedContentRequest.markPreparing(request.id)
+                    val opened = chatViewModel.openSharedContentDraft(
+                        onReady = { sessionId ->
+                            com.hermesandroid.relay.util.SharedContentRequest.markReady(
+                                id = request.id,
+                                targetConnectionId = targetConnectionId,
+                                targetProfileId = targetProfileId,
+                                targetSessionId = sessionId,
+                            )
+                        },
+                        onFailure = {
+                            com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
+                        },
+                    )
+                    if (opened) {
+                        navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                            launchSingleTop = true
+                        }
+                    } else {
+                        com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
                     }
-                    com.hermesandroid.relay.util.SharedTextRequest.consume(request.id)
                 }
             }
         }
@@ -2452,14 +2523,7 @@ fun RelayApp() {
                             // underneath the discovery UI instead of blocking
                             // navigation on encrypted-store/client setup.
                             navController.navigate(Screen.Pair.route(connectionId = id))
-                            val job = connectionSwitchScope.launch {
-                                try {
-                                    connectionViewModel.beginAddConnection(preAllocatedId = id)
-                                } finally {
-                                    pendingAddConnectionJobs.remove(id)
-                                }
-                            }
-                            pendingAddConnectionJobs[id] = job
+                            prepareAddConnection(id, false)
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status
@@ -2553,12 +2617,44 @@ fun RelayApp() {
                         ?.getString(Screen.Pair.ARG_AUTO_START)
                     val pairConnections by connectionViewModel.connections.collectAsState()
                     val pairActiveId by connectionViewModel.activeConnectionId.collectAsState()
-                    val pairSetupReady = connectionIdArg == null ||
-                        (pairActiveId == connectionIdArg && pairConnections.any { it.id == connectionIdArg })
+                    val pairStoreHydrated by connectionViewModel.connectionStore.isHydrated.collectAsState()
+                    // Duplicate Renew authorizes one explicit route handoff
+                    // before switching away from the placeholder. Persist the
+                    // identity, not a bare readiness boolean, so Activity
+                    // recreation remains safe and process restore still has
+                    // to hydrate a real matching connection row.
+                    var authorizedPairHandoffId by rememberSaveable(connectionIdArg) {
+                        mutableStateOf<String?>(null)
+                    }
+                    val pairSetupReady = resolvePairSetupReady(
+                        storeHydrated = pairStoreHydrated,
+                        connectionId = connectionIdArg,
+                        authorizedHandoffId = authorizedPairHandoffId,
+                        activeConnectionId = pairActiveId,
+                        connectionIds = pairConnections.mapTo(mutableSetOf()) { it.id },
+                    )
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         autoStart = autoStartArg,
                         setupReady = pairSetupReady,
+                        onSetupTimeout = if (connectionIdArg == null) null else ({
+                            DiagnosticsLog.record(
+                                category = DiagnosticCategory.Auth,
+                                severity = DiagnosticSeverity.Warning,
+                                title = "Connection setup did not become ready",
+                                detail = "targetPresent=${pairConnections.any { it.id == connectionIdArg }} " +
+                                    "activeMatches=${pairActiveId == connectionIdArg} " +
+                                    "activePresent=${pairActiveId != null}",
+                                operation = "Prepare connection-scoped local storage",
+                                suggestion = "Retry setup or cancel and add the connection again.",
+                            )
+                        }),
+                        onSetupRetry = if (connectionIdArg == null) null else ({
+                            prepareAddConnection(connectionIdArg, true)
+                        }),
+                        onConnectionTargetChanged = { existingId ->
+                            authorizedPairHandoffId = existingId
+                        },
                         // Offer demo only on the bare "Connect" entry (the
                         // "No Hermes connection" path) — not on add-connection /
                         // re-pair flows, which have a placeholder connection in

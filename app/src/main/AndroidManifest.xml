@@ -48,12 +48,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- User-mediated text handoff. The app opens a fresh Chat draft
-                 and fills the composer; it never sends from an external intent. -->
+            <!-- User-mediated sharesheet handoff. Shared text and files open in
+                 a fresh reviewable Chat draft; external intents never send. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
             <!-- The loopback native-PKCE result page uses this fixed, tokenless
                  link only to bring the installed flavor back to the foreground.

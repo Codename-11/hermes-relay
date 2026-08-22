@@ -191,6 +191,7 @@ fun ConnectionWizard(
      */
     autoStart: String? = null,
     setupReady: Boolean = true,
+    onConnectionTargetChanged: (String) -> Unit = {},
     /**
      * Optional "Try the demo" affordance shown atop the Method step. When
      * non-null, the wizard surfaces an offline Demo / Explore entry point so a
@@ -923,6 +924,10 @@ fun ConnectionWizard(
             onUpdate = {
                 val prompt = existing
                 duplicatePrompt = null
+                // Authorize the route's exact target handoff before the
+                // active-id emission changes. This keeps the wizard composed
+                // without turning readiness into an unscoped boolean latch.
+                onConnectionTargetChanged(prompt.id)
                 wizardScope.launch {
                     // Snapshot the placeholder id before we switch away —
                     // after switchConnection returns, activeConnectionId
