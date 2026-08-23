@@ -228,4 +228,5 @@ independent validation.
 ## Questions?
 
 - **Architecture context?** [docs/spec.md](docs/spec.md) covers protocols, UI layouts, and the channel model. [docs/decisions.md](docs/decisions.md) covers the forks in the road and why we picked what we did.
-- **Something unclear?** [Open an issue](https://github.com/Codename-11/hermes-relay/issues/new) — we read every one, and "this contributing guide is confusing" is a completely fair bug report.
+- Need help or want to explore an early idea? Start a [GitHub Discussion](https://github.com/Codename-11/hermes-relay/discussions).
+- Found a reproducible bug or have a specific, actionable feature request? [Open an issue](https://github.com/Codename-11/hermes-relay/issues/new).

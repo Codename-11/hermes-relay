@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-23 — GitHub Discussions community surface
+
+GitHub Discussions is enabled as the repository's lightweight community surface.
+Setup questions, early ideas, broader conversation, and community projects route
+to Discussions; reproducible bugs and specific, actionable feature requests remain
+in Issues. The English and Simplified Chinese README entry points plus the
+contributor guide now expose that boundary directly.
+
 ## 2026-08-22 — Android 1.12.1 sharing and recovery patch
 
 Hermes-Relay Android 1.12.1 is published from the immutable
