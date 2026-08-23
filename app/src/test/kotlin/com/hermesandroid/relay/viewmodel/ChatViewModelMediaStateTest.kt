@@ -103,6 +103,54 @@ class ChatViewModelMediaStateTest {
         assertEquals("content://com.axiomlabs.hermesrelay.fileprovider/hermes-media/photo.jpg", loaded.cachedUri)
     }
 
+    @Test
+    fun assistantWindowsPathCellularRetryUsesByPathEndpoint() {
+        val windowsPath =
+            "C:\\Users\\Example\\AppData\\Local\\Temp\\Sovereign Intelligence copy.md"
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-file-1",
+                    role = "assistant",
+                    content = JsonPrimitive("MEDIA:$windowsPath"),
+                )
+            )
+        )
+
+        val deferred = awaitMessage {
+            it.attachments.singleOrNull()?.errorMessage == "Tap to download"
+        }
+        assertEquals(AttachmentState.FAILED, deferred.attachments.single().state)
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "text/markdown")
+                .setHeader(
+                    "Content-Disposition",
+                    "inline; filename=\"Sovereign Intelligence copy.md\"",
+                )
+                .setBody("# copy")
+        )
+        viewModel.cellularNetworkOverride = false
+        viewModel.manualFetchAttachment("assistant-file-1", 0)
+
+        val loaded = awaitMessage {
+            it.attachments.singleOrNull()?.state == AttachmentState.LOADED
+        }.attachments.single()
+        assertEquals("text/markdown", loaded.contentType)
+        assertEquals("Sovereign Intelligence copy.md", loaded.fileName)
+
+        val request = server.takeRequest()
+        assertEquals("/media/by-path", request.requestUrl?.encodedPath)
+        assertEquals(
+            "path=C%3A%5CUsers%5CExample%5CAppData%5CLocal%5CTemp%5C" +
+                "Sovereign%20Intelligence%20copy.md",
+            request.requestUrl?.encodedQuery,
+        )
+        assertEquals(windowsPath, request.requestUrl?.queryParameter("path"))
+    }
+
     private fun awaitMessage(predicate: (ChatMessage) -> Boolean): ChatMessage {
         val deadline = System.nanoTime() + 5_000_000_000L
         while (System.nanoTime() < deadline) {
