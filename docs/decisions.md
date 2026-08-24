@@ -1,6 +1,6 @@
 # Hermes-Relay — Decisions & Implementation Guide
 
-> Updated: 2026-04-06
+> Updated: 2026-08-24
 >
 > Read this before SPEC.md — it tells you what to build, what was deferred, and why.
 
@@ -3683,3 +3683,113 @@ upstream drift, Android state-machine defects, rendered lifecycle failures, and
 physical-device failures are reported as distinct evidence lanes. A physical
 pass is never inferred from JVM or source checks, and scheduled execution can
 be considered later without being silently introduced now.
+
+---
+
+## ADR 66 — Android Supervised Mode is a parent-controlled client policy
+
+**Status:** Implemented in code; physical managed-device certification pending (2026-08-24).
+
+**Context.** Some operators prepare a deliberately restricted Hermes profile
+for use through a parent-supervised Android client. The profile remains the
+authority for its model, prompt, tools, provider credentials, content behavior,
+and server-side data. Hermes-Relay should help a parent present a smaller,
+proctored phone interface without representing that interface as end-to-end
+child security or as a server-enforced account type.
+
+**Decision.** Android will treat Supervised Mode as an opt-in, locally enforced
+policy pinned to one existing Connection and one existing Hermes profile. The
+parent is responsible for preparing and reviewing that profile before enabling
+the mode. Entering, changing, or leaving the parent policy requires Android
+device authentication. That prompt authenticates an enrolled device user, not
+a distinct server-side parent identity. While the policy is active, the app restores directly
+into a restricted root and never renders the ordinary app behind an
+authentication prompt. A missing Connection, missing profile, malformed policy,
+failed authentication, process restart, or restored route that cannot prove its
+owner fails closed to the restricted surface.
+
+The ordinary Chat screen stays visually quiet. It does not carry a persistent
+"supervised" banner. Its existing Settings action opens only approved
+preferences; a separate **Parent access** row authenticates before showing the
+policy editor or full application settings. Backgrounding, inactivity, process
+recreation, and leaving parent settings relock parent access according to the
+policy. Deep links, notification actions, restored navigation, shortcuts, and
+programmatic routes pass the same gate.
+
+The parent policy controls capabilities rather than imposing a special
+attachment count. Initial capabilities are text chat, new chat, cancel, steer,
+attachments, standard voice, generated-media viewing, save/share media, copy,
+retry, quote/reply, and edit/resend. Attachments and voice are independently
+enabled. When attachments are enabled, Android retains the normal supported
+attachment flow and its existing size/type limits unless the parent selects a
+stricter limit; disabling attachments removes every picker, paste-to-file,
+camera/share-to-chat, and restored-draft entry point. Disabling voice removes
+capture, voice intents, and voice settings from the restricted surface. Provider
+credentials remain on the configured Hermes host under the existing standard
+voice contract.
+
+The restricted composer does not expose the command palette, slash
+autocomplete, server command catalog, or command-generated action cards. A
+leading slash is rejected locally rather than dispatched; approved outcomes
+such as New chat and Cancel remain explicit typed UI actions. Approval,
+clarification, secret, and elevated-access requests are denied or skipped
+immediately with a bounded notice. The supervised user cannot authorize them;
+a parent may retry from the authenticated full client.
+
+Restricted Settings contains only parent-approved, non-authoritative choices,
+such as appearance, text size, language, animations, haptics, accessibility,
+message presentation, sensitive-media blur, and permitted voice playback
+preferences. Connections, Manage, profiles, models, personalities, reasoning,
+approvals, tools, plugins, Terminal, TUI, Bridge, Device Control, notification
+companion, diagnostics, logs, files, credentials, developer controls, Relay
+management, and other sessions are absent rather than shown disabled.
+
+The parent also chooses what Chat discloses. **Simple** is the default: agent
+name/avatar plus generic Connected, Working, and Reconnecting states; it hides
+model, profile, provider/route, context, token/usage, reasoning, and tool detail.
+**Transparent** may add timestamps, bounded usage/context information, and
+approved activity labels without exposing arguments, results, paths, or
+credentials. **Custom** exposes the individual visibility switches. Model name
+and profile name default off in every new policy. Required errors, safety
+notices, parent-action states, and connection failures cannot be hidden by a
+cosmetic visibility choice.
+
+Session selection is limited to the pinned profile. New chat creates a new
+conversation for that profile; history visibility, transcript retention, and
+conversation actions follow the parent policy. Ending Supervised Mode may clear
+local drafts, pending media, and restricted caches, but does not imply deletion
+of server-owned session history. Server history remains available through the
+parent's ordinary authenticated Hermes surfaces.
+
+When the optional Relay plugin is paired, Android reports a bounded
+client-declared `supervised` tag and a non-sensitive policy summary with its
+ordinary device identity. Relay and its UI may display that tag and allow the
+operator to revoke the paired Relay session through the existing revocation
+model. The tag is informational: Relay does not interpret or enforce the Android
+policy, pin a profile, filter Gateway traffic, or certify the client. Revoking
+the Relay session removes Relay-backed capabilities but cannot revoke a direct
+Dashboard/Gateway session or remotely disable an Android-only policy. Without
+Relay pairing, Supervised Mode remains usable and locally enforced.
+
+**Security and product boundary.** This mode restricts the official Android UI,
+not the Hermes agent or server. It cannot secure another client, a modified APK,
+direct server access, server-side tools, provider output, or a parent account
+whose credentials are available elsewhere. It is not a substitute for profile
+hardening, provider safety controls, parental review, operating-system controls,
+or applicable legal obligations. Public language uses **Supervised Mode** or
+**parent-controlled client**, not "child account," "safe for children," or
+"server enforced."
+
+**Verification gate.** Implementation requires policy, authentication,
+navigation, process-death, deep-link, notification, capability, attachment,
+voice, session-ownership, Relay-tag, and revocation tests. Physical testing must
+cover the exact Android build on a managed/restricted device, including relock,
+restart, offline recovery, and attempts to escape the restricted root. Until
+that evidence exists, documentation and release notes must call the feature
+planned or experimental and must not call it child-ready.
+
+**Consequences.** The project gains a generalized, low-noise supervised client
+without creating a new Hermes account type or making Relay a chat authorization
+proxy. Parents receive clear local controls and optional paired-device
+visibility, while server ownership and the limits of client-side enforcement
+remain explicit.

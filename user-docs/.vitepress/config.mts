@@ -220,6 +220,7 @@ export default defineConfig({
             { text: 'Remote access', link: '/guide/remote-access' },
             { text: 'Release tracks', link: '/guide/release-tracks' },
             { text: 'Chat', link: '/guide/chat' },
+            { text: 'Supervised Mode', link: '/guide/supervised-mode' },
             { text: 'Sessions', link: '/guide/sessions' },
             { text: 'Troubleshooting', link: '/guide/troubleshooting' },
           ],
