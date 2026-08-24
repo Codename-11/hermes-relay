@@ -87,6 +87,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:noHistory="true"
+            android:permission="android.permission.STATUS_BAR_SERVICE"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>

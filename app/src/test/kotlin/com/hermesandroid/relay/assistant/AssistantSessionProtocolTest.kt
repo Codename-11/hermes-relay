@@ -93,12 +93,21 @@ class AssistantSessionProtocolTest {
     }
 
     @Test
-    fun onlyUnlockedManualSession_requestsAssistAndScreenshot() {
-        val unlocked = assistantSessionShowFlags(fromKeyguard = false, manualMic = true)
+    fun onlyUnlockedContextSession_requestsAssistAndScreenshot() {
+        val unlocked = assistantSessionShowFlags(
+            fromKeyguard = false,
+            captureScreenContext = true,
+        )
         assertTrue(unlocked and VoiceInteractionSession.SHOW_WITH_ASSIST != 0)
         assertTrue(unlocked and VoiceInteractionSession.SHOW_WITH_SCREENSHOT != 0)
-        assertEquals(0, assistantSessionShowFlags(fromKeyguard = true, manualMic = true))
-        assertEquals(0, assistantSessionShowFlags(fromKeyguard = false, manualMic = false))
+        assertEquals(
+            0,
+            assistantSessionShowFlags(fromKeyguard = true, captureScreenContext = true),
+        )
+        assertEquals(
+            0,
+            assistantSessionShowFlags(fromKeyguard = false, captureScreenContext = false),
+        )
     }
 
     @Test
@@ -124,6 +133,22 @@ class AssistantSessionProtocolTest {
         assertFalse(assistantPendingRequestCanDrain(serviceReady = false, preferencesLoaded = false))
         assertFalse(assistantPendingRequestCanDrain(serviceReady = true, preferencesLoaded = false))
         assertTrue(assistantPendingRequestCanDrain(serviceReady = true, preferencesLoaded = true))
+    }
+
+    @Test
+    fun delayedContextRequest_rechecksKeyguardWhenSessionIsShown() {
+        var keyguardLocked = false
+        val isKeyguardLocked = { keyguardLocked }
+
+        keyguardLocked = true
+        val policy = assistantSessionCapturePolicy(
+            captureScreenContext = true,
+            isKeyguardLocked = isKeyguardLocked,
+        )
+
+        assertTrue(policy.fromKeyguard)
+        assertFalse(policy.expectScreenContext)
+        assertEquals(0, policy.showFlags)
     }
 
     @Test

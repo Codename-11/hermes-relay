@@ -23,8 +23,8 @@ Hermes-Relay has two Android tracks:
 The Google Play build cannot use Accessibility or MediaProjection to inspect or
 control the screen, and it cannot tap/type/swipe, send SMS, place calls, access
 contacts or location, or perform unattended phone control. If you explicitly
-select Hermes as Android's Digital Assistant and invoke it through compatible
-firmware's manual assistant control while unlocked, Android may provide bounded
+select Hermes as Android's Digital Assistant and invoke it through a compatible
+platform-authorized firmware hardware assistant control while unlocked, Android may provide bounded
 visible screen text and a screenshot to the assistant session. Hermes labels that
 data untrusted and sends it only with the first Standard voice turn to the Hermes
 server you configured; that server may forward it to its configured AI provider.
@@ -85,7 +85,7 @@ Google Play build:
 | `RECORD_AUDIO` | Optional Voice mode capture and opt-in local “Hey Hermes” detection. Pre-activation wake audio stays on the phone. |
 | `MODIFY_AUDIO_SETTINGS` | Voice playback and audio-session behavior |
 | Android Notification Access | Optional system setting for the notification companion; forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay |
-| Android Digital Assistant role | Optional system setting. Compatible unlocked manual assistant invocations may let Android provide bounded visible screen text and a screenshot for one Standard voice turn. |
+| Android Digital Assistant role | Optional system setting. Compatible unlocked hardware assistant invocations may let Android provide bounded visible screen text and a screenshot for one Standard voice turn. |
 
 Sideload builds may additionally request permissions needed for Device Control, including overlay, foreground-service, wake-lock, screenshot, contacts, location, SMS, and call capabilities. Those permissions are not present in the Google Play manifest.
 

@@ -22,7 +22,7 @@ The Google Play build ships Hermes Bridge Core and does **not** include
 AccessibilityService or MediaProjection Device Control. It cannot tap/type/swipe,
 send SMS, place calls, access contacts or location, or perform unattended phone
 control. If you explicitly select Hermes as Android's Digital Assistant,
-compatible unlocked manual assistant firmware may provide bounded visible screen
+compatible unlocked platform-authorized hardware assistant controls may provide bounded visible screen
 text and a screenshot for one Standard voice turn. That context is sent to your
 configured Hermes server and may reach its configured AI provider. Ordinary wake,
 power-button, and keyguard assistant invocations do not request screen context.

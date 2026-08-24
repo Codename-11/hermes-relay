@@ -1016,15 +1016,18 @@ utilities.
   through a dedicated single-task transparent exported trampoline with empty task
   affinity and a bounded session-acceptance timeout,
   ignores query/extras, and
-  fails closed unless Hermes is the active Assistant role. The trampoline asks
+  requires the protected `STATUS_BAR_SERVICE` caller permission, and fails
+  closed unless Hermes is the
+  active Assistant role. The trampoline asks
   the already system-managed `VoiceInteractionService` to show a real session;
   failed or expired session requests close the trampoline, and it never routes
-  WEB_SEARCH through `MainActivity`. This invocation enters voice
-  in manual-microphone mode, while ordinary assistant wake and keyguard invocation
-  retain automatic listening. The service re-reads `KeyguardManager` immediately
+  WEB_SEARCH through `MainActivity`. This invocation enters voice and starts
+  listening from the same hardware-button press, while ordinary assistant wake and
+  keyguard invocation retain automatic listening. The service re-reads
+  `KeyguardManager` immediately
   before showing the session, including after a bounded readiness delay; caller
   extras never decide capture policy.
-- Only unlocked firmware WEB_SEARCH sessions in manual-microphone mode request
+- Only unlocked firmware WEB_SEARCH sessions request
   `SHOW_WITH_ASSIST` and `SHOW_WITH_SCREENSHOT`. Wake-word, power-button,
   keyguard, and ordinary assistant invocations request neither and retain their
   prior automatic-listening behavior. Assist callbacks

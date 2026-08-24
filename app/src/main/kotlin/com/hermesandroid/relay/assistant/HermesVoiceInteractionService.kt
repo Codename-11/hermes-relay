@@ -243,6 +243,7 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
     private fun showAssistantSession(
         activationId: String = java.util.UUID.randomUUID().toString(),
         manualMic: Boolean = false,
+        captureScreenContext: Boolean = false,
     ) {
         if (AssistantRole.status(this) != AssistantRoleStatus.Selected) {
             AssistantLaunchActivity.finishActive()
@@ -256,28 +257,28 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
             voiceSessionActive = false
             AssistantSessionPersistence.setActive(this, false)
         }
-        val fromKeyguard = getSystemService(android.app.KeyguardManager::class.java)
-            ?.isKeyguardLocked == true
-        val expectScreenContext = manualMic && !fromKeyguard
+        val capturePolicy = assistantSessionCapturePolicy(captureScreenContext) {
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+        }
         voiceSessionActive = true
         stopRecognition()
         setRuntimeState(AssistantWakeRuntimeState.AwaitingSession)
         runCatching {
             showSession(
                 Bundle().apply {
-                    putBoolean(EXTRA_FROM_KEYGUARD, fromKeyguard)
+                    putBoolean(EXTRA_FROM_KEYGUARD, capturePolicy.fromKeyguard)
                     putString(AssistantSessionProtocol.EXTRA_ACTIVATION_ID, activationId)
                     putBoolean(AssistantSessionProtocol.EXTRA_MANUAL_MIC, manualMic)
                     putBoolean(
                         AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
-                        expectScreenContext,
+                        capturePolicy.expectScreenContext,
                     )
                     putBoolean(
                         AssistantSessionProtocol.EXTRA_START_NEW_SESSION,
                         latestPreferences.startNewSession,
                     )
                 },
-                assistantSessionShowFlags(fromKeyguard, manualMic),
+                capturePolicy.showFlags,
             )
         }.onFailure {
             voiceSessionActive = false
@@ -298,6 +299,7 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
         }
         showAssistantSession(
             manualMic = request.manualMic,
+            captureScreenContext = request.captureScreenContext,
         )
     }
 
@@ -391,10 +393,12 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
         @JvmStatic
         fun requestAssistantSession(
             manualMic: Boolean = false,
+            captureScreenContext: Boolean = false,
         ) {
             pendingHandler.removeCallbacks(pendingExpiry)
             val request = PendingSessionRequest(
                 manualMic = manualMic,
+                captureScreenContext = captureScreenContext,
                 expiresAtElapsedMs = SystemClock.elapsedRealtime() + PENDING_SESSION_TIMEOUT_MS,
             )
             val shouldPost = synchronized(pendingLock) {
@@ -418,7 +422,10 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
                 ) {
                     pendingHandler.removeCallbacks(pendingExpiry)
                     synchronized(pendingLock) { pendingSessionRequest = null }
-                    instance.showAssistantSession(manualMic = currentRequest.manualMic)
+                    instance.showAssistantSession(
+                        manualMic = currentRequest.manualMic,
+                        captureScreenContext = currentRequest.captureScreenContext,
+                    )
                     return@post
                 }
                 pendingHandler.removeCallbacks(pendingExpiry)
@@ -433,6 +440,7 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
 
         private data class PendingSessionRequest(
             val manualMic: Boolean,
+            val captureScreenContext: Boolean,
             val expiresAtElapsedMs: Long,
         )
     }
@@ -456,8 +464,29 @@ internal fun assistantPendingRequestCanDrain(
     preferencesLoaded: Boolean,
 ): Boolean = serviceReady && preferencesLoaded
 
-internal fun assistantSessionShowFlags(fromKeyguard: Boolean, manualMic: Boolean): Int =
-    if (fromKeyguard || !manualMic) {
+internal data class AssistantSessionCapturePolicy(
+    val fromKeyguard: Boolean,
+    val expectScreenContext: Boolean,
+    val showFlags: Int,
+)
+
+internal fun assistantSessionCapturePolicy(
+    captureScreenContext: Boolean,
+    isKeyguardLocked: () -> Boolean,
+): AssistantSessionCapturePolicy {
+    val fromKeyguard = isKeyguardLocked()
+    return AssistantSessionCapturePolicy(
+        fromKeyguard = fromKeyguard,
+        expectScreenContext = captureScreenContext && !fromKeyguard,
+        showFlags = assistantSessionShowFlags(fromKeyguard, captureScreenContext),
+    )
+}
+
+internal fun assistantSessionShowFlags(
+    fromKeyguard: Boolean,
+    captureScreenContext: Boolean,
+): Int =
+    if (fromKeyguard || !captureScreenContext) {
         0
     } else {
         VoiceInteractionSession.SHOW_WITH_ASSIST or VoiceInteractionSession.SHOW_WITH_SCREENSHOT

@@ -2466,18 +2466,19 @@ boundary.
 - Firmware WEB_SEARCH dispatch is handled by a separate single-task transparent
   Activity with empty task affinity that
   accepts exactly `android.speech.action.WEB_SEARCH`, ignores all inbound query
-  data, verifies Hermes is the active Assistant role, and asks the running
+  data, requires the protected `STATUS_BAR_SERVICE` caller permission,
+  verifies Hermes is the active Assistant role, and asks the running
   interaction service to show a system session. A bounded pending request covers
   service readiness; a local acceptance timeout plus show-failure, role-shutdown,
   and service-destruction cleanup prevent a never-shown session from leaving the
   trampoline alive. WEB_SEARCH never enters `MainActivity`. The service, not the
   trampoline or its extras, re-reads keyguard state at the point `showSession` is
   called so a delayed request cannot retain stale unlocked capture flags.
-- Every shown session owns a stable activation identifier. Only unlocked manual
+- Every shown session owns a stable activation identifier. Only unlocked hardware
   WEB_SEARCH sessions ask Android for AssistStructure and screenshot callbacks;
   ordinary wake, power, and keyguard sessions request neither. WEB_SEARCH starts
-  in manual-microphone mode, while existing wake and keyguard paths keep automatic
-  listening. Package-internal start/stop broadcasts
+  listening from the same hardware-button press, while existing wake and keyguard
+  paths keep automatic listening. Package-internal start/stop broadcasts
   let the separate session process control the one main-process recorder.
 - AssistStructure extraction is bounded by node, depth, per-piece, and total-text
   limits and omits blocked, hidden, and password subtrees.
@@ -2533,9 +2534,11 @@ boundary.
 - OEM WEB_SEARCH routing and platform assist delivery remain device behaviors;
   source and host-side tests prove classification, policy, storage, and submission
   boundaries but not a particular firmware integration.
-- The exported WEB_SEARCH trampoline cannot use a signature permission without
-  excluding compatible OEM firmware. Its defense in depth is therefore the exact
-  action check, ignored extras, active-assistant-role check, manual microphone,
+- The exported WEB_SEARCH trampoline intentionally requires Android's protected
+  `STATUS_BAR_SERVICE` caller permission, limiting invocation to components the
+  platform grants that permission, including eligible Recents components. Its
+  defense in depth also includes the exact action check, ignored extras,
+  active-assistant-role check, user-initiated hardware invocation,
   single-active-session admission, and bounded/coalesced readiness request. Role
   ownership establishes Hermes' assistant consent but does not authenticate the
   originating application, so physical certification includes repeated and

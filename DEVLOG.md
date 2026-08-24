@@ -5,13 +5,14 @@
 Android firmware that maps an assistant control to
 `android.speech.action.WEB_SEARCH` now enters a dedicated transparent trampoline.
 The trampoline accepts only that action, requires Hermes to be the active Android
-assistant, requests a real `VoiceInteractionSession`, ignores inbound query data,
+assistant, requires Android's protected `STATUS_BAR_SERVICE` caller permission, requests a real
+`VoiceInteractionSession`, ignores inbound query data,
 and leaves the existing `ACTION_ASSIST` Activity path unchanged. Empty task affinity
 preserves the prior foreground app, single-task delivery makes retries deterministic,
 and a bounded acceptance timeout plus service-failure cleanup prevents orphaned
 transparent activities when the system never shows a session.
 
-Only unlocked manual firmware assistant sessions request platform assist data and
+Only unlocked firmware WEB_SEARCH assistant sessions request platform assist data and
 screenshots under a stable activation identifier. The session captures bounded visible semantic text,
 safe activity and page metadata, and an optional downscaled JPEG without logging
 captured content. Activation-scoped app-private cache files use atomic replacement,
@@ -47,7 +48,8 @@ Verification covered focused Robolectric and Gateway chat tests, Android locale
 validation, Kotlin compilation for both Google Play and sideload variants, and
 Google Play debug lint. Physical Android 15 automotive certification verified that
 the firmware WEB_SEARCH control preserved the foreground Settings screen, delivered
-a 96-view AssistStructure plus screenshot thumbnail, waited for an explicit mic tap,
+a 96-view AssistStructure plus screenshot thumbnail, started recording from the same
+button press,
 answered from the visible connected-network context, and retained only the consumed
 one-shot marker afterward. The OEM background manager required an allowlisted local
 review package for that device; canonical release package identities are unchanged.

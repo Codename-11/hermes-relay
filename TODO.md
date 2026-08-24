@@ -9,12 +9,12 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 ## Certify Android assistant screen context on physical firmware
 
 Host-side tests prove strict WEB_SEARCH classification, show-flag policy, bounded
-extraction and screenshot framing, fail-soft store semantics, manual microphone
+extraction and screenshot framing, fail-soft store semantics, microphone
 protocol, heartbeat expiry and Full Voice ownership, Gateway text/image upload
 ordering plus one-shot acceptance, preflight retention, proactive-route rejection,
 and draft-isolated submission. One Android 15 automotive device also verifies
 WEB_SEARCH dispatch, foreground-screen preservation, a persistent transparent
-session, AssistStructure plus screenshot delivery, explicit mic start, contextual
+session, AssistStructure plus screenshot delivery, one-press mic start, contextual
 model use, and one-shot consumption. Complete the remaining edge-case matrix before
 claiming broad OEM compatibility:
 
@@ -33,9 +33,10 @@ claiming broad OEM compatibility:
 - Verify gesture, wake-word, power-button, and keyguard assistant invocations retain
   their existing automatic-listening behavior and never capture keyguard context.
 - Exercise repeated explicit WEB_SEARCH launches from another foreground app. The
-  exported OEM-compatible trampoline cannot use a signature permission, so verify
-  exact-action/role gating, request coalescing, single-session admission, and manual
-  microphone behavior prevent useful escalation or unbounded churn.
+  exported OEM-compatible trampoline uses the protected `STATUS_BAR_SERVICE`
+  permission, so verify
+  exact-action/role gating, request coalescing, and single-session admission prevent
+  useful escalation or unbounded churn.
 
 ---
 
@@ -43,7 +44,7 @@ claiming broad OEM compatibility:
 
 Before the next Google Play submission, review the current Console questionnaire
 for optional User content and sharing against the documented flow: after the user
-selects Hermes as Android Assistant, compatible unlocked manual firmware can send
+selects Hermes as Android Assistant, compatible unlocked firmware controls can send
 voice, bounded visible screen text, and a screenshot to the user-configured Hermes
 server and its configured AI provider for one Standard turn. Record the final
 Console answers in `docs/play-store-listing.md`; do not reuse the previous blanket

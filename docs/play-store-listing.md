@@ -28,7 +28,7 @@ Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign
 
 GOOGLE PLAY BUILD
 
-The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService or MediaProjection Device Control and cannot tap, type, swipe, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play. If you explicitly choose Hermes as Android's Digital Assistant, compatible firmware can provide bounded visible screen text and a screenshot for one manually started Standard voice turn; that context is sent to your configured Hermes server and its configured AI provider.
+The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService or MediaProjection Device Control and cannot tap, type, swipe, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play. If you explicitly choose Hermes as Android's Digital Assistant, compatible firmware with the required platform assistant permission can provide bounded visible screen text and a screenshot for one hardware-triggered Standard voice turn; that context is sent to your configured Hermes server and its configured AI provider.
 
 FEATURES
 
@@ -36,7 +36,7 @@ FEATURES
 
 ◆ Manage Your Agent — the Hermes dashboard on your phone: switch models from your provider catalog, manage provider keys (masked), edit profiles, and browse, install, and update skills.
 
-◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection. Compatible unlocked manual assistant controls may include one-turn screen context; ordinary wake and keyguard invocations do not. Relay-paired setups add per-profile voices and an experimental realtime engine.
+◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection. Compatible unlocked hardware assistant controls may include one-turn screen context; ordinary wake and keyguard invocations do not. Relay-paired setups add per-profile voices and an experimental realtime engine.
 
 ◆ Floating Pets — browse and install Petdex companions or import your own. Keep the pet separate from your agent identity, drag it anywhere, or let it roam across UI-aware ledges.
 

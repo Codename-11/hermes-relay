@@ -41,7 +41,8 @@ class AssistantLaunchActivity : Activity() {
             handler.removeCallbacks(launchTimeout)
             handler.postDelayed(launchTimeout, LAUNCH_TIMEOUT_MS)
             HermesVoiceInteractionService.requestAssistantSession(
-                manualMic = true,
+                manualMic = false,
+                captureScreenContext = true,
             )
         } else {
             finish()
