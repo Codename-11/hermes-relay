@@ -17,7 +17,7 @@ permissions:
   actions: read
   contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: review-bundle-report-${{ github.event.workflow_run.id || inputs.run_id }}
