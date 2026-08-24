@@ -109,6 +109,10 @@ async function reportReviewBundle({ github, context, core }) {
     core.info('Ignoring a review-bundle run that was not triggered by a pull request.');
     return;
   }
+  if (run.conclusion === 'skipped') {
+    core.info(`Ignoring skipped review-bundle run ${run.id}.`);
+    return;
+  }
 
   const artifacts = await github.paginate(
     github.rest.actions.listWorkflowRunArtifacts,

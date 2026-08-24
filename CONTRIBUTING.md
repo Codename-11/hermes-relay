@@ -39,9 +39,10 @@ install/rollback guidance. While the label remains applied, a new PR head commit
 automatically replaces any in-progress build with a bundle for the new head.
 For a first-time fork contributor, GitHub may hold the first run for explicit
 maintainer approval before any untrusted code executes.
-When the run completes, a separate trusted reporter creates or updates one PR
-comment with the exact source SHA, artifact link, expiry, and concise install and
-rollback guidance.
+When an opted-in candidate run completes, a separate trusted reporter creates or
+updates one PR comment with the exact source SHA, artifact link, expiry, and
+concise install and rollback guidance. Skipped workflow shells for unlabeled PRs
+do not create comments.
 
 Review bundles never bump versions, create tags, upload to Play, or replace the
 stable Android app. Relay review still requires a staging Hermes instance or an
