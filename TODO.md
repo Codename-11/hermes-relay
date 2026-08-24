@@ -8,47 +8,26 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ## Certify Android assistant screen context on physical firmware
 
-Host-side tests prove strict WEB_SEARCH classification, show-flag policy, bounded
-extraction and screenshot framing, fail-soft store semantics, microphone
-protocol, heartbeat expiry and Full Voice ownership, Gateway text/image upload
-ordering plus one-shot acceptance, preflight retention, proactive-route rejection,
-and draft-isolated submission. One Android 15 automotive device also verifies
-WEB_SEARCH dispatch, foreground-screen preservation, a persistent transparent
-session, AssistStructure plus screenshot delivery, one-press mic start, contextual
-model use, and one-shot consumption. Complete the remaining edge-case matrix before
-claiming broad OEM compatibility:
+Host-side coverage and one Android 15 automotive device prove the primary flow.
+Before claiming broad firmware compatibility:
 
-- Verify unlocked AssistStructure plus screenshot delivery, secure-window null
-  screenshots, assist-blocked/password exclusion, secondary assist callbacks,
-  rotation, cancellation, process recreation, and callbacks arriving before show.
-- Inspect the resulting Hermes turn to confirm visible semantic text is labeled
-  untrusted, the screenshot is attached only when captured, composer drafts remain
-  untouched, and no second voice turn receives the activation context.
-- Force attachment/preflight failure, verify the overlay says screen context is
-  ready rather than sent, then use Try again and confirm the same staged context is
-  accepted and consumed exactly once.
-- Open Full Voice, kill the separate assistant-session process, wait beyond the
-  session heartbeat grace, and confirm the main-app voice turn remains active and
-  completes normally.
-- Verify gesture, wake-word, power-button, and keyguard assistant invocations retain
-  their existing automatic-listening behavior and never capture keyguard context.
-- Exercise repeated explicit WEB_SEARCH launches from another foreground app. The
-  exported OEM-compatible trampoline uses the protected `STATUS_BAR_SERVICE`
-  permission, so verify
-  exact-action/role gating, request coalescing, and single-session admission prevent
-  useful escalation or unbounded churn.
+- Certify representative phone OEMs, secure-window behavior, rotation, cancellation,
+  process recreation, and callbacks that arrive before the session is shown.
+- Confirm hidden/password exclusion, untrusted labeling, draft isolation, retry after
+  attachment preflight failure, and exactly-once delivery across later voice turns.
+- Verify Full Voice survives assistant-process loss and that wake-word, power-button,
+  ordinary assistant, and keyguard paths never receive screen context.
+- Exercise repeated explicit WEB_SEARCH launches and confirm the permission, active
+  Assistant role, request coalescing, and single-session gates remain fail-closed.
 
 ---
 
 ## Reassess Play Console data safety for assistant screen context
 
-Before the next Google Play submission, review the current Console questionnaire
-for optional User content and sharing against the documented flow: after the user
-selects Hermes as Android Assistant, compatible unlocked firmware controls can send
-voice, bounded visible screen text, and a screenshot to the user-configured Hermes
-server and its configured AI provider for one Standard turn. Record the final
-Console answers in `docs/play-store-listing.md`; do not reuse the previous blanket
-“no data collection or sharing” declaration.
+Before the next Google Play submission, reassess the Console's User content and
+data-sharing answers for optional Assistant voice, visible text, and screenshot
+delivery to the user-configured Hermes server and AI provider. Record the final
+answers in `docs/play-store-listing.md`.
 
 ---
 

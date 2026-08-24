@@ -2,57 +2,27 @@
 
 ## 2026-08-23 — Android assistant screen context
 
-Android firmware that maps an assistant control to
-`android.speech.action.WEB_SEARCH` now enters a dedicated transparent trampoline.
-The trampoline accepts only that action, requires Hermes to be the active Android
-assistant, requires Android's protected `STATUS_BAR_SERVICE` caller permission, requests a real
-`VoiceInteractionSession`, ignores inbound query data,
-and leaves the existing `ACTION_ASSIST` Activity path unchanged. Empty task affinity
-preserves the prior foreground app, single-task delivery makes retries deterministic,
-and a bounded acceptance timeout plus service-failure cleanup prevents orphaned
-transparent activities when the system never shows a session.
+Compatible unlocked firmware controls that dispatch
+`android.speech.action.WEB_SEARCH` now open a real Hermes
+`VoiceInteractionSession` without replacing the foreground app. The path requires
+Hermes to be the selected Android Assistant, ignores caller-provided query data,
+starts listening from the same button press, and fails closed when the platform
+cannot show the session.
 
-Only unlocked firmware WEB_SEARCH assistant sessions request platform assist data and
-screenshots under a stable activation identifier. The session captures bounded visible semantic text,
-safe activity and page metadata, and an optional downscaled JPEG without logging
-captured content. Activation-scoped app-private cache files use atomic replacement,
-a consumed marker, stale cleanup, and cancellation cleanup across the assistant and
-main processes. The first ordinary Standard Hermes voice turn receives the staged
-data as explicitly untrusted interface context plus an isolated per-turn image
-attachment. Gateway carries the frame as a bounded referenced text-file upload;
-SSE routes retain the interface context. Local commands, Bridge intents,
-active-turn rejection, and pending composer attachments do not consume it. The
-optimistic local row retires context from later ordinary turns, but staged files
-remain until Gateway attachment preflight plus `prompt.submit`, or an authoritative
-SSE start event, confirms acceptance. Preflight failures keep the exact files and
-surface Error; Try again re-arms the same activation. A first bounded load with no
-staged data retires later-turn reuse without writing a consumed marker.
+The session can receive bounded visible text and an optional screenshot from
+Android. Hidden, assist-blocked, and password fields are excluded; captured content
+is not logged. Context is staged in app-private cache, labeled as untrusted, and
+attached only to the first accepted Standard voice turn. Failed transport preflight
+keeps the same context available for an explicit retry, while cancellation and stale
+cleanup prevent later reuse.
 
-Session retries retain their activation identifier. Context-free Standard voice
-keeps the existing phone-thread/proactive route; only actual staged screen context
-is rejected there. A package-internal heartbeat
-lets the main runtime clear a voice activation after separate-process death, with
-a conservative monotonic grace and a second check after suspension. Show failure
-and normal finish clear pending/watchdog state, cold requests wait for voice
-preferences, context cache IO is fail-soft and off the UI thread, and rejected
-mid-turn voice submissions remain visibly in Error with context retained.
-Open full voice transfers liveness ownership to the main runtime before disabling
-the session UI, stops overlay heartbeats, and prevents late session expiry from
-cancelling the main-app voice flow. The pre-send indicator now says **Screen
-context ready** rather than claiming transport acceptance.
-
-The transparent assistant surface is now a bounded bottom-end card with an optional
-screen thumbnail or semantic-context indicator, an explicit start/stop microphone
-control, a separate close action, and expandable transcript/response detail.
-Verification covered focused Robolectric and Gateway chat tests, Android locale
-validation, Kotlin compilation for both Google Play and sideload variants, and
-Google Play debug lint. Physical Android 15 automotive certification verified that
-the firmware WEB_SEARCH control preserved the foreground Settings screen, delivered
-a 96-view AssistStructure plus screenshot thumbnail, started recording from the same
-button press,
-answered from the visible connected-network context, and retained only the consumed
-one-shot marker afterward. The OEM background manager required an allowlisted local
-review package for that device; canonical release package identities are unchanged.
+The assistant card reports whether screen context is ready, keeps microphone and
+close actions separate, and can hand off to Full Voice without losing ownership.
+Focused assistant, Gateway, chat, and voice tests passed along with Android locale
+validation, Kotlin compilation, and Google Play debug lint. One Android 15
+automotive device verified foreground preservation, AssistStructure and screenshot
+delivery, immediate listening, contextual response, and one-shot consumption;
+broader firmware certification remains tracked in `TODO.md`.
 
 ## 2026-08-23 — GitHub Discussions community surface
 

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android assistant buttons can open Hermes with current-screen context.** Compatible unlocked firmware WEB_SEARCH invocations from callers granted Android's protected `STATUS_BAR_SERVICE` permission now open the system assistant surface, start listening from the same button press, and can attach bounded, explicitly untrusted visible text and an available screenshot to the first Standard voice turn. Gateway and API transports carry the context without changing chat drafts; staged files are consumed only after transport acceptance and remain retryable after preflight failure. Ordinary wake and keyguard invocations do not request screen context.
+- **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
 ## [Android 1.12.1] - 2026-08-22
 

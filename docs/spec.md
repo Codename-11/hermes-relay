@@ -1011,73 +1011,31 @@ utilities.
   mutually exclusive with the experimental notification-based foreground
   listener. Third-party assistants do not receive Google's dedicated low-power
   hotword hardware, so continuous local detection has a material battery cost.
-- Compatible Android firmware may dispatch a hardware or floating assistant
-  control as `android.speech.action.WEB_SEARCH`. Hermes handles that action only
-  through a dedicated single-task transparent exported trampoline with empty task
-  affinity and a bounded session-acceptance timeout,
-  ignores query/extras, and
-  requires the protected `STATUS_BAR_SERVICE` caller permission, and fails
-  closed unless Hermes is the
-  active Assistant role. The trampoline asks
-  the already system-managed `VoiceInteractionService` to show a real session;
-  failed or expired session requests close the trampoline, and it never routes
-  WEB_SEARCH through `MainActivity`. This invocation enters voice and starts
-  listening from the same hardware-button press, while ordinary assistant wake and
-  keyguard invocation retain automatic listening. The service re-reads
-  `KeyguardManager` immediately
-  before showing the session, including after a bounded readiness delay; caller
-  extras never decide capture policy.
-- Only unlocked firmware WEB_SEARCH sessions request
-  `SHOW_WITH_ASSIST` and `SHOW_WITH_SCREENSHOT`. Wake-word, power-button,
-  keyguard, and ordinary assistant invocations request neither and retain their
-  prior automatic-listening behavior. Assist callbacks
-  extract bounded visible semantic text and safe activity/page metadata while
-  excluding assist-blocked, hidden, and password nodes.
-  Available screenshots are downscaled to a 1,600-pixel longest edge and encoded
-  as a bounded JPEG. Secure or null screenshots are normal, and captured content
-  is never logged.
-- Screen context is staged across the assistant/main process boundary under the
-  activation identifier in app-private cache storage. Fail-soft atomic files, a consumed
-  marker, stale cleanup, callback-before-show buffering, and cancellation cleanup
-  prevent replay and late-callback reuse. The first ordinary Standard Hermes
-  voice turn after local commands and Bridge intents loads the context without
-  consuming it, frames semantic text explicitly as untrusted screen content, and
-  supplies the screenshot as an explicit per-turn attachment. SSE routes retain
-  that bounded interface context; Gateway uploads a separate bounded `text/plain`
-  context file with `file.attach`, uploads the image with `image.attach_bytes`, and
-  places the returned file reference before the unchanged spoken prompt. Creating
-  the optimistic local user row retires the activation from later ordinary voice
-  turns but does not delete staged files. Files are consumed only after Gateway
-  accepts `prompt.submit` following attachment preflight, or after an authoritative
-  SSE message/turn-start callback. Preflight failure retains the exact staged files
-  and leaves Voice in Error; **Try again** re-arms that same activation for a
-  context-preserving retry. If the one bounded load found no context, the activation
-  is still retired but no consumed marker is written, so late callbacks cannot join
-  later turns and are discarded on exit/cancel. Composer drafts and pending
-  attachments are never borrowed; an active turn rejects the isolated submission
-  and retains staged context for retry. Context-free Standard voice keeps its prior
-  phone-thread/proactive behavior; only turns with actual staged context are rejected
-  there. The Standard path performs one IO-thread
-  load after a short settle delay rather than polling or rereading JPEG data on
-  the main thread. Phone-thread/proactive routes reject isolated context because
-  they cannot transport it. Later voice turns receive no screen data.
+- Compatible firmware may dispatch an assistant control as
+  `android.speech.action.WEB_SEARCH`. Hermes accepts only that action through a
+  transparent system-assistant trampoline, requires the protected platform caller
+  permission and active Assistant role, ignores caller query data, and fails closed
+  if the real `VoiceInteractionSession` cannot be shown. An accepted invocation
+  starts listening from the same button press without replacing the foreground app.
+- Only unlocked WEB_SEARCH sessions request `SHOW_WITH_ASSIST` and
+  `SHOW_WITH_SCREENSHOT`. Android-provided context is bounded, excludes hidden,
+  assist-blocked, and password fields, treats secure or missing screenshots as
+  normal, and never logs captured content. Wake-word, power-button, ordinary
+  assistant, and keyguard paths request no screen context.
+- Screen context is activation-scoped, staged in app-private cache, and framed as
+  untrusted user content. It belongs only to the first Standard voice turn, never
+  borrows composer drafts, and is consumed only after the selected Gateway or API
+  transport accepts the turn. Preflight failure retains the exact context for Try
+  again; cancellation, expiry, and later turns cannot reuse it. Routes that cannot
+  transport screen context reject that isolated submission instead of dropping the
+  attachment silently.
 - The assistant session surface remains a transparent system overlay and uses a
   bounded bottom-end Hermes card on large screens. It shows a thumbnail only when
   a screenshot exists, otherwise a semantic-context indicator only when context
   exists and the selected Standard voice path can transport it; experimental
-  Realtime Agent sessions do not claim inclusion. Idle starts microphone capture, Listening stops and submits, all other
-  states disable the mic control, and close/cancel remains separate from optional
-  transcript/response expansion.
-- The session process sends activation-scoped heartbeat broadcasts while its
-  lifecycle remains live. The main runtime uses monotonic time, a conservative
-  grace, and a second recheck after process suspension before cancelling an
-  orphaned activation. Finish, cancel, show failure, and normal completion clear
-  the watchdog. `onShowSessionFailed` also clears pending launch state and resumes
-  opt-in wake listening only after preferences are loaded.
-- **Open full voice** sends an activation-scoped ownership handoff before disabling
-  the session UI. The session overlay stops heartbeats, while the main runtime keeps
-  activation and voice ownership without a watchdog dependency on the separate
-  process. Late heartbeat expiry cannot cancel the main-app Full Voice session.
+  Realtime Agent sessions do not claim inclusion. The mic control follows the
+  active voice state, close remains separate, and **Open full voice** explicitly
+  transfers ownership so assistant-process cleanup cannot cancel the main-app flow.
 - Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an

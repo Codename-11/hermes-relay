@@ -2463,55 +2463,28 @@ boundary.
   surface first; Back from compact, hide, Stop, or cancel remains terminal,
   while the hidden session still observes the final `Closed` state and finishes
   without cancelling the completed turn.
-- Firmware WEB_SEARCH dispatch is handled by a separate single-task transparent
-  Activity with empty task affinity that
-  accepts exactly `android.speech.action.WEB_SEARCH`, ignores all inbound query
-  data, requires the protected `STATUS_BAR_SERVICE` caller permission,
-  verifies Hermes is the active Assistant role, and asks the running
-  interaction service to show a system session. A bounded pending request covers
-  service readiness; a local acceptance timeout plus show-failure, role-shutdown,
-  and service-destruction cleanup prevent a never-shown session from leaving the
-  trampoline alive. WEB_SEARCH never enters `MainActivity`. The service, not the
-  trampoline or its extras, re-reads keyguard state at the point `showSession` is
-  called so a delayed request cannot retain stale unlocked capture flags.
-- Every shown session owns a stable activation identifier. Only unlocked hardware
-  WEB_SEARCH sessions ask Android for AssistStructure and screenshot callbacks;
-  ordinary wake, power, and keyguard sessions request neither. WEB_SEARCH starts
-  listening from the same hardware-button press, while existing wake and keyguard
-  paths keep automatic listening. Package-internal start/stop broadcasts
-  let the separate session process control the one main-process recorder.
-- AssistStructure extraction is bounded by node, depth, per-piece, and total-text
-  limits and omits blocked, hidden, and password subtrees.
-  Screenshots are optional, downscaled and byte-bounded, and no captured content
-  enters logs. IO failures degrade to absent context rather than crashing the
-  session process. The session stages semantic and image data atomically in app-private
-  cache storage under the activation identifier, with consumed markers and stale,
-  cancellation, and late-callback cleanup.
+- Firmware WEB_SEARCH dispatch uses a separate transparent single-task Activity
+  that accepts only `android.speech.action.WEB_SEARCH`, requires the protected
+  `STATUS_BAR_SERVICE` caller permission and active Assistant role, ignores query
+  data, and asks the system-managed interaction service to show a real session.
+  Bounded readiness and show-failure cleanup close the trampoline when the platform
+  does not accept it. The service re-reads keyguard state immediately before show;
+  caller data never decides capture policy.
+- Each shown session owns a stable activation identifier. Only an unlocked
+  WEB_SEARCH session requests AssistStructure and screenshot callbacks and starts
+  listening from the same button press. Extraction is bounded and excludes hidden,
+  assist-blocked, and password subtrees; screenshots are optional and byte-bounded;
+  captured content never enters logs. Fail-soft app-private staging plus consumed,
+  cancellation, and stale markers prevents replay across processes.
 - Screen context belongs to one ordinary Standard voice turn, not to the chat
-  composer. After local commands and Bridge intents, Voice loads staged context,
-  labels text and the optional screenshot as untrusted screen content, and passes
-  the screenshot via an explicit per-turn attachment argument. SSE retains the
-  interface context; Gateway receives the same frame as a bounded `text/plain`
-  `file.attach` upload and references it in `prompt.submit`. Chat creates or
-  rejects that isolated submission without mutating drafts. Local row creation
-  retires the activation from later turns; staged files are consumed only when
-  attachment preflight plus `prompt.submit`, or an authoritative SSE start event,
-  proves transport acceptance. Preflight failure retains the exact files and a
-  visible retry action re-arms the same activation. A bounded load that found no
-  context still retires the activation but writes no consumed marker. Phone-thread/
-  proactive sends reject only actual staged context they cannot transport, so
-  context-free Standard voice remains unchanged. Standard voice performs one IO-thread load after a short settle
-  delay; Realtime Agent neither consumes the context nor displays an inclusion
-  claim.
-- Retry retains the current activation identifier. The session process emits a
-  bounded activation heartbeat, and the main runtime waits through a conservative
-  monotonic grace plus a post-suspension recheck before cancelling an orphaned
-  activation. Finish and show-failure paths clear active, pending, and watchdog
-  state; cold firmware requests wait for loaded voice preferences before showing.
-- Full Voice explicitly transfers heartbeat ownership to the main runtime before
-  the session overlay disables itself. This cancels the session-process watchdog
-  without clearing activation or voice ownership; the overlay stops heartbeats and
-  stale expiry checks cannot terminate the main-app voice session.
+  composer. It is labeled as untrusted, submitted through explicit per-turn
+  attachments, retired from later turns when the local turn is created, and deleted
+  only after authoritative Gateway or API acceptance. Preflight failure retains it
+  for Try again; unsupported routes reject the isolated submission rather than
+  dropping context. Realtime Agent neither consumes nor claims the context.
+- Activation heartbeats let the main runtime clean up after assistant-process loss.
+  Finish and show-failure paths clear pending/watchdog state, while Full Voice
+  explicitly transfers ownership before the session overlay stops heartbeats.
 - Connection, chat, and voice runtime ownership is application-lifetime in the
   main process rather than Activity-owned. The assistant service may initialize
   that graph and start a turn while no Activity exists; the app UI later binds
@@ -2532,17 +2505,11 @@ boundary.
   hotword DSP integration. Local sherpa inference keeps pre-activation audio
   private but can consume materially more battery than the built-in assistant.
 - OEM WEB_SEARCH routing and platform assist delivery remain device behaviors;
-  source and host-side tests prove classification, policy, storage, and submission
-  boundaries but not a particular firmware integration.
-- The exported WEB_SEARCH trampoline intentionally requires Android's protected
-  `STATUS_BAR_SERVICE` caller permission, limiting invocation to components the
-  platform grants that permission, including eligible Recents components. Its
-  defense in depth also includes the exact action check, ignored extras,
-  active-assistant-role check, user-initiated hardware invocation,
-  single-active-session admission, and bounded/coalesced readiness request. Role
-  ownership establishes Hermes' assistant consent but does not authenticate the
-  originating application, so physical certification includes repeated and
-  explicit-intent invocation behavior.
+  source and host tests do not prove broad firmware compatibility. The exported
+  trampoline relies on the protected caller permission plus exact-action,
+  active-role, coalescing, and single-session gates. Physical certification still
+  covers repeated explicit invocation because Assistant-role ownership alone does
+  not authenticate the originating component.
 
 ---
 
