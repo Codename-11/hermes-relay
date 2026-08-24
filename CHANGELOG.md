@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Release names use one public product hierarchy.** Future releases use `Hermes-Relay Android`, `Hermes-Relay Plugin`, or `Hermes-Relay CLI+UI` display names without changing immutable tags, package identities, updater contracts, or artifact filenames.
+
 ## [Android 1.12.1] - 2026-08-22
 
 ### Fixed

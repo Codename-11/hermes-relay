@@ -1,10 +1,10 @@
-# Hermes-Relay-Android — explicit public release approval
+# Hermes-Relay Android — explicit public release approval
 #
 # Run from main only after the automated Play preflight passes and the release
 # PR has merged. Starting this workflow is the release approval. Creating the
 # stable tag triggers Play submission first, then GitHub publication.
 
-name: Approve Android Release
+name: Hermes-Relay Android Release Approval
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "::error::Approve Android Release must run from main, not $GITHUB_REF"
+            echo "::error::Hermes-Relay Android Release Approval must run from main, not $GITHUB_REF"
             exit 1
           fi
           TOML_VERSION=$(grep -oP 'appVersionName\s*=\s*"\K[^"]+' gradle/libs.versions.toml)

@@ -78,9 +78,9 @@ metadata and notes have been prepared on `dev`.
    `server-v1.9.0-rc.1`, or `desktop-v0.5.0-rc.1`, at that commit.
 3. The release workflow verifies the prerelease tag is contained in `dev`.
 4. Android RCs publish the side-by-side Candidate APK and never upload to Play.
-5. Server RCs publish prerelease packages for explicit staging/opt-in install;
+5. Plugin RCs publish prerelease packages for explicit staging/opt-in install;
    they do not replace a running production plugin automatically.
-6. Desktop RCs publish opt-in prerelease binaries/installers; stable updater
+6. CLI+UI RCs publish opt-in prerelease binaries/installers; stable updater
    channels continue to ignore them.
 7. Record the exact tag/SHA and test results in the release issue.
 

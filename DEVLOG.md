@@ -1,5 +1,14 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-24 — Release surface naming
+
+Future Android, Plugin, and CLI+UI GitHub Releases, Android Play submissions,
+candidate provenance, release-note templates, workflow summaries, operator
+guidance, and user documentation use the
+`Hermes-Relay <Surface> v<version>` display-name contract. Immutable tags,
+package identities, machine-readable version-track IDs, updater channels, and
+artifact filenames remain unchanged.
+
 ## 2026-08-23 — GitHub Discussions community surface
 
 GitHub Discussions is enabled as the repository's lightweight community surface.
