@@ -5935,6 +5935,13 @@ class ChatViewModel : ViewModel() {
         activeStream?.cancel()
         activeStream = null
         activeStreamIsGateway = false
+        // Navigation owns the visible composer even when the live handle has
+        // already ended or could not be detached. Do not wait for a late
+        // cancel callback to clear a handler-wide busy bit after the new
+        // transcript has replaced its streaming bubble.
+        handler.clearStreamingStatus()
+        _steerableTurn.value = false
+        _steerNotice.value = null
     }
 
     /** Last-chance synchronous flush before the ViewModel scope is cancelled. */
@@ -8781,6 +8788,11 @@ class ChatViewModel : ViewModel() {
             if (streamingMsg != null) {
                 handler.markStopped(streamingMsg.id)
                 handler.onStreamComplete(streamingMsg.id)
+            } else {
+                // The terminal bubble can settle before the handler-wide busy
+                // flag (or navigation can already have cleared the transcript).
+                // Stop must still be an unconditional escape hatch.
+                handler.clearStreamingStatus()
             }
         }
     }
