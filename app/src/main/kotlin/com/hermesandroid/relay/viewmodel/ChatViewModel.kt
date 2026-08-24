@@ -41,6 +41,8 @@ import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SupervisedAttachmentCategory
+import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
@@ -274,6 +276,24 @@ internal fun voiceTurnTransportRejection(
 }
 
 class ChatViewModel : ViewModel() {
+    /**
+     * Active Android-only supervision policy. RelayApp replaces this snapshot
+     * whenever the active connection changes. Enforcement belongs here as well
+     * as in Compose so alternate UI entry points cannot bypass the restrictions.
+     */
+    @Volatile
+    private var supervisedModePolicy: SupervisedModePolicy = SupervisedModePolicy()
+
+    fun updateSupervisedModePolicy(policy: SupervisedModePolicy) {
+        supervisedModePolicy = policy
+        if (policy.enabled) {
+            _pendingAttachments.update { attachments ->
+                attachments.filterIndexed { index, attachment ->
+                    isAttachmentAllowedBySupervision(attachment, index)
+                }.take(policy.capabilities.attachmentMaxCount)
+            }
+        }
+    }
 
     private var apiClient: HermesApiClient? = null
     private var chatHandler: ChatHandler? = null
@@ -665,7 +685,10 @@ class ChatViewModel : ViewModel() {
     }
 
     fun addAttachment(attachment: Attachment) {
-        _pendingAttachments.update { it + attachment }
+        _pendingAttachments.update { current ->
+            if (!isAttachmentAllowedBySupervision(attachment, current.size)) current
+            else current + attachment
+        }
     }
 
     fun removeAttachment(index: Int) {
@@ -675,11 +698,20 @@ class ChatViewModel : ViewModel() {
     }
 
     fun replacePendingAttachments(attachments: List<Attachment>) {
-        _pendingAttachments.value = attachments.toList()
+        val policy = supervisedModePolicy
+        _pendingAttachments.value = if (!policy.enabled) {
+            attachments.toList()
+        } else {
+            attachments.filter { isAttachmentAllowedBySupervision(it, 0) }
+                .take(policy.capabilities.attachmentMaxCount)
+        }
     }
 
     fun replaceAttachment(composerId: String, attachment: Attachment) {
         _pendingAttachments.update { attachments ->
+            if (!isAttachmentAllowedBySupervision(attachment, (attachments.size - 1).coerceAtLeast(0))) {
+                return@update attachments.filterNot { it.composerId == composerId }
+            }
             var replaced = false
             val updated = attachments.map { current ->
                 if (current.composerId == composerId) {
@@ -707,6 +739,23 @@ class ChatViewModel : ViewModel() {
 
     fun clearAttachments() {
         _pendingAttachments.value = emptyList()
+    }
+
+    private fun isAttachmentAllowedBySupervision(attachment: Attachment, existingCount: Int): Boolean {
+        val policy = supervisedModePolicy
+        if (!policy.enabled) return true
+        val capabilities = policy.capabilities
+        if (!policy.isActive || !capabilities.attachments) return false
+        if (existingCount >= capabilities.attachmentMaxCount) return false
+        val maxBytes = capabilities.attachmentMaxFileMb.toLong() * 1024L * 1024L
+        if ((attachment.fileSize ?: 0L) > maxBytes) return false
+        val category = when {
+            attachment.contentType.startsWith("image/") -> SupervisedAttachmentCategory.Images
+            attachment.contentType.startsWith("audio/") -> SupervisedAttachmentCategory.Audio
+            attachment.contentType.startsWith("video/") -> SupervisedAttachmentCategory.Video
+            else -> SupervisedAttachmentCategory.Documents
+        }
+        return category in capabilities.attachmentCategories
     }
 
     // Server-side personality selection
@@ -4597,6 +4646,22 @@ class ChatViewModel : ViewModel() {
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
+        supervisedMessageBlockReason(supervisedModePolicy, text)?.let { reason ->
+            chatHandler?.addSystemNotice(reason)
+            return
+        }
+        if (supervisedModePolicy.enabled) {
+            val attachments = _pendingAttachments.value
+            if (attachments.any { attachment ->
+                    !isAttachmentAllowedBySupervision(attachment, attachments.indexOf(attachment))
+                }
+            ) {
+                chatHandler?.addSystemNotice(
+                    "One or more attachments are unavailable under the supervised policy.",
+                )
+                return
+            }
+        }
         recordRecentPrompt(text)
 
         // Demo / Explore mode: there is no server, but a silently dead Send
@@ -4865,6 +4930,10 @@ class ChatViewModel : ViewModel() {
         action: com.hermesandroid.relay.data.HermesCardAction,
     ) {
         val handler = chatHandler ?: return
+        if (supervisedModePolicy.enabled) {
+            handler.addSystemNotice("This action is unavailable in supervised mode.")
+            return
+        }
         // Ask answers route straight to the gateway respond RPCs —
         // answerAsk records its own (sanitized) dispatch stamp, so don't
         // double-stamp here.
@@ -4903,6 +4972,10 @@ class ChatViewModel : ViewModel() {
         ask: GatewayAsk,
         restored: ChatTurnAskCheckpoint? = null,
     ) {
+        if (supervisedModePolicy.enabled) {
+            denySupervisedInteraction(handler, ask)
+            return
+        }
         val sessionId = handler.currentSessionId.value
         val contextKey = activeProfileContextKey
         val existing = _pendingAsk.value
@@ -5029,6 +5102,33 @@ class ChatViewModel : ViewModel() {
         activeKey?.let { ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), true) }
         scheduleCheckpointWrite(immediate = true)
         sessionId?.let { maybeNotifyInteraction(it, ask) }
+    }
+
+    /**
+     * Supervised Chat never exposes approval, clarification, sudo, or secret
+     * inputs. Settle the upstream interaction immediately with its safest
+     * negative/empty response; if that cannot be confirmed, interrupt the turn
+     * so a hidden card cannot leave the session waiting indefinitely.
+     */
+    private fun denySupervisedInteraction(handler: ChatHandler, ask: GatewayAsk) {
+        val gateway = gatewayClient
+        if (gateway == null) {
+            handler.addSystemNotice("An interactive request was blocked by supervised mode.")
+            cancelStream()
+            return
+        }
+        viewModelScope.launch {
+            val response: Result<GatewayAskResponse>? = when (ask.kind) {
+                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = "deny")
+                GatewayAsk.Kind.CLARIFY -> ask.requestId?.let {
+                    gateway.respondClarify(it, "This supervised client cannot answer interactive requests.")
+                }
+                GatewayAsk.Kind.SUDO -> ask.requestId?.let { gateway.respondSudo(it, "") }
+                GatewayAsk.Kind.SECRET -> ask.requestId?.let { gateway.respondSecret(it, "") }
+            }
+            handler.addSystemNotice("An interactive request was denied by supervised mode.")
+            if (response == null || response.isFailure) cancelStream()
+        }
     }
 
     /** Render only upstream-supported approval values; old servers retain Approve/Deny. */
@@ -8816,6 +8916,9 @@ class ChatViewModel : ViewModel() {
      * so we shouldn't see duplicate calls here.
      */
     fun onMediaAttachmentRequested(messageId: String, token: String) {
+        if (supervisedModePolicy.enabled &&
+            !supervisedModePolicy.capabilities.generatedImages
+        ) return
         val handler = chatHandler ?: return
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
@@ -8874,6 +8977,9 @@ class ChatViewModel : ViewModel() {
      * produces `/` so the prefix check is unambiguous.
      */
     fun manualFetchAttachment(messageId: String, attachmentIndex: Int) {
+        if (supervisedModePolicy.enabled &&
+            !supervisedModePolicy.capabilities.generatedImages
+        ) return
         val handler = chatHandler ?: return
         val relay = relayHttpClient ?: return
         val repo = mediaSettingsRepo ?: return
@@ -8944,6 +9050,9 @@ class ChatViewModel : ViewModel() {
      * it into the markdown-image renderer, which previously ignored the relay.
      */
     suspend fun resolveServerImage(serverPath: String): ServerImageResult {
+        if (supervisedModePolicy.enabled &&
+            !supervisedModePolicy.capabilities.generatedImages
+        ) return ServerImageResult.Failure("Generated images are disabled in supervised mode")
         val relay = relayHttpClient
             ?: return ServerImageResult.Failure("Relay not configured on this connection")
         // fetchMediaByPath returns Result<MediaBytes>; fold it ONCE, right here,
@@ -8986,6 +9095,11 @@ class ChatViewModel : ViewModel() {
         expectedRole: MessageRole,
         unavailableMessage: String,
     ) {
+        if (
+            expectedRole == MessageRole.ASSISTANT &&
+            supervisedModePolicy.enabled &&
+            !supervisedModePolicy.capabilities.generatedImages
+        ) return
         val handler = chatHandler ?: return
         val relay = relayHttpClient
         val repo = mediaSettingsRepo

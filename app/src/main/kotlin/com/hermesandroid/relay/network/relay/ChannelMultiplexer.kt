@@ -153,7 +153,7 @@ class ChannelMultiplexer {
                 )
                 send(pong)
             }
-            "auth.ok", "auth.fail" -> {
+            "auth.ok", "auth.fail", "supervised.updated", "error" -> {
                 // Delegate to system handler if registered
                 handlers["system"]?.onMessage(envelope)
             }

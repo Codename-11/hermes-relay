@@ -132,6 +132,8 @@ import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
+import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedModeStore
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
@@ -166,6 +168,7 @@ import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
+import com.hermesandroid.relay.ui.screens.SupervisedControlsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
@@ -504,6 +507,11 @@ sealed class Screen(
     // the plural `ConnectionsSettings` subpage. See `ConnectionsSettings`
     // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
+    data object SupervisedControls : Screen(
+        "settings/supervised",
+        "Supervised mode",
+        Icons.Filled.Settings,
+    )
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
@@ -672,6 +680,69 @@ fun RelayApp() {
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+    val connectionStoreHydrated by
+        connectionViewModel.connectionStore.isHydrated.collectAsState()
+    val supervisedModeStore = remember(applicationContext) {
+        SupervisedModeStore(applicationContext)
+    }
+    val supervisedPolicyState = produceState<Pair<String?, SupervisedModePolicy>?>(
+        initialValue = null,
+        key1 = activeConnectionId,
+        key2 = supervisedModeStore,
+    ) {
+        val connectionId = activeConnectionId
+        if (connectionId == null) {
+            value = null to SupervisedModePolicy()
+        } else {
+            supervisedModeStore.policyFlow(connectionId).collect { policy ->
+                value = connectionId to policy
+            }
+        }
+    }
+    val ownedSupervisedPolicyState = supervisedPolicyState.value
+        ?.takeIf { (ownerConnectionId, _) -> ownerConnectionId == activeConnectionId }
+    // Fail closed across process restoration. activeConnectionId starts as
+    // null while ConnectionStore reads DataStore, so null alone cannot prove
+    // this is a fresh install with no supervised policy to restore.
+    if (!isRelayNavigationHydrated(
+            connectionStoreHydrated = connectionStoreHydrated,
+            activeConnectionId = activeConnectionId,
+            supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
+        )
+    ) return
+    val supervisedPolicy = ownedSupervisedPolicyState?.second ?: SupervisedModePolicy()
+    val supervisedPinnedProfile = supervisedPolicy.pinnedProfileName?.let { name ->
+        agentProfiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
+    }
+    val supervisedProfileConfirmed = !supervisedPolicy.enabled || (
+        profileSelectionSettled &&
+            supervisedPinnedProfile != null &&
+            selectedProfile?.name.equals(supervisedPinnedProfile.name, ignoreCase = true)
+        )
+    val chatSupervisedPolicy = if (supervisedPolicy.enabled && !supervisedProfileConfirmed) {
+        supervisedPolicy.copy(pinnedProfileName = null)
+    } else supervisedPolicy
+    var parentAccessUnlocked by remember(activeConnectionId) { mutableStateOf(false) }
+
+    LaunchedEffect(
+        activeConnectionId,
+        supervisedPolicy,
+        agentProfiles,
+        selectedProfile,
+        profileSelectionSettled,
+    ) {
+        chatViewModel.updateSupervisedModePolicy(chatSupervisedPolicy)
+        connectionViewModel.authManager.updateSupervisedMode(chatSupervisedPolicy)
+        if (!supervisedPolicy.enabled) {
+            parentAccessUnlocked = false
+            return@LaunchedEffect
+        }
+        val pinned = supervisedPinnedProfile ?: return@LaunchedEffect
+        if (!selectedProfile?.name.equals(pinned.name, ignoreCase = true)) {
+            connectionViewModel.selectProfile(pinned)
+            chatViewModel.activateGatewayProfile(pinned)
+        }
+    }
 
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
@@ -924,22 +995,6 @@ fun RelayApp() {
 
         val navController = rememberNavController()
 
-        // === PHASE3-safety-rails-followup: cross-layer deep-link nav ===
-        // Collect navigation requests posted by external launchers (e.g., the
-        // BridgeForegroundService notification's "Settings" action). The
-        // service sets EXTRA_NAV_ROUTE on its launch intent → MainActivity's
-        // onCreate / onNewIntent reads it and pumps it onto NavRouteRequest →
-        // we forward each emission to the NavController. Single observer at
-        // the app root so every screen benefits.
-        LaunchedEffect(navController) {
-            com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
-                navController.navigate(route) {
-                    launchSingleTop = true
-                }
-            }
-        }
-        // === END PHASE3-safety-rails-followup ===
-
         // Wire the proactive "session" surfacing once: a message with
         // surfacing="session" is injected into the active chat conversation.
         // ChatViewModel isn't available where ConnectionViewModel builds the
@@ -1012,6 +1067,72 @@ fun RelayApp() {
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
+        // The unlock remains useful while moving between parent-only settings,
+        // but never follows an enrolled device user back into supervised chat.
+        val parentAccessForCurrentRoute = parentAccessUnlocked &&
+            !shouldRelockParentAccess(
+                supervisedEnabled = supervisedPolicy.enabled,
+                parentAccessUnlocked = parentAccessUnlocked,
+                route = currentRoute,
+            )
+        // Cross-layer requests (notifications, services, deep links) use the
+        // route-scoped unlock. As soon as Chat is current, the parent grant is
+        // ineffective even before the state-clearing effect runs.
+        LaunchedEffect(
+            navController,
+            supervisedPolicy.enabled,
+            parentAccessForCurrentRoute,
+        ) {
+            com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
+                if (
+                    supervisedPolicy.enabled &&
+                    !isSupervisedRouteAllowed(route, parentAccessForCurrentRoute)
+                ) return@collect
+                navController.navigate(route) {
+                    launchSingleTop = true
+                }
+            }
+        }
+        LaunchedEffect(
+            supervisedPolicy.enabled,
+            parentAccessForCurrentRoute,
+            currentRoute,
+        ) {
+            if (
+                supervisedPolicy.enabled &&
+                !isSupervisedRouteAllowed(currentRoute, parentAccessForCurrentRoute)
+            ) {
+                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                    popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+        }
+        LaunchedEffect(supervisedPolicy.enabled, parentAccessUnlocked, currentRoute) {
+            if (shouldRelockParentAccess(supervisedPolicy.enabled, parentAccessUnlocked, currentRoute)) {
+                parentAccessUnlocked = false
+            }
+        }
+        LaunchedEffect(parentAccessUnlocked, supervisedPolicy.parentAccess.timeoutMinutes) {
+            if (parentAccessUnlocked) {
+                delay(supervisedPolicy.parentAccess.timeoutMinutes * 60_000L)
+                parentAccessUnlocked = false
+            }
+        }
+        DisposableEffect(lifecycleOwner, supervisedPolicy.enabled, parentAccessUnlocked) {
+            val relockObserver = LifecycleEventObserver { _, event ->
+                if (
+                    event == Lifecycle.Event.ON_PAUSE &&
+                    supervisedPolicy.enabled &&
+                    parentAccessUnlocked &&
+                    supervisedPolicy.parentAccess.relockOnBackground
+                ) {
+                    parentAccessUnlocked = false
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(relockObserver)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(relockObserver) }
+        }
         val suppressGlobalChrome = shouldSuppressGlobalChrome(
             onboardingCompleted = onboardingCompleted,
             isDemoMode = isDemoMode,
@@ -1690,6 +1811,8 @@ fun RelayApp() {
                     !suppressGlobalChrome &&
                     !isKeyboardVisible &&
                     !showStartupSphere &&
+                    (!supervisedPolicy.enabled ||
+                        supervisedPolicy.visibility.resolved().showTechnicalRoute) &&
                     shouldShowConnectionFooter(voiceUiState.voiceMode, voicePresentationMode)
                 ) {
                     val footerRoute = resolveFooterRouteCandidate(
@@ -1764,6 +1887,14 @@ fun RelayApp() {
                     .fillMaxSize()
                     .padding(innerPadding),
             ) {
+                val routeContentAllowed = !supervisedPolicy.enabled ||
+                    isSupervisedRouteAllowed(currentRoute, parentAccessForCurrentRoute)
+                if (!routeContentAllowed) {
+                    // The redirect effect runs after composition. Render no
+                    // destination content in the meantime so a restored or
+                    // external forbidden route cannot flash privileged UI.
+                    Box(modifier = Modifier.fillMaxSize())
+                } else {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
@@ -1856,15 +1987,43 @@ fun RelayApp() {
                     // sheet.
                     val openAgentSheetArg = backStackEntry.arguments
                         ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
-                    val requestedSessionId = backStackEntry.arguments
+                    val rawRequestedSessionId = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_SESSION_ID)
                         ?.takeIf { it.isNotBlank() }
-                    val requestedProfileRoute = backStackEntry.arguments
+                    val rawRequestedProfileRoute = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_PROFILE)
                         ?.takeIf { it.isNotBlank() }
-                    val requestedProactiveChatId = backStackEntry.arguments
+                    val rawRequestedProactiveChatId = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_PROACTIVE_CHAT_ID)
                         ?.takeIf { it.isNotBlank() }
+                    // Nav/deep-link arguments are not ownership evidence. The
+                    // supervised drawer uses profile-scoped session rows
+                    // directly; external args stay discarded until an
+                    // owner-aware source can explicitly prove the binding.
+                    val sanitizedRouteArgs = sanitizeSupervisedChatRouteArgs(
+                        policy = supervisedPolicy,
+                        args = SupervisedChatRouteArgs(
+                            sessionId = rawRequestedSessionId,
+                            profile = rawRequestedProfileRoute,
+                            proactiveChatId = rawRequestedProactiveChatId,
+                        ),
+                        pinnedProfileOwnershipProven = false,
+                    )
+                    val requestedSessionId = sanitizedRouteArgs.sessionId
+                    val requestedProfileRoute = sanitizedRouteArgs.profile
+                    val requestedProactiveChatId = sanitizedRouteArgs.proactiveChatId
+                    LaunchedEffect(
+                        supervisedPolicy.enabled,
+                        rawRequestedSessionId,
+                        rawRequestedProfileRoute,
+                        rawRequestedProactiveChatId,
+                    ) {
+                        if (supervisedPolicy.enabled) {
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_PROACTIVE_CHAT_ID, null)
+                        }
+                    }
                     val proactiveInboxEntries by connectionViewModel.inboxMessages.collectAsState()
                     val phoneThreadChatIds by connectionViewModel.phoneThreadChatIds.collectAsState()
                     LaunchedEffect(
@@ -2027,6 +2186,7 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        supervisedPolicy = chatSupervisedPolicy,
                     )
                 }
                 composable(Screen.Manage.route) {
@@ -2247,6 +2407,21 @@ fun RelayApp() {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
+                        supervisedPolicy = supervisedPolicy,
+                        parentAccessUnlocked = parentAccessUnlocked,
+                        onRequestParentAccess = { parentAccessUnlocked = true },
+                        onUpdateSupervisedPolicy = { policy ->
+                            activeConnectionId?.let { connectionId ->
+                                connectionSwitchScope.launch {
+                                    supervisedModeStore.setPolicy(connectionId, policy)
+                                }
+                            }
+                        },
+                        onNavigateToSupervisedControls = {
+                            if (parentAccessUnlocked || !supervisedPolicy.enabled) {
+                                navController.navigate(Screen.SupervisedControls.route)
+                            }
+                        },
                         onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
                         // used to live here was removed 2026-04-21. Tapping
@@ -2317,6 +2492,31 @@ fun RelayApp() {
                             )
                         },
                     )
+                }
+                composable(Screen.SupervisedControls.route) {
+                    if (!parentAccessUnlocked && supervisedPolicy.enabled) {
+                        LaunchedEffect(Unit) { navController.popBackStack() }
+                    } else {
+                        SupervisedControlsScreen(
+                            policy = supervisedPolicy,
+                            profiles = agentProfiles.filterNot { it.isDefault },
+                            onPolicyChange = { policy ->
+                                activeConnectionId?.let { connectionId ->
+                                    connectionSwitchScope.launch {
+                                        supervisedModeStore.setPolicy(connectionId, policy)
+                                    }
+                                }
+                            },
+                            onBack = { navController.popBackStack() },
+                            onReturnToSupervisedView = {
+                                parentAccessUnlocked = false
+                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                    popUpTo(Screen.Chat.route) { inclusive = false }
+                                    launchSingleTop = true
+                                }
+                            },
+                        )
+                    }
                 }
                 composable(Screen.Plugins.route) {
                     PluginsScreen(
@@ -2788,7 +2988,8 @@ fun RelayApp() {
                 composable(Screen.About.route) {
                     AboutScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        allowDeveloperUnlock = !supervisedPolicy.enabled || parentAccessUnlocked,
                     )
                 }
                 composable(
@@ -2891,6 +3092,7 @@ fun RelayApp() {
                     )
                 }
             }
+                }
             } // end bridge-return wrapper column
             } // end CompositionLocalProvider
         }

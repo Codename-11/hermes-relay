@@ -312,6 +312,8 @@ fun AttachmentViewer(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         val context = LocalContext.current
+        val exportAllowed = LocalImageExportAllowed.current ||
+            attachment.renderMode != AttachmentRenderMode.IMAGE
         AllowDeviceRotation()
         val scope = rememberCoroutineScope()
         var busy by remember { mutableStateOf(false) }
@@ -405,6 +407,7 @@ fun AttachmentViewer(
                 title = title,
                 busy = busy,
                 actionsEnabled = !blurred,
+                exportAllowed = exportAllowed,
                 onShare = onShare,
                 onSave = onSave,
                 onOpenExternal = onOpenExternal,
@@ -448,6 +451,7 @@ internal fun AttachmentGalleryViewer(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         val context = LocalContext.current
+        val exportAllowed = LocalImageExportAllowed.current
         AllowDeviceRotation()
         val scope = rememberCoroutineScope()
         var busy by remember { mutableStateOf(false) }
@@ -584,6 +588,7 @@ internal fun AttachmentGalleryViewer(
                 title = toolbarTitle,
                 busy = busy,
                 actionsEnabled = !currentBlurred,
+                exportAllowed = exportAllowed,
                 onShare = onShare,
                 onSave = onSave,
                 onOpenExternal = onOpenExternal,
@@ -613,6 +618,7 @@ private fun MediaViewerToolbar(
     title: String,
     busy: Boolean,
     actionsEnabled: Boolean = true,
+    exportAllowed: Boolean = true,
     onShare: () -> Unit,
     onSave: () -> Unit,
     onOpenExternal: () -> Unit,
@@ -653,11 +659,13 @@ private fun MediaViewerToolbar(
         ) {
             Icon(Icons.Filled.OpenInNew, contentDescription = stringResource(R.string.attachment_open_externally_a11y))
         }
-        IconButton(onClick = onShare, enabled = actionsEnabled && !busy, colors = tint) {
-            Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.attachment_share_a11y))
-        }
-        IconButton(onClick = onSave, enabled = actionsEnabled && !busy, colors = tint) {
-            Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.attachment_save_a11y))
+        if (exportAllowed) {
+            IconButton(onClick = onShare, enabled = actionsEnabled && !busy, colors = tint) {
+                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.attachment_share_a11y))
+            }
+            IconButton(onClick = onSave, enabled = actionsEnabled && !busy, colors = tint) {
+                Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.attachment_save_a11y))
+            }
         }
     }
 }

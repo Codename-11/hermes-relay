@@ -2698,6 +2698,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun installAuthManager(am: AuthManager) {
         am.setActiveEndpointProvider { connectionManager.activeRelayEndpoint.value }
+        am.setSupervisedMetadataReconnectFallback {
+            connectionManager.reconnectForAuthenticatedMetadataUpdate()
+        }
         authManager = am
         // Push into the flow so the flatMapLatest chains on authState /
         // pairingCode / currentPairedSession repoint to the new manager.
@@ -3538,6 +3541,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // ConnectionStore's EncryptedSharedPrefs.
         profileController.profileSelectionStore.clear(connectionId)
         profileController.profileLockStore.clear(connectionId)
+        com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())
+            .clear(connectionId)
         profileController.profilePresentationStore.clear(connectionId)
         profileController.profileSessionStore.clearConnection(connectionId)
         profileController.profileDisplayAliasStore.clearConnection(connectionId)
@@ -3577,6 +3582,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     init {
+        authManager.setSupervisedMetadataReconnectFallback {
+            connectionManager.reconnectForAuthenticatedMetadataUpdate()
+        }
         // Wire multiplexer to connection manager (for relay/bridge/terminal)
         multiplexer.setSendCallback { envelope ->
             connectionManager.send(envelope)
@@ -4043,6 +4051,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         connectionStore.removeConnection(duplicate.id)
                         profileController.profileSelectionStore.clear(duplicate.id)
                         profileController.profileLockStore.clear(duplicate.id)
+                        com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())
+                            .clear(duplicate.id)
                         profileController.profilePresentationStore.clear(duplicate.id)
                         profileController.profileSessionStore.clearConnection(duplicate.id)
                     }
@@ -7137,6 +7147,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 check(dataManager.resetAppData()) { "App data store reset failed" }
                 profileController.profileSelectionStore.clearAll()
                 profileController.profileLockStore.clearAll()
+                com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())
+                    .clearAll()
                 profileController.profilePresentationStore.clearAll()
                 profileController.profileSessionStore.clearAll()
                 _apiServerUrl.value = ""

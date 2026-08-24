@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
+- **Android Supervised Mode presents a parent-controlled, profile-pinned chat surface.** Parents can limit attachments, Standard voice, generated media, conversation history, actions, and technical metadata while device authentication protects full settings. Hermes-Relay can identify and revoke a paired supervised client without becoming the policy enforcement boundary.
 
 ### Changed
 
