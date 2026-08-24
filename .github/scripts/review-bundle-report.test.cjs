@@ -134,9 +134,47 @@ async function testManualRunSelectionCreatesComment() {
   assert.match(calls.create[0].body, /## Review candidate ready/);
 }
 
+async function testSkippedRunIsIgnored() {
+  let apiCalled = false;
+  const messages = [];
+  const github = {
+    rest: {
+      actions: {
+        listWorkflowRunArtifacts() {},
+      },
+    },
+    paginate: async () => {
+      apiCalled = true;
+      return [];
+    },
+  };
+  await reportReviewBundle({
+    github,
+    context: {
+      repo: { owner: 'Codename-11', repo: 'hermes-relay' },
+      payload: {
+        workflow_run: {
+          ...run,
+          id: 32736508535,
+          conclusion: 'skipped',
+          head_sha: 'a38849ff1680a1993230773a5d602b781367c789',
+        },
+      },
+    },
+    core: {
+      info: (message) => messages.push(message),
+      warning: (message) => messages.push(message),
+      setFailed: (message) => assert.fail(message),
+    },
+  });
+  assert.equal(apiCalled, false);
+  assert.deepEqual(messages, ['Ignoring skipped review-bundle run 32736508535.']);
+}
+
 Promise.all([
   testExistingCommentIsUpdated(),
   testManualRunSelectionCreatesComment(),
+  testSkippedRunIsIgnored(),
 ])
   .then(() => console.log('Review-bundle report tests passed.'))
   .catch((error) => {

@@ -25,8 +25,10 @@ the label stops those automatic rebuilds. GitHub may hold a first-time fork
 contributor's initial run for explicit maintainer approval before any untrusted
 code executes.
 
-After each completion, a separate trusted `workflow_run` reporter creates or
-updates one marked comment on the PR. It reads only workflow and artifact
+After each non-skipped candidate completion, a separate trusted `workflow_run`
+reporter creates or updates one marked comment on the PR. Skipped workflow shells
+for unlabeled PR events are ignored before artifact or comment APIs are called.
+The reporter reads only workflow and artifact
 metadata from the completed run and checks out only the repository's default
 branch; it never checks out the PR head, downloads the candidate, or executes
 fork code with write permission. The comment links the exact artifact and run,
