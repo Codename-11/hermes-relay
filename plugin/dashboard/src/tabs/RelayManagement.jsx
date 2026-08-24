@@ -13,6 +13,7 @@ import {
 } from "../lib/api.js";
 import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatters.js";
 import { formatSessionExpiry } from "../lib/session-expiry.mjs";
+import { supervisedSessionDisplay } from "../lib/supervised-session.mjs";
 import PairDialog from "../components/PairDialog.jsx";
 import {
   Alert,
@@ -596,6 +597,7 @@ export default function RelayManagement({ autoRefresh }) {
 
   const ov = overview || {};
   const list = sessions || [];
+  const hasSupervisedSession = list.some((session) => supervisedSessionDisplay(session));
 
   return (
     <div className="space-y-4">
@@ -643,6 +645,13 @@ export default function RelayManagement({ autoRefresh }) {
           </Button>
         </CardHeader>
         <CardContent>
+          {hasSupervisedSession ? (
+            <div className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Supervised mode is reported and enforced by the Android client, not by Relay. Relay
+              shows the client&apos;s reported settings here so a paired device can be identified and
+              revoked.
+            </div>
+          ) : null}
           {!autoRefresh ? (
             <div className="mb-3">
               <Button size="sm" variant="outline" onClick={load}>
@@ -685,19 +694,43 @@ export default function RelayManagement({ autoRefresh }) {
                   const grants = extractGrants(s);
                   const type = classifySession(s, grants);
                   const transport = sessionTransport(s);
+                  const supervised = supervisedSessionDisplay(s);
                   const deviceDetail = [s.device_model, s.device_platform]
                     .filter((value) => value && value !== "unknown")
                     .join(" · ");
                   return (
                     <TableRow key={tokenPrefix || idx}>
                       <TableCell className="font-medium">
-                        <div>{label}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{label}</span>
+                          {supervised ? (
+                            <Badge variant="secondary" className="w-fit text-xs">
+                              Supervised
+                            </Badge>
+                          ) : null}
+                        </div>
                         <div className="font-mono text-xs font-normal text-muted-foreground">
                           {tokenPrefix ? shortToken(tokenPrefix, 12) : "no token prefix"}
                         </div>
                         {deviceDetail ? (
                           <div className="text-xs font-normal text-muted-foreground">
                             {deviceDetail}
+                          </div>
+                        ) : null}
+                        {supervised && supervised.profileLabel ? (
+                          <div className="text-xs font-normal text-muted-foreground">
+                            Pinned profile: {supervised.profileLabel}
+                          </div>
+                        ) : null}
+                        {supervised && supervised.visibleCapabilities.length > 0 ? (
+                          <div
+                            className="max-w-xs text-xs font-normal text-muted-foreground"
+                            title="Capabilities reported by the Android client"
+                          >
+                            Client allows: {supervised.visibleCapabilities.join(" · ")}
+                            {supervised.remainingCapabilityCount > 0
+                              ? ` · +${supervised.remainingCapabilityCount} more`
+                              : ""}
                           </div>
                         ) : null}
                       </TableCell>
