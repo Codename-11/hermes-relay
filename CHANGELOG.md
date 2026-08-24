@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
+- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
 
 ## [Android 1.12.1] - 2026-08-22
 

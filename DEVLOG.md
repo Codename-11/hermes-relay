@@ -13,6 +13,9 @@ A separate trusted completion reporter reads only run/artifact metadata, checks
 out only the default branch, and creates or updates one marked PR comment with
 the exact candidate link and bounded review instructions. It never checks out or
 executes fork code with write permission.
+Skipped Build Review Bundle shells from unlabeled PR synchronize, reopen, or
+unrelated-label events return before artifact lookup and PR comment access, so
+only an explicit `review-candidate` run can produce candidate status copy.
 
 ## 2026-08-23 — GitHub Discussions community surface
 
