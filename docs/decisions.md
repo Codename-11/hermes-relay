@@ -1042,6 +1042,10 @@ two operational frictions as it grew:
   a release-merge from `dev`.
 - `dev` = **integration branch**. Feature branches target `dev`; the
   `[Unreleased]` CHANGELOG section lives there.
+- `origin/dev` is the single integration authority. Local `dev` is a
+  fast-forward-only mirror; concurrent work stays on task worktrees, and any
+  multi-branch batch uses a named integration branch plus PR rather than a
+  private local-`dev` queue.
 - Server pulls `dev` for staging. Users and `hermes-relay-update` track
   `main` and tags.
 - Releases are opened as PRs from `dev` into `main`, merged `--no-ff`,

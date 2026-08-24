@@ -19,7 +19,7 @@ parallel. This is the entire reason per-feature worktrees feel fast.
 ```
 main    ──●──────────────────●─────────   released only; tags cut HERE
            \                /
-dev     ──●──●──●──●──●──●──●───────────   integration; [Unreleased] accumulates
+origin/dev ──●──●──●──●──●──●────────────   canonical integration ref
           /    /    /
 feat/a ──●        worktree A  ┐
 feat/b ────●      worktree B  ├─ one worktree = one branch = one unit of work
@@ -29,9 +29,23 @@ feat/c ──────●    worktree C  ┘
 ## Four rules cover everything
 
 1. **One worktree = one branch = one feature/fix**, in its own folder.
-2. **Branch off `dev`, PR back to `dev`.** CI green → merge `--no-ff`.
+2. **Branch from current `origin/dev`, PR back to `dev`.** CI green → merge
+   `--no-ff`.
 3. **`main` only receives `dev`→`main` release merges.** Tag from `main`.
 4. **Worktrees are disposable** — remove them once the PR merges.
+
+The primary local `dev` checkout is a tracked-clean, fast-forward-only mirror of
+`origin/dev`. It is not a staging area. Never commit, merge feature branches, or
+queue release work there; update it with `git merge --ff-only origin/dev` after
+fetching. This gives every session one integration authority even while several
+worktrees are active.
+
+When multiple reviewed branches must land as one batch, create
+`integration/<batch>` from the latest `origin/dev` in a dedicated worktree, merge
+the component branches there with `--no-ff`, and open one PR from that integration
+branch to `dev`. One coordinator refreshes the batch against current `dev`, waits
+for exact-head checks, and merges it. Other worktrees do not update local `dev` or
+push directly to `origin/dev`.
 
 ## In Orca (the normal path here)
 
@@ -54,8 +68,11 @@ the four rules above; gitflow is the merge discipline layered on top.
 When you're not driving through Orca:
 
 ```bash
-# Create a worktree for a new feature branch off dev
-git worktree add ../hermes-feat-bridge-scroll -b feature/bridge-scroll dev
+# Refresh the canonical integration ref without switching the primary checkout
+git fetch origin dev
+
+# Create a worktree for a new feature branch from exact origin/dev
+git worktree add ../hermes-feat-bridge-scroll -b feature/bridge-scroll origin/dev
 
 # ...work in that folder, commit, push, open a PR into dev...
 
@@ -74,8 +91,9 @@ git worktree remove <path> # delete a worktree (must be clean, or pass --force)
 ### Gotchas
 
 - **A branch can be checked out in only one worktree at a time.** Trying to check
-  out `dev` in two worktrees errors — that's intentional. Keep `dev`/`main` in the
-  main checkout and feature branches in their own worktrees.
+  out `dev` in two worktrees errors — that's intentional. Keep local `dev`/`main`
+  as clean mirrors in the primary checkout and do all task work on worktree
+  branches.
 - **Worktrees share the same `.git`**, so a `git fetch`/`git gc` in any worktree
   affects all of them. Refs and stashes are shared; the *working tree* and
   per-worktree `HEAD` are not.
@@ -98,4 +116,5 @@ git worktree remove <path> # delete a worktree (must be clean, or pass --force)
 Worktrees change *nothing* about the release contract. Feature worktrees merge to
 `dev`; releases are still cut by merging `dev` → `main` with `--no-ff` and tagging
 from `main` (Android `android-v*`, Plugin `server-v*`, CLI+UI `desktop-v*`). Version bumps
-happen on `dev` at release-prep, never on a feature branch — see RELEASE.md.
+happen on a dedicated release-prep branch that merges through a PR to `dev` — see
+RELEASE.md.

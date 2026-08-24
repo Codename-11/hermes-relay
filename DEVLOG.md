@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-24 — Single dev integration authority
+
+`origin/dev` is the sole integration authority. Primary local `dev` checkouts are
+fast-forward-only mirrors, while feature, fix, docs, release-prep, and multi-branch
+integration work stays in dedicated worktrees and reaches `dev` through PRs. This
+keeps concurrent sessions from creating a second unpublished integration history
+and makes exact-head CI the gate before release preparation.
+
 ## 2026-08-24 — Release surface naming
 
 Future Android, Plugin, and CLI+UI GitHub Releases, Android Play submissions,
