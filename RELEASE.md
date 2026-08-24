@@ -422,14 +422,15 @@ the threshold is intent-driven, not event-driven.
 If you want to dogfood a frozen `dev` release candidate without declaring GA,
 tag the exact release-prepared `dev` commit with a **prerelease** tag such as
 `android-vX.Y.Z-rc.N` or `server-vX.Y.Z-rc.N`. Android prereleases publish the
-side-by-side Candidate app and never upload to Play. Plugin prereleases publish
-opt-in packages for staging and do not automatically replace production.
+side-by-side **HR Candidate** app and never upload to Play. Plugin prereleases
+publish opt-in packages for staging and do not automatically replace production.
 See [Review builds and release candidates](docs/review-candidates.md).
 
-For one-PR review, do not bump versions or create a tag. Run **Build Review
-Bundle** for the PR number or exact SHA. It produces one short-lived matched
-Android + Relay artifact; the Candidate app uses a separate application ID and
-the Relay package requires an explicit staging or snapshot/rollback install.
+For one-PR review, do not bump versions or create a tag. Apply the
+`review-candidate` label to an open PR targeting `dev`. It produces one
+short-lived matched Android + Relay artifact; the **HR Candidate** app uses a
+separate application ID and the Relay package requires an explicit staging or
+snapshot/rollback install.
 
 ## Release train ownership
 

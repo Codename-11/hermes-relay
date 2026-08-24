@@ -7,9 +7,9 @@ Hermes-Relay supports two candidate lanes with different intent:
 | PR review bundle | Exact PR head commit | Private GitHub Actions artifact | No version bump or tag |
 | Release candidate | Release-prepared exact `dev` SHA | Public GitHub prerelease | Surface tag ending in `-rc.N` |
 
-Neither lane changes a stable Android installation. Candidate APKs use the
+Neither lane changes a stable Android installation. **HR Candidate** APKs use the
 dedicated package ID `com.axiomlabs.hermesrelay.sideload.candidate`, the launcher
-label **Hermes Candidate**, an amber launcher background, separate Android app
+label **HR Candidate**, an amber launcher background, separate Android app
 data, and a persistent in-app banner containing the candidate kind, source, and
 short commit SHA. Installing a newer candidate replaces only the previous
 candidate slot. It must be paired separately because it does not share the
@@ -59,7 +59,7 @@ updater notification.
 
 1. Verify the downloaded files with `SHA256SUMS.txt`.
 2. Install the APK normally or with `adb install -r <candidate.apk>`.
-3. Confirm the launcher says **Hermes Candidate** and the in-app banner shows
+3. Confirm the launcher says **HR Candidate** and the in-app banner shows
    the expected PR/SHA before pairing it.
 4. Remove only the candidate with:
    `adb uninstall com.axiomlabs.hermesrelay.sideload.candidate`.
@@ -94,7 +94,7 @@ metadata and notes have been prepared on `dev`.
 2. Create the affected surface tag, such as `android-v1.12.0-rc.1`,
    `server-v1.9.0-rc.1`, or `desktop-v0.5.0-rc.1`, at that commit.
 3. The release workflow verifies the prerelease tag is contained in `dev`.
-4. Android RCs publish the side-by-side Candidate APK and never upload to Play.
+4. Android RCs publish the side-by-side **HR Candidate** APK and never upload to Play.
 5. Plugin RCs publish prerelease packages for explicit staging/opt-in install;
    they do not replace a running production plugin automatically.
 6. CLI+UI RCs publish opt-in prerelease binaries/installers; stable updater

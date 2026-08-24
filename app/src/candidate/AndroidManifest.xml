@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:icon="@mipmap/ic_launcher_candidate"
-        android:label="Hermes Candidate"
+        android:label="HR Candidate"
         android:roundIcon="@mipmap/ic_launcher_candidate_round"
         tools:replace="android:icon,android:label" />
 </manifest>

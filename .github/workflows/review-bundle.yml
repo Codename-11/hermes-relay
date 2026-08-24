@@ -123,7 +123,7 @@ jobs:
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
           test -x "$aapt"
           "$aapt" dump badging "$apk" | grep -F "package: name='com.axiomlabs.hermesrelay.sideload.candidate'"
-          "$aapt" dump badging "$apk" | grep -F "application-label:'Hermes Candidate'"
+          "$aapt" dump badging "$apk" | grep -F "application-label:'HR Candidate'"
 
       - name: Assemble review bundle
         env:

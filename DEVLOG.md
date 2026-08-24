@@ -8,6 +8,10 @@ guidance, and user documentation use the
 `Hermes-Relay <Surface> v<version>` display-name contract. Immutable tags,
 package identities, machine-readable version-track IDs, updater channels, and
 artifact filenames remain unchanged.
+The isolated Android review and release-candidate application is branded
+`HR Candidate` in its launcher label, workflow verification, handoff comment,
+and active contributor and release documentation. Its package identity, build
+type, tags, and artifact contracts remain unchanged.
 
 ## 2026-08-24 — Review-candidate commissioning
 
