@@ -90,9 +90,10 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 case "$os-$arch" in
   linux-x86_64)  asset="hermes-relay-linux-x64" ;;
+  linux-aarch64|linux-arm64) asset="hermes-relay-linux-arm64" ;;
   darwin-x86_64) asset="hermes-relay-darwin-x64" ;;
   darwin-arm64)  asset="hermes-relay-darwin-arm64" ;;
-  *) die "unsupported platform: $os/$arch (published binaries: linux-x64, darwin-x64/arm64; Windows uses install.ps1)" ;;
+  *) die "unsupported platform: $os/$arch (published binaries: linux-x64/arm64, darwin-x64/arm64; Windows uses install.ps1)" ;;
 esac
 
 # Resolve "latest" to a concrete tag. GitHub's /releases/latest/download/ URL
@@ -103,16 +104,24 @@ esac
 resolved_version="$VERSION"
 if [ "$VERSION" = "latest" ]; then
   say "-> resolving latest desktop-v* release..."
-  api_body=$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>/dev/null) \
-    || die "could not query GitHub Releases API"
+  release_tags=""
+  page=1
+  while :; do
+    api_body=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page" 2>/dev/null) \
+      || die "could not query GitHub Releases API page $page"
+    page_tags=$(printf '%s\n' "$api_body" \
+      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+      | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)"/\1/' || true)
+    page_count=$(printf '%s\n' "$page_tags" | awk 'NF { count++ } END { print count + 0 }')
+    release_tags=$(printf '%s\n%s\n' "$release_tags" "$page_tags")
+    [ "$page_count" -eq 100 ] || break
+    page=$((page + 1))
+  done
   # Extract every CLI-track tag_name and pick the SemVer-max. Don't trust the
   # API's first-element ordering — GitHub orders by the release row's created_at
-  # which shifts when the row is edited or re-tagged. Each "tag_name": entry is
-  # on its own line in GitHub's JSON output, so line-oriented tooling is
-  # sufficient and avoids a jq dependency.
-  release_tags=$(printf '%s\n' "$api_body" \
-    | grep -E '"tag_name": *"(cli-v|desktop-v)' \
-    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)
+  # which shifts when the row is edited or re-tagged. Extract only tag_name
+  # fields from each page so this stays independent of JSON formatting and
+  # avoids a jq dependency.
   resolved_version=$(printf '%s\n' "$release_tags" \
     | awk '/^desktop-v/ { v=$0; sub(/^desktop-v/, "", v); print v "\t" $0 }' \
     | sort -V \

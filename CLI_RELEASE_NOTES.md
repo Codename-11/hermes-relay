@@ -1,17 +1,26 @@
 # Hermes-Relay CLI v__VERSION__
 
-**Release Date:** 2026-08-15
+**Release Date:** 2026-08-22
 
-This patch keeps the Windows management UI usable when the Relay daemon is stopped or its status cannot be read.
+This release makes the Desktop connector resilient through Relay interruptions,
+aligns Windows computer control with current CUA Driver releases, and adds a
+native Linux ARM64 build.
 
-**Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64; the management UI is Windows-only.
+**Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
 ## What's changed
 
+### Added
+
+- **Linux ARM64 is a first-class release target.** The one-line installer,
+  updater, checksums, and release artifacts now cover both Linux x64 and arm64.
+
 ### Fixed
 
-- **Stopped daemons no longer block the management UI.** Missing, stale, malformed, or temporarily unavailable daemon status falls back to an explicit stopped state while hosts, settings, activity, CLI details, diagnostics, and daemon controls continue loading normally.
-- **Starting the daemon restores live status without reopening the UI.** A valid running status continues through the same bounded, single-flight snapshot path introduced in beta.3.
+- **The daemon reconnects instead of exiting after an interrupted Relay socket.** Relay restarts and repeated transient replacement failures stay on bounded automatic backoff, and terminal failures persist an accurate stopped reason for the UI.
+- **Oversized desktop-tool output no longer closes the shared connection.** PowerShell output and every serialized desktop response stay inside the Relay WebSocket budget.
+- **Current CUA Driver releases remain compatible by contract.** Driver 0.20 and newer are accepted when their manifest and required tools match Hermes, and Windows uses the manifest-declared direct standard-mode runtime instead of a stale machine-wide daemon.
+- **Install and update discovery paginates the multi-surface release history.** Desktop releases remain discoverable after more Android and Server releases, Windows cooperative updates clean their released backup, and unsigned installers retain the normal SmartScreen warning.
 
 ## Install
 
@@ -42,6 +51,7 @@ hermes-relay --version
 hermes-relay hosts list --json
 hermes-relay daemon start
 hermes-relay daemon status --json
+hermes-relay computer-use status --json
 ```
 
 On Windows, click the Hermes-Relay CLI UI notification-area icon to open the management popup directly above it.

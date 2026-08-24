@@ -120,6 +120,9 @@ $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/C
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
 
+Prebuilt Linux CLI assets support both x64 and arm64; the installer selects the
+matching binary from the machine architecture.
+
 Windows downloads and verifies `hermes-relay-windows-x64-setup.exe`. The installer
 places the CLI and management UI together, adds `~/.hermes/bin` to the user PATH, and
 lets the UI start at sign-in. CLI-only installs download the same prebuilt
