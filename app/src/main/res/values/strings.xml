@@ -1002,6 +1002,36 @@
     <string name="active_section_revoke_relay">Revoke Relay pairing</string>
 
     <!-- P0: SessionDrawer -->
+    <string name="bot_mode_title">Bot Mode</string>
+    <string name="bot_mode_drawer_summary">Bots and group rooms</string>
+    <string name="bot_mode_search">Search Bot Mode</string>
+    <string name="bot_mode_search_hint">Search Bots and groups</string>
+    <string name="bot_mode_refresh">Refresh Bot Mode</string>
+    <string name="bot_mode_new_bot">New Bot</string>
+    <string name="bot_mode_gateway_unavailable">Gateway unavailable</string>
+    <string name="bot_mode_all_gateways">All gateways</string>
+    <string name="bot_mode_offline">Offline</string>
+    <string name="bot_mode_filter_all">All</string>
+    <string name="bot_mode_filter_bots">Bots</string>
+    <string name="bot_mode_filter_groups">Groups</string>
+    <string name="bot_mode_active_now">Active now</string>
+    <string name="bot_mode_opening_chat">Opening Bot Chat…</string>
+    <string name="bot_mode_no_messages">Start the Bot Chat</string>
+    <string name="bot_mode_read_only">Read only</string>
+    <string name="bot_mode_group_no_messages">No room messages yet</string>
+    <string name="bot_mode_empty">No Bots or group rooms yet</string>
+    <string name="bot_mode_group_title">Group room</string>
+    <string name="bot_mode_group_missing">This group room is no longer available.</string>
+    <string name="bot_mode_group_read_only_help">This is the bounded read-only room history shared by Hermes Desktop. Continue with an individual Bot for now.</string>
+    <string name="bot_mode_bot_name">Profile name</string>
+    <string name="bot_mode_bot_title">Bot name</string>
+    <string name="bot_mode_bot_description">Role and description</string>
+    <string name="bot_mode_create_help">The new Bot starts from the default profile and shares its sign-in. You can refine its skills and model in Manage.</string>
+    <string name="bot_mode_create">Create Bot</string>
+    <string name="bot_mode_back_to_bots">Back to Bot Mode</string>
+    <string name="bot_mode_chat_open_failed">Bot Chat could not open</string>
+    <string name="bot_mode_created">%1$s created</string>
+    <string name="bot_mode_create_failed">Bot could not be created</string>
     <string name="drawer_filter_by_source">Filter by source</string>
     <string name="drawer_show_sources">Show sources</string>
     <string name="drawer_refresh_sessions">Refresh sessions</string>

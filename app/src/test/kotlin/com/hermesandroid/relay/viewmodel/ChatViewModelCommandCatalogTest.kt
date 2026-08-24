@@ -59,6 +59,15 @@ class ChatViewModelCommandCatalogTest {
     }
 
     @Test
+    fun canonicalBotChat_rewritesOnlyConversationForkCommands() {
+        assertTrue(shouldCompactCanonicalBotChat("new", canonicalBotChatMode = true))
+        assertTrue(shouldCompactCanonicalBotChat("RESET", canonicalBotChatMode = true))
+        assertFalse(shouldCompactCanonicalBotChat("new", canonicalBotChatMode = false))
+        assertFalse(shouldCompactCanonicalBotChat("compact", canonicalBotChatMode = true))
+        assertFalse(shouldCompactCanonicalBotChat("title", canonicalBotChatMode = true))
+    }
+
+    @Test
     fun parseCommandsCatalog_ranksOnlySkillSlotsAndBoundsMetadata() {
         val catalog = buildJsonObject {
             put(

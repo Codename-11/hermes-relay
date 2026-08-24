@@ -14,6 +14,13 @@ import com.hermesandroid.relay.data.GatewayProfilePatch
 import com.hermesandroid.relay.data.GatewayProfileSection
 import com.hermesandroid.relay.data.GatewayProfileSkill
 import com.hermesandroid.relay.data.GatewayProfileToolset
+import com.hermesandroid.relay.data.BotChatTarget
+import com.hermesandroid.relay.data.BotGroupMember
+import com.hermesandroid.relay.data.BotGroupMessage
+import com.hermesandroid.relay.data.BotGroupRoom
+import com.hermesandroid.relay.data.BotModeRoster
+import com.hermesandroid.relay.data.BotRosterEntry
+import com.hermesandroid.relay.data.BotSessionSummary
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -91,6 +98,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class GatewayChatClient(
     initialDashboardClient: DashboardApiClient,
+    private val fixedSessionProfile: String? = null,
     okHttpClient: OkHttpClient? = null,
     private val callbackDispatcher: (block: () -> Unit) -> Unit = MainThreadDispatcher,
     /** Surface for "this server has no usable /api/ws" — flips availability to Unsupported. */
@@ -123,6 +131,7 @@ class GatewayChatClient(
     private var profileSetAssetSupported: Boolean? = null
     companion object {
         private const val TAG = "GatewayChatClient"
+        private const val BOT_CHAT_TITLE = "Bot Chat"
 
         /**
          * Idle-progress turn watchdog — reset on EVERY received gateway event
@@ -389,7 +398,8 @@ class GatewayChatClient(
     var sessionProfileProvider: () -> String? = { null }
 
     private fun currentSessionProfile(): String? =
-        sessionProfileProvider().takeIf { !it.isNullOrBlank() }
+        fixedSessionProfile?.trim()?.takeIf(String::isNotBlank)
+            ?: sessionProfileProvider().takeIf { !it.isNullOrBlank() }
 
     /**
      * Supplies non-model overrides for each fresh `session.create`. Model and
@@ -1474,6 +1484,102 @@ class GatewayChatClient(
         }.onSuccess { profileListSupported = true }
     }
 
+    /**
+     * Rich Bot Mode roster from the upstream Gateway. Kept separate from
+     * [listProfiles] because session previews and room projections are useful
+     * to the messenger surface but needlessly expensive for ordinary profile
+     * selectors.
+     */
+    suspend fun listBotModeRoster(): Result<BotModeRoster> {
+        if (profileListSupported == false) {
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val response = rpc(
+            "profiles.list",
+            buildJsonObject { put("include_sessions", true) },
+        )
+        if (response.exceptionOrNull().isMethodNotFound()) {
+            profileListSupported = false
+            return Result.failure(GatewayProfileManagementUnsupportedException("profiles.list"))
+        }
+        return response.mapCatching(::parseBotModeRoster)
+            .onSuccess { profileListSupported = true }
+    }
+
+    /**
+     * Resolve the profile's one canonical hidden `Bot Chat`, creating it only
+     * after an authoritative exact-title lookup returned no row. Lookup errors
+     * fail closed so a transient connection problem can never fork the bot's
+     * durable conversation.
+     */
+    suspend fun ensureCanonicalBotChat(profileName: String): Result<BotChatTarget> = runCatching {
+        val profile = profileName.trim().takeIf(String::isNotEmpty)
+            ?: throw IllegalArgumentException("profile name required")
+        connectMutex.withLock {
+            ensureConnected()
+            val existing = rpc(
+                "session.list",
+                buildJsonObject {
+                    put("profile", profile)
+                    put("title", BOT_CHAT_TITLE)
+                    put("include_hidden", true)
+                    put("limit", 200)
+                },
+            ).getOrElse { error ->
+                throw GatewayPreflightException(
+                    "Could not check $profile's Bot Chat registry: ${error.message}",
+                )
+            }
+            val row = (existing["sessions"] as? JsonArray)
+                ?.firstOrNull() as? JsonObject
+            if (row != null) {
+                val stored = row.stringField("id")?.takeIf(String::isNotBlank)
+                    ?: throw GatewayPreflightException("Bot Chat registry returned no session id")
+                val resolved = row.stringField("resolved_id")?.takeIf(String::isNotBlank) ?: stored
+                return@withLock BotChatTarget(storedSessionId = stored, resolvedSessionId = resolved)
+            }
+
+            if (hasActiveTurn()) {
+                throw GatewayPreflightException("Wait for the current Hermes turn to finish before creating Bot Chat")
+            }
+            val created = rpc(
+                "session.create",
+                buildJsonObject {
+                    put("cols", DEFAULT_COLS)
+                    put("source", sessionSource)
+                    put("profile", profile)
+                    put("title", BOT_CHAT_TITLE)
+                    put("hidden", true)
+                },
+            ).getOrElse { error ->
+                throw GatewayPreflightException("Bot Chat creation failed: ${error.message}")
+            }
+            requireConfirmedSessionProfile(created, profile)
+            val live = created.stringField("session_id")
+                ?: throw GatewayPreflightException("Bot Chat creation returned no session id")
+            val stored = created.stringField("stored_session_id") ?: live
+
+            // `session.create` is lazy. Title the live runtime immediately so
+            // the durable exact-title registry exists before navigation or a
+            // second tap; newer upstream materializes the row here.
+            rpc(
+                "session.title",
+                buildJsonObject {
+                    put("session_id", live)
+                    put("title", BOT_CHAT_TITLE)
+                },
+            ).getOrElse { error ->
+                throw GatewayPreflightException("Bot Chat could not be materialized: ${error.message}")
+            }
+            BotChatTarget(storedSessionId = stored, resolvedSessionId = stored)
+        }
+    }
+
     /** Create through the Gateway so auth behavior is explicit and server-owned. */
     suspend fun createProfile(request: GatewayProfileCreateRequest): Result<GatewayProfileCreateResult> {
         if (profileCreateSupported == false) {
@@ -2377,7 +2483,10 @@ class GatewayChatClient(
             throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
-        val url = dashboardClient.gatewayWebSocketUrl(ticket.ticket)
+        val url = dashboardClient.gatewayWebSocketUrl(
+            ticket = ticket.ticket,
+            profile = currentSessionProfile(),
+        )
             ?: throw GatewayConnectAttemptException("could not build /api/ws URL")
 
         _connectionState.value = GatewayConnectionState.Connecting
@@ -4130,6 +4239,122 @@ data class GatewayCompressResult(
 
     val isAuthoritative: Boolean
         get() = messages.isNotEmpty()
+}
+
+internal fun parseBotModeRoster(payload: JsonObject): BotModeRoster {
+    val rawRows = (payload["profiles"] as? JsonArray).orEmpty()
+    val rows = rawRows.mapNotNull { it as? JsonObject }
+    val bots = rows.mapNotNull(::parseBotRosterEntry)
+    val defaultRow = rows.firstOrNull {
+        (it["is_default"] as? JsonPrimitive)?.booleanOrNull == true
+    } ?: rows.firstOrNull { it.stringField("name") == "default" }
+    return BotModeRoster(
+        bots = bots,
+        groups = parseBotGroupRooms(defaultRow),
+        botModeProtocolSupported =
+            (payload["bot_mode_protocol"] as? JsonPrimitive)?.booleanOrNull == true,
+    )
+}
+
+private fun parseBotRosterEntry(row: JsonObject): BotRosterEntry? {
+    val name = row.stringField("name")?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    val uiMeta = (row["ui_meta"] as? JsonObject)
+        ?.takeIf { it.toString().toByteArray(Charsets.UTF_8).size <= 65_536 }
+        ?: JsonObject(emptyMap())
+    val botMeta = uiMeta["hermes-bots"] as? JsonObject
+    val title = botMeta?.stringField("title")?.trim()?.take(128).orEmpty()
+    val displayName = title.takeIf(String::isNotBlank)
+        ?: row.stringField("display_name")?.trim()?.takeIf(String::isNotBlank)?.take(128)
+        ?: name
+    return BotRosterEntry(
+        profile = Profile(
+            name = name,
+            model = row.stringField("model").orEmpty(),
+            provider = row.stringField("provider").orEmpty(),
+            description = row.stringField("description")?.take(512).orEmpty(),
+            skillCount = (row["skill_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+            isDefault = (row["is_default"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            hasAvatar = (row["has_avatar"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        ),
+        displayName = displayName,
+        botTitle = title,
+        hidden = (botMeta?.get("hidden") as? JsonPrimitive)?.booleanOrNull == true,
+        lastSession = parseBotSessionSummary(row["last_session"] as? JsonObject),
+        workerSession = parseBotSessionSummary(row["worker_session"] as? JsonObject),
+        canonicalSession = parseBotSessionSummary(row["canonical_session"] as? JsonObject),
+    )
+}
+
+private fun parseBotSessionSummary(row: JsonObject?): BotSessionSummary? {
+    row ?: return null
+    val id = row.stringField("id")?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    return BotSessionSummary(
+        id = id,
+        resolvedId = row.stringField("resolved_id")?.trim()?.takeIf(String::isNotEmpty) ?: id,
+        title = row.stringField("title")?.take(256).orEmpty(),
+        rootTitle = row.stringField("root_title")?.take(256).orEmpty(),
+        preview = row.stringField("preview")?.take(512).orEmpty(),
+        startedAtMs = normalizeHermesEpoch(row.longField("started_at")),
+        lastActiveAtMs = normalizeHermesEpoch(row.longField("last_active")),
+        messageCount = (row["message_count"] as? JsonPrimitive)?.intOrNull ?: 0,
+    )
+}
+
+private fun parseBotGroupRooms(defaultRow: JsonObject?): List<BotGroupRoom> {
+    val uiMeta = defaultRow?.get("ui_meta") as? JsonObject ?: return emptyList()
+    if (uiMeta.toString().toByteArray(Charsets.UTF_8).size > 65_536) return emptyList()
+    val snapshot = uiMeta["hermes-bots-groups"] as? JsonObject ?: return emptyList()
+    val rooms = snapshot["rooms"] as? JsonObject ?: return emptyList()
+    return rooms.entries.take(64).mapNotNull { (key, raw) ->
+        val room = raw as? JsonObject ?: return@mapNotNull null
+        val name = room.stringField("name")?.trim()?.takeIf(String::isNotEmpty)?.take(128)
+            ?: key.substringAfter(':').take(128)
+        val members = (room["members"] as? JsonArray).orEmpty().take(6).mapNotNull { memberRaw ->
+            val member = memberRaw as? JsonObject ?: return@mapNotNull null
+            val memberName = member.stringField("name")?.trim()?.takeIf(String::isNotEmpty)
+                ?: return@mapNotNull null
+            BotGroupMember(
+                name = memberName.take(128),
+                handle = member.stringField("handle")?.take(128),
+                connectionId = member.stringField("connectionId")?.take(128),
+                connectionLabel = member.stringField("connectionLabel")?.take(128),
+            )
+        }
+        val messages = (room["log"] as? JsonArray).orEmpty().takeLast(16).mapNotNull { messageRaw ->
+            val message = messageRaw as? JsonObject ?: return@mapNotNull null
+            val from = message["from"] as? JsonObject ?: JsonObject(emptyMap())
+            val text = message.stringField("text")?.trim()?.takeIf(String::isNotEmpty)?.take(1_200)
+                ?: return@mapNotNull null
+            BotGroupMessage(
+                id = message.stringField("id")?.take(160),
+                senderName = from.stringField("name")?.trim()?.takeIf(String::isNotEmpty)?.take(128)
+                    ?: "Bot",
+                senderKind = from.stringField("kind")?.take(32) ?: "member",
+                senderSource = from.stringField("source")?.take(128),
+                text = text,
+                atMs = normalizeHermesEpoch(message.longField("at")),
+            )
+        }
+        BotGroupRoom(
+            key = key.take(256),
+            roomId = room.stringField("roomId")?.take(128),
+            name = name,
+            revision = room.longField("revision"),
+            members = members,
+            messages = messages,
+        )
+    }.sortedByDescending(BotGroupRoom::latestActivityAtMs)
+}
+
+private fun JsonObject.longField(key: String): Long =
+    (get(key) as? JsonPrimitive)?.longOrNull
+        ?: (get(key) as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toLong()
+        ?: 0L
+
+private fun normalizeHermesEpoch(value: Long): Long = when {
+    value <= 0L -> 0L
+    value < 10_000_000_000L -> value * 1_000L
+    else -> value
 }
 
 private fun Throwable?.isMethodNotFound(): Boolean {

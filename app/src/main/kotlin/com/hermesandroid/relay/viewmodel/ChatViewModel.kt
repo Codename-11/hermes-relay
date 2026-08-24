@@ -2559,6 +2559,12 @@ class ChatViewModel : ViewModel() {
     /** Server slash-command catalog (`commands.catalog`) — 4th allCommands source. */
     private val _serverCommands = MutableStateFlow<List<SlashCommand>>(emptyList())
     val serverCommands: StateFlow<List<SlashCommand>> = _serverCommands.asStateFlow()
+    @Volatile
+    private var canonicalBotChatMode = false
+
+    fun setCanonicalBotChatMode(enabled: Boolean) {
+        canonicalBotChatMode = enabled
+    }
 
     /**
      * True while the in-flight turn is actually running on the gateway
@@ -3512,6 +3518,15 @@ class ChatViewModel : ViewModel() {
                 onPersistedUserImageRequested(messageId, originalPath)
             }
         }
+    }
+
+    /** Route-owned Gateway chat setup without borrowing the active connection's Relay/media clients. */
+    fun initializeGatewayOnly(context: Context) {
+        appContext = context.applicationContext
+        if (chatTurnCheckpointStore == null) {
+            chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
+        }
+        ensureCheckpointObservers()
     }
 
     /** JVM-test seam; production is wired to the app-wide relay DataStore. */
@@ -5235,6 +5250,14 @@ class ChatViewModel : ViewModel() {
         val gateway = gatewayClient
         if (gateway == null) {
             handler.addSystemNotice("Slash commands need the Hermes gateway connection. Check Manage sign-in and connection status.")
+            return true
+        }
+
+        if (shouldCompactCanonicalBotChat(normalizedName, canonicalBotChatMode)) {
+            handler.addSystemNotice("Bot Chat stays in one conversation — compacting its context instead.")
+            viewModelScope.launch {
+                runServerCompressCommand(gateway, handler, focusTopic = null)
+            }
             return true
         }
 
@@ -9524,6 +9547,9 @@ private fun isUnsupportedMobileCommand(name: String, pair: JsonArray): Boolean {
         ?: metadata?.stringValue("gatewayConfigGate")
     return cliOnly && gatewayGate.isNullOrBlank()
 }
+
+internal fun shouldCompactCanonicalBotChat(commandName: String, canonicalBotChatMode: Boolean): Boolean =
+    canonicalBotChatMode && commandName.lowercase() in setOf("new", "reset")
 
 private fun normalizeSlashCommandName(rawName: String): String? {
     val normalized = rawName

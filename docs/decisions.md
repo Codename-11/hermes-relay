@@ -3651,3 +3651,57 @@ upstream drift, Android state-machine defects, rendered lifecycle failures, and
 physical-device failures are reported as distinct evidence lanes. A physical
 pass is never inferred from JVM or source checks, and scheduled execution can
 be considered later without being silently introduced now.
+
+---
+
+## ADR 66 — Android Bot Mode is a separate upstream-owned messaging workspace
+
+**Status:** Accepted (2026-08-24).
+
+**Context.** Upstream Hermes Desktop presents profiles as Bots with one durable
+canonical `Bot Chat`, profile-scoped routines, group rooms, and source-qualified
+multi-gateway ownership. Folding those rows into Android's ordinary session
+drawer would mix a standing identity/room roster with scratch conversations and
+repeat the category error avoided for platform Threads. Desktop also owns live
+group orchestration locally while publishing a bounded recent-history projection
+through Gateway `ui_meta` for other clients.
+
+**Decision.** The existing drawer gains one `Bot Mode` entry and otherwise keeps
+its session behavior. Bot Mode is a full-screen messenger list with gateway,
+All/Bots/Groups, search, activity, individual Bot, and group-room affordances.
+It aggregates every saved gateway with bounded concurrency and keeps the
+foreground connection unchanged. Last-good rows remain visible as offline.
+Upstream `install_id` collapses two saved routes to the same installation before
+same-profile handle disambiguation.
+
+Android consumes `profiles.list {include_sessions:true}` only for this surface.
+The Gateway's `canonical_session` wins. When absent, Android performs the exact
+hidden-title lookup for `Bot Chat`, fails closed on lookup error, and creates and
+materializes a hidden canonical row only after authoritative absence. Opening it
+uses the existing profile/session chat owner and exposes a direct return to Bot
+Mode. `/new` and `/reset` in that canonical surface run the existing bounded
+compression path instead of forking the relationship. New Bot creates an upstream profile with shared authentication and writes
+only the small `hermes-bots` metadata marker; profile skills/model remain managed
+through the established Hermes surfaces.
+
+Every Bot owner is the immutable `(connectionId, profile)` pair. A typed route
+pool holds separate clients for separate owners, validates bearer authority
+against that connection's exact trusted Dashboard base, adds the profile to the
+WebSocket URL, mints a fresh one-use ticket on every dial, and uses request or
+retained leases so a stale release cannot evict a replacement. Opening a Bot
+uses a dedicated Gateway-only Chat destination and Dashboard history reader;
+it never switches the globally active connection or lets API fallback consult a
+different database.
+
+Group rooms parse the bounded v3 `hermes-bots-groups` projection without its
+optional embedded image. They render read-only and cannot dispatch or mutate
+room state. Android does not copy Desktop's round-robin coordinator or local
+plugin store.
+
+**Consequences.** Vanilla upstream owns Bot identity, history, auth, and prompt
+protocol; Relay remains optional. Ordinary sessions remain legible, same-named
+profiles on different gateways cannot alias, a remote Bot Chat cannot leak into
+the active connection, and a group cannot gain a competing mobile writer.
+Route-scoped Relay media, voice, background delivery notifications, autonomous
+peer delivery, and writable room control remain separate capabilities rather
+than implicit authority gained from appearing in the union roster.

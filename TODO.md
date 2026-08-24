@@ -6,6 +6,21 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Bot Mode follow-ups after multi-gateway aggregation
+
+Android Bot Mode now has an all-gateway roster, typed `(connectionId, profile)`
+ownership, install-identity collapse, source-qualified handles, offline cache,
+route-pooled Gateway clients, and dedicated owner-routed Bot Chats without a
+foreground connection switch. Keep autonomous cross-gateway delivery on
+upstream peer/server authority rather than making Android an unreliable
+background courier. Writable group rooms stay blocked until upstream publishes
+one canonical room read/write/control contract; do not reproduce Desktop's
+local orchestrator in the phone. Route-scoped outbound attachments, Relay media,
+voice, and proactive completion notifications can be added independently when
+their credential and lifecycle ownership is explicit.
+
+---
+
 ## Certify Android Gateway missing-terminal recovery on physical devices
 
 Deterministic fake-Gateway coverage now proves that a foreground turn with

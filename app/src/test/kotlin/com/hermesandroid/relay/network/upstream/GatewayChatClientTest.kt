@@ -191,6 +191,11 @@ class GatewayClientHarness(
     }
 
     @Volatile
+    var sessionListPayload: JsonObject = buildJsonObject {
+        put("sessions", JsonArray(emptyList()))
+    }
+
+    @Volatile
     var profileCreatePayload: JsonObject = buildJsonObject {
         put("ok", true)
         put("name", "operator")
@@ -310,6 +315,8 @@ class GatewayClientHarness(
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
+                "session.list" -> sessionListPayload
+                "session.title" -> buildJsonObject { put("ok", true) }
                 "prompt.submit" -> promptSubmitPayload
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
                 "process.list" -> buildJsonObject {
@@ -889,6 +896,165 @@ class GatewayChatClientTest {
         assertTrue(profiles.single().hasAvatar)
         assertEquals("#ff5500", (profiles.single().uiMeta["accent"] as JsonPrimitive).content)
         assertEquals(false, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `bot roster parses canonical chats activity and read only room projection`() = runBlocking {
+        harness.profilesListPayload = buildJsonObject {
+            put("bot_mode_protocol", true)
+            put("profiles", JsonArray(listOf(buildJsonObject {
+                put("name", "default")
+                put("display_name", "Hermes")
+                put("model", "gpt-5.6")
+                put("is_default", true)
+                put("canonical_session", buildJsonObject {
+                    put("id", "bot-root")
+                    put("resolved_id", "bot-tip")
+                    put("root_title", "Bot Chat")
+                    put("preview", "Release plan ready")
+                    put("last_active", 1_777_000_000)
+                    put("message_count", 8)
+                })
+                put("worker_session", buildJsonObject {
+                    put("id", "worker-1")
+                    put("title", "Build")
+                    put("last_active", 1_777_000_030)
+                })
+                put("ui_meta", buildJsonObject {
+                    put("hermes-bots", buildJsonObject { put("title", "Lucy") })
+                    put("hermes-bots-groups", buildJsonObject {
+                        put("version", 3)
+                        put("rooms", buildJsonObject {
+                            put("id:launch", buildJsonObject {
+                                put("name", "Launch Council")
+                                put("roomId", "launch")
+                                put("revision", 4)
+                                put("members", JsonArray(listOf(buildJsonObject {
+                                    put("name", "default")
+                                    put("handle", "hermes")
+                                })))
+                                put("log", JsonArray(listOf(buildJsonObject {
+                                    put("id", "message-1")
+                                    put("from", buildJsonObject {
+                                        put("kind", "member")
+                                        put("name", "Lucy")
+                                    })
+                                    put("text", "Rollout is clear")
+                                    put("at", 1_777_000_020)
+                                })))
+                            })
+                        })
+                    })
+                })
+            })))
+        }
+
+        val roster = client.listBotModeRoster().getOrThrow()
+
+        assertTrue(roster.botModeProtocolSupported)
+        assertEquals("Lucy", roster.bots.single().displayName)
+        assertEquals("bot-tip", roster.bots.single().canonicalSession?.resolvedId)
+        assertEquals(1_777_000_030_000L, roster.bots.single().workerSession?.lastActiveAtMs)
+        assertEquals("Launch Council", roster.groups.single().name)
+        assertEquals("Rollout is clear", roster.groups.single().latestMessage?.text)
+        assertEquals(true, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `canonical bot chat adopts exact title registry without creating`() = runBlocking {
+        harness.sessionListPayload = buildJsonObject {
+            put("sessions", JsonArray(listOf(buildJsonObject {
+                put("id", "bot-root")
+                put("resolved_id", "bot-tip")
+                put("root_title", "Bot Chat")
+            })))
+        }
+
+        val target = client.ensureCanonicalBotChat("operator").getOrThrow()
+
+        assertEquals("bot-root", target.storedSessionId)
+        assertEquals("bot-tip", target.resolvedSessionId)
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+        val lookup = harness.awaitRpc("session.list")
+        assertEquals("operator", (lookup["profile"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (lookup["title"] as JsonPrimitive).content)
+        assertEquals(true, (lookup["include_hidden"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `canonical bot chat creates hidden row only after authoritative empty lookup`() = runBlocking {
+        harness.createdSessionProfileName = "operator"
+
+        val target = client.ensureCanonicalBotChat("operator").getOrThrow()
+
+        assertEquals("20260612_120000_abc123", target.storedSessionId)
+        val create = harness.awaitRpc("session.create")
+        assertEquals("operator", (create["profile"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (create["title"] as JsonPrimitive).content)
+        assertEquals(true, (create["hidden"] as JsonPrimitive).booleanOrNull)
+        val title = harness.awaitRpc("session.title")
+        assertEquals("live-1", (title["session_id"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (title["title"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `canonical bot chat lookup failure never creates replacement`() = runBlocking {
+        harness.rpcErrors["session.list"] = 5006 to "profile db unavailable"
+
+        assertTrue(client.ensureCanonicalBotChat("operator").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+    }
+
+    @Test
+    fun `fixed route profile rides websocket URL and canonical RPC`() = runBlocking {
+        val routeClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = harness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            fixedSessionProfile = "research bot",
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { it() },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        )
+        try {
+            routeClient.ensureCanonicalBotChat("research bot").getOrThrow()
+            val requests = List(2) { harness.server.takeRequest(5, TimeUnit.SECONDS) }
+            assertTrue(requests.filterNotNull().any {
+                it.path?.contains("profile=research%20bot") == true
+            })
+            assertEquals(
+                "research bot",
+                (harness.awaitRpc("session.list")["profile"] as JsonPrimitive).content,
+            )
+        } finally {
+            routeClient.shutdown()
+        }
+    }
+
+    @Test
+    fun `canonical bot lookup on remote route never reaches active gateway`() = runBlocking {
+        val remoteHarness = GatewayClientHarness()
+        val remoteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val remoteClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = remoteHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            fixedSessionProfile = "default",
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { it() },
+            scope = remoteScope,
+        )
+        try {
+            remoteClient.ensureCanonicalBotChat("default").getOrThrow()
+            assertTrue(remoteHarness.rpcLog.any { it.first == "session.list" })
+            assertTrue(harness.rpcLog.none { it.first == "session.list" })
+        } finally {
+            remoteClient.shutdown()
+            remoteScope.cancel()
+            remoteHarness.shutdown()
+        }
     }
 
     @Test
