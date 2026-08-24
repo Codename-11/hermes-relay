@@ -37,7 +37,8 @@ const successBody = buildReviewComment({
 assert.match(successBody, /## Review candidate ready/);
 assert.match(successBody, /hermes-relay-review-pr-398-90ab705a883c/);
 assert.match(successBody, /expires \*\*August 31, 2026\*\*/);
-assert.match(successBody, /Hermes Candidate/);
+assert.match(successBody, /HR Candidate/);
+assert.ok(!successBody.includes(['Hermes', 'Candidate'].join(' ')));
 assert.match(successBody, /REVIEW_MANIFEST\.json/);
 
 const blockedBody = buildReviewComment({

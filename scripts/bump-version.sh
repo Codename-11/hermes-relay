@@ -3,9 +3,9 @@
 #
 # Hermes-Relay now has split release tracks:
 #   - Android app: android-vX.Y.Z, version in gradle/libs.versions.toml
-#   - Server/Python package: server-vX.Y.Z, version in pyproject.toml
+#   - Plugin/Python package: server-vX.Y.Z, version in pyproject.toml
 #     and plugin/relay/__init__.py
-#   - Desktop: desktop-vX.Y.Z, version in desktop/package.json
+#   - CLI+UI: desktop-vX.Y.Z, version in desktop/package.json
 #
 # Keep this legacy script as an alias for the Android app bump so older release
 # notes and muscle memory still work, but prefer the explicit script names:

@@ -1,17 +1,18 @@
-# Hermes-Relay-Android — Release Pipeline
+# Hermes-Relay Android — Release Pipeline
 #
 # Triggered when an Android release tag (android-v*) is pushed.
 # Validates the tag matches the app version in libs.versions.toml,
 # runs focused Android checks, builds release APK/AAB artifacts, and creates a
-# GitHub Release. Server/Python package releases use server-v* tags.
+# GitHub Release. Plugin/Python package releases use server-v* tags.
 
-name: Release Android
+name: Hermes-Relay Android Release
 
 on:
   push:
     tags:
       - "android-v*"
-  # Approve Android Release creates its tag with GITHUB_TOKEN, whose tag event
+  # Hermes-Relay Android Release Approval creates its tag with GITHUB_TOKEN,
+  # whose tag event
   # does not recursively start workflows. It dispatches the current workflow
   # definition from main, while every job checks out the immutable tag. Manual
   # tag pushes continue to use the push trigger.
@@ -120,7 +121,7 @@ jobs:
             --jq '[.artifacts[] | select(.expired == false)] | length')
           if [ "$COUNT" -lt 1 ]; then
             echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
-            echo "Run Play Preflight from the final dev tree, merge that unchanged tree to main, then approve the release."
+            echo "Run Hermes-Relay Android Play Preflight from the final dev tree, merge that unchanged tree to main, then approve the release."
             exit 1
           fi
           echo "Play preflight proof found: $ARTIFACT_NAME"
@@ -220,7 +221,7 @@ jobs:
           SOURCE_SHA="$(git rev-parse HEAD)"
           ./gradlew :app:assembleSideloadCandidate \
             -Pcandidate.kind=rc \
-            -Pcandidate.label="Android ${VERSION}" \
+            -Pcandidate.label="Hermes-Relay Android v${VERSION}" \
             -Pcandidate.sourceRef="android-v${VERSION}" \
             -Pcandidate.sourceSha="$SOURCE_SHA" \
             --console=plain
@@ -309,7 +310,7 @@ jobs:
             --update=production \
             --version-code=${{ needs.validate.outputs.version_code }} \
             --release-status=completed \
-            --release-name="Hermes-Relay ${{ needs.validate.outputs.version }}"
+            --release-name="Hermes-Relay Android v${{ needs.validate.outputs.version }}"
 
       # Public distribution happens only after Play accepts the production
       # submission above. This keeps a Play-detected release blocker from
@@ -318,7 +319,7 @@ jobs:
         if: ${{ needs.validate.outputs.prerelease != 'true' }}
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Android v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay Android v${{ needs.validate.outputs.version }}
           tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
           prerelease: false
@@ -333,7 +334,7 @@ jobs:
         if: ${{ needs.validate.outputs.prerelease == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Android v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay Android v${{ needs.validate.outputs.version }}
           tag_name: android-v${{ needs.validate.outputs.version }}
           body_path: RELEASE_NOTES.md
           prerelease: true
@@ -347,12 +348,12 @@ jobs:
           HERMES_KEYSTORE_BASE64: ${{ secrets.HERMES_KEYSTORE_BASE64 }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          echo "## Hermes-Relay-Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Hermes-Relay Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ "$PRERELEASE" = "true" ] && [ -n "$HERMES_KEYSTORE_BASE64" ]; then
-            echo "✅ **Release-signed Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
+            echo "✅ **Release-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
           elif [ "$PRERELEASE" = "true" ]; then
-            echo "⚠️ **Debug-signed Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ **Debug-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "$HERMES_KEYSTORE_BASE64" ]; then
             echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"
           else

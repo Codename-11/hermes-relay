@@ -1,4 +1,4 @@
-# Hermes-Relay-Server v__VERSION__
+# Hermes-Relay Plugin v__VERSION__
 
 **Release Date:** August 21, 2026
 
@@ -34,4 +34,4 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ---
 
-Tag prefixes: Android releases use android-v*, Server releases use server-v*, and Desktop releases use desktop-v*.
+Tag prefixes: Android releases use android-v*, Plugin releases use server-v*, and CLI+UI releases use desktop-v*.

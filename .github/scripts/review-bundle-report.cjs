@@ -26,7 +26,7 @@ Built from PR #${prNumber} head \`${shortSha}\`.
 [Download \`${artifact.name}\`](${artifactUrl}) — expires **${formatExpiry(artifact.expires_at)}**.
 
 1. Unzip the bundle and verify its files against \`SHA256SUMS.txt\`.
-2. Install the APK under \`android/\`. It appears as **Hermes Candidate**, leaves stable installs untouched, and must be paired separately.
+2. Install the APK under \`android/\`. It appears as **HR Candidate**, leaves stable installs untouched, and must be paired separately.
 3. Test the Relay package only in a disposable/staging Hermes instance or with an explicit snapshot and rollback plan. Confirm the source SHA in \`REVIEW_MANIFEST.json\`.
 
 [View workflow run](${runUrl})`;

@@ -1,4 +1,4 @@
-name: Release Desktop
+name: Hermes-Relay CLI+UI Release
 
 on:
   push:
@@ -58,13 +58,13 @@ jobs:
           if [[ "$version" == *-* ]]; then
             git fetch origin dev --no-tags
             if ! git merge-base --is-ancestor "$tag_commit" origin/dev; then
-              echo "Desktop prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
+              echo "CLI+UI prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
               exit 1
             fi
           else
             git fetch origin main --no-tags
             if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-              echo "Stable Desktop releases must be tagged from main; $tag_commit is not in origin/main" >&2
+              echo "Stable CLI+UI releases must be tagged from main; $tag_commit is not in origin/main" >&2
               exit 1
             fi
           fi
@@ -425,7 +425,7 @@ jobs:
       # (the other publish-release steps only consume downloaded build artifacts).
       - uses: actions/checkout@v7
 
-      - name: Extract Desktop version
+      - name: Extract CLI+UI version
         id: version
         run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
 
@@ -457,7 +457,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
+          name: Hermes-Relay CLI+UI v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
