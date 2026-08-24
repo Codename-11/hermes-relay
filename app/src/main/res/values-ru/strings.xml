@@ -3667,6 +3667,11 @@
     <string name="assistant_session_expand">Развернуть помощника</string>
     <string name="assistant_session_collapse">Свернуть помощника</string>
     <string name="assistant_session_open_full_voice">Открыть полный голосовой режим</string>
+    <string name="assistant_session_close">Закрыть</string>
+    <string name="assistant_session_start_listening">Начать прослушивание</string>
+    <string name="assistant_session_stop_listening">Остановить и отправить</string>
+    <string name="assistant_session_screen_context_ready">Контекст экрана готов</string>
+    <string name="assistant_session_screen_thumbnail">Миниатюра текущего экрана</string>
     <string name="voice_settings_stop_phrases">Фразы остановки</string>
     <string name="voice_settings_stop_phrases_desc">Точные фразы через запятую, завершающие активный голосовой чат. Чтобы слышать их, пока Hermes размышляет или говорит, прерывание должно быть включено. Оставьте поле пустым, чтобы отключить.</string>
     <string name="voice_settings_barge_in_rms_multiplier">Порог RMS: %1$.1f×</string>

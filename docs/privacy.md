@@ -2,7 +2,7 @@
 
 Hermes-Relay is a companion app for the Hermes agent. It connects only to servers you configure — there are no cloud accounts, hosted backends, ads, or third-party analytics.
 
-## No External Data Transmission
+## No Hermes-Relay Cloud Service or Telemetry
 
 - The app makes **no connections** to Anthropic, Google, or any third party by default
 - **No telemetry**, analytics, crash reports, or tracking data are sent externally
@@ -17,10 +17,17 @@ Hermes-Relay has two Android tracks:
 
 | Track | Bridge scope | Sensitive Android APIs |
 |-------|--------------|------------------------|
-| Google Play | **Bridge Core**: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, status | No AccessibilityService, no overlay permission, no MediaProjection screenshots, no wake-lock device-control service, no contacts/location/SMS/call permissions |
+| Google Play | **Bridge Core**: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, status | No AccessibilityService, overlay permission, MediaProjection, wake-lock device-control service, or contacts/location/SMS/call permissions. Optional Android Assistant screen context is described below. |
 | Sideload | **Device Control**: the full agent-driven phone-control bridge | AccessibilityService, foreground service, overlay chip, optional screenshots, and phone-utility permissions when enabled |
 
-The Google Play build cannot read your screen, tap/type/swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.
+The Google Play build cannot use Accessibility or MediaProjection to inspect or
+control the screen. It cannot tap, type, swipe, send SMS, place calls, access
+contacts or location, or perform unattended phone control. If you select Hermes as
+Android's Digital Assistant, a compatible unlocked assistant-button invocation may
+provide bounded visible text and an available screenshot. Hermes labels that data
+untrusted and sends it only with the first Standard voice turn to your configured
+Hermes server and AI provider. Wake-word, power-button, ordinary assistant, and
+keyguard invocations do not request screen context.
 
 ## Local Storage
 
@@ -34,6 +41,7 @@ All app data is stored on-device in the app's private sandbox:
 | Theme and display preferences | DataStore preferences | Tool display mode, reasoning toggle, voice preferences |
 | Stats for Nerds counters | DataStore preferences | Response times, token counts, health stats — local only |
 | Reliability reports | App-private JSON | Up to 20 locally redacted crash/handled-error records, retained for 14 days; no prompts, messages, profile names, hosts, tokens, or media |
+| Pending Android Assistant context | App-private cache | Bounded visible text and optional JPEG for one activation; kept across a failed preflight, then cleared after acceptance, cancellation, exit, or one-hour stale cleanup |
 
 Chat messages are **not cached locally**. They are loaded from the Hermes API server on demand and exist only in memory while the app is running.
 
@@ -44,6 +52,9 @@ The app connects only to user-configured endpoints:
 - **HTTP/SSE** to your Hermes API server for chat streaming
 - **WSS** to your relay server for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and paired-session management
 - **HTTP(S)/WSS** to your relay server's `/voice/*` routes for voice settings, speech-to-text uploads, realtime voice websocket sessions, and text-to-speech audio when you use Voice mode
+- **HTTP(S)/WSS** to your Hermes Dashboard/Gateway or API route for Android
+  Assistant turns, including bounded visible text and an available screenshot when
+  compatible firmware supplies screen context
 - **HTTP(S)** to your optional Relay server's `/relay/model-capabilities` route
   when Android refines reasoning-effort choices for models already reported by
   upstream Hermes. The phone sends provider/model identifiers and the selected
@@ -71,6 +82,7 @@ Google Play build:
 | `RECORD_AUDIO` | Optional Voice mode capture and opt-in local “Hey Hermes” detection. Pre-activation wake audio stays on the phone. |
 | `MODIFY_AUDIO_SETTINGS` | Voice playback and audio-session behavior |
 | Android Notification Access | Optional system setting for the notification companion; forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay |
+| Android Digital Assistant role | Optional system setting. Compatible unlocked assistant-button invocations may include bounded visible text and an available screenshot in one Standard voice turn. |
 
 Sideload builds may additionally request permissions needed for Device Control, including overlay, foreground-service, wake-lock, screenshot, contacts, location, SMS, and call capabilities. Those permissions are not present in the Google Play manifest.
 

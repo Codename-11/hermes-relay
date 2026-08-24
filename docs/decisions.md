@@ -2463,6 +2463,28 @@ boundary.
   surface first; Back from compact, hide, Stop, or cancel remains terminal,
   while the hidden session still observes the final `Closed` state and finishes
   without cancelling the completed turn.
+- Firmware WEB_SEARCH dispatch uses a separate transparent single-task Activity
+  that accepts only `android.speech.action.WEB_SEARCH`, requires the protected
+  `STATUS_BAR_SERVICE` caller permission and active Assistant role, ignores query
+  data, and asks the system-managed interaction service to show a real session.
+  Bounded readiness and show-failure cleanup close the trampoline when the platform
+  does not accept it. The service re-reads keyguard state immediately before show;
+  caller data never decides capture policy.
+- Each shown session owns a stable activation identifier. Only an unlocked
+  WEB_SEARCH session requests AssistStructure and screenshot callbacks and starts
+  listening from the same button press. Extraction is bounded and excludes hidden,
+  assist-blocked, and password subtrees; screenshots are optional and byte-bounded;
+  captured content never enters logs. Fail-soft app-private staging plus consumed,
+  cancellation, and stale markers prevents replay across processes.
+- Screen context belongs to one ordinary Standard voice turn, not to the chat
+  composer. It is labeled as untrusted, submitted through explicit per-turn
+  attachments, retired from later turns when the local turn is created, and deleted
+  only after authoritative Gateway or API acceptance. Preflight failure retains it
+  for Try again; unsupported routes reject the isolated submission rather than
+  dropping context. Realtime Agent neither consumes nor claims the context.
+- Activation heartbeats let the main runtime clean up after assistant-process loss.
+  Finish and show-failure paths clear pending/watchdog state, while Full Voice
+  explicitly transfers ownership before the session overlay stops heartbeats.
 - Connection, chat, and voice runtime ownership is application-lifetime in the
   main process rather than Activity-owned. The assistant service may initialize
   that graph and start a turn while no Activity exists; the app UI later binds
@@ -2482,6 +2504,12 @@ boundary.
 - Android does not grant third-party assistants Google's dedicated low-power
   hotword DSP integration. Local sherpa inference keeps pre-activation audio
   private but can consume materially more battery than the built-in assistant.
+- OEM WEB_SEARCH routing and platform assist delivery remain device behaviors;
+  source and host tests do not prove broad firmware compatibility. The exported
+  trampoline relies on the protected caller permission plus exact-action,
+  active-role, coalescing, and single-session gates. Physical certification still
+  covers repeated explicit invocation because Assistant-role ownership alone does
+  not authenticate the originating component.
 
 ---
 

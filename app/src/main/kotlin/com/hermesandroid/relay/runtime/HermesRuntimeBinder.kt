@@ -367,7 +367,11 @@ internal class HermesRuntimeBinder(
         }
         jobs += runtime.coroutineScope.launch {
             voice.uiState.collect { state ->
-                val snapshot = AssistantSessionProtocol.snapshotFromVoiceState(state)
+                val snapshot = AssistantSessionProtocol.snapshotFromVoiceState(state).copy(
+                    screenContextSupported = assistantCanTransmitScreenContext(
+                        VoiceEngineMode.fromStorage(voiceSettings.value.engineMode),
+                    ),
+                )
                 _assistantSnapshot.value = snapshot
                 if (!AssistantAppSessionState.active.value) return@collect
                 if (state.voiceMode) AssistantAppSessionState.markVoiceStarted()
@@ -386,7 +390,10 @@ internal class HermesRuntimeBinder(
     }
 
     suspend fun activateVoice(
+        activationId: String,
         startNewSession: Boolean,
+        manualMic: Boolean,
+        expectScreenContext: Boolean,
         timeoutMs: Long,
         isCurrent: () -> Boolean,
     ) {
@@ -410,6 +417,7 @@ internal class HermesRuntimeBinder(
 
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
+        check(!voice.uiState.value.voiceMode) { "Hermes voice is already active" }
         // Re-apply scope before entry. The readiness collector already observed
         // the scope's resolved settings, so Realtime prewarm cannot use defaults.
         voice.setVoicePrefsConnection(connection.activeConnectionId.value)
@@ -423,14 +431,38 @@ internal class HermesRuntimeBinder(
         }
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
-        voice.enterVoiceMode()
+        voice.enterVoiceMode(
+            activationId = activationId,
+            expectScreenContext = expectScreenContext &&
+                readiness.route != HermesVoiceActivationRoute.Realtime,
+        )
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
-        voice.startListening()
-        check(voice.uiState.value.state == VoiceState.Listening) {
-            voice.uiState.value.error ?: "Voice recorder did not enter Listening"
+        if (!manualMic) {
+            voice.startListening()
+            check(voice.uiState.value.state == VoiceState.Listening) {
+                voice.uiState.value.error ?: "Voice recorder did not enter Listening"
+            }
         }
         _voiceActivationReadiness.value = readiness
+    }
+
+    fun startAssistantListening() {
+        val voice = runtime.voiceViewModel
+        if (voice.uiState.value.voiceMode && voice.uiState.value.state == VoiceState.Idle) {
+            voice.startListening()
+        }
+    }
+
+    fun stopAssistantListening() {
+        val voice = runtime.voiceViewModel
+        if (voice.uiState.value.voiceMode && voice.uiState.value.state == VoiceState.Listening) {
+            voice.stopListening()
+        }
+    }
+
+    fun retryAssistantVoiceAfterFailure() {
+        runtime.voiceViewModel.retryAssistantVoiceAfterFailure()
     }
 
     fun cancelVoice() {
@@ -467,6 +499,9 @@ internal class HermesRuntimeBinder(
         const val GATEWAY_ROUTE_SETTLE_MS = 750L
     }
 }
+
+internal fun assistantCanTransmitScreenContext(engineMode: VoiceEngineMode): Boolean =
+    engineMode == VoiceEngineMode.HermesVoiceOutput
 
 sealed interface HermesVoiceActivationReadiness {
     data object Initializing : HermesVoiceActivationReadiness
