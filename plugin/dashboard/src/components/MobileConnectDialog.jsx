@@ -76,7 +76,7 @@ export default function MobileConnectDialog({ open, onClose }) {
               Connect mobile app
             </h2>
             <p id="hr-mobile-connect-description" className="text-sm text-muted-foreground mt-1">
-              Scan this from Hermes Relay to add this Dashboard.
+              Scan with Hermes-Relay Android to add this Dashboard.
             </p>
           </div>
           <Button

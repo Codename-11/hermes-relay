@@ -6,13 +6,101 @@
 
 It also includes a terminal escape hatch for when *you* want to drive: bare `hermes-relay` attaches your server's own Hermes TUI over a PTY, tmux-backed so disconnects lose nothing.
 
+## Install and pair
+
+### 1. Install the client
+
+::: code-group
+
+```powershell [Windows · CLI + management UI]
+irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
+```
+
+```bash [macOS / Linux · CLI]
+curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
+```
+
+:::
+
+The Windows installer includes the CLI and compact management UI. macOS and
+Linux install the same remote-hands CLI without the Windows-only tray surface.
+See [Installation](./installation.md) for checksums, pinned versions, updates,
+platform support, and the CLI-only Windows option.
+
+### 2. Copy a one-time pairing invite
+
+Use whichever Hermes operator surface is already open:
+
+- **Web Dashboard:** open **Relay → Pair new device → Copy invite**.
+- **Official Hermes Desktop:** open the **Relay** pane, click **Pair new device**,
+  then **Copy**.
+- **Hermes host terminal:** run `hermes pair` and copy the printed
+  `hermes-relay://pair?...` invite URL.
+
+Then pair this computer with the complete invite:
+
+```bash
+hermes-relay pair --pair-qr "hermes-relay://pair?payload=…" --grant-tools
+```
+
+This is the recommended path. The invite is one-time and can contain ordered
+LAN, Tailscale, public, and pinned secure candidates; the client probes them and
+stores the first trusted reachable route. `--grant-tools` asks locally before
+making desktop tools available to the daemon.
+
+### 3. Use it
+
+```bash
+hermes-relay                 # open the paired Hermes TUI
+hermes-relay status          # confirm host and route
+hermes-relay daemon start    # keep approved desktop tools available
+hermes-relay ui              # Windows: open the management UI
+```
+
+::: details Manual URL + code fallback
+If you cannot copy the invite, mint one in the Dashboard, Hermes Desktop, or
+with `hermes pair`, then enter its shown Relay URL and six-character code:
+
+```bash
+hermes-relay pair ABC123 --remote wss://relay.example.com --grant-tools
+```
+
+Manual URL, code, and route overrides are fallbacks. Prefer the full invite so
+certificate pins and multi-endpoint candidates survive the trust ceremony.
+:::
+
+[Pairing details and recovery →](./pairing.md)
+
+<div class="desktop-ui-doc-gallery">
+  <figure>
+    <img src="/product/desktop-ui/overview.png" alt="Hermes-Relay CLI UI overview with connected host, access preset, and recent activity" />
+    <figcaption>Connection, trust, capabilities, and activity at a glance.</figcaption>
+  </figure>
+  <figure>
+    <img src="/product/desktop-ui/settings.png" alt="Hermes-Relay CLI UI settings with daemon, CUA Driver, diagnostics, and update controls" />
+    <figcaption>Daemon, computer control, diagnostics, and bundle updates.</figcaption>
+  </figure>
+</div>
+
 ::: warning Experimental phase
-Prebuilt CLI binaries ship for Windows x64, Linux x64, and macOS x64/arm64. The optional compact management UI is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between alphas, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
+Prebuilt CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64. The optional compact management UI is Windows-only. Assets are unsigned, so SmartScreen or Gatekeeper warnings are expected. Wire protocol details may shift between prereleases, and multi-client routing remains a single-client MVP. [File an issue](https://github.com/Codename-11/hermes-relay/issues) when something does not behave as documented.
 :::
 
 ::: info Where this track is headed
 This surface is focusing into a **remote-hands connector** — remote control, filesystem, and terminal access for the agent on machines you install it to. Desktop chat and management UX belong to [hermes-desktop](https://github.com/NousResearch/hermes-agent); this CLI's `chat` mode keeps working for scripting but isn't where new features land. "Desktop" is shorthand, not a constraint — the same binary runs on laptops and headless servers (`daemon` mode needs no display at all). New release tags use the `desktop-v*` track; historical releases used `cli-v*`.
 :::
+
+## Which surface adds what?
+
+| Surface | What it adds | What it needs |
+|---------|--------------|---------------|
+| **Android from Google Play** | Chat, standard voice, Manage, profiles, sessions | Unmodified upstream Hermes Dashboard/Gateway |
+| **CLI + Windows UI** | Remote TUI, files, commands, jobs, clipboard, screenshots, audit, optional CUA computer control | Relay plugin, one paired host; Windows only for the UI/CUA layer |
+| **Android Sideload** | Device Control: inspect, tap, type, scroll, and capture the phone | Sideload build, Relay plugin, and explicit local capability grants |
+| **Away from home** | Reaches those same surfaces without exposing Relay publicly | Tailscale recommended, or pinned Hermes Secure Link |
+
+The Hermes host remains the brain: models, secrets, sessions, memory, and agent
+state stay there. Paired devices lend it narrowly controlled hands.
 
 ## The point — the agent works on *your* machine
 
@@ -93,28 +181,6 @@ Both are valid. Pick based on where the agent's compute, models, and state shoul
 
 Hermes-Relay is for the first case. If you're in the second case, you don't need this CLI at all — just install hermes-agent and use `hermes` directly. The two paths are complements, not alternatives.
 
-## Quick start
-
-::: code-group
-
-```powershell [Windows]
-irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.ps1 | iex
-hermes-relay pair --remote ws://<host>:8767
-hermes-relay
-```
-
-```bash [macOS / Linux]
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
-hermes-relay pair --remote ws://<host>:8767
-hermes-relay
-```
-
-:::
-
-The third command (`hermes-relay` with no args) drops you into `shell` mode — the full Hermes TUI verbatim, running in tmux on the server. Try `Ctrl+A v` after a `Win+Shift+S` and you'll see the [native-paste demo](#demo-native-paste-into-the-attached-tui) in action.
-
-See **[Installation](./installation.md)** for the full walkthrough (Bun-compiled binaries, version-aware install, `hermes` alias, self-update flow) and **[Pairing](./pairing.md)** for minting a 6-char code on the server.
-
 ## Windows management UI
 
 The optional **Hermes-Relay CLI UI** is a compact popup anchored above its notification-area icon. Click the icon to open or hide it. It manages paired Hermes hosts, connection and daemon state, per-host access, local approvals, activity, updates, and settings. Pairing can be completed directly from **Hosts → Pair host** with the relay URL and six-character code. Prefer a `wss://` URL: the UI labels `ws://` connections as unencrypted instead of implying that connectivity provides transport security. It deliberately does not embed chat, the Hermes TUI, a terminal emulator, plugins, voice, or agent sessions.
@@ -156,3 +222,27 @@ Use `shell` when you want to drive interactively; use `chat --json` from scripts
 - [Herm](https://github.com/liftaris/herm) — optional terminal dashboard plugin installable from the CLI.
 - [CLI GitHub source](https://github.com/Codename-11/hermes-relay/tree/main/desktop) — `@hermes-relay/cli` package.
 - [Release notes](https://github.com/Codename-11/hermes-relay/releases?q=desktop) — tagged `desktop-v*` (separate track from Android); historical releases are under `cli-v*`.
+
+<style>
+.desktop-ui-doc-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+.desktop-ui-doc-gallery figure { margin: 0; }
+.desktop-ui-doc-gallery img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+}
+.desktop-ui-doc-gallery figcaption {
+  margin-top: .55rem;
+  color: var(--vp-c-text-2);
+  font-size: .8rem;
+}
+@media (max-width: 640px) {
+  .desktop-ui-doc-gallery { grid-template-columns: 1fr; }
+}
+</style>

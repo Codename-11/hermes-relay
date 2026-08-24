@@ -6,8 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
+- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
+
 ### Fixed
 
+- **README and Google Play onboarding now match the Dashboard-first product path.** Public setup copy names the two separate Dashboard QR actions, treats the API server as an advanced fallback, explains the encouraged Hermes-Relay extension without implying Play includes Device Control, and ships one current deterministic Android screenshot set.
+- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
 - **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
 - **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
 

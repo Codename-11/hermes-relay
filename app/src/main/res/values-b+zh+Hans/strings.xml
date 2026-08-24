@@ -3934,7 +3934,7 @@
     <string name="appearance_preview_voice">语音</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 个 token  ·  137.2K</string>
     <string name="appearance_preview_message_placeholder">消息…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / 配置文件：默认</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / 配置文件：默认</string>
     <string name="appearance_preview_live_note">更改预设、模式、字体或 Sphere 皮肤后，此预览会立即更新。</string>
     <string name="appearance_customize_theme">自定义 %1$s</string>
     <string name="appearance_accent_preset">预设强调色</string>

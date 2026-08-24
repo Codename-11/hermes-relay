@@ -235,7 +235,7 @@ export default function PairDialog({ open, onClose }) {
           <div>
             <h2 id="hr-pair-dialog-title" className="hr-modal-title">Pair new device</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Scan from the Hermes-Relay Android app to pair.
+              Scan with Hermes-Relay Android, or copy the invite for Desktop CLI.
             </p>
           </div>
           <Button variant="ghost" size="sm" className="hr-modal-close" onClick={onClose}>

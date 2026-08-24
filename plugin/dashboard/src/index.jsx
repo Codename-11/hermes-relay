@@ -75,7 +75,7 @@ function RelayPluginRoot() {
         <div>
           <h1 className="text-2xl font-semibold">Relay</h1>
           <p className="text-sm text-muted-foreground">
-            Paired devices, bridge activity, media, and remote access for hermes-relay.
+            Connect clients and manage Relay sessions, activity, media, and remote access.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">

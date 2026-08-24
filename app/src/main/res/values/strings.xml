@@ -1276,7 +1276,7 @@
     <string name="appearance_preview_voice">Voice</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 tokens  ·  137.2K</string>
     <string name="appearance_preview_message_placeholder">Message…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / profile: default</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / profile: default</string>
     <string name="appearance_preview_live_note">This preview updates immediately with your preset, mode, font, and sphere skin.</string>
     <string name="appearance_back">Back</string>
     <string name="appearance_remove_pet_title">Remove pet?</string>

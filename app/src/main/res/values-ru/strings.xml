@@ -3727,7 +3727,7 @@
     <string name="appearance_preview_voice">Голос</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 токенов  ·  137,2 тыс.</string>
     <string name="appearance_preview_message_placeholder">Сообщение…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / профиль: по умолчанию</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / профиль: по умолчанию</string>
     <string name="appearance_preview_live_note">Предпросмотр сразу обновляется при изменении шаблона, режима, шрифта и оформления Sphere.</string>
     <string name="appearance_customize_theme">Настроить %1$s</string>
     <string name="appearance_accent_preset">Предустановленный акцент</string>
