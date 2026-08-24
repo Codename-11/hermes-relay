@@ -25,9 +25,9 @@ const isNoticeWindow = windowLabel === 'notice'
 const isEvidenceWindow = windowLabel === 'evidence'
 
 const demo: Snapshot = {
-  hosts: [{ url: 'wss://home-hermes.local:8767', name: 'Docker-Server', server_version: '1.6.3', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'full-access', capabilities: { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' } }],
-  active_url: 'wss://home-hermes.local:8767',
-  daemon: { state: 'connected', running: true, url: 'wss://home-hermes.local:8767', privilege: 'user', username: 'Local user' },
+  hosts: [{ url: 'wss://relay.example.test:8767', name: 'Hermes Home', server_version: '1.6.3', endpoint_role: 'tailscale', paired_at: 1786458000, is_active: true, access_mode: 'full-access', capabilities: { commands: 'allow', files: 'allow', screen_input: 'allow', usb: 'allow', microphone: 'allow', camera: 'allow' } }],
+  active_url: 'wss://relay.example.test:8767',
+  daemon: { state: 'connected', running: true, url: 'wss://relay.example.test:8767', privilege: 'user', username: 'Local user' },
   startup_enabled: true,
   daemon_autostart_enabled: true,
   ui_version: '0.4.0-alpha.7',
@@ -57,7 +57,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     ] as T
     if (command === 'check_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: true, latest_version: '0.4.0-alpha.2', installed: false, needs_restart: false } as T
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
-    if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
+    if (command === 'test_host_route') return { best: { label: 'Secure Link', url: 'wss://relay.example.test:8767', reachable: true, elapsed_ms: 36, encrypted: true, security: 'Encrypted relay connection' }, routes: [] } as T
     if (command === 'computer_cua_status') return { installed: false, stale_path_shim: false, compatible: false, compatibility_reason: 'CUA Driver is not installed', supported_range: { minimum: '0.20.0', maximum_exclusive: null } } as T
     if (command === 'computer_cua_health') return { state: 'degraded', checkedAt: new Date().toISOString(), overall: 'degraded', reason: 'UI Automation desktop enumeration exceeded 2000ms.', temporaryWindowsCompatibility: true } as T
     return undefined as T
