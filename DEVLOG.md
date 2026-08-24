@@ -30,6 +30,30 @@ Skipped Build Review Bundle shells from unlabeled PR synchronize, reopen, or
 unrelated-label events return before artifact lookup and PR comment access, so
 only an explicit `review-candidate` run can produce candidate status copy.
 
+## 2026-08-23 — Android assistant screen context
+
+Compatible unlocked firmware controls that dispatch
+`android.speech.action.WEB_SEARCH` now open a real Hermes
+`VoiceInteractionSession` without replacing the foreground app. The path requires
+Hermes to be the selected Android Assistant, ignores caller-provided query data,
+starts listening from the same button press, and fails closed when the platform
+cannot show the session.
+
+The session can receive bounded visible text and an optional screenshot from
+Android. Hidden, assist-blocked, and password fields are excluded; captured content
+is not logged. Context is staged in app-private cache, labeled as untrusted, and
+attached only to the first accepted Standard voice turn. Failed transport preflight
+keeps the same context available for an explicit retry, while cancellation and stale
+cleanup prevent later reuse.
+
+The assistant card reports whether screen context is ready, keeps microphone and
+close actions separate, and can hand off to Full Voice without losing ownership.
+Focused assistant, Gateway, chat, and voice tests passed along with Android locale
+validation, Kotlin compilation, and Google Play debug lint. One Android 15
+automotive device verified foreground preservation, AssistStructure and screenshot
+delivery, immediate listening, contextual response, and one-shot consumption;
+broader firmware certification remains tracked in `TODO.md`.
+
 ## 2026-08-23 — GitHub Discussions community surface
 
 GitHub Discussions is enabled as the repository's lightweight community surface.

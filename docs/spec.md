@@ -1011,6 +1011,31 @@ utilities.
   mutually exclusive with the experimental notification-based foreground
   listener. Third-party assistants do not receive Google's dedicated low-power
   hotword hardware, so continuous local detection has a material battery cost.
+- Compatible firmware may dispatch an assistant control as
+  `android.speech.action.WEB_SEARCH`. Hermes accepts only that action through a
+  transparent system-assistant trampoline, requires the protected platform caller
+  permission and active Assistant role, ignores caller query data, and fails closed
+  if the real `VoiceInteractionSession` cannot be shown. An accepted invocation
+  starts listening from the same button press without replacing the foreground app.
+- Only unlocked WEB_SEARCH sessions request `SHOW_WITH_ASSIST` and
+  `SHOW_WITH_SCREENSHOT`. Android-provided context is bounded, excludes hidden,
+  assist-blocked, and password fields, treats secure or missing screenshots as
+  normal, and never logs captured content. Wake-word, power-button, ordinary
+  assistant, and keyguard paths request no screen context.
+- Screen context is activation-scoped, staged in app-private cache, and framed as
+  untrusted user content. It belongs only to the first Standard voice turn, never
+  borrows composer drafts, and is consumed only after the selected Gateway or API
+  transport accepts the turn. Preflight failure retains the exact context for Try
+  again; cancellation, expiry, and later turns cannot reuse it. Routes that cannot
+  transport screen context reject that isolated submission instead of dropping the
+  attachment silently.
+- The assistant session surface remains a transparent system overlay and uses a
+  bounded bottom-end Hermes card on large screens. It shows a thumbnail only when
+  a screenshot exists, otherwise a semantic-context indicator only when context
+  exists and the selected Standard voice path can transport it; experimental
+  Realtime Agent sessions do not claim inclusion. The mic control follows the
+  active voice state, close remains separate, and **Open full voice** explicitly
+  transfers ownership so assistant-process cleanup cannot cancel the main-app flow.
 - Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an

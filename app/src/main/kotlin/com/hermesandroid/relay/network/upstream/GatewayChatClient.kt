@@ -565,10 +565,14 @@ class GatewayChatClient(
         truncateBeforeRowId: Long? = null,
         queuedFollowUp: Boolean = false,
         onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
+        onTransportAccepted: () -> Unit = { },
         onAttachmentFailure: ((String) -> Unit)? = null,
         onPreflightFailure: (reason: String) -> Unit,
     ): ActiveTurnHandle {
-        val turn = GatewayTurn(dispatchOn(callbacks))
+        val turn = GatewayTurn(
+            callbacks = dispatchOn(callbacks),
+            onTransportAccepted = onTransportAccepted,
+        )
         // Warm = the connection-establish phases are skipped this turn (socket
         // alive AND the requested session already live). A "cold" turn re-pays
         // ticket/ws/session — exactly the asymmetry vs always-connected desktop.
@@ -652,6 +656,7 @@ class GatewayChatClient(
                     // prompt as a duplicate turn. Recovery belongs to the
                     // stream: the watchdog and mid-turn rejoin own it.
                     if (turn.started || turn.ended || turn.transportRecoveryStarted) {
+                        turn.markTransportAccepted()
                         Log.w(
                             TAG,
                             "prompt.submit ack failed after turn start/rejoin " +
@@ -686,6 +691,7 @@ class GatewayChatClient(
                         submitError?.message ?: "prompt.submit failed",
                     )
                 }
+                turn.markTransportAccepted()
                 (submitted.getOrNull()?.get("survivor_user_row_ids") as? JsonArray)?.let { raw ->
                     val rebound = raw.map { element ->
                         (element as? JsonPrimitive)?.longOrNull
@@ -3463,6 +3469,7 @@ class GatewayChatClient(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
         deferEvents: Boolean = false,
+        private val onTransportAccepted: () -> Unit = { },
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
         val pendingInteraction: GatewayAsk?
@@ -3487,6 +3494,13 @@ class GatewayChatClient(
             private set
 
         private val rejoinAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        private val transportAccepted = AtomicBoolean(false)
+
+        fun markTransportAccepted() {
+            if (transportAccepted.compareAndSet(false, true)) {
+                callbackDispatcher(onTransportAccepted)
+            }
+        }
 
         @Volatile
         private var reconcileRequired = false
@@ -3555,7 +3569,10 @@ class GatewayChatClient(
 
         private fun processEvent(type: String, payload: JsonObject?) {
             if (settledWithoutTerminalFrame) return
-            if (type != "session.info") started = true
+            if (type != "session.info") {
+                started = true
+                markTransportAccepted()
+            }
             tracer.mark("ttfe")
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
                 tracer.mark("ttft")
