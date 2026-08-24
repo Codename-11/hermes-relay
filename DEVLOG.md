@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-24 — Review-candidate commissioning
+
+The repository label catalog now provisions `review-candidate` as the sole
+automation label for matched Android and Relay PR bundles. The unprivileged
+workflow rebuilds an opted-in PR when its exact head changes, while documentation
+now reflects the label-driven path instead of an unavailable manual dispatch.
+The first live bundle completed for PR #398 after GitHub's normal first-time fork
+approval gate; the downloaded manifest matched the PR head and all four packaged
+artifact checksums verified.
+A separate trusted completion reporter reads only run/artifact metadata, checks
+out only the default branch, and creates or updates one marked PR comment with
+the exact candidate link and bounded review instructions. It never checks out or
+executes fork code with write permission.
+
 ## 2026-08-23 — GitHub Discussions community surface
 
 GitHub Discussions is enabled as the repository's lightweight community surface.

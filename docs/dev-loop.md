@@ -84,7 +84,7 @@ branches can run concurrently. `ISSUE-BRIEF.md` is git-ignored. Tear down with
 
 ## Setup (one-time)
 
-The workflows can only apply labels that already exist. Create them once:
+Repository automation only recognizes labels that already exist. Create them once:
 
 ```bash
 gh label create "area:android"            -c "1d76db" -d "Kotlin app"
@@ -92,11 +92,15 @@ gh label create "area:cli"                -c "0e8a16" -d "desktop/ Node CLI"
 gh label create "area:plugin"             -c "fbca04" -d "plugin/ Python relay + tools"
 gh label create "area:dashboard"          -c "c5def5" -d "plugin/dashboard React UI"
 gh label create "area:docs"               -c "bfd4f2" -d "docs/ or user-docs/"
+gh label create "review-candidate"         -c "ffb300" -d "Build a side-by-side Android and Relay review bundle for this PR"
 ```
 
 ## Operational notes
 
 - **Manual issue labels.** Type and area labels are applied during maintainer
   triage; no issue-open workflow guesses ownership from keywords.
+- **Review-candidate PRs.** Applying `review-candidate` opts an open PR targeting
+  `dev` into exact-head Android and Relay review bundles until the label is
+  removed.
 - **No write-access escalation from issues.** Auto-attempting a fix from
   untrusted issue text remains intentionally out of scope.
