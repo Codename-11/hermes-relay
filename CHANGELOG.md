@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
+### Changed
+
+- **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
+
 ## [Android 1.12.1] - 2026-08-22
 
 ### Fixed

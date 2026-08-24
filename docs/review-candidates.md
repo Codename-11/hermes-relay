@@ -4,7 +4,7 @@ Hermes-Relay supports two candidate lanes with different intent:
 
 | Lane | Source | Publication | Version/tag |
 |---|---|---|---|
-| PR review bundle | Exact PR head or 40-character SHA | Private GitHub Actions artifact | No version bump or tag |
+| PR review bundle | Exact PR head commit | Private GitHub Actions artifact | No version bump or tag |
 | Release candidate | Release-prepared exact `dev` SHA | Public GitHub prerelease | Surface tag ending in `-rc.N` |
 
 Neither lane changes a stable Android installation. Candidate APKs use the
@@ -19,7 +19,22 @@ stable app's encrypted connection state.
 
 For an open PR targeting `dev`, apply the `review-candidate` label. The label
 event runs in the PR's unprivileged workflow context and builds that exact head
-commit, including fork PRs.
+commit, including fork PRs. The label is an ongoing opt-in: reopening the PR or
+pushing a new head commit rebuilds the bundle from the new exact head. Removing
+the label stops those automatic rebuilds. GitHub may hold a first-time fork
+contributor's initial run for explicit maintainer approval before any untrusted
+code executes.
+
+After each completion, a separate trusted `workflow_run` reporter creates or
+updates one marked comment on the PR. It reads only workflow and artifact
+metadata from the completed run and checks out only the repository's default
+branch; it never checks out the PR head, downloads the candidate, or executes
+fork code with write permission. The comment links the exact artifact and run,
+records the source SHA and expiry, and keeps the install and Relay rollback
+instructions brief. Rebuilt heads update the same bot comment instead of adding
+new comments. Maintainers may also dispatch the reporter with an existing
+completed **Build Review Bundle** run ID; the reporter validates that workflow
+identity before using its metadata.
 
 For an integrated `dev` commit, use the release-candidate lane below. Review
 bundles intentionally have no privileged manual-dispatch path that can execute
