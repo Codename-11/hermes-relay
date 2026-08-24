@@ -48,7 +48,7 @@ startup entry; the separate **Start daemon with UI** preference decides whether
 opening the tray also connects remote access. Automatic daemon startup is off
 for existing installs until explicitly enabled. Settings also exposes **Open
 terminal**, **Open Hermes CLI**, **View daemon log**, and **Run diagnostics**,
-and manages Desktop release updates. **Help &
+and manages CLI+UI release updates. **Help &
 About** reports the UI, CLI, and connected Relay versions and links to the docs,
 troubleshooting, release notes, logs, and diagnostics. Tray lifecycle and child-
 process failures are written to `~/.hermes/tray.log`; daemon connection and tool-

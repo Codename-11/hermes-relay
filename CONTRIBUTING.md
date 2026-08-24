@@ -33,10 +33,11 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 
 Maintainers can produce a matched Android + Relay handoff for one pull request
 without cutting a release. Apply the `review-candidate` label to an open PR
-targeting `dev`. The short-lived artifact contains a side-by-side Candidate APK,
-Relay packages/source from the same exact PR commit, provenance, checksums, and
-install/rollback guidance. While the label remains applied, a new PR head commit
-automatically replaces any in-progress build with a bundle for the new head.
+targeting `dev`. The short-lived artifact contains a side-by-side
+**HR Candidate** APK, Relay packages/source from the same exact PR commit,
+provenance, checksums, and install/rollback guidance. While the label remains
+applied, a new PR head commit automatically replaces any in-progress build with
+a bundle for the new head.
 For a first-time fork contributor, GitHub may hold the first run for explicit
 maintainer approval before any untrusted code executes.
 When an opted-in candidate run completes, a separate trusted reporter creates or

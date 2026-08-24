@@ -1,4 +1,4 @@
-# Hermes-Relay-Android v1.12.1
+# Hermes-Relay Android v1.12.1
 
 **Release Date:** August 22, 2026
 

@@ -4,8 +4,8 @@
 The repo ships three independently versioned artifacts:
 
 - Android app: ``android-v*`` tags, source in ``gradle/libs.versions.toml``.
-- Server: ``server-v*`` tags, source in ``pyproject.toml``.
-- Desktop: ``desktop-v*`` tags, source in ``desktop/package.json``.
+- Plugin: ``server-v*`` tags, source in ``pyproject.toml``.
+- CLI+UI: ``desktop-v*`` tags, source in ``desktop/package.json``.
 
 This script gives release prep one command that checks the sources without
 forcing unrelated artifacts to share the same SemVer.
@@ -124,6 +124,7 @@ def _plugin_track(errors: list[str]) -> Track:
         if found != version:
             errors.append(f"plugin version mismatch: {source} has {found}, expected {version}")
     return Track(
+        # Stable machine-readable identifier; the public surface name is Plugin.
         name="server",
         version=version,
         source="pyproject.toml",
@@ -156,14 +157,15 @@ def _cli_track(errors: list[str]) -> Track:
         ),
     ]
     if not SEMVER_RE.match(version):
-        errors.append(f"desktop CLI version is not SemVer: {version!r}")
+        errors.append(f"CLI+UI version is not SemVer: {version!r}")
     for source, found in versions:
         if found != version:
             errors.append(
-                f"desktop CLI version mismatch: {source} has {found}, expected {version}; "
+                f"CLI+UI version mismatch: {source} has {found}, expected {version}; "
                 "run npm run sync:version in desktop/"
             )
     return Track(
+        # Stable machine-readable identifier; the public surface name is CLI+UI.
         name="desktop",
         version=version,
         source="desktop/package.json",
@@ -184,7 +186,13 @@ def collect_tracks() -> tuple[list[Track], list[str]]:
 
 def _print_table(tracks: list[Track]) -> None:
     headers = ("track", "version", "source", "tag", "details")
-    rows = [(t.name, t.version, t.source, t.tag, t.details) for t in tracks]
+    # Keep JSON track identifiers stable while presenting the current public
+    # surface names to operators.
+    display_names = {"server": "Plugin", "desktop": "CLI+UI"}
+    rows = [
+        (display_names.get(t.name, t.name), t.version, t.source, t.tag, t.details)
+        for t in tracks
+    ]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows))
         for index in range(len(headers))
