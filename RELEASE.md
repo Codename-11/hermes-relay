@@ -137,8 +137,8 @@ optional Windows installer.
 | `desktop/tray/package.json` | tray UI package version |
 | `desktop/tray/package-lock.json` | locked tray UI package version |
 
-Prepare a new CLI version on `dev` without creating a tag or npm-generated
-commit:
+Prepare a new CLI version on its release-prep branch targeting `dev`, without
+creating a tag or npm-generated commit:
 
 ```powershell
 cd desktop
@@ -185,14 +185,17 @@ never create a staging branch. Stable production tags are cut only from the new
 
 ### Normal contribution and release flow
 
-1. Branch `feature/*`, `fix/*`, `docs/*`, or `chore/*` from `dev`.
+1. Fetch `origin/dev` and branch `feature/*`, `fix/*`, `docs/*`, or `chore/*`
+   from that exact ref in a dedicated worktree.
 2. Open the PR into `dev` and require CI to pass.
 3. Merge with a merge commit/no-ff according to repository policy.
 4. Accumulate user-facing work under `CHANGELOG.md` `[Unreleased]`.
 5. Treat the feature as complete when it is merged and verified on `dev`.
 6. Start a separate Forge release issue/session when a release train is approved.
-7. Prepare the affected surface release on `dev`, including its version and notes.
-8. Open and approve the release PR from `dev` into `main`.
+7. Create `release/<surface-version>` from current `origin/dev`, prepare the
+   affected surface version and notes there, and merge its PR into `dev`.
+8. Fast-forward local `dev` to the exact merged `origin/dev`, then open and
+   approve the release PR from `dev` into `main`.
 9. Tag the new `main` tip with the affected surface prefix.
 10. Build and publish that surface's artifacts, roll out or deploy from the
     immutable tag, and verify the release and live environment.
@@ -205,10 +208,12 @@ never create a staging branch. Stable production tags are cut only from the new
 | `fix/<name>` | Focused bug fix | `fix/media-projection-fgs` |
 | `docs/<name>` | Docs-only changes larger than a typo | `docs/sideload-guide` |
 | `chore/<name>` | Cleanup / refactor / tooling | `chore/sync-version-sources` |
+| `integration/<batch>` | Maintainer-owned batch of reviewed branches | `integration/android-routing-batch` |
+| `release/<surface-version>` | Surface release preparation targeting `dev` | `release/android-1.13.0` |
 
-All of the above branch off `dev` and merge back to `dev`. There is no
-straight-to-main exemption — even single-file typos go through a feature
-branch and PR into `dev`.
+All of the above branch from current `origin/dev` and merge back to `dev`.
+There is no straight-to-main exemption — even single-file typos go through a
+task branch and PR into `dev`.
 
 ### Merge style: `--no-ff`
 
@@ -226,7 +231,7 @@ preserves the branch context as a visible merge commit in
 
 Squash merges lose that detail and are **not** the house style.
 
-### Version bumps happen at release-prep on `dev`, NOT on feature branches
+### Version bumps happen on release-prep branches, NOT feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
 plugin-owned version metadata, or `desktop/package.json`.
@@ -234,8 +239,9 @@ If two feature branches both bumped a release version, they'd collide on
 version files and, for Android, on `appVersionCode` (which must be
 monotonic).
 
-Version-bump commits live on `dev` as the last commit of release-prep
-work. Android commits use `release(android): android-vX.Y.Z`; server commits
+Version-bump commits land on `dev` through the release-prep PR as the final
+release-preparation commit. Android commits use
+`release(android): android-vX.Y.Z`; server commits
 use `release(server): server-vX.Y.Z`; desktop commits use
 `release(desktop): desktop-vX.Y.Z`. A release PR then merges `dev` →
 `main` with `--no-ff`, and the matching tag is cut from the resulting
