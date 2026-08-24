@@ -145,8 +145,8 @@ hermes-relay computer-use status --json
 - **Not installed** means the canonical package was not found at
   `%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe`. A PATH-only shim
   is intentionally ignored.
-- **Incompatible** means the executable, manifest, supported version, required
-  tool set, or permission mode did not match the Hermes adapter contract.
+- **Incompatible** means the executable, Hermes-compatible minimum version,
+  manifest launch contract, or required tool set did not match the adapter.
 - **Accessibility health** is a separate, explicit diagnostic on Windows. Use
   **Recheck** in the UI or run `hermes-relay computer-use cua health`. A
   degraded result does not disable the runtime while the temporary workaround
@@ -156,7 +156,7 @@ hermes-relay computer-use status --json
   diagnosis.
 
 CUA is preferred for new structured-control sessions. If its executable,
-manifest, required tool set, daemon status, or safe permission mode is not
+manifest, required tool set, or direct standard-mode MCP launch is not
 ready before a session begins, Hermes can select the Windows input compatibility backend;
 it never changes backend in the middle of a control session. Re-check with
 `hermes-relay computer-use cua status`, repair explicitly with

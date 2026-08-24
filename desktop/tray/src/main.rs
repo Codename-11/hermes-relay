@@ -1068,10 +1068,19 @@ mod app {
     }
 
     fn daemon_status_from_probe(result: Result<Value, String>) -> DaemonStatus {
-        result
-            .ok()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or_default()
+        let parsed = match result {
+            Ok(value) => serde_json::from_value(value).ok(),
+            // `daemon status --json` intentionally exits non-zero when the
+            // recorded process is gone, but stdout is still a useful status
+            // object with `alive:false`. Preserve it instead of surfacing the
+            // raw JSON as a tray command failure.
+            Err(output) => serde_json::from_str(&output).ok(),
+        };
+        let mut status: DaemonStatus = parsed.unwrap_or_default();
+        if !status.running {
+            status.state = stopped();
+        }
+        status
     }
 
     fn build_snapshot() -> Result<Snapshot, String> {
@@ -2557,6 +2566,27 @@ mod app {
                 assert!(!status.running);
                 assert!(status.url.is_none());
             }
+        }
+
+        #[test]
+        fn stale_daemon_json_preserves_diagnostics_without_claiming_connected() {
+            let status = daemon_status_from_probe(Err(serde_json::json!({
+                "state": "connected",
+                "alive": false,
+                "url": "wss://relay.example.test",
+                "last_event": "transport_exited",
+                "last_error": "Relay connection stopped (code 1009): message too big"
+            })
+            .to_string()));
+
+            assert_eq!(status.state, "stopped");
+            assert!(!status.running);
+            assert_eq!(status.url.as_deref(), Some("wss://relay.example.test"));
+            assert_eq!(status.last_event.as_deref(), Some("transport_exited"));
+            assert!(status
+                .last_error
+                .as_deref()
+                .is_some_and(|value| value.contains("1009")));
         }
 
         #[test]

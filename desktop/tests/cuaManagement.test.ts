@@ -18,7 +18,7 @@ import { computerUseCommand } from '../src/commands/computerUse.js'
 
 const ok = (stdout = ''): CuaProcessResult => ({ stdout, stderr: '', exitCode: 0 })
 
-async function packageHome(version = '0.19.3'): Promise<{ root: string; binary: string }> {
+async function packageHome(version = '0.20.0'): Promise<{ root: string; binary: string }> {
   const root = await mkdtemp(join(tmpdir(), 'hermes-cua-management-'))
   const release = join(root, '.cua-driver', 'packages', 'releases', `${version}-x86_64-pc-windows-msvc`)
   const current = join(root, '.cua-driver', 'packages', 'current')
@@ -31,7 +31,7 @@ async function packageHome(version = '0.19.3'): Promise<{ root: string; binary: 
 
 class ProbeRunner implements CuaProcessRunner {
   constructor(
-    readonly version = '0.19.3',
+    readonly version = '0.20.0',
     readonly latest = version,
     readonly onRun?: (executable: string, args: readonly string[], env?: NodeJS.ProcessEnv) => Promise<void> | void,
     readonly health: string = 'ok'
@@ -50,7 +50,17 @@ class ProbeRunner implements CuaProcessRunner {
     if (args[0] === 'manifest') return ok(JSON.stringify({
       schema_version: '1',
       binary_version: this.version,
-      binary_path: executable
+      binary_path: executable,
+      mcp_invocation: { command: executable, args: ['mcp'] },
+      subcommands: [
+        { name: 'mcp', args: [{ name: '--socket' }, { name: '--grant' }] },
+        { name: 'serve', args: [
+          { name: '--socket' }, { name: '--permission-mode' },
+          { name: '--capability-manifest' }, { name: '--approve-capability-manifest' },
+          { name: '--embedded' }
+        ] },
+        { name: 'stop', args: [{ name: '--socket' }] }
+      ]
     }))
     if (args[0] === 'list-tools') return ok([
       'health_report:', 'start_session:', 'end_session:', 'list_windows:',
@@ -64,11 +74,12 @@ class ProbeRunner implements CuaProcessRunner {
   }
 }
 
-test('supported CUA range is bounded to the adapter contract', () => {
-  assert.equal(isSupportedCuaVersion('0.19.2'), false)
-  assert.equal(isSupportedCuaVersion('0.19.3'), true)
-  assert.equal(isSupportedCuaVersion('0.19.99'), true)
-  assert.equal(isSupportedCuaVersion('0.20.0'), false)
+test('supported CUA range follows Hermes minimum-plus-contract semantics', () => {
+  assert.equal(isSupportedCuaVersion('0.19.99'), false)
+  assert.equal(isSupportedCuaVersion('0.20.0'), true)
+  assert.equal(isSupportedCuaVersion('0.21.0'), true)
+  assert.equal(isSupportedCuaVersion('1.0.0'), true)
+  assert.equal(isSupportedCuaVersion('not-semver'), false)
 })
 
 test('status prefers canonical package/current and reports a competing PATH shim', async () => {
@@ -80,7 +91,7 @@ test('status prefers canonical package/current and reports a competing PATH shim
       platform: 'win32', homeDir: home.root, path: stale, runner: new ProbeRunner()
     })
     assert.equal(status.installed, true)
-    assert.equal(status.current_version, '0.19.3')
+    assert.equal(status.current_version, '0.20.0')
     assert.equal(status.compatible, true)
     assert.equal(status.stale_path_shim, true)
     assert.equal(status.canonical_path, home.binary)
@@ -92,21 +103,21 @@ test('status prefers canonical package/current and reports a competing PATH shim
   }
 })
 
-test('check-update exposes a newer incompatible release without applying it', async () => {
+test('check-update accepts a newer release that preserves the Hermes runtime contract', async () => {
   const home = await packageHome()
   try {
     const status = await checkCuaUpdate({
-      platform: 'win32', homeDir: home.root, path: '', runner: new ProbeRunner('0.19.3', '0.20.0')
+      platform: 'win32', homeDir: home.root, path: '', runner: new ProbeRunner('0.20.0', '0.21.0')
     })
     assert.equal(status.update?.update_available, true)
-    assert.equal(status.update?.latest_version, '0.20.0')
-    assert.equal(status.update?.compatible, false)
+    assert.equal(status.update?.latest_version, '0.21.0')
+    assert.equal(status.update?.compatible, true)
   } finally {
     await rm(home.root, { recursive: true, force: true })
   }
 })
 
-test('update refuses an unsupported latest release before any download or apply', async () => {
+test('update refuses an invalid latest version before any download or apply', async () => {
   const home = await packageHome()
   let fetches = 0
   let powershellRuns = 0
@@ -115,7 +126,7 @@ test('update refuses an unsupported latest release before any download or apply'
       platform: 'win32',
       homeDir: home.root,
       path: '',
-      runner: new ProbeRunner('0.19.3', '0.20.0', executable => {
+      runner: new ProbeRunner('0.20.0', 'not-semver', executable => {
         if (executable.toLowerCase() === 'powershell.exe') powershellRuns += 1
       }),
       fetch: async () => {
@@ -144,19 +155,19 @@ test('install verifies trusted release metadata/checksum and sanitizes installer
         schemaVersion: 1,
         repository: 'trycua/cua',
         product: 'cua-driver-rs',
-        version: '0.19.3',
-        tag: 'cua-driver-rs-v0.19.3',
+        version: '0.20.0',
+        tag: 'cua-driver-rs-v0.20.0',
         assets: [{ name: 'install.ps1', sha256: scriptSha }]
       }
     }
   })
   let installerEnvironment: NodeJS.ProcessEnv | undefined
   let installerPath: string | undefined
-  const runner = new ProbeRunner('0.19.3', '0.19.3', async (executable, args, env) => {
+  const runner = new ProbeRunner('0.20.0', '0.20.0', async (executable, args, env) => {
     if (!executable.toLowerCase().endsWith('\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe')) return
     installerEnvironment = env
     installerPath = args[args.indexOf('-File') + 1]
-    const release = join(root, '.cua-driver', 'packages', 'releases', '0.19.3-x86_64-pc-windows-msvc')
+    const release = join(root, '.cua-driver', 'packages', 'releases', '0.20.0-x86_64-pc-windows-msvc')
     await mkdir(release, { recursive: true })
     await writeFile(join(release, 'cua-driver.exe'), 'installed')
     await symlink(release, join(root, '.cua-driver', 'packages', 'current'), 'junction')
@@ -172,7 +183,7 @@ test('install verifies trusted release metadata/checksum and sanitizes installer
     assert.equal(status.operation?.runtime_verified, true)
     assert.equal(installerEnvironment?.OPENAI_API_KEY, undefined)
     assert.equal(installerEnvironment?.CUA_DRIVER_RS_TELEMETRY_ENABLED, '0')
-    assert.equal(installerEnvironment?.CUA_DRIVER_RS_VERSION, '0.19.3')
+    assert.equal(installerEnvironment?.CUA_DRIVER_RS_VERSION, '0.20.0')
     assert.ok(installerPath)
     await assert.rejects(access(installerPath!))
   } finally {
@@ -200,8 +211,8 @@ test('install rejects invalid release identity metadata before downloading the i
               schemaVersion: 1,
               repository: 'attacker/fork',
               product: 'cua-driver-rs',
-              version: '0.19.3',
-              tag: 'cua-driver-rs-v0.19.3',
+              version: '0.20.0',
+              tag: 'cua-driver-rs-v0.20.0',
               assets: [{ name: 'install.ps1', sha256: 'a'.repeat(64) }]
             }
           }
@@ -220,7 +231,7 @@ test('install rejects an installer whose bytes do not match release metadata', a
   try {
     await assert.rejects(installCuaDriver({
       platform: 'win32', homeDir: root, path: '',
-      runner: new ProbeRunner('0.19.3', '0.19.3', executable => {
+      runner: new ProbeRunner('0.20.0', '0.20.0', executable => {
         if (executable.toLowerCase() === 'powershell.exe') powershellRuns += 1
       }),
       fetch: async url => ({
@@ -231,7 +242,7 @@ test('install rejects an installer whose bytes do not match release metadata', a
           assert.match(url, /release-manifest\.json$/)
           return {
             schemaVersion: 1, repository: 'trycua/cua', product: 'cua-driver-rs',
-            version: '0.19.3', tag: 'cua-driver-rs-v0.19.3',
+            version: '0.20.0', tag: 'cua-driver-rs-v0.20.0',
             assets: [{ name: 'install.ps1', sha256: 'a'.repeat(64) }]
           }
         }
@@ -247,9 +258,9 @@ test('post-install runtime verification succeeds while explicit health remains d
   const root = await mkdtemp(join(tmpdir(), 'hermes-cua-degraded-'))
   const script = Buffer.from('installer')
   const checksum = createHash('sha256').update(script).digest('hex')
-  const runner = new ProbeRunner('0.19.3', '0.19.3', async executable => {
+  const runner = new ProbeRunner('0.20.0', '0.20.0', async executable => {
     if (!executable.toLowerCase().endsWith('\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe')) return
-    const release = join(root, '.cua-driver', 'packages', 'releases', '0.19.3-x86_64-pc-windows-msvc')
+    const release = join(root, '.cua-driver', 'packages', 'releases', '0.20.0-x86_64-pc-windows-msvc')
     await mkdir(release, { recursive: true })
     await writeFile(join(release, 'cua-driver.exe'), 'installed')
     await symlink(release, join(root, '.cua-driver', 'packages', 'current'), 'junction')
@@ -265,7 +276,7 @@ test('post-install runtime verification succeeds while explicit health remains d
           assert.match(url, /release-manifest\.json$/)
           return {
             schemaVersion: 1, repository: 'trycua/cua', product: 'cua-driver-rs',
-            version: '0.19.3', tag: 'cua-driver-rs-v0.19.3',
+            version: '0.20.0', tag: 'cua-driver-rs-v0.20.0',
             assets: [{ name: 'install.ps1', sha256: checksum }]
           }
         }
@@ -307,13 +318,13 @@ test('install rejects an unverified installer before process execution', async (
         schemaVersion: 1,
         repository: 'trycua/cua',
         product: 'cua-driver-rs',
-        version: '0.19.3',
-        tag: 'cua-driver-rs-v0.19.3',
+        version: '0.20.0',
+        tag: 'cua-driver-rs-v0.20.0',
         assets: [{ name: 'install.ps1', sha256: '0'.repeat(64) }]
       }
     }
   })
-  const runner = new ProbeRunner('0.19.3', '0.19.3', () => { processStarted = true })
+  const runner = new ProbeRunner('0.20.0', '0.20.0', () => { processStarted = true })
   try {
     await assert.rejects(
       installCuaDriver({ platform: 'win32', homeDir: root, path: '', runner, fetch: fetchImpl }),

@@ -20,6 +20,15 @@ const REQUIRED_TOOL_LINES = [
   'health_report', 'start_session', 'end_session', 'list_windows', 'get_window_state',
   'click', 'set_value', 'press_key', 'scroll'
 ].map(name => `${name}: test tool`).join('\n')
+const RUNTIME_SUBCOMMANDS = [
+  { name: 'mcp', args: [{ name: '--socket' }, { name: '--grant' }] },
+  { name: 'serve', args: [
+    { name: '--socket' }, { name: '--permission-mode' },
+    { name: '--capability-manifest' }, { name: '--approve-capability-manifest' },
+    { name: '--embedded' }
+  ] },
+  { name: 'stop', args: [{ name: '--socket' }] }
+]
 
 class FakeRunner implements CuaProcessRunner {
   readonly calls: Array<{ executable: string; args: readonly string[]; stdin?: string }> = []
@@ -27,7 +36,7 @@ class FakeRunner implements CuaProcessRunner {
   constructor(
     private readonly binaryPath: string,
     private readonly health = 'ok',
-    private readonly version = '0.19.3',
+    private readonly version = '0.21.0',
     private readonly permissionMode = 'standard'
   ) {}
 
@@ -36,7 +45,11 @@ class FakeRunner implements CuaProcessRunner {
     const command = args.join(' ')
     if (command === '--version') return ok(`cua-driver ${this.version}`)
     if (command === 'manifest --pretty') {
-      return ok(JSON.stringify({ schema_version: '1', binary_version: this.version, binary_path: this.binaryPath }))
+      return ok(JSON.stringify({
+        schema_version: '1', binary_version: this.version, binary_path: this.binaryPath,
+        mcp_invocation: { command: this.binaryPath, args: ['mcp'] },
+        subcommands: RUNTIME_SUBCOMMANDS
+      }))
     }
     if (command === 'list-tools') return ok(REQUIRED_TOOL_LINES)
     if (command === 'status') return ok(`Cua Driver daemon is running\n  permission mode: ${this.permissionMode} (test)`)
@@ -54,7 +67,7 @@ function ok(stdout: string): CuaProcessResult {
 async function fakeInstall(): Promise<{ home: string; binary: string; cleanup(): Promise<void> }> {
   const home = await mkdtemp(join(tmpdir(), 'hermes-cua-'))
   const releases = join(home, '.cua-driver', 'packages', 'releases')
-  const release = join(releases, '0.19.3-x86_64-pc-windows-msvc')
+  const release = join(releases, '0.21.0-x86_64-pc-windows-msvc')
   const current = join(home, '.cua-driver', 'packages', 'current')
   await mkdir(release, { recursive: true })
   const binary = join(release, 'cua-driver.exe')
@@ -69,27 +82,52 @@ test('discovers only the canonical package/current executable and negotiates rea
     const runner = new FakeRunner(install.binary)
     const adapter = await CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner })
     assert.equal(adapter.binaryPath, install.binary)
-    assert.equal(adapter.binaryVersion, '0.19.3')
+    assert.equal(adapter.binaryVersion, '0.21.0')
     assert.equal(adapter.permissionMode, 'standard')
     assert.equal(runner.calls[0]?.executable, install.binary)
-    assert.deepEqual(runner.calls.map(call => call.args.join(' ')).slice(0, 4), [
-      '--version', 'manifest --pretty', 'list-tools', 'status'
+    assert.deepEqual(runner.calls.map(call => call.args.join(' ')).slice(0, 3), [
+      '--version', 'manifest --pretty', 'list-tools'
     ])
     assert.equal(runner.calls.some(call => call.args.join(' ') === 'call health_report'), false)
   } finally {
     await install.cleanup()
   }
 })
-test('keeps runtime ready when global health is degraded but still rejects unrestricted permission mode', async () => {
+test('keeps runtime ready when global health is degraded and owns a direct standard-mode child', async () => {
   const install = await fakeInstall()
   try {
     const adapter = await CuaDriverAdapter.connect({
-      platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'degraded')
+      platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'degraded', '0.21.0', 'unrestricted')
     })
-    assert.equal(adapter.binaryVersion, '0.19.3')
+    assert.equal(adapter.binaryVersion, '0.21.0')
+    assert.equal(adapter.permissionMode, 'standard')
+  } finally {
+    await install.cleanup()
+  }
+})
+
+test('rejects pre-contract versions and manifests missing Hermes-required daemon arguments', async () => {
+  const install = await fakeInstall()
+  try {
     await assert.rejects(
-      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'ok', '0.19.3', 'unrestricted') }),
-      (error: unknown) => error instanceof CuaRuntimeError && error.code === 'incompatible'
+      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner: new FakeRunner(install.binary, 'ok', '0.19.3') }),
+      /Unsupported CUA Driver version/
+    )
+    const runner = new FakeRunner(install.binary)
+    const originalRun = runner.run.bind(runner)
+    runner.run = async (executable, args, options = {}) => {
+      if (args.join(' ') === 'manifest --pretty') {
+        return ok(JSON.stringify({
+          schema_version: '1', binary_version: '0.21.0', binary_path: install.binary,
+          mcp_invocation: { command: install.binary, args: ['mcp'] },
+          subcommands: [{ name: 'mcp', args: [{ name: '--socket' }] }]
+        }))
+      }
+      return originalRun(executable, args, options)
+    }
+    await assert.rejects(
+      CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner }),
+      /manifest is missing/
     )
   } finally {
     await install.cleanup()

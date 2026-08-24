@@ -59,6 +59,8 @@ const asGatewayEvent = (value: unknown): GatewayEvent | null =>
     ? (value as GatewayEvent)
     : null
 
+class CertificatePinMismatchError extends Error {}
+
 interface Pending {
   id: string
   method: string
@@ -156,8 +158,8 @@ export interface RelayTransportConfig {
   ttlSeconds?: number
   /** Test hook. */
   wsFactory?: WSFactory
-  /** Auto-reconnect on WSS close. Default: true. Set false for one-shot
-   * commands (pair, tools list). */
+  /** Auto-reconnect on WSS close. Opt in for long-running commands; one-shot
+   * commands (pair, tools list) remain terminal by default. */
   autoReconnect?: boolean
   /** Max reconnect attempts before giving up and emitting 'exit'. 0 =
    * unlimited. Default: 0. */
@@ -210,7 +212,7 @@ export class RelayTransport extends EventEmitter implements Transport {
   private logs = new CircularBuffer<string>(MAX_LOG_LINES)
   private pending = new Map<string, Pending>()
   private bufferedEvents = new CircularBuffer<GatewayEvent>(MAX_BUFFERED_EVENTS)
-  private pendingExit: number | null | undefined
+  private pendingExit: { code: number | null; reason: string } | undefined
   private subscribed = false
   private authResolved = false
   private authTimer: ReturnType<typeof setTimeout> | null = null
@@ -249,6 +251,10 @@ export class RelayTransport extends EventEmitter implements Transport {
    * pick which auth handler path runs — subsequent auth.ok should fire
    * `'reconnected'`, not settle the initial `whenAuthResolved()` promise. */
   private reconnectInFlight = false
+  /** True after any socket has completed auth. Unlike `authResolved`, this is
+   * not cleared while a replacement socket authenticates, so a failed
+   * reconnect attempt can schedule the next backoff instead of exiting. */
+  private everAuthenticated = false
 
   constructor(cfg: RelayTransportConfig) {
     super()
@@ -370,7 +376,10 @@ export class RelayTransport extends EventEmitter implements Transport {
         const msg = e instanceof Error ? e.message : String(e)
         this.pushLog(`[tofu] ${msg}`)
         this.publish({ type: 'gateway.stderr', payload: { line: `[tofu] ${msg}` } })
-        this.authFailReason = msg
+        // A reviewed pin mismatch is terminal. A refused/timed-out TLS probe
+        // during a Relay restart is transient and must continue the daemon's
+        // reconnect backoff.
+        if (e instanceof CertificatePinMismatchError) this.authFailReason = msg
         this.teardownSocket(-1, msg)
 
         return
@@ -491,7 +500,7 @@ export class RelayTransport extends EventEmitter implements Transport {
         // Surface a user-friendly remediation path. The session file carries
         // the pin so a re-pair clears it; `saveSession(..., {certPin: null})`
         // also wipes it if a `--reset-pin` flag lands.
-        throw new Error(
+        throw new CertificatePinMismatchError(
           `cert pin mismatch for ${key}: expected ${expectedPin}, got ${actualPin}. ` +
             `If this server was legitimately rotated, re-pair with \`hermes-relay pair\` ` +
             `to capture the new pin.`
@@ -651,6 +660,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (type === 'auth.ok') {
       const isReconnect = this.reconnectInFlight
       this.authResolved = true
+      this.everAuthenticated = true
       this.state = 'connected'
       this.reconnectAttempt = 0
       this.reconnectInFlight = false
@@ -969,9 +979,9 @@ export class RelayTransport extends EventEmitter implements Transport {
     }
 
     if (this.subscribed) {
-      this.emit('exit', code)
+      this.emit('exit', code, reason)
     } else {
-      this.pendingExit = code
+      this.pendingExit = { code, reason }
     }
   }
 
@@ -1000,7 +1010,7 @@ export class RelayTransport extends EventEmitter implements Transport {
 
     const canReconnect =
       this.cfg.autoReconnect === true &&
-      this.authResolved && // only reconnect sessions that were once healthy
+      this.everAuthenticated && // only reconnect sessions that were once healthy
       !this.authFailReason && // terminal auth failure blocks reconnect
       (this.cfg.reconnectGate?.() ?? true) &&
       this.withinAttemptLimit()
@@ -1093,9 +1103,9 @@ export class RelayTransport extends EventEmitter implements Transport {
     }
 
     if (this.pendingExit !== undefined) {
-      const code = this.pendingExit
+      const { code, reason } = this.pendingExit
       this.pendingExit = undefined
-      this.emit('exit', code)
+      this.emit('exit', code, reason)
     }
   }
 

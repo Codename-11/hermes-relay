@@ -34,9 +34,10 @@ const DEFAULT_TIMEOUT_MS = 30_000
 // detached job (desktop_job_start) so the agent can poll instead of holding
 // a 10-minute open RPC.
 const MAX_TIMEOUT_MS = 10 * 60_000
-// Cap stdout/stderr per stream. PowerShell can produce a lot when the agent
-// asks for `Get-Process`, but a runaway loop shouldn't OOM the relay.
-const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+// Leave room for stderr, JSON escaping, and the desktop response envelope under
+// the relay's 4 MiB decompressed WebSocket-message limit. The router also owns
+// a final serialized-envelope budget for non-PowerShell handlers.
+const MAX_OUTPUT_BYTES = 1024 * 1024
 
 type ShellPick = 'pwsh' | 'powershell'
 
