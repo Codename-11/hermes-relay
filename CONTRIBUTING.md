@@ -32,10 +32,16 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ### Review bundles
 
 Maintainers can produce a matched Android + Relay handoff for one pull request
-without cutting a release. Run **Actions → Build Review Bundle** with the PR
-number or an exact 40-character SHA. The short-lived artifact contains a
-side-by-side Candidate APK, Relay packages/source from the same commit,
-provenance, checksums, and install/rollback guidance.
+without cutting a release. Apply the `review-candidate` label to an open PR
+targeting `dev`. The short-lived artifact contains a side-by-side Candidate APK,
+Relay packages/source from the same exact PR commit, provenance, checksums, and
+install/rollback guidance. While the label remains applied, a new PR head commit
+automatically replaces any in-progress build with a bundle for the new head.
+For a first-time fork contributor, GitHub may hold the first run for explicit
+maintainer approval before any untrusted code executes.
+When the run completes, a separate trusted reporter creates or updates one PR
+comment with the exact source SHA, artifact link, expiry, and concise install and
+rollback guidance.
 
 Review bundles never bump versions, create tags, upload to Play, or replace the
 stable Android app. Relay review still requires a staging Hermes instance or an
