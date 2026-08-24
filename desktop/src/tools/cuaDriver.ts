@@ -6,8 +6,11 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { readDesktopUseSettingsSync } from '../lib/desktopUseSettings.js'
 
-const SUPPORTED_MIN_VERSION = [0, 19, 3] as const
-const SUPPORTED_MAX_VERSION = [0, 20, 0] as const
+// Match Hermes' current runtime contract: 0.20 introduced the manifest-backed
+// daemon/MCP surface. Newer releases remain eligible when they continue to
+// advertise that contract; capability checks, not a stale upper version pin,
+// decide compatibility.
+const SUPPORTED_MIN_VERSION = [0, 20, 0] as const
 const DEFAULT_TIMEOUT_MS = 8_000
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const REQUIRED_TOOLS = Object.freeze([
@@ -22,6 +25,14 @@ const REQUIRED_TOOLS = Object.freeze([
   'scroll'
 ])
 const ALLOWED_TOOLS = Object.freeze([...REQUIRED_TOOLS, 'set_agent_cursor_enabled'])
+const REQUIRED_MANIFEST_ARGS = Object.freeze({
+  mcp: Object.freeze(['--socket', '--grant']),
+  serve: Object.freeze([
+    '--socket', '--permission-mode', '--capability-manifest',
+    '--approve-capability-manifest', '--embedded'
+  ]),
+  stop: Object.freeze(['--socket'])
+})
 
 export interface CuaProcessResult {
   stdout: string
@@ -113,6 +124,8 @@ interface CuaManifest {
   schema_version?: unknown
   binary_version?: unknown
   binary_path?: unknown
+  mcp_invocation?: unknown
+  subcommands?: unknown
 }
 
 interface CuaHealthReport {
@@ -153,8 +166,11 @@ class CuaMcpClient {
   private stdout = ''
   private closed = false
 
-  private constructor(binaryPath: string) {
-    this.child = spawn(binaryPath, ['mcp', '--socket', '\\\\.\\pipe\\cua-driver'], {
+  private constructor(binaryPath: string, mcpArgs: readonly string[]) {
+    // Follow Hermes' standard Windows runtime: the manifest-declared MCP
+    // process owns its runtime directly. Do not force it through the optional
+    // machine-wide daemon, whose independently updated contract may be stale.
+    this.child = spawn(binaryPath, [...mcpArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: cuaDriverEnvironment()
@@ -164,8 +180,8 @@ class CuaMcpClient {
     this.child.on('close', code => this.failAll(new CuaRuntimeError(`CUA MCP transport closed (${code ?? 'unknown'})`, 'transport')))
   }
 
-  static async connect(binaryPath: string, expectedVersion: string): Promise<CuaMcpClient> {
-    const client = new CuaMcpClient(binaryPath)
+  static async connect(binaryPath: string, expectedVersion: string, mcpArgs: readonly string[]): Promise<CuaMcpClient> {
+    const client = new CuaMcpClient(binaryPath, mcpArgs)
     const initialized = await client.request('initialize', {
       protocolVersion: '2025-06-18',
       capabilities: {},
@@ -369,6 +385,46 @@ function parseJsonObject(text: string, label: string): Record<string, unknown> {
   return parsed as Record<string, unknown>
 }
 
+function manifestRuntimeContract(manifest: CuaManifest): { mcpArgs: string[] } {
+  const invocation = manifest.mcp_invocation
+  const invocationArgs = invocation && typeof invocation === 'object' && !Array.isArray(invocation)
+    ? (invocation as Record<string, unknown>).args
+    : null
+  if (!Array.isArray(invocationArgs) || invocationArgs.length === 0 || !invocationArgs.every(arg => typeof arg === 'string' && arg.length > 0)) {
+    throw new CuaRuntimeError('CUA Driver manifest does not provide an MCP launch command', 'incompatible')
+  }
+
+  const advertised = new Map<string, Set<string>>()
+  if (Array.isArray(manifest.subcommands)) {
+    for (const entry of manifest.subcommands) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+      const command = entry as Record<string, unknown>
+      if (typeof command.name !== 'string') continue
+      const args = new Set<string>()
+      if (Array.isArray(command.args)) {
+        for (const arg of command.args) {
+          if (arg && typeof arg === 'object' && !Array.isArray(arg) && typeof (arg as Record<string, unknown>).name === 'string') {
+            args.add((arg as Record<string, unknown>).name as string)
+          }
+        }
+      }
+      advertised.set(command.name, args)
+    }
+  }
+
+  const missing: string[] = []
+  for (const [command, requiredArgs] of Object.entries(REQUIRED_MANIFEST_ARGS)) {
+    const actual = advertised.get(command) ?? new Set<string>()
+    for (const arg of requiredArgs) {
+      if (!actual.has(arg)) missing.push(`${command} ${arg}`)
+    }
+  }
+  if (missing.length > 0) {
+    throw new CuaRuntimeError(`CUA Driver manifest is missing: ${missing.join(', ')}`, 'incompatible')
+  }
+  return { mcpArgs: [...invocationArgs] as string[] }
+}
+
 function validatePositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new CuaRuntimeError(`${name} must be a positive integer`, 'transport')
@@ -448,7 +504,8 @@ export class CuaDriverAdapter {
     permissionMode: 'standard' | 'bounded',
     private readonly runner: CuaProcessRunner,
     private readonly usePersistentMcp: boolean,
-    private readonly supportsCursorToggle: boolean
+    private readonly supportsCursorToggle: boolean,
+    private readonly mcpArgs: readonly string[]
   ) {
     this.binaryPath = binaryPath
     this.binaryVersion = binaryVersion
@@ -470,7 +527,7 @@ export class CuaDriverAdapter {
     }
     const versionText = await run(['--version'])
     const versionTuple = parseVersion(versionText)
-    if (!versionTuple || compareVersion(versionTuple, SUPPORTED_MIN_VERSION) < 0 || compareVersion(versionTuple, SUPPORTED_MAX_VERSION) >= 0) {
+    if (!versionTuple || compareVersion(versionTuple, SUPPORTED_MIN_VERSION) < 0) {
       throw new CuaRuntimeError(`Unsupported CUA Driver version: ${versionText || 'unknown'}`, 'incompatible')
     }
     const manifest = parseJsonObject(await run(['manifest', '--pretty']), 'CUA Driver manifest') as CuaManifest
@@ -481,22 +538,22 @@ export class CuaDriverAdapter {
     if (resolve(manifestPath).toLowerCase() !== resolve(binaryPath).toLowerCase()) {
       throw new CuaRuntimeError('CUA Driver manifest identifies a different executable', 'incompatible')
     }
+    const { mcpArgs } = manifestRuntimeContract(manifest)
     const toolNames = new Set((await run(['list-tools'])).split(/\r?\n/).map(line => line.split(':', 1)[0]?.trim()).filter(Boolean))
     const missingTools = REQUIRED_TOOLS.filter(tool => !toolNames.has(tool))
     if (missingTools.length > 0) {
       throw new CuaRuntimeError(`CUA Driver is missing required tools: ${missingTools.join(', ')}`, 'incompatible')
     }
-    const statusText = await run(['status'])
-    const permissionMatch = /permission mode:\s*(standard|bounded|unrestricted)\b/i.exec(statusText)
-    if (!permissionMatch || permissionMatch[1]?.toLowerCase() === 'unrestricted') {
-      throw new CuaRuntimeError('CUA Driver permission mode is unavailable or unrestricted', 'incompatible')
-    }
-    const permissionMode = permissionMatch[1]!.toLowerCase() as 'standard' | 'bounded'
-    // Temporary Windows compatibility policy for trycua/cua#3103. The global
+    // The sanitized direct MCP launch receives no permission-mode override,
+    // capability manifest, or approval-bypass environment, so cua-driver's
+    // fail-closed standard mode owns the child runtime. Host Full Access and
+    // task grants remain separate Relay authorization gates.
+    const permissionMode = 'standard' as const
+    // Temporary Windows compatibility policy for trycua/cua#3103. The
     // health_report performs a whole-desktop UIA walk with a fixed timeout and
     // can poison the driver's busy flag after a false timeout. Runtime
-    // readiness is therefore based on the canonical binary, manifest, tool
-    // contract, daemon status, and safe permission mode. Individual structured
+    // readiness is therefore based on the canonical binary, manifest, and tool
+    // contract. The direct child starts in standard mode, and individual structured
     // actions still fail closed. Keep health_report as an explicit diagnostic
     // via healthStatus(), and remove this split when upstream fixes #3103.
     return new CuaDriverAdapter(
@@ -505,7 +562,8 @@ export class CuaDriverAdapter {
       permissionMode,
       runner,
       options.runner === undefined,
-      toolNames.has('set_agent_cursor_enabled')
+      toolNames.has('set_agent_cursor_enabled'),
+      mcpArgs
     )
   }
 
@@ -531,19 +589,21 @@ export class CuaDriverAdapter {
     const checkedAt = new Date().toISOString()
     try {
       const adapter = await CuaDriverAdapter.connect(options)
-      const runner = options.runner ?? new SpawnCuaProcessRunner()
-      const result = await runner.run(adapter.binaryPath, ['call', 'health_report'], {
-        stdin: '{}',
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-        env: cuaDriverEnvironment()
-      })
-      if (result.exitCode !== 0) {
-        return {
-          state: 'error', checkedAt, temporaryWindowsCompatibility: true,
-          reason: `CUA Driver health probe exited ${result.exitCode}`
+      let health: CuaHealthReport
+      if (options.runner) {
+        const result = await options.runner.run(adapter.binaryPath, ['call', 'health_report'], {
+          stdin: '{}', timeoutMs: DEFAULT_TIMEOUT_MS, env: cuaDriverEnvironment()
+        })
+        if (result.exitCode !== 0) {
+          return {
+            state: 'error', checkedAt, temporaryWindowsCompatibility: true,
+            reason: `CUA Driver health probe exited ${result.exitCode}`
+          }
         }
+        health = parseJsonObject(result.stdout.trim(), 'CUA Driver health report') as CuaHealthReport
+      } else {
+        health = await adapter.healthReport()
       }
-      const health = parseJsonObject(result.stdout.trim(), 'CUA Driver health report') as CuaHealthReport
       if (health.schema_version !== '1' || health.driver_version !== adapter.binaryVersion) {
         return {
           state: 'error', checkedAt, temporaryWindowsCompatibility: true,
@@ -565,13 +625,22 @@ export class CuaDriverAdapter {
     }
   }
 
+  private async healthReport(): Promise<CuaHealthReport> {
+    const mcp = await CuaMcpClient.connect(this.binaryPath, this.binaryVersion, this.mcpArgs)
+    try {
+      return await mcp.call('health_report', {}) as CuaHealthReport
+    } finally {
+      mcp.close()
+    }
+  }
+
   async openSession(identity: CuaControlSessionIdentity, signal?: AbortSignal, cursorEnabled = false): Promise<CuaControlSession> {
     const id = derivedSessionId(identity)
     if (this.sessions.has(id)) {
       throw new CuaRuntimeError('CUA control session is already active', 'transport')
     }
     if (signal?.aborted) throw new CuaRuntimeError('CUA control session was cancelled', 'transport')
-    const mcp = this.usePersistentMcp ? await CuaMcpClient.connect(this.binaryPath, this.binaryVersion) : null
+    const mcp = this.usePersistentMcp ? await CuaMcpClient.connect(this.binaryPath, this.binaryVersion, this.mcpArgs) : null
     const invoke = async (tool: string, args: Record<string, unknown>, invokeSignal?: AbortSignal): Promise<CuaToolResult> => {
       if (invokeSignal?.aborted) throw new CuaRuntimeError('CUA action was cancelled', 'transport')
       if (!ALLOWED_TOOLS.includes(tool)) throw new CuaRuntimeError('Attempted to invoke a non-allowlisted CUA Driver tool', 'transport')

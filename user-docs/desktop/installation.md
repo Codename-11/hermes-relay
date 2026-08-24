@@ -80,12 +80,13 @@ hermes-relay computer-use cua update --yes
 ```
 
 Install is pinned to the minimum compatible release. Update first asks the
-installed driver's native update service which release is current, then refuses
-to apply it if it falls outside Hermes-Relay's supported range (`>=0.19.3,
-<0.20.0`). Hermes downloads the versioned GitHub release manifest and installer,
+installed driver's native update service which release is current. Following
+Hermes, compatibility requires CUA Driver `>=0.20.0` and has no hardcoded upper
+version ceiling; each build must continue to advertise the required manifest,
+daemon/MCP arguments, and tool contract. Hermes-Relay downloads the versioned GitHub release manifest and installer,
 checks the manifest repository/product/version and the installer's SHA-256, and
 then verifies the canonical binary path, version, driver manifest, required
-tools, and permission mode. Accessibility health remains an explicit recheck
+tools, and direct standard-mode MCP launch. Accessibility health remains an explicit recheck
 while the temporary Windows compatibility workaround is active. These are release-metadata and
 checksum integrity checks, not a Windows publisher signature.
 

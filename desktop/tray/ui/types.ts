@@ -61,7 +61,7 @@ export interface CuaManagementStatus {
   current_version?: string | null
   compatible: boolean
   compatibility_reason?: string | null
-  supported_range: { minimum: string; maximum_exclusive: string }
+  supported_range: { minimum: string; maximum_exclusive: string | null }
   update?: { latest_version?: string; update_available: boolean; compatible: boolean; error?: string; release_notes_url?: string }
   operation?: { kind: 'install' | 'update'; state: 'completed'; version: string }
 }

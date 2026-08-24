@@ -1034,15 +1034,16 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   }
   const updateStatus = (partial: Partial<DaemonStatus> & { state?: DaemonState }) => {
     Object.assign(status, partial, { updated_at: nowSec() })
-    void writeDaemonStatus(status)
+    return writeDaemonStatus(status)
   }
-  updateStatus({})
+  void updateStatus({})
 
   const relay = new RelayTransport({
     url,
     sessionToken: token,
     sessionHeader: useSessionHeader,
     broker: brokerRoute,
+    autoReconnect: true,
     ...desktopRelayIdentity()
   })
 
@@ -1069,14 +1070,25 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     updateStatus({ state: 'connected', last_event: 'reconnected', reconnect_attempt: null, retry_at: null, last_error: null })
     void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnected', category: 'system', ok: true, host_url: configuredUrl, summary: 'Relay tunnel restored' })
   })
-  relay.on('exit', (code: unknown) => {
+  relay.on('exit', (code: unknown, reason: unknown) => {
     // Transport gave up (auth.fail, reconnect gate returned false, or
     // reconnect attempts exhausted). Daemon exits non-zero so the
     // service manager decides whether to restart.
-    log.error({ event: 'transport_exited', code: typeof code === 'number' ? code : null })
-    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.disconnected', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay transport stopped', error: 'Automatic reconnect stopped' })
-    // Defer exit so the log line flushes before the process dies.
-    setImmediate(() => process.exit(1))
+    const closeCode = typeof code === 'number' ? code : null
+    const closeReason = typeof reason === 'string' && reason ? reason : 'Automatic reconnect stopped'
+    const lastError = `Relay connection stopped${closeCode === null ? '' : ` (code ${closeCode})`}: ${closeReason}`
+    log.error({ event: 'transport_exited', code: closeCode, reason: closeReason })
+    const statusWrite = updateStatus({
+      state: 'stopped',
+      last_event: 'transport_exited',
+      reconnect_attempt: null,
+      retry_at: null,
+      last_error: lastError
+    })
+    const auditWrite = appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.disconnected', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay transport stopped', error: lastError })
+    // Preserve the terminal state before exiting so the tray never renders a
+    // stale connected heartbeat from a process that is already gone.
+    void Promise.allSettled([statusWrite, auditWrite]).finally(() => process.exit(1))
   })
 
   relay.start()

@@ -64,6 +64,37 @@ export type ToolResponsePayload =
   | { request_id: string; ok: true; result: unknown }
   | { request_id: string; ok: false; error: string }
 
+// aiohttp's relay WebSocket accepts 4 MiB decompressed messages. Keep a full
+// MiB for the envelope, escaping growth, and protocol evolution. Handlers
+// should still apply useful domain-specific truncation; this is the final
+// fail-safe that prevents one oversized result from closing the shared socket.
+export const DESKTOP_RESPONSE_WIRE_BUDGET_BYTES = 3 * 1024 * 1024
+const ENVELOPE_ID_BUDGET_PLACEHOLDER = '00000000-0000-0000-0000-000000000000'
+
+export function fitDesktopResponseToWire(payload: ToolResponsePayload): ToolResponsePayload {
+  let wireBytes: number
+  try {
+    wireBytes = Buffer.byteLength(JSON.stringify({
+      channel: 'desktop',
+      type: 'desktop.response',
+      id: ENVELOPE_ID_BUDGET_PLACEHOLDER,
+      payload
+    }))
+  } catch {
+    return {
+      request_id: payload.request_id,
+      ok: false,
+      error: 'Desktop result could not be serialized. Retry with bounded text or save the output to a file.'
+    }
+  }
+  if (wireBytes <= DESKTOP_RESPONSE_WIRE_BUDGET_BYTES) return payload
+  return {
+    request_id: payload.request_id,
+    ok: false,
+    error: `Desktop result exceeded the ${DESKTOP_RESPONSE_WIRE_BUDGET_BYTES}-byte relay response budget. Retry with bounded output or save the result to a file.`
+  }
+}
+
 /** Context passed to every handler. `cwd` defaults to `process.cwd()` but
  * per-call overrides (e.g. terminalHandler's own `cwd` arg) still apply
  * inside the handler — this is just the router-level default. `abortSignal`
@@ -546,7 +577,7 @@ export class DesktopToolRouter {
       this.relay.sendChannel(
         'desktop',
         'desktop.response',
-        payload as unknown as Record<string, unknown>
+        fitDesktopResponseToWire(payload) as unknown as Record<string, unknown>
       )
     } catch {
       // If send fails, the server will time out the pending request; no
