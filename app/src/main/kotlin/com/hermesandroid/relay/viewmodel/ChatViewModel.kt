@@ -43,6 +43,8 @@ import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedSessionAction
+import com.hermesandroid.relay.data.allowsSessionAction
 import com.hermesandroid.relay.data.ToolCallEvent
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.data.HermesCard
@@ -4120,6 +4122,7 @@ class ChatViewModel : ViewModel() {
         onReady: ((String?) -> Unit)? = null,
         onFailure: (() -> Unit)? = null,
     ) {
+        if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.newChat) return
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
         clearOpenedSessionOwner()
@@ -4452,6 +4455,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun deleteSession(sessionId: String, onDeleted: () -> Unit = {}) {
+        if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Delete)) return
         val handler = chatHandler ?: return
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
@@ -4516,6 +4520,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun renameSession(sessionId: String, newTitle: String) {
+        if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Rename)) return
         val handler = chatHandler ?: return
         val client = apiClient
         if (streamingEndpoint != "gateway" && client == null) return
@@ -4560,6 +4565,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun setSessionPinned(sessionId: String, pinned: Boolean) {
+        if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Pin)) return
         val expectedContextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
         mutateSessionFlag(
@@ -4578,6 +4584,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun setSessionArchived(sessionId: String, archived: Boolean) {
+        if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Archive)) return
         if (!_sessionArchivingSupported.value) {
             emitError(
                 UnsupportedOperationException("Archive and restore require Dashboard sessions"),

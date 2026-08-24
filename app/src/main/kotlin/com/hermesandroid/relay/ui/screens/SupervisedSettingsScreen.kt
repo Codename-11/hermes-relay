@@ -6,9 +6,11 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,10 +29,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -51,13 +55,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.data.SupervisedVisibilityPreset
+import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
+import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
+import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.ThemeMode
 import com.hermesandroid.relay.ui.mayEnableSupervisedMode
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -76,6 +86,7 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 fun SupervisedSettingsScreen(
     connectionViewModel: ConnectionViewModel,
     policy: SupervisedModePolicy,
+    onPolicyChange: (SupervisedModePolicy) -> Unit,
     onBack: (() -> Unit)?,
     onParentAccessGranted: () -> Unit,
 ) {
@@ -83,9 +94,7 @@ fun SupervisedSettingsScreen(
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileAlias by connectionViewModel.profileDisplayAlias.collectAsState()
-    val theme by connectionViewModel.theme.collectAsState()
     val fontScale by connectionViewModel.fontScale.collectAsState()
-    val animationEnabled by connectionViewModel.animationEnabled.collectAsState()
     val isDarkTheme = LocalBrand.current.isDark
     var authError by remember { mutableStateOf<String?>(null) }
     var showAbout by remember { mutableStateOf(false) }
@@ -153,17 +162,7 @@ fun SupervisedSettingsScreen(
 
             SupervisedSectionLabel("Appearance")
             SupervisedCard(isDarkTheme) {
-                Text("Theme", style = MaterialTheme.typography.titleSmall)
-                val themeOptions = listOf("auto" to "System", "light" to "Light", "dark" to "Dark")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    themeOptions.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = theme == option.first,
-                            onClick = { connectionViewModel.setTheme(option.first) },
-                            shape = SegmentedButtonDefaults.itemShape(index, themeOptions.size),
-                        ) { Text(option.second) }
-                    }
-                }
+                SupervisedThemeControls(policy, onPolicyChange)
 
                 HorizontalDivider()
                 Text("Text size", style = MaterialTheme.typography.titleSmall)
@@ -181,13 +180,20 @@ fun SupervisedSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
-                SupervisedSwitchRow(
-                    title = "Animations",
-                    subtitle = "Use motion and animated chat effects",
-                    checked = animationEnabled,
-                    onCheckedChange = connectionViewModel::setAnimationEnabled,
-                )
+            }
+
+            if (
+                policy.appearance.allowProfileIconChanges ||
+                policy.appearance.allowBackgroundChanges
+            ) {
+                SupervisedSectionLabel("Agent look")
+                SupervisedCard(isDarkTheme) {
+                    SupervisedAgentLookControls(
+                        connectionViewModel = connectionViewModel,
+                        allowProfileIconChanges = policy.appearance.allowProfileIconChanges,
+                        allowBackgroundChanges = policy.appearance.allowBackgroundChanges,
+                    )
+                }
             }
 
             SupervisedSectionLabel("Help")
@@ -240,6 +246,7 @@ fun SupervisedSettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SupervisedControlsScreen(
+    connectionViewModel: ConnectionViewModel,
     policy: SupervisedModePolicy,
     profiles: List<Profile>,
     onPolicyChange: (SupervisedModePolicy) -> Unit,
@@ -253,6 +260,7 @@ fun SupervisedControlsScreen(
     val deviceSecure = keyguardManager?.isDeviceSecure == true
     val isDarkTheme = LocalBrand.current.isDark
     var showProfilePicker by remember { mutableStateOf(false) }
+    var sessionActionsExpanded by remember { mutableStateOf(false) }
     var enableAuthError by remember { mutableStateOf<String?>(null) }
     var enableRequested by remember { mutableStateOf(false) }
     val enableCredentialLauncher = rememberLauncherForActivityResult(
@@ -350,6 +358,60 @@ fun SupervisedControlsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            SupervisedSectionLabel("Supervised appearance")
+            SupervisedCard(isDarkTheme) {
+                SupervisedThemeControls(policy, onPolicyChange)
+                HorizontalDivider()
+                SupervisedSwitchRow(
+                    title = "Show pet",
+                    subtitle = "Show the pet selected in the full Appearance settings",
+                    checked = policy.appearance.showPet,
+                    onCheckedChange = {
+                        onPolicyChange(policy.copy(appearance = policy.appearance.copy(showPet = it)))
+                    },
+                )
+                HorizontalDivider()
+                SupervisedSwitchRow(
+                    title = "Let supervised user change the agent icon",
+                    subtitle = "The parent can always change the phone-local icon",
+                    checked = policy.appearance.allowProfileIconChanges,
+                    onCheckedChange = {
+                        onPolicyChange(
+                            policy.copy(
+                                appearance = policy.appearance.copy(allowProfileIconChanges = it),
+                            ),
+                        )
+                    },
+                )
+                HorizontalDivider()
+                SupervisedSwitchRow(
+                    title = "Let supervised user change the background",
+                    subtitle = "The parent can always choose the supervised chat background",
+                    checked = policy.appearance.allowBackgroundChanges,
+                    onCheckedChange = {
+                        onPolicyChange(
+                            policy.copy(
+                                appearance = policy.appearance.copy(allowBackgroundChanges = it),
+                            ),
+                        )
+                    },
+                )
+            }
+
+            SupervisedSectionLabel("Parent-set agent look")
+            SupervisedCard(isDarkTheme) {
+                Text(
+                    "These controls remain available to the parent even when supervised-user changes are off.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SupervisedAgentLookControls(
+                    connectionViewModel = connectionViewModel,
+                    allowProfileIconChanges = true,
+                    allowBackgroundChanges = true,
+                )
+            }
 
             SupervisedSectionLabel("Allowed features")
             SupervisedCard(isDarkTheme) {
@@ -461,6 +523,73 @@ fun SupervisedControlsScreen(
                 }
                 CapabilitySwitch("Edit and resend", policy.capabilities.editAndResend, divider = false) {
                     onPolicyChange(policy.copy(capabilities = policy.capabilities.copy(editAndResend = it)))
+                }
+            }
+
+            SupervisedSectionLabel("Session options")
+            SupervisedCard(isDarkTheme) {
+                val actions = policy.capabilities.sessionActions
+                SupervisedValueRow(
+                    title = "History actions",
+                    value = sessionActionsSummary(actions),
+                    onClick = { sessionActionsExpanded = !sessionActionsExpanded },
+                )
+                Text(
+                    if (policy.capabilities.conversationHistory) {
+                        "Choose which actions appear on previous chats. Delete still asks for confirmation."
+                    } else {
+                        "Selections are saved, but previous-chat actions stay unavailable until Conversation history is on."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (sessionActionsExpanded) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = actions.allEnabled,
+                            onClick = {
+                                onPolicyChange(
+                                    policy.copy(
+                                        capabilities = policy.capabilities.copy(
+                                            sessionActions = actions.withAll(true),
+                                        ),
+                                    ),
+                                )
+                            },
+                            label = { Text("Allow all") },
+                        )
+                        FilterChip(
+                            selected = actions.noneEnabled,
+                            onClick = {
+                                onPolicyChange(
+                                    policy.copy(
+                                        capabilities = policy.capabilities.copy(
+                                            sessionActions = actions.withAll(false),
+                                        ),
+                                    ),
+                                )
+                            },
+                            label = { Text("Allow none") },
+                        )
+                    }
+                    SessionActionSwitch("Pin and unpin", actions.pin) {
+                        onPolicyChange(policy.withSessionActions(actions.copy(pin = it)))
+                    }
+                    SessionActionSwitch("Rename", actions.rename) {
+                        onPolicyChange(policy.withSessionActions(actions.copy(rename = it)))
+                    }
+                    SessionActionSwitch("Archive and restore", actions.archive) {
+                        onPolicyChange(policy.withSessionActions(actions.copy(archive = it)))
+                    }
+                    SessionActionSwitch("Share transcript", actions.shareTranscript) {
+                        onPolicyChange(policy.withSessionActions(actions.copy(shareTranscript = it)))
+                    }
+                    SessionActionSwitch("Delete", actions.delete, divider = false) {
+                        onPolicyChange(policy.withSessionActions(actions.copy(delete = it)))
+                    }
                 }
             }
 
@@ -731,7 +860,14 @@ private fun SupervisedSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -740,7 +876,7 @@ private fun SupervisedSwitchRow(
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = null)
     }
 }
 
@@ -793,4 +929,174 @@ private fun SupervisedAttachmentCategory.displayLabel(): String = when (this) {
     SupervisedAttachmentCategory.Documents -> "Documents"
     SupervisedAttachmentCategory.Audio -> "Audio"
     SupervisedAttachmentCategory.Video -> "Video"
+}
+
+private fun SupervisedModePolicy.withSessionActions(
+    actions: SupervisedSessionActions,
+): SupervisedModePolicy = copy(
+    capabilities = capabilities.copy(sessionActions = actions),
+)
+
+private fun sessionActionsSummary(actions: SupervisedSessionActions): String = when {
+    actions.allEnabled -> "All allowed"
+    actions.noneEnabled -> "None allowed"
+    else -> "${actions.enabledCount} of ${SupervisedSessionActions.TOTAL} allowed"
+}
+
+@Composable
+private fun SessionActionSwitch(
+    title: String,
+    checked: Boolean,
+    divider: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) = CapabilitySwitch(title, checked, divider, onCheckedChange)
+
+@Composable
+private fun SupervisedThemeControls(
+    policy: SupervisedModePolicy,
+    onPolicyChange: (SupervisedModePolicy) -> Unit,
+) {
+    var showThemePicker by remember { mutableStateOf(false) }
+    val selectedTheme = AppThemes.byId(policy.appearance.appThemeId)
+
+    SupervisedValueRow(
+        title = "Theme",
+        value = selectedTheme.label,
+        onClick = { showThemePicker = true },
+    )
+    if (selectedTheme.mode == ThemeMode.BOTH) {
+        val modeOptions = listOf("auto" to "System", "light" to "Light", "dark" to "Dark")
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            modeOptions.forEachIndexed { index, option ->
+                SegmentedButton(
+                    selected = policy.appearance.themePreference == option.first,
+                    onClick = {
+                        onPolicyChange(
+                            policy.copy(
+                                appearance = policy.appearance.copy(themePreference = option.first),
+                            ),
+                        )
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index, modeOptions.size),
+                ) { Text(option.second) }
+            }
+        }
+    } else {
+        Text(
+            if (selectedTheme.mode == ThemeMode.LIGHT_ONLY) "Fixed light theme" else "Fixed dark theme",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    if (showThemePicker) {
+        AlertDialog(
+            onDismissRequest = { showThemePicker = false },
+            title = { Text("Choose supervised theme") },
+            text = {
+                Column {
+                    AppThemes.ALL.forEach { theme ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onPolicyChange(
+                                        policy.copy(
+                                            appearance = policy.appearance.copy(appThemeId = theme.id),
+                                        ),
+                                    )
+                                    showThemePicker = false
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selectedTheme.id == theme.id, onClick = null)
+                            Column(Modifier.padding(start = 8.dp)) {
+                                Text(theme.label, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    theme.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemePicker = false }) { Text("Close") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SupervisedAgentLookControls(
+    connectionViewModel: ConnectionViewModel,
+    allowProfileIconChanges: Boolean,
+    allowBackgroundChanges: Boolean,
+) {
+    val localProfileIcon by connectionViewModel.localProfileIcon.collectAsState()
+    val backgroundEnabled by connectionViewModel.backgroundVisualizationEnabled.collectAsState()
+    val backgroundAvatar by connectionViewModel.backgroundAvatar.collectAsState()
+    val availableBackgrounds = LocalAvailablePets.current
+    val iconPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let(connectionViewModel::setProfileIcon)
+    }
+
+    if (allowProfileIconChanges) {
+        Text("Agent icon", style = MaterialTheme.typography.titleSmall)
+        Text(
+            if (localProfileIcon.isNullOrBlank()) {
+                "Using the profile's current icon"
+            } else {
+                "Using a phone-local icon for this profile"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { iconPicker.launch("image/*") }) {
+                Text("Choose image")
+            }
+            if (!localProfileIcon.isNullOrBlank()) {
+                TextButton(onClick = connectionViewModel::clearProfileIcon) {
+                    Text("Use profile icon")
+                }
+            }
+        }
+    }
+
+    if (allowProfileIconChanges && allowBackgroundChanges) HorizontalDivider()
+
+    if (allowBackgroundChanges) {
+        Text("Chat background", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Choose from backgrounds already installed by the parent.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = !backgroundEnabled,
+                onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
+                label = { Text("Off") },
+            )
+            FilterChip(
+                selected = backgroundEnabled && backgroundAvatar == SphereAvatar.id,
+                onClick = { connectionViewModel.setBackgroundAvatar(SphereAvatar.id) },
+                label = { Text("Sphere") },
+            )
+            availableBackgrounds.forEach { avatar ->
+                FilterChip(
+                    selected = backgroundEnabled && backgroundAvatar == avatar.id,
+                    onClick = { connectionViewModel.setBackgroundAvatar(avatar.id) },
+                    label = { Text(avatar.label) },
+                )
+            }
+        }
+    }
 }

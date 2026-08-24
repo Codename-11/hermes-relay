@@ -2,6 +2,7 @@ package com.hermesandroid.relay.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import com.hermesandroid.relay.ui.theme.AppThemes
 
 /**
  * Parent-configured restrictions for the official Android client.
@@ -15,6 +16,7 @@ data class SupervisedModePolicy(
     val enabled: Boolean = false,
     val pinnedProfileName: String? = null,
     val capabilities: SupervisedCapabilities = SupervisedCapabilities(),
+    val appearance: SupervisedAppearance = SupervisedAppearance(),
     val visibility: SupervisedVisibility = SupervisedVisibility(),
     val parentAccess: SupervisedParentAccess = SupervisedParentAccess(),
 ) {
@@ -29,6 +31,7 @@ data class SupervisedModePolicy(
     internal fun normalized(): SupervisedModePolicy = copy(
         pinnedProfileName = pinnedProfileName?.trim()?.takeIf { it.isNotEmpty() },
         capabilities = capabilities.normalized(),
+        appearance = appearance.normalized(),
         parentAccess = parentAccess.normalized(),
     )
 }
@@ -48,6 +51,7 @@ data class SupervisedCapabilities(
     val quoteReplies: Boolean = true,
     val editAndResend: Boolean = false,
     val shareGeneratedImages: Boolean = false,
+    val sessionActions: SupervisedSessionActions = SupervisedSessionActions(),
     val attachmentMaxCount: Int = DEFAULT_ATTACHMENT_MAX_COUNT,
     val attachmentMaxFileMb: Int = DEFAULT_ATTACHMENT_MAX_FILE_MB,
     val attachmentCategories: Set<SupervisedAttachmentCategory> = setOf(
@@ -67,6 +71,76 @@ data class SupervisedCapabilities(
         const val DEFAULT_ATTACHMENT_MAX_FILE_MB = 10
         const val MAX_ATTACHMENT_COUNT = 10
         const val MAX_ATTACHMENT_FILE_MB = 100
+    }
+}
+
+/** Appearance applied only while the supervised root is locked. */
+@Serializable
+data class SupervisedAppearance(
+    val appThemeId: String = AppThemes.DEFAULT_ID,
+    val themePreference: String = "auto",
+    val showPet: Boolean = false,
+    val allowProfileIconChanges: Boolean = false,
+    val allowBackgroundChanges: Boolean = false,
+) {
+    internal fun normalized(): SupervisedAppearance = copy(
+        appThemeId = AppThemes.byId(appThemeId).id,
+        themePreference = themePreference.takeIf { it in VALID_THEME_PREFERENCES } ?: "auto",
+    )
+
+    private companion object {
+        val VALID_THEME_PREFERENCES = setOf("auto", "light", "dark")
+    }
+}
+
+/** Mutable operations available from a supervised conversation-history row. */
+@Serializable
+data class SupervisedSessionActions(
+    val pin: Boolean = false,
+    val rename: Boolean = false,
+    val archive: Boolean = false,
+    val delete: Boolean = false,
+    val shareTranscript: Boolean = false,
+) {
+    val enabledCount: Int
+        get() = listOf(pin, rename, archive, delete, shareTranscript).count { it }
+
+    val allEnabled: Boolean
+        get() = enabledCount == TOTAL
+
+    val noneEnabled: Boolean
+        get() = enabledCount == 0
+
+    fun withAll(enabled: Boolean): SupervisedSessionActions = SupervisedSessionActions(
+        pin = enabled,
+        rename = enabled,
+        archive = enabled,
+        delete = enabled,
+        shareTranscript = enabled,
+    )
+
+    companion object {
+        const val TOTAL = 5
+    }
+}
+
+enum class SupervisedSessionAction {
+    Pin,
+    Rename,
+    Archive,
+    Delete,
+    ShareTranscript,
+}
+
+fun SupervisedModePolicy.allowsSessionAction(action: SupervisedSessionAction): Boolean {
+    if (!enabled) return true
+    if (!capabilities.conversationHistory) return false
+    return when (action) {
+        SupervisedSessionAction.Pin -> capabilities.sessionActions.pin
+        SupervisedSessionAction.Rename -> capabilities.sessionActions.rename
+        SupervisedSessionAction.Archive -> capabilities.sessionActions.archive
+        SupervisedSessionAction.Delete -> capabilities.sessionActions.delete
+        SupervisedSessionAction.ShareTranscript -> capabilities.sessionActions.shareTranscript
     }
 }
 

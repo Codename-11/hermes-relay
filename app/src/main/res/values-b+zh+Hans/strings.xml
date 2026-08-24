@@ -698,6 +698,14 @@
     <string name="settings_analytics_desc">使用统计、TTFT、token、健康状态</string>
     <string name="settings_diagnostics">诊断</string>
     <string name="settings_diagnostics_desc">状态检查，以及最近的 API、Relay、会话和语音活动</string>
+    <string name="settings_advanced">高级</string>
+    <string name="settings_advanced_desc">受监督模式和其他可选功能</string>
+    <string name="settings_advanced_intro">可选和专用功能集中在此，以保持主设置界面简洁。</string>
+    <string name="settings_supervised_mode">受监督模式</string>
+    <string name="settings_supervised_desc">选择配置文件和允许的聊天功能</string>
+    <string name="settings_supervised_on">已开启</string>
+    <string name="settings_supervised_on_profile">已开启 · %1$s</string>
+    <string name="settings_supervised_ready_profile">已就绪 · %1$s</string>
     <string name="settings_developer_options">开发者选项</string>
     <string name="settings_developer_options_desc">功能标志、数据管理、实验性</string>
     <string name="settings_whats_new">新功能</string>

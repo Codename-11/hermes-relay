@@ -698,6 +698,14 @@
     <string name="settings_analytics_desc">使用状況統計、TTFT、トークン、ヘルス</string>
     <string name="settings_diagnostics">診断</string>
     <string name="settings_diagnostics_desc">ステータス チェック、および最近の API、Relay、セッション、および音声アクティビティ</string>
+    <string name="settings_advanced">詳細設定</string>
+    <string name="settings_advanced_desc">監督モードとその他のオプション機能</string>
+    <string name="settings_advanced_intro">メインの設定画面をシンプルに保つため、オプション機能と専門機能はここにまとめられています。</string>
+    <string name="settings_supervised_mode">監督モード</string>
+    <string name="settings_supervised_desc">プロファイルと許可するチャット機能を選択</string>
+    <string name="settings_supervised_on">オン</string>
+    <string name="settings_supervised_on_profile">オン · %1$s</string>
+    <string name="settings_supervised_ready_profile">準備完了 · %1$s</string>
     <string name="settings_developer_options">開発者向けオプション</string>
     <string name="settings_developer_options_desc">機能フラグ、データ管理、実験的</string>
     <string name="settings_whats_new">新着情報</string>

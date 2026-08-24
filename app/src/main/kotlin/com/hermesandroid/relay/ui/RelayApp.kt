@@ -145,6 +145,7 @@ import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
+import com.hermesandroid.relay.ui.screens.AdvancedSettingsScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.CustomThemeScreen
@@ -507,6 +508,7 @@ sealed class Screen(
     // the plural `ConnectionsSettings` subpage. See `ConnectionsSettings`
     // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
+    data object AdvancedSettings : Screen("settings/advanced", "Advanced", Icons.Filled.Settings)
     data object SupervisedControls : Screen(
         "settings/supervised",
         "Supervised mode",
@@ -826,6 +828,22 @@ fun RelayApp() {
     val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
     val activeCustomTheme by connectionViewModel.activeCustomTheme.collectAsState()
+    val navController = rememberNavController()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val parentAccessForCurrentRoute = parentAccessUnlocked &&
+        !shouldRelockParentAccess(
+            supervisedEnabled = supervisedPolicy.enabled,
+            parentAccessUnlocked = parentAccessUnlocked,
+            route = currentRoute,
+        )
+    val resolvedTheme = resolveSupervisedTheme(
+        policy = supervisedPolicy,
+        parentAccessUnlocked = parentAccessForCurrentRoute,
+        globalAppThemeId = appThemeId,
+        globalThemePreference = themePreference,
+    )
+    val supervisedAppearanceLocked = supervisedPolicy.enabled && !parentAccessForCurrentRoute
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -842,10 +860,10 @@ fun RelayApp() {
         value = SphereRegistry.builtIns +
             withContext(Dispatchers.IO) { SphereSkinLoader.loadUserSkins(sphereContext) }
     }
-    val activeSphereSkin = remember(sphereSkinId, appThemeId, availableSphereSkins) {
+    val activeSphereSkin = remember(sphereSkinId, resolvedTheme.appThemeId, availableSphereSkins) {
         SphereRegistry.resolve(
             selectedId = sphereSkinId,
-            themeDefaultSkinId = AppThemes.byId(appThemeId).defaultSphereSkinId,
+            themeDefaultSkinId = AppThemes.byId(resolvedTheme.appThemeId).defaultSphereSkinId,
             available = availableSphereSkins,
         )
     }
@@ -980,20 +998,18 @@ fun RelayApp() {
             ),
         )
     HermesRelayTheme(
-        appThemeId = appThemeId,
-        themePreference = themePreference,
+        appThemeId = resolvedTheme.appThemeId,
+        themePreference = resolvedTheme.themePreference,
         fontScale = fontScale,
         appFontId = appFontId,
-        accentHex = appearanceAccent,
+        accentHex = appearanceAccent.takeIf { resolvedTheme.useGlobalCustomTheme },
         shapeId = appearanceShape,
-        customTheme = activeCustomTheme,
+        customTheme = activeCustomTheme.takeIf { resolvedTheme.useGlobalCustomTheme },
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
         // it just needs to be inside the theme for Material colors.
         CrashReportGate()
-
-        val navController = rememberNavController()
 
         // Wire the proactive "session" surfacing once: a message with
         // surfacing="session" is injected into the active chat conversation.
@@ -1065,16 +1081,8 @@ fun RelayApp() {
         // restart cleanly lands back in setup.
         val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
 
-        val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute = navBackStackEntry?.destination?.route
         // The unlock remains useful while moving between parent-only settings,
         // but never follows an enrolled device user back into supervised chat.
-        val parentAccessForCurrentRoute = parentAccessUnlocked &&
-            !shouldRelockParentAccess(
-                supervisedEnabled = supervisedPolicy.enabled,
-                parentAccessUnlocked = parentAccessUnlocked,
-                route = currentRoute,
-            )
         // Cross-layer requests (notifications, services, deep links) use the
         // route-scoped unlock. As soon as Chat is current, the parent grant is
         // ineffective even before the state-clearing effect runs.
@@ -1098,9 +1106,11 @@ fun RelayApp() {
             parentAccessForCurrentRoute,
             currentRoute,
         ) {
-            if (
-                supervisedPolicy.enabled &&
-                !isSupervisedRouteAllowed(currentRoute, parentAccessForCurrentRoute)
+            if (shouldRedirectSupervisedRoute(
+                    supervisedEnabled = supervisedPolicy.enabled,
+                    parentAccessUnlocked = parentAccessForCurrentRoute,
+                    currentRoute = currentRoute,
+                )
             ) {
                 navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                     popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
@@ -2417,10 +2427,8 @@ fun RelayApp() {
                                 }
                             }
                         },
-                        onNavigateToSupervisedControls = {
-                            if (parentAccessUnlocked || !supervisedPolicy.enabled) {
-                                navController.navigate(Screen.SupervisedControls.route)
-                            }
+                        onNavigateToAdvancedSettings = {
+                            navController.navigate(Screen.AdvancedSettings.route)
                         },
                         onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
@@ -2493,11 +2501,25 @@ fun RelayApp() {
                         },
                     )
                 }
+                composable(Screen.AdvancedSettings.route) {
+                    if (!parentAccessUnlocked && supervisedPolicy.enabled) {
+                        LaunchedEffect(Unit) { navController.popBackStack() }
+                    } else {
+                        AdvancedSettingsScreen(
+                            supervisedPolicy = supervisedPolicy,
+                            onNavigateToSupervisedControls = {
+                                navController.navigate(Screen.SupervisedControls.route)
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                }
                 composable(Screen.SupervisedControls.route) {
                     if (!parentAccessUnlocked && supervisedPolicy.enabled) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
                     } else {
                         SupervisedControlsScreen(
+                            connectionViewModel = connectionViewModel,
                             policy = supervisedPolicy,
                             profiles = agentProfiles.filterNot { it.isDefault },
                             onPolicyChange = { policy ->
@@ -3105,6 +3127,7 @@ fun RelayApp() {
         val petSurfaceOwner = petSurfaceOwnerForRoute(currentRoute)
         val petActivity = petCompanionCoordinator.activityFor(petSurfaceOwner)
         val showFloatingPet = activeFloatingPet != null &&
+            shouldShowPetInSupervisedMode(supervisedPolicy, parentAccessForCurrentRoute) &&
             floatingPetAllowedOnRoute(currentRoute) &&
             !petActivity.hidden &&
             !suppressGlobalChrome &&
@@ -3135,6 +3158,7 @@ fun RelayApp() {
                 ),
                 animationEnabled = animationEnabled,
                 appForeground = appIsForeground,
+                interactive = !supervisedAppearanceLocked,
                 route = roamingRoute,
                 visitRequest = petCompanionCoordinator.pendingVisitRequest,
                 onVisitRequestConsumed = petCompanionCoordinator::clearVisitRequest,

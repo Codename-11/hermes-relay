@@ -39,7 +39,8 @@ server-side capabilities that profile has.
 
 From full Android Settings, the parent:
 
-1. Open **Supervised Mode** from the active Hermes Connection.
+1. Open **Settings → Advanced → Supervised Mode** for the active Hermes
+   Connection.
 2. Choose one existing named profile. Android requires a secure device screen
    lock before the mode can be enabled.
 3. Select the allowed features and any stricter attachment or history limits.
@@ -62,7 +63,9 @@ authentication before any parent controls or full application settings appear.
 
 Restricted Settings may include:
 
-- theme, text size, language, animations, and haptics;
+- a supervised-only theme, text size, language, and haptics;
+- parent-approved pet display and, when allowed, a phone-local profile icon and
+  chat background;
 - accessibility preferences;
 - message presentation and sensitive-media blur;
 - harmless playback or interaction preferences when voice is allowed;
@@ -101,6 +104,7 @@ The parent chooses capabilities independently. The proposed controls are:
 | Quote/reply | On | Removes quote/reply actions |
 | Edit and resend | Off | Prevents rewriting earlier prompts from the client |
 | Session history | Parent choice | Limits the pinned profile to the current or approved conversations |
+| Session actions | Off | Individually allows pin, rename, archive, share, and delete for visible history |
 
 Attachments are a general capability, not a one-image rule. When enabled, the
 normal supported attachment flow and app limits apply unless the parent chooses
@@ -110,6 +114,16 @@ and a draft restored after process death.
 
 Standard voice uses the existing host-side voice configuration. Provider
 credentials stay on the Hermes host and are not exposed in Restricted Settings.
+
+The supervised theme is stored separately from the parent app theme and applies
+only while the restricted root is locked. Pet display is parent-controlled.
+Profile-icon and background changes can be enabled independently for the
+supervised user; the authenticated parent retains those controls either way.
+
+Session actions use a separate allowlist. The parent can allow all, allow none,
+or choose individual actions. Copying technical session identifiers, browsing
+other profiles, Relay Threads, and drawer customization remain unavailable.
+Delete continues to require confirmation.
 
 Generated media is limited by display policy, not by a claim that Android can
 prove how the server created it. Parents may allow viewing while disabling save

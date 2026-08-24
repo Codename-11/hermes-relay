@@ -11,6 +11,15 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
         normalized == Screen.Settings.route
 }
 
+/** Do not inspect or mutate a NavController until its first destination exists. */
+internal fun shouldRedirectSupervisedRoute(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+    currentRoute: String?,
+): Boolean = currentRoute != null &&
+    supervisedEnabled &&
+    !isSupervisedRouteAllowed(currentRoute, parentAccessUnlocked)
+
 /**
  * Cold-start gate for the app navigation graph.
  *

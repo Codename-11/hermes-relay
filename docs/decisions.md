@@ -3737,12 +3737,20 @@ immediately with a bounded notice. The supervised user cannot authorize them;
 a parent may retry from the authenticated full client.
 
 Restricted Settings contains only parent-approved, non-authoritative choices,
-such as appearance, text size, language, animations, haptics, accessibility,
+such as a supervised-only theme, text size, language, haptics, accessibility,
 message presentation, sensitive-media blur, and permitted voice playback
 preferences. Connections, Manage, profiles, models, personalities, reasoning,
 approvals, tools, plugins, Terminal, TUI, Bridge, Device Control, notification
 companion, diagnostics, logs, files, credentials, developer controls, Relay
 management, and other sessions are absent rather than shown disabled.
+
+The parent may allow the configured floating pet and may independently let the
+supervised user change the phone-local profile icon or an already-installed chat
+background. The parent retains those appearance controls when supervised-user
+changes are disabled. Conversation history and its mutations are separate
+permissions: pin, rename, archive/restore, transcript sharing, and delete are
+individually allowlisted, while technical session identifiers and cross-profile
+administration remain hidden. Delete retains its confirmation step.
 
 The parent also chooses what Chat discloses. **Simple** is the default: agent
 name/avatar plus generic Connected, Working, and Reconnecting states; it hides

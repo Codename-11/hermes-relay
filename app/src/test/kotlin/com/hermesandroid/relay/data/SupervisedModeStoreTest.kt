@@ -48,6 +48,18 @@ class SupervisedModeStoreTest {
                     SupervisedAttachmentCategory.Images,
                     SupervisedAttachmentCategory.Documents,
                 ),
+                sessionActions = SupervisedSessionActions(
+                    pin = true,
+                    rename = true,
+                    shareTranscript = true,
+                ),
+            ),
+            appearance = SupervisedAppearance(
+                appThemeId = "rose",
+                themePreference = "dark",
+                showPet = true,
+                allowProfileIconChanges = true,
+                allowBackgroundChanges = true,
             ),
             visibility = SupervisedVisibility(
                 preset = SupervisedVisibilityPreset.Custom,
@@ -65,6 +77,12 @@ class SupervisedModeStoreTest {
         assertEquals(6, restored.capabilities.attachmentMaxCount)
         assertEquals(20, restored.capabilities.attachmentMaxFileMb)
         assertEquals(saved.capabilities.attachmentCategories, restored.capabilities.attachmentCategories)
+        assertEquals(saved.capabilities.sessionActions, restored.capabilities.sessionActions)
+        assertEquals("rose", restored.appearance.appThemeId)
+        assertEquals("dark", restored.appearance.themePreference)
+        assertTrue(restored.appearance.showPet)
+        assertTrue(restored.appearance.allowProfileIconChanges)
+        assertTrue(restored.appearance.allowBackgroundChanges)
         assertEquals(SupervisedVisibilityPreset.Custom, restored.visibility.preset)
         assertTrue(restored.visibility.showModelName)
         assertTrue(restored.visibility.showToolNames)
@@ -120,6 +138,10 @@ class SupervisedModeStoreTest {
                     requireDeviceAuthentication = false,
                     timeoutMinutes = 0,
                 ),
+                appearance = SupervisedAppearance(
+                    appThemeId = "missing-theme",
+                    themePreference = "sepia",
+                ),
             ),
         )
 
@@ -129,6 +151,8 @@ class SupervisedModeStoreTest {
         assertEquals(setOf(SupervisedAttachmentCategory.Images), policy.capabilities.attachmentCategories)
         assertTrue(policy.parentAccess.requireDeviceAuthentication)
         assertEquals(SupervisedParentAccess.MIN_TIMEOUT_MINUTES, policy.parentAccess.timeoutMinutes)
+        assertEquals("hermes-relay", policy.appearance.appThemeId)
+        assertEquals("auto", policy.appearance.themePreference)
     }
 
     @Test

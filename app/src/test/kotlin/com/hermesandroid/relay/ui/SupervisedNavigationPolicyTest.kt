@@ -14,6 +14,7 @@ class SupervisedNavigationPolicyTest {
         // The supervised Settings root owns its own allowlisted theme controls.
         assertFalse(isSupervisedRouteAllowed("settings/appearance", false))
         assertFalse(isSupervisedRouteAllowed("settings/about", false))
+        assertFalse(isSupervisedRouteAllowed(Screen.AdvancedSettings.route, false))
         assertFalse(isSupervisedRouteAllowed("manage", false))
         assertFalse(isSupervisedRouteAllowed("settings/developer", false))
         assertFalse(isSupervisedRouteAllowed("settings/supervised", false))
@@ -22,6 +23,14 @@ class SupervisedNavigationPolicyTest {
 
     @Test fun `parent unlock permits full navigation`() {
         assertTrue(isSupervisedRouteAllowed("manage", true))
+        assertTrue(isSupervisedRouteAllowed(Screen.AdvancedSettings.route, true))
+    }
+
+    @Test fun `supervised redirect waits until the navigation graph has a route`() {
+        assertFalse(shouldRedirectSupervisedRoute(true, false, null))
+        assertFalse(shouldRedirectSupervisedRoute(true, false, Screen.Chat.route))
+        assertTrue(shouldRedirectSupervisedRoute(true, false, Screen.AdvancedSettings.route))
+        assertFalse(shouldRedirectSupervisedRoute(true, true, Screen.AdvancedSettings.route))
     }
 
     @Test fun `navigation waits for connection store before trusting null active id`() {

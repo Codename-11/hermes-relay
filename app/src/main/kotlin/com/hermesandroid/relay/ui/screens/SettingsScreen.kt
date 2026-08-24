@@ -154,7 +154,7 @@ fun SettingsScreen(
     /** Called only after the restricted surface completes device authentication. */
     onRequestParentAccess: () -> Unit = {},
     onUpdateSupervisedPolicy: (SupervisedModePolicy) -> Unit = {},
-    onNavigateToSupervisedControls: () -> Unit = {},
+    onNavigateToAdvancedSettings: () -> Unit = {},
     // Needed by the Active Agent summary card at the top of the screen — it
     // reads the current personality pick so the subtitle can render
     // `connection · model · personality` without re-reading ChatViewModel
@@ -210,6 +210,7 @@ fun SettingsScreen(
         SupervisedSettingsScreen(
             connectionViewModel = connectionViewModel,
             policy = supervisedPolicy,
+            onPolicyChange = onUpdateSupervisedPolicy,
             onBack = onBack,
             onParentAccessGranted = onRequestParentAccess,
         )
@@ -461,11 +462,11 @@ fun SettingsScreen(
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Security,
-                title = "Supervised mode",
+                title = stringResource(R.string.settings_advanced),
                 subtitle = when {
                     supervisedPolicy?.isActive == true -> "On · ${supervisedPolicy.pinnedProfileName}"
                     supervisedPolicy?.isConfigured == true -> "Ready · ${supervisedPolicy.pinnedProfileName}"
-                    else -> "Choose a profile and approved chat features"
+                    else -> stringResource(R.string.settings_advanced_desc)
                 },
                 badge = supervisedPolicy?.takeIf { it.isActive }?.let {
                     SettingsStatusPillModel(
@@ -473,7 +474,7 @@ fun SettingsScreen(
                         tone = SettingsStatusTone.Good,
                     )
                 },
-                onClick = onNavigateToSupervisedControls,
+                onClick = onNavigateToAdvancedSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -1250,12 +1251,12 @@ private fun ProfileLockOptionRow(
     }
 }
 
-private data class SettingsStatusPillModel(
+internal data class SettingsStatusPillModel(
     val label: String,
     val tone: SettingsStatusTone = SettingsStatusTone.Neutral,
 )
 
-private enum class SettingsStatusTone {
+internal enum class SettingsStatusTone {
     Neutral,
     Good,
     Info,
@@ -1324,18 +1325,22 @@ private fun SettingsSectionHeader(
  * mega-SettingsScreen.
  */
 @Composable
-private fun SettingsCategoryRow(
+internal fun SettingsCategoryRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     badge: SettingsStatusPillModel? = null,
-    petPerchKey: String = title,
+    petPerchKey: String? = title,
 ) {
+    val surfaceModifier = if (petPerchKey != null) {
+        Modifier.settingsPetSurface("settings-category:$petPerchKey")
+    } else {
+        Modifier
+    }
     Card(
-        modifier = Modifier
-            .settingsPetSurface("settings-category:$petPerchKey")
+        modifier = surfaceModifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),

@@ -184,6 +184,8 @@ import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedSessionAction
+import com.hermesandroid.relay.data.allowsSessionAction
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
@@ -2412,6 +2414,9 @@ fun ChatScreen(
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
+                supervisedSessionActions = supervisedPolicy.capabilities.sessionActions
+                    .takeIf { supervised },
+                newChatEnabled = !supervised || supervisedPolicy.capabilities.newChat,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onNewChat = {
                     if (!supervised || supervisedPolicy.capabilities.newChat) {
@@ -2443,6 +2448,9 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteSession = { sessionId ->
+                    if (supervised && !supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Delete)) {
+                        return@SessionDrawerContent
+                    }
                     val connectionId = activeConnection?.id
                     val profileId = explicitBindingProfileName ?: selectedProfile?.name
                     chatViewModel.deleteSession(sessionId) {
@@ -2456,10 +2464,21 @@ fun ChatScreen(
                     }
                 },
                 onRenameSession = { sessionId, title ->
+                    if (supervised && !supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Rename)) {
+                        return@SessionDrawerContent
+                    }
                     chatViewModel.renameSession(sessionId, title)
                 },
-                onSetSessionPinned = chatViewModel::setSessionPinned,
-                onSetSessionArchived = chatViewModel::setSessionArchived,
+                onSetSessionPinned = { sessionId, pinned ->
+                    if (!supervised || supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Pin)) {
+                        chatViewModel.setSessionPinned(sessionId, pinned)
+                    }
+                },
+                onSetSessionArchived = { sessionId, archived ->
+                    if (!supervised || supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Archive)) {
+                        chatViewModel.setSessionArchived(sessionId, archived)
+                    }
+                },
                 onCopySessionId = { sessionId ->
                     scope.launch {
                         clipboard.setClipEntry(
@@ -2489,7 +2508,7 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
-                allProfilesSupported = !isProfileLocked &&
+                allProfilesSupported = !supervised && !isProfileLocked &&
                     !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
@@ -2995,7 +3014,11 @@ fun ChatScreen(
                     // Settings — which is what was squeezing the title subtitle.
                     // Session identity is useful before the first message; sharing only appears
                     // once the conversation has content.
-                    if (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) {
+                    if (
+                        (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) ||
+                        (supervised && messages.isNotEmpty() &&
+                            supervisedPolicy.allowsSessionAction(SupervisedSessionAction.ShareTranscript))
+                    ) {
                         var showOverflowMenu by remember { mutableStateOf(false) }
                         Box {
                             RelayChromeIconButton(
@@ -3008,7 +3031,7 @@ fun ChatScreen(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
-                                currentSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
+                                currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
                                     DropdownMenuItem(
                                         text = { Text(copySessionIdLabel) },
                                         leadingIcon = {
@@ -3033,7 +3056,7 @@ fun ChatScreen(
                                         },
                                     )
                                 }
-                                if (messages.isNotEmpty()) {
+                                if (!supervised && messages.isNotEmpty()) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.chat_search_conversation)) },
                                         leadingIcon = {
@@ -3051,6 +3074,22 @@ fun ChatScreen(
                                                 imageVector = Icons.Filled.Share,
                                                 contentDescription = null,
                                             )
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            shareConversation(context, messages)
+                                        },
+                                    )
+                                } else if (
+                                    messages.isNotEmpty() &&
+                                    supervisedPolicy.allowsSessionAction(
+                                        SupervisedSessionAction.ShareTranscript,
+                                    )
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_share_conversation)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Share, contentDescription = null)
                                         },
                                         onClick = {
                                             showOverflowMenu = false
