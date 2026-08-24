@@ -3904,6 +3904,11 @@
     <string name="assistant_session_expand">展开助理</string>
     <string name="assistant_session_collapse">收起助理</string>
     <string name="assistant_session_open_full_voice">打开完整语音界面</string>
+    <string name="assistant_session_close">关闭</string>
+    <string name="assistant_session_start_listening">开始聆听</string>
+    <string name="assistant_session_stop_listening">停止并发送</string>
+    <string name="assistant_session_screen_context_ready">屏幕上下文已就绪</string>
+    <string name="assistant_session_screen_thumbnail">当前屏幕缩略图</string>
     <string name="voice_settings_stop_phrases">停止短语</string>
     <string name="voice_settings_stop_phrases_desc">用逗号分隔可结束当前语音聊天的精确短语。要在 Hermes 思考或说话时识别这些短语，必须开启插话功能。留空可禁用。</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS 阈值：%1$.1f×</string>

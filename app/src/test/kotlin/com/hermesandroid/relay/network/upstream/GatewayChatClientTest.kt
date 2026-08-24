@@ -2330,15 +2330,18 @@ class GatewayChatClientTest {
     @Test
     fun `image attachments upload between session establish and prompt submit`() {
         val r = Recorder()
+        val accepted = AtomicInteger(0)
         client.sendTurn(
             sessionId = null,
             text = "describe this",
             newSessionTitle = null,
             callbacks = r.callbacks,
             attachments = listOf(GatewayAttachment(name = "shot.png", base64 = "aGVsbG8=", ext = "png", contentType = "image/png")),
+            onTransportAccepted = { accepted.incrementAndGet() },
             onPreflightFailure = { r.preflightFailures += it },
         )
         harness.awaitRpc("prompt.submit")
+        awaitCondition { accepted.get() == 1 }
 
         val methods = harness.rpcLog.map { it.first }
         val createIdx = methods.indexOf("session.create")
@@ -2353,6 +2356,13 @@ class GatewayChatClientTest {
         assertEquals("shot.png", (attach["filename"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("png", (attach["ext"] as? JsonPrimitive)?.contentOrNull)
         assertTrue(r.preflightFailures.isEmpty())
+        assertEquals(1, accepted.get())
+
+        harness.awaitServerSocket().send(
+            harness.eventFrame("message.start", null, "live-1")
+        )
+        Thread.sleep(50)
+        assertEquals(1, accepted.get())
     }
 
     @Test
@@ -2401,12 +2411,14 @@ class GatewayChatClientTest {
         harness.methodNotFound.add("image.attach_bytes")
         harness.methodNotFound.add("image.attach.bytes")
         val r = Recorder()
+        val accepted = AtomicInteger(0)
         client.sendTurn(
             sessionId = null,
             text = "img",
             newSessionTitle = null,
             callbacks = r.callbacks,
             attachments = listOf(GatewayAttachment("a.png", "QQ==", "png", "image/png")),
+            onTransportAccepted = { accepted.incrementAndGet() },
             onPreflightFailure = {
                 r.preflightFailures += it
                 r.completeLatch.countDown()
@@ -2417,6 +2429,7 @@ class GatewayChatClientTest {
         // Nothing started server-side — the prompt was never submitted.
         assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
         assertTrue(r.errors.isEmpty())
+        assertEquals(0, accepted.get())
     }
 
     @Test

@@ -4172,6 +4172,11 @@
     <string name="assistant_session_expand">Expand assistant</string>
     <string name="assistant_session_collapse">Collapse assistant</string>
     <string name="assistant_session_open_full_voice">Open full voice</string>
+    <string name="assistant_session_close">Close</string>
+    <string name="assistant_session_start_listening">Start listening</string>
+    <string name="assistant_session_stop_listening">Stop and submit</string>
+    <string name="assistant_session_screen_context_ready">Screen context ready</string>
+    <string name="assistant_session_screen_thumbnail">Current screen thumbnail</string>
     <string name="voice_settings_stop_phrases">Stop phrases</string>
     <string name="voice_settings_stop_phrases_desc">Exact comma-separated phrases that end an active voice chat. Barge-in must be enabled to hear them while Hermes is Thinking or Speaking. Leave empty to disable.</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS threshold: %1$.1f×</string>

@@ -21,6 +21,7 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 | Contract item | Canonical source or target |
 |---|---|
 | Integration branch | `dev`; normal feature, fix, docs, and chore PRs target `dev` |
+| Integration authority | `origin/dev`; local `dev` is a fast-forward-only mirror, never a private staging queue |
 | Release branch | `main`; release history and hotfix integration only |
 | Production tag source | The new `main` tip after an approved `dev` → `main` release PR, or after an approved hotfix PR to `main` |
 | Candidate tag source | An exact release-prepared and tested `dev` SHA; prerelease suffix required (`-alpha`, `-beta`, or `-rc.N`) |
@@ -35,6 +36,19 @@ issue/session: reconcile only the affected surface version and notes on `dev`,
 open the `dev` → `main` release PR, tag the resulting `main` tip, publish the
 surface artifacts, deploy or roll out, and verify the live result. Never create
 a staging branch.
+
+### Local integration discipline
+
+- Fetch `origin/dev` before creating a task branch or worktree; do not base new
+  work on a stale local `dev` ref.
+- Keep the primary local `dev` checkout tracked-clean and update it only with
+  `git merge --ff-only origin/dev`. Feature, fix, docs, release-prep, and
+  integration commits belong on their own branches and reach `dev` through PRs.
+- When several reviewed branches must move together, combine them on a named
+  `integration/<batch>` branch in its own worktree, then open one PR to `dev`.
+  An integration branch is not a second `dev` and must not become a hidden queue.
+- One coordinator owns final base refresh, required checks, and merges while
+  concurrent worktrees continue independently.
 
 ## Non-negotiables (the short list)
 
@@ -56,9 +70,10 @@ a staging branch.
   of these lanes are on demand; do not add scheduled execution without explicit
   approval.
 - **Conventional Commits + `main`/`dev` branching.** Normal branches start at
-  `dev` and PR back to `dev`; merge commits/no-ff are the repository policy.
-  Version bumps happen only during release preparation on `dev`, and production
-  tags are cut only from `main`.
+  current `origin/dev` and PR back to `dev`; merge commits/no-ff are the
+  repository policy.
+  Version bumps happen only on a release-prep branch targeting `dev`, and
+  production tags are cut only from `main`.
 - **Android:** Jetpack Compose only (no XML), kotlinx.serialization (no Gson),
   OkHttp (no Ktor), `wss://` only. Run `./gradlew lint` before pushing Kotlin.
 - **Plugin (Python 3.11+):** aiohttp + asyncio (no threading), type hints

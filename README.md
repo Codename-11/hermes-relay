@@ -24,6 +24,7 @@
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
   <a href="https://hermes-relay.dev/docs/">Documentation</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
+  <a href="https://github.com/Codename-11/hermes-relay/discussions">Discussions</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>
 </p>
@@ -368,9 +369,9 @@ Then restart hermes and run `hermes pair` to verify. The 35 `android_*` and 25 `
 
 Hermes-Relay is built for [Hermes Agent](https://github.com/NousResearch/hermes-agent) — an open-source AI agent platform by [Nous Research](https://nousresearch.com). See the [Hermes Agent docs](https://hermes-agent.nousresearch.com) for server setup, gateway configuration, and plugin development.
 
-## Found a bug? Let us know
+## Questions, ideas, or bugs?
 
-This is an indie project and every report helps shape where it goes next. If something feels off, broken, or just weird — [open an issue](https://github.com/Codename-11/hermes-relay/issues/new). We read every one, and even a one-line *"this didn't work on my Pixel 7"* is genuinely useful.
+Use [GitHub Discussions](https://github.com/Codename-11/hermes-relay/discussions) for setup questions, early ideas, broader conversation, and things you are building with Hermes-Relay. If something is reproducibly broken or you have a specific, actionable feature request, [open an issue](https://github.com/Codename-11/hermes-relay/issues/new). This is an indie project and every report helps shape where it goes next.
 
 ## Star History
 

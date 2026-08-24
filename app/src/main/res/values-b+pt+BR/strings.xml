@@ -3816,6 +3816,11 @@
     <string name="assistant_session_expand">Expandir assistente</string>
     <string name="assistant_session_collapse">Recolher assistente</string>
     <string name="assistant_session_open_full_voice">Abrir voz completa</string>
+    <string name="assistant_session_close">Fechar</string>
+    <string name="assistant_session_start_listening">Começar a ouvir</string>
+    <string name="assistant_session_stop_listening">Parar e enviar</string>
+    <string name="assistant_session_screen_context_ready">Contexto da tela pronto</string>
+    <string name="assistant_session_screen_thumbnail">Miniatura da tela atual</string>
     <string name="voice_settings_stop_phrases">Frases de parada</string>
     <string name="voice_settings_stop_phrases_desc">Frases exatas separadas por vírgulas que encerram um chat de voz ativo. O Barge-in deve estar ativado para ouvi-las enquanto Hermes pensa ou fala. Deixe vazio para desativar.</string>
     <string name="voice_settings_barge_in_rms_multiplier">Limite RMS: %1$.1f×</string>

@@ -12,11 +12,20 @@ Hermes-Relay is a native Android app that connects to your own [Hermes Agent](ht
 
 ## Summary
 
-Hermes-Relay does not collect, transmit, or share personal data with third parties. The app connects only to servers that you configure. There are no accounts, no hosted Hermes-Relay cloud service, and no analytics sent externally.
+Hermes-Relay has no hosted cloud service and sends no analytics. The app connects
+only to servers that you configure; those servers may send chat, voice, attachments,
+and optional Assistant screen context to the AI providers you configure.
 
 ## Google Play Track
 
-The Google Play build ships Hermes Bridge Core: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, and status. It does **not** include AccessibilityService-based Device Control and cannot read your screen, tap/type/swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.
+The Google Play build ships Hermes Bridge Core and does **not** include
+AccessibilityService or MediaProjection Device Control. It cannot tap, type, swipe,
+send SMS, place calls, access contacts or location, or perform unattended phone
+control. If you select Hermes as Android's Digital Assistant, a compatible unlocked
+assistant-button invocation may provide bounded visible text and an available
+screenshot for one Standard voice turn. That context is sent to your configured
+Hermes server and AI provider. Ordinary wake, power-button, assistant, and keyguard
+invocations do not request screen context.
 
 The sideload build is a separate distribution track for users who intentionally install Device Control outside Google Play.
 
@@ -30,6 +39,7 @@ All data is stored locally on your device in the app's private sandbox:
 | API key, relay session tokens | AES-256-GCM encryption via Android Keystore |
 | Performance counters | Android DataStore (local only) |
 | Notification trigger rules and activity log | Android DataStore (local only) |
+| Pending Android Assistant context | App-private cache until one turn is accepted, the session exits or is cancelled, or one-hour stale cleanup runs; a failed preflight retains it for retry |
 
 Chat messages are **not cached** on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.
 
@@ -40,6 +50,7 @@ The app connects only to endpoints you configure:
 - **Your Hermes API server** — HTTP/SSE for chat streaming
 - **Your relay server** — WSS for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and session management
 - **Your relay voice routes** — HTTP(S)/WSS for speech-to-text, voice settings, realtime voice sessions, and text-to-speech audio when you use Voice mode
+- **Your Hermes Dashboard/Gateway or API route** — Android Assistant turns, including bounded visible text and an available screenshot when compatible firmware supplies screen context
 
 No connections are made to Google, Anthropic, or any other third-party service by the app. There is no telemetry, no crash reporting, no DNS prefetching, and no background network activity to hosted services.
 
@@ -54,6 +65,7 @@ Google Play build:
 | Camera | QR code scanning for server pairing | No |
 | Microphone | Voice mode speech-to-text and opt-in local “Hey Hermes” detection | No |
 | Notification Access | Optional notification companion metadata forwarding to your paired relay | No |
+| Android Digital Assistant role | Optional assistant session; compatible unlocked assistant-button invocations may include one-turn screen context | No |
 
 Notification Access is granted and revoked from Android system settings. When enabled, Hermes-Relay forwards posted-notification package, title, text, subtext, timestamp, and notification key to your paired relay. It does not forward notifications to a Hermes-Relay cloud service. If you separately enable Notification triggers, matching happens locally on the phone; the MVP action writes a local activity-log entry and posts a local “Ask Hermes?” prompt. It does not send a new AI request or reply in another app automatically.
 
