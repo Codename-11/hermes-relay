@@ -81,6 +81,21 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".assistant.AssistantLaunchActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:permission="android.permission.STATUS_BAR_SERVICE"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.speech.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- AppCompat persists in-app language choices on Android 12 and lower.
              Android 13+ stores the same selection in the platform LocaleManager. -->
         <service

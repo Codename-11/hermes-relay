@@ -6,6 +6,31 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify Android assistant screen context on physical firmware
+
+Host-side coverage and one Android 15 automotive device prove the primary flow.
+Before claiming broad firmware compatibility:
+
+- Certify representative phone OEMs, secure-window behavior, rotation, cancellation,
+  process recreation, and callbacks that arrive before the session is shown.
+- Confirm hidden/password exclusion, untrusted labeling, draft isolation, retry after
+  attachment preflight failure, and exactly-once delivery across later voice turns.
+- Verify Full Voice survives assistant-process loss and that wake-word, power-button,
+  ordinary assistant, and keyguard paths never receive screen context.
+- Exercise repeated explicit WEB_SEARCH launches and confirm the permission, active
+  Assistant role, request coalescing, and single-session gates remain fail-closed.
+
+---
+
+## Reassess Play Console data safety for assistant screen context
+
+Before the next Google Play submission, reassess the Console's User content and
+data-sharing answers for optional Assistant voice, visible text, and screenshot
+delivery to the user-configured Hermes server and AI provider. Record the final
+answers in `docs/play-store-listing.md`.
+
+---
+
 ## Certify Android Gateway missing-terminal recovery on physical devices
 
 Deterministic fake-Gateway coverage now proves that a foreground turn with
@@ -1388,4 +1413,3 @@ Follow-ups:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
   - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
-

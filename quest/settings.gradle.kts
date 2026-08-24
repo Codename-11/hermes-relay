@@ -5,8 +5,8 @@ pluginManagement {
         gradlePluginPortal()
     }
     plugins {
-        id("com.android.application") version "9.3.1"
-        id("com.android.library") version "9.3.1"
+        id("com.android.application") version "9.3.2"
+        id("com.android.library") version "9.3.2"
         id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
         id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
     }

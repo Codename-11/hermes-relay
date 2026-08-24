@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
 - **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
+- **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
+
+### Changed
+
+- **Release and candidate names use one public product hierarchy.** Future releases use `Hermes-Relay Android`, `Hermes-Relay Plugin`, or `Hermes-Relay CLI+UI` display names, while isolated Android review and release-candidate installs use `HR Candidate`, without changing immutable tags, package identities, updater contracts, or artifact filenames.
+- **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
+- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
 
 ### Fixed
 

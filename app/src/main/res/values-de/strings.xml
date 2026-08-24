@@ -3946,6 +3946,11 @@
     <string name="assistant_session_expand">Assistent erweitern</string>
     <string name="assistant_session_collapse">Assistent minimieren</string>
     <string name="assistant_session_open_full_voice">Vollständige Sprachansicht öffnen</string>
+    <string name="assistant_session_close">Schließen</string>
+    <string name="assistant_session_start_listening">Aufnahme starten</string>
+    <string name="assistant_session_stop_listening">Stoppen und senden</string>
+    <string name="assistant_session_screen_context_ready">Bildschirmkontext bereit</string>
+    <string name="assistant_session_screen_thumbnail">Vorschau des aktuellen Bildschirms</string>
     <string name="voice_settings_stop_phrases">Stopp-Phrasen</string>
     <string name="voice_settings_stop_phrases_desc">Exakte, durch Kommas getrennte Phrasen, die einen aktiven Sprachchat beenden. Barge-in muss aktiviert sein, damit sie während des Nachdenkens oder Sprechens erkannt werden. Leer lassen zum Deaktivieren.</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS-Schwelle: %1$.1f×</string>

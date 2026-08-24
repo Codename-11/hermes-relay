@@ -3945,6 +3945,11 @@
     <string name="assistant_session_expand">アシスタントを展開</string>
     <string name="assistant_session_collapse">アシスタントを折りたたむ</string>
     <string name="assistant_session_open_full_voice">フル音声画面を開く</string>
+    <string name="assistant_session_close">閉じる</string>
+    <string name="assistant_session_start_listening">音声入力を開始</string>
+    <string name="assistant_session_stop_listening">停止して送信</string>
+    <string name="assistant_session_screen_context_ready">画面コンテキストの準備完了</string>
+    <string name="assistant_session_screen_thumbnail">現在の画面のサムネイル</string>
     <string name="voice_settings_stop_phrases">停止フレーズ</string>
     <string name="voice_settings_stop_phrases_desc">音声チャットを終了する完全一致のフレーズをカンマ区切りで指定します。Hermes が考えたり話したりしている間に認識するには、バージインを有効にする必要があります。空欄にすると無効になります。</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS しきい値: %1$.1f×</string>

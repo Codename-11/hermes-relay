@@ -49,6 +49,8 @@ import com.hermesandroid.relay.voice.VoiceCommandContext
 import com.hermesandroid.relay.voice.VoiceCommandInterpreter
 import com.hermesandroid.relay.voice.SpokenInterruptionLatch
 import com.hermesandroid.relay.voice.voiceInterfaceContextPrompt
+import com.hermesandroid.relay.assistant.assistantContextStore
+import com.hermesandroid.relay.assistant.buildAssistantVoiceTurnPayload
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
 import com.hermesandroid.relay.voice.LocalBridgeDispatcher
@@ -58,6 +60,7 @@ import com.hermesandroid.relay.voice.createVoiceBridgeIntentHandler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -76,6 +79,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.io.IOException
@@ -102,6 +106,37 @@ internal fun ownsVoiceAudioCompletion(
     voiceMode: Boolean,
     responseSpeechActive: Boolean,
 ): Boolean = voiceMode || responseSpeechActive
+
+internal fun voiceSubmissionRejectedState(
+    state: VoiceUiState,
+    reason: String,
+): VoiceUiState = state.copy(
+    state = VoiceState.Error,
+    outputAudioActive = false,
+    responseText = "",
+    error = reason,
+)
+
+internal fun voiceSubmissionRetryState(state: VoiceUiState): VoiceUiState = state.copy(
+    state = VoiceState.Idle,
+    outputAudioActive = false,
+    responseText = "",
+    error = null,
+)
+
+internal data class AssistantContextTurnDisposition(
+    val retireForLaterTurns: Boolean,
+    val consumeOnTransportAcceptance: Boolean,
+)
+
+internal fun assistantContextTurnDisposition(
+    expectScreenContext: Boolean,
+    hasActivation: Boolean,
+    stagedContextLoaded: Boolean,
+): AssistantContextTurnDisposition = AssistantContextTurnDisposition(
+    retireForLaterTurns = expectScreenContext && hasActivation,
+    consumeOnTransportAcceptance = stagedContextLoaded && hasActivation,
+)
 
 private enum class StandardSpeechStreamState {
     Idle,
@@ -530,6 +565,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         private const val BACKGROUND_CANCEL_CONFIRM_TIMEOUT_MS = 5_000L
         private const val REALTIME_TURN_DELIVERY_TIMEOUT_MS = 20_000L
         private const val MAX_BROKERED_TOOL_STATUS_PER_MESSAGE = 2
+        private const val ASSISTANT_CONTEXT_SETTLE_MS = 75L
         private const val STABLE_VOICE_INTERFACE_CONTEXT =
             "Hermes Android voice interface context for this turn:\n" +
                 "- Active voice engine: Hermes chat + voice output (hermes_voice_output).\n" +
@@ -672,6 +708,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voiceClient: RelayVoiceClient? = null
     private var voiceAudioClient: VoiceAudioClient? = null
     private var chatViewModel: ChatViewModel? = null
+    private var assistantActivationId: String? = null
+    private var assistantContextTurnCommitted = false
+    private var assistantExpectScreenContext = false
+    private var assistantContextRetryAvailable = false
     private var recorder: VoiceRecorder? = null
     private var player: VoicePlayer? = null
     private var realtimePcmPlayer: RealtimePcmPlayer? = null
@@ -1496,12 +1536,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // Voice-mode lifecycle
     // ---------------------------------------------------------------------
 
-    fun enterVoiceMode() {
+    fun enterVoiceMode(
+        activationId: String? = null,
+        expectScreenContext: Boolean = false,
+    ) {
         val freshEntry = !_uiState.value.voiceMode
         val orphanedRun = _uiState.value
             .takeIf { freshEntry }
             ?.backgroundRun
         if (freshEntry) {
+            assistantActivationId = activationId
+            assistantContextTurnCommitted = false
+            assistantExpectScreenContext = expectScreenContext
+            assistantContextRetryAvailable = false
             synchronized(realtimeSessionStateLock) {
                 realtimeSessionGeneration.incrementAndGet()
                 if (orphanedRun != null) {
@@ -1771,6 +1818,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // can bypass this guard by calling the primitives directly — or we
         // add a separate `forceExitVoiceMode()` when that need materializes.
         if (!_uiState.value.voiceMode) return
+
+        assistantActivationId?.let { id ->
+            viewModelScope.launch(Dispatchers.IO) {
+                assistantContextStore(getApplication()).discard(id)
+            }
+        }
+        assistantActivationId = null
+        assistantContextTurnCommitted = false
+        assistantExpectScreenContext = false
+        assistantContextRetryAvailable = false
 
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
         try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
@@ -3319,17 +3376,93 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // StateFlow replay preserves any assistant text that arrives before the
         // observer starts.
         val spokenInterruptionNote = spokenInterruptionLatch.takeNote()
-        val submittedUserUiKey =
-            chatVm.sendVoiceMessage(
-                userText,
-                voiceInterfaceContextPrompt(
-                    stableContext = STABLE_VOICE_INTERFACE_CONTEXT,
-                    spokenReplyInterrupted = spokenInterruptionNote != null,
-                ),
+        val baseInterfaceContext =
+            voiceInterfaceContextPrompt(
+                stableContext = STABLE_VOICE_INTERFACE_CONTEXT,
+                spokenReplyInterrupted = spokenInterruptionNote != null,
             )
+        val stagedContext = awaitAssistantContext()
+        val turnPayload = buildAssistantVoiceTurnPayload(baseInterfaceContext, stagedContext)
+        val contextActivationId = assistantActivationId
+        val contextDisposition = assistantContextTurnDisposition(
+            expectScreenContext = assistantExpectScreenContext,
+            hasActivation = contextActivationId != null,
+            stagedContextLoaded = stagedContext != null,
+        )
+        val submission = chatVm.sendVoiceMessage(
+            text = userText,
+            interfaceContextPrompt = turnPayload.interfaceContextPrompt,
+            attachments = turnPayload.attachments,
+            gatewayAttachments = turnPayload.gatewayAttachments,
+            hasScreenContext = stagedContext != null,
+            onTransportAccepted = {
+                assistantContextRetryAvailable = false
+                if (contextDisposition.consumeOnTransportAcceptance && contextActivationId != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        assistantContextStore(getApplication()).consume(contextActivationId)
+                    }
+                }
+            },
+            onTransportFailed = { reason ->
+                if (stagedContext != null && contextActivationId == assistantActivationId) {
+                    assistantContextRetryAvailable = true
+                }
+                _uiState.update {
+                    voiceSubmissionRejectedState(
+                        it,
+                        "Screen context was not sent. $reason Tap Try again to retry.",
+                    )
+                }
+            },
+        )
+        val submittedUserUiKey = when (submission) {
+            is VoiceMessageSubmissionResult.Submitted -> {
+                if (contextDisposition.retireForLaterTurns) {
+                    assistantContextTurnCommitted = true
+                }
+                submission.userUiKey
+            }
+            is VoiceMessageSubmissionResult.Rejected -> {
+                cancelStandardSpeechStream("voice turn was rejected")
+                voiceTurnSessionFence = null
+                _uiState.update { voiceSubmissionRejectedState(it, submission.reason) }
+                return
+            }
+            VoiceMessageSubmissionResult.CommandHandled -> {
+                cancelStandardSpeechStream("voice command handled outside chat")
+                voiceTurnSessionFence = null
+                _uiState.update {
+                    it.copy(
+                        state = VoiceState.Idle,
+                        outputAudioActive = false,
+                        responseText = "Command sent.",
+                    )
+                }
+                return
+            }
+        }
         voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
         beginBargeInTurnIfEnabled()
         startStreamObserver(chatVm)
+    }
+
+    fun retryAssistantVoiceAfterFailure() {
+        val state = _uiState.value
+        if (!state.voiceMode || state.state != VoiceState.Error) return
+        if (assistantContextRetryAvailable) {
+            assistantContextTurnCommitted = false
+            assistantContextRetryAvailable = false
+        }
+        _uiState.update(::voiceSubmissionRetryState)
+    }
+
+    private suspend fun awaitAssistantContext(): com.hermesandroid.relay.assistant.StagedAssistantContext? {
+        if (!assistantExpectScreenContext) return null
+        val id = assistantActivationId?.takeUnless { assistantContextTurnCommitted } ?: return null
+        delay(ASSISTANT_CONTEXT_SETTLE_MS)
+        return withContext(Dispatchers.IO) {
+            assistantContextStore(getApplication()).load(id)
+        }
     }
 
     private suspend fun runVoiceRelayPreflight(engineLabel: String): Boolean {

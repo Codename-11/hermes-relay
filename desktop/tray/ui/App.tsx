@@ -1060,7 +1060,7 @@ function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activ
         ? `Version ${update.current} · up to date`
         : update?.latest_version
           ? `${update.current} → ${update.latest_version} available`
-          : 'Check the desktop release channel.'
+          : 'Check the CLI+UI release channel.'
 
   const cuaReady = computerControl?.available === true && computerControl.state === 'ready'
   const engineState = computerControl?.state ?? 'not_installed'

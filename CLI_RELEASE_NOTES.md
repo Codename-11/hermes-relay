@@ -1,4 +1,4 @@
-# Hermes-Relay CLI v__VERSION__
+# Hermes-Relay CLI+UI v__VERSION__
 
 **Release Date:** 2026-08-22
 

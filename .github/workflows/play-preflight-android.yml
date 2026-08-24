@@ -1,4 +1,4 @@
-# Hermes-Relay-Android — private Google Play preflight
+# Hermes-Relay Android — private Google Play preflight
 #
 # Run manually from the final dev or untagged main tree before creating
 # android-v*. The job
@@ -7,7 +7,7 @@
 # Play gate while no public GitHub Release or sideload APK exists. Console-only
 # pre-review and pre-launch reports are informational and do not block release.
 
-name: Play Preflight — Android
+name: Hermes-Relay Android Play Preflight
 
 on:
   workflow_dispatch:
@@ -119,7 +119,7 @@ jobs:
             --track=production \
             --release-status=draft \
             --resolution-strategy=ignore \
-            --release-name="Hermes-Relay ${{ steps.metadata.outputs.version }}"
+            --release-name="Hermes-Relay Android v${{ steps.metadata.outputs.version }}"
 
       - name: Record successful preflight for the exact commit
         run: |
@@ -152,4 +152,4 @@ jobs:
           echo "- Release tree: \`${{ steps.metadata.outputs.tree }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Play track/status: **Production draft**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The signed build, DEX scan, and Play draft upload passed. Ensure this exact release tree is on main, then run **Approve Android Release** from main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"
+          echo "The signed build, DEX scan, and Play draft upload passed. Ensure this exact release tree is on main, then run **Hermes-Relay Android Release Approval** from main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"
