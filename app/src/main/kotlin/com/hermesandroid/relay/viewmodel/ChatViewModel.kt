@@ -257,6 +257,22 @@ internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwabl
         "unauthorized" in message || "forbidden" in message
 }
 
+sealed interface VoiceMessageSubmissionResult {
+    data class Submitted(val userUiKey: String) : VoiceMessageSubmissionResult
+    data class Rejected(val reason: String) : VoiceMessageSubmissionResult
+    data object CommandHandled : VoiceMessageSubmissionResult
+}
+
+internal fun voiceTurnTransportRejection(
+    pendingPhoneThread: Boolean,
+    activeSessionSource: String?,
+    hasIsolatedContext: Boolean,
+): String? = if (hasIsolatedContext && (pendingPhoneThread || activeSessionSource == "phone")) {
+    "Voice screen context cannot be sent to a phone thread. Open a Hermes chat and try again."
+} else {
+    null
+}
+
 class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
@@ -4708,16 +4724,65 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    fun sendVoiceMessage(text: String, interfaceContextPrompt: String): String? {
-        if (text.isBlank()) return null
+    fun sendVoiceMessage(
+        text: String,
+        interfaceContextPrompt: String,
+        attachments: List<Attachment> = emptyList(),
+        gatewayAttachments: List<Attachment> = emptyList(),
+        hasScreenContext: Boolean = false,
+        onTransportAccepted: () -> Unit = { },
+        onTransportFailed: (String) -> Unit = { },
+    ): VoiceMessageSubmissionResult {
+        if (text.isBlank()) return VoiceMessageSubmissionResult.Rejected("Nothing was recorded.")
+        if (demoModeProvider()) {
+            return VoiceMessageSubmissionResult.Rejected("Voice sending is unavailable in demo mode.")
+        }
+        val handler = chatHandler
+            ?: return VoiceMessageSubmissionResult.Rejected("Hermes chat is not ready.")
+        val client = apiClient
+        if ((streamingEndpoint != "gateway" && client == null) ||
+            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+        ) {
+            return VoiceMessageSubmissionResult.Rejected("Hermes is not connected.")
+        }
+        if (activeStream != null || streamRecovery != null || handler.isStreaming.value) {
+            return VoiceMessageSubmissionResult.Rejected(
+                "Hermes is still handling another turn. Your screen context was kept; try again.",
+            )
+        }
+        if (maybeHandleServerSlashCommand(text.trim())) {
+            return VoiceMessageSubmissionResult.CommandHandled
+        }
+        val sessionId = handler.currentSessionId.value
+        val activeThread = handler.sessions.value.firstOrNull { it.sessionId == sessionId }
+        voiceTurnTransportRejection(
+            pendingPhoneThread = pendingThread != null,
+            activeSessionSource = activeThread?.source,
+            hasIsolatedContext = hasScreenContext,
+        )?.let { return VoiceMessageSubmissionResult.Rejected(it) }
+
         val existingUserKeys = messages.value.asSequence()
             .filter { it.role == MessageRole.USER }
             .mapTo(mutableSetOf()) { it.uiKey }
-        nextInterfaceContextPrompt = interfaceContextPrompt.takeIf { it.isNotBlank() }
-        sendMessage(text)
-        return messages.value.lastOrNull {
+        recordRecentPrompt(text)
+        dismissChatFailure()
+        sendMessageInternal(
+            client = client,
+            handler = handler,
+            text = text,
+            explicitAttachments = attachments,
+            explicitGatewayAttachments = gatewayAttachments,
+            explicitInterfaceContextPrompt = interfaceContextPrompt.takeIf { it.isNotBlank() },
+            explicitOnTransportAccepted = onTransportAccepted,
+            explicitOnTransportFailed = onTransportFailed,
+            isolateComposer = true,
+        )
+        val userUiKey = messages.value.lastOrNull {
             it.role == MessageRole.USER && it.uiKey !in existingUserKeys
-        }?.uiKey
+        }?.uiKey ?: return VoiceMessageSubmissionResult.Rejected(
+            "Hermes could not create the voice turn. Your screen context was kept.",
+        )
+        return VoiceMessageSubmissionResult.Submitted(userUiKey)
     }
 
     /**
@@ -6648,16 +6713,30 @@ class ChatViewModel : ViewModel() {
         transportText: String = text,
         queuedFollowUp: Boolean = false,
         queuedMessage: QueuedMessage? = null,
+        explicitAttachments: List<Attachment> = emptyList(),
+        explicitGatewayAttachments: List<Attachment> = emptyList(),
+        explicitInterfaceContextPrompt: String? = null,
+        explicitOnTransportAccepted: () -> Unit = { },
+        explicitOnTransportFailed: (String) -> Unit = { },
+        isolateComposer: Boolean = false,
     ) {
         AppAnalytics.onMessageSent()
         val displayText = text.trim()
         val outboundText = transportText.trim()
-        val interfaceContextPrompt = queuedMessage?.interfaceContextPrompt ?: nextInterfaceContextPrompt
-        if (queuedMessage == null) nextInterfaceContextPrompt = null
+        val interfaceContextPrompt = if (isolateComposer) {
+            explicitInterfaceContextPrompt
+        } else {
+            queuedMessage?.interfaceContextPrompt ?: nextInterfaceContextPrompt
+        }
+        if (queuedMessage == null && !isolateComposer) nextInterfaceContextPrompt = null
 
         // Snapshot and clear pending attachments
-        val attachments = (queuedMessage?.attachments ?: _pendingAttachments.value).ifEmpty { null }
-        if (queuedMessage == null) _pendingAttachments.value = emptyList()
+        val attachments = if (isolateComposer) {
+            explicitAttachments.ifEmpty { null }
+        } else {
+            (queuedMessage?.attachments ?: _pendingAttachments.value).ifEmpty { null }
+        }
+        if (queuedMessage == null && !isolateComposer) _pendingAttachments.value = emptyList()
         val textTransport = prepareTextTransportAttachments(outboundText, attachments.orEmpty())
 
         val messageId = queuedMessage?.id ?: UUID.randomUUID().toString()
@@ -6745,6 +6824,9 @@ class ChatViewModel : ViewModel() {
                 interfaceContextPrompt,
                 queuedFollowUp,
                 displayText,
+                explicitGatewayAttachments,
+                explicitOnTransportAccepted,
+                explicitOnTransportFailed,
             )
         } else if (sessionId != null) {
             startStream(
@@ -6758,6 +6840,9 @@ class ChatViewModel : ViewModel() {
                 interfaceContextPrompt,
                 queuedFollowUp,
                 displayText,
+                explicitGatewayAttachments,
+                explicitOnTransportAccepted,
+                explicitOnTransportFailed,
             )
         } else {
             if (client == null) {
@@ -6799,6 +6884,9 @@ class ChatViewModel : ViewModel() {
                             interfaceContextPrompt,
                             queuedFollowUp,
                             displayText,
+                            explicitGatewayAttachments,
+                            explicitOnTransportAccepted,
+                            explicitOnTransportFailed,
                         )
 
                         // Auto-title: use first ~50 chars of user message
@@ -7647,7 +7735,20 @@ class ChatViewModel : ViewModel() {
         interfaceContextPrompt: String? = null,
         queuedFollowUp: Boolean = false,
         checkpointUserText: String = message,
+        gatewayOnlyAttachments: List<Attachment> = emptyList(),
+        onTransportAccepted: () -> Unit = { },
+        onTransportFailed: (String) -> Unit = { },
     ) {
+        val transportAccepted = AtomicBoolean(false)
+        val transportFailed = AtomicBoolean(false)
+        fun markTransportAccepted() {
+            if (transportAccepted.compareAndSet(false, true)) onTransportAccepted()
+        }
+        fun markTransportFailed(reason: String) {
+            if (!transportAccepted.get() && transportFailed.compareAndSet(false, true)) {
+                onTransportFailed(reason)
+            }
+        }
         // Resolve the active profile pick once — used below for both
         // modelOverride and the system_message precedence rule.
         val selectedProfile = selectedProfileProvider()
@@ -7770,6 +7871,7 @@ class ChatViewModel : ViewModel() {
 
         // Shared callbacks for both endpoints
         val onMessageStartedCb = { serverMsgId: String ->
+            markTransportAccepted()
             streamDeltas.flushNow()
             // Replace the placeholder's ID so subsequent deltas/tool calls attach
             // to it instead of creating a duplicate orphan bubble with streaming dots.
@@ -7779,6 +7881,7 @@ class ChatViewModel : ViewModel() {
             updateTurnCheckpointAssistantId(serverMsgId)
         }
         val onTextDeltaCb = { delta: String ->
+            markTransportAccepted()
             ensurePostInterimMessage()
             if (!firstTokenNotified) {
                 firstTokenNotified = true
@@ -7787,10 +7890,12 @@ class ChatViewModel : ViewModel() {
             streamDeltas.appendText(delta)
         }
         val onThinkingDeltaCb = { delta: String ->
+            markTransportAccepted()
             ensurePostInterimMessage()
             streamDeltas.appendThinking(delta)
         }
         val onInterimMessageCb = { text: String, alreadyStreamed: Boolean ->
+            markTransportAccepted()
             streamDeltas.flushNow()
             if (!alreadyStreamed && text.isNotBlank()) {
                 handler.onTextDelta(currentMessageId, text)
@@ -7811,6 +7916,7 @@ class ChatViewModel : ViewModel() {
         }
         val observedImageToolStates = mutableMapOf<String, String>()
         val handleToolCallStart = { toolCallId: String, toolName: String, argsPreview: String? ->
+            markTransportAccepted()
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
@@ -8030,6 +8136,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         val onErrorCb = { errorMsg: String ->
+            markTransportFailed(errorMsg)
             stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
@@ -8140,6 +8247,7 @@ class ChatViewModel : ViewModel() {
         val onPreflightErrorCb = { error: Throwable ->
             val errorMsg = error.message
                 ?: "Model routing could not be confirmed before sending."
+            markTransportFailed(errorMsg)
             stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             // The chat POST never started, so server history cannot contain
@@ -8275,6 +8383,7 @@ class ChatViewModel : ViewModel() {
                     attachments = prepared.attachments,
                     voiceIntentMessages = voiceIntentMessages,
                     onSessionId = { sid ->
+                        markTransportAccepted()
                         handler.setSessionId(sid)
                         updateTurnCheckpointSession(sid)
                         onSessionChanged?.invoke(sid)
@@ -8542,8 +8651,9 @@ class ChatViewModel : ViewModel() {
                             handler.clearTurnStatus(kind)
                         },
                     ),
-                    attachments = attachments.orEmpty()
+                    attachments = (attachments.orEmpty() + gatewayOnlyAttachments)
                         .map { it.toGatewayAttachment() },
+                    onTransportAccepted = ::markTransportAccepted,
                     truncateBeforeUserOrdinal = pendingTruncation?.ordinal,
                     truncateBeforeRowId = pendingTruncation?.rowId,
                     queuedFollowUp = queuedFollowUp,

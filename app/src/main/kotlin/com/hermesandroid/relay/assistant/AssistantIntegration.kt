@@ -44,6 +44,7 @@ data class AssistantSessionSnapshot(
     val transcript: String? = null,
     val response: String = "",
     val error: String? = null,
+    val screenContextSupported: Boolean = false,
 )
 
 object AssistantRole {
@@ -96,15 +97,27 @@ object AssistantSessionProtocol {
     const val EXTRA_ACTIVATION_ID = "com.hermesandroid.relay.assistant.ACTIVATION_ID"
     const val EXTRA_START_NEW_SESSION =
         "com.hermesandroid.relay.assistant.START_NEW_SESSION"
+    const val EXTRA_MANUAL_MIC = "com.hermesandroid.relay.assistant.MANUAL_MIC"
+    const val EXTRA_EXPECT_SCREEN_CONTEXT =
+        "com.hermesandroid.relay.assistant.EXPECT_SCREEN_CONTEXT"
     const val EXTRA_HANDOFF_ONLY = "com.hermesandroid.relay.assistant.HANDOFF_ONLY"
     private const val ACTION_STATUS = "com.hermesandroid.relay.assistant.STATUS"
     private const val ACTION_FINISH = "com.hermesandroid.relay.assistant.FINISH"
     private const val ACTION_START = "com.hermesandroid.relay.assistant.START"
     private const val ACTION_ACTIVATE = "com.hermesandroid.relay.assistant.ACTIVATE"
+    private const val ACTION_START_LISTENING =
+        "com.hermesandroid.relay.assistant.START_LISTENING"
+    private const val ACTION_STOP_LISTENING =
+        "com.hermesandroid.relay.assistant.STOP_LISTENING"
+    private const val ACTION_HEARTBEAT = "com.hermesandroid.relay.assistant.HEARTBEAT"
+    private const val ACTION_FULL_VOICE_HANDOFF =
+        "com.hermesandroid.relay.assistant.FULL_VOICE_HANDOFF"
+    private const val ACTION_RETRY_VOICE = "com.hermesandroid.relay.assistant.RETRY_VOICE"
     private const val EXTRA_PHASE = "phase"
     private const val EXTRA_TRANSCRIPT = "transcript"
     private const val EXTRA_RESPONSE = "response"
     private const val EXTRA_ERROR = "error"
+    private const val EXTRA_SCREEN_CONTEXT_SUPPORTED = "screen_context_supported"
     private const val EXTRA_CANCEL_VOICE = "cancel_voice"
 
     fun prepareAssistActivation(intent: Intent?) {
@@ -141,12 +154,16 @@ object AssistantSessionProtocol {
         context: Context,
         activationId: String = UUID.randomUUID().toString(),
         startNewSession: Boolean = true,
+        manualMic: Boolean = false,
+        expectScreenContext: Boolean = false,
     ) {
         context.sendBroadcast(
             Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
                 action = ACTION_ACTIVATE
                 putExtra(EXTRA_ACTIVATION_ID, activationId)
                 putExtra(EXTRA_START_NEW_SESSION, startNewSession)
+                putExtra(EXTRA_MANUAL_MIC, manualMic)
+                putExtra(EXTRA_EXPECT_SCREEN_CONTEXT, expectScreenContext)
             }
         )
     }
@@ -160,7 +177,8 @@ object AssistantSessionProtocol {
         if (intent?.getBooleanExtra(EXTRA_ASSISTANT_SESSION, false) != true) return false
         val id = intent.getStringExtra(EXTRA_ACTIVATION_ID) ?: UUID.randomUUID().toString()
         val startNewSession = intent.getBooleanExtra(EXTRA_START_NEW_SESSION, true)
-        AssistantSessionPersistence.setActivation(context, id, startNewSession)
+        val manualMic = intent.getBooleanExtra(EXTRA_MANUAL_MIC, false)
+        AssistantSessionPersistence.setActivation(context, id, startNewSession, manualMic)
         WakeWordActivationCoordinator.request(
             WakeWordActivation(
                 id = id,
@@ -173,6 +191,7 @@ object AssistantSessionProtocol {
         intent.removeExtra(EXTRA_ASSISTANT_SESSION)
         intent.removeExtra(EXTRA_ACTIVATION_ID)
         intent.removeExtra(EXTRA_START_NEW_SESSION)
+        intent.removeExtra(EXTRA_MANUAL_MIC)
         return true
     }
 
@@ -185,6 +204,8 @@ object AssistantSessionProtocol {
         application.runtime.requestVoiceActivation(
             activationId = activation.id,
             startNewSession = activation.startNewSession,
+            manualMic = activation.manualMic,
+            expectScreenContext = activation.expectScreenContext,
             onFailure = { failure ->
                 publish(
                     application,
@@ -206,6 +227,7 @@ object AssistantSessionProtocol {
                 putExtra(EXTRA_TRANSCRIPT, snapshot.transcript)
                 putExtra(EXTRA_RESPONSE, snapshot.response)
                 putExtra(EXTRA_ERROR, snapshot.error)
+                putExtra(EXTRA_SCREEN_CONTEXT_SUPPORTED, snapshot.screenContextSupported)
             }
         )
         if (shouldFinishLifecycleOnSnapshot(snapshot)) {
@@ -241,11 +263,16 @@ object AssistantSessionProtocol {
     internal fun shouldFinishLifecycleOnSnapshot(snapshot: AssistantSessionSnapshot): Boolean =
         snapshot.phase == AssistantSessionPhase.Closed
 
-    fun finish(context: Context, cancelVoice: Boolean) {
+    fun finish(
+        context: Context,
+        cancelVoice: Boolean,
+        activationId: String? = AssistantSessionPersistence.activationId(context),
+    ) {
         context.sendBroadcast(
             Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
                 action = ACTION_FINISH
                 putExtra(EXTRA_CANCEL_VOICE, cancelVoice)
+                activationId?.let { putExtra(EXTRA_ACTIVATION_ID, it) }
             }
         )
     }
@@ -256,9 +283,60 @@ object AssistantSessionProtocol {
         )
     }
 
+    fun startListening(context: Context, activationId: String) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_START_LISTENING
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+            }
+        )
+    }
+
+    fun stopListening(context: Context, activationId: String) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_STOP_LISTENING
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+            }
+        )
+    }
+
+    fun heartbeat(context: Context, activationId: String) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_HEARTBEAT
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+            }
+        )
+    }
+
+    fun fullVoiceHandoff(context: Context, activationId: String) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_FULL_VOICE_HANDOFF
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+            }
+        )
+    }
+
+    fun retryVoice(context: Context, activationId: String) {
+        context.sendBroadcast(
+            Intent(context, AssistantSessionLifecycleReceiver::class.java).apply {
+                action = ACTION_RETRY_VOICE
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
+            }
+        )
+    }
+
     internal fun isFinishAction(action: String?): Boolean = action == ACTION_FINISH
     internal fun isStartAction(action: String?): Boolean = action == ACTION_START
     internal fun isActivateAction(action: String?): Boolean = action == ACTION_ACTIVATE
+    internal fun isStartListeningAction(action: String?): Boolean = action == ACTION_START_LISTENING
+    internal fun isStopListeningAction(action: String?): Boolean = action == ACTION_STOP_LISTENING
+    internal fun isHeartbeatAction(action: String?): Boolean = action == ACTION_HEARTBEAT
+    internal fun isFullVoiceHandoffAction(action: String?): Boolean =
+        action == ACTION_FULL_VOICE_HANDOFF
+    internal fun isRetryVoiceAction(action: String?): Boolean = action == ACTION_RETRY_VOICE
     internal fun shouldCancelVoice(intent: Intent): Boolean =
         intent.getBooleanExtra(EXTRA_CANCEL_VOICE, false)
 
@@ -273,6 +351,10 @@ object AssistantSessionProtocol {
             transcript = intent.getStringExtra(EXTRA_TRANSCRIPT),
             response = intent.getStringExtra(EXTRA_RESPONSE).orEmpty(),
             error = intent.getStringExtra(EXTRA_ERROR),
+            screenContextSupported = intent.getBooleanExtra(
+                EXTRA_SCREEN_CONTEXT_SUPPORTED,
+                false,
+            ),
         )
     }
 
@@ -304,12 +386,29 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
         if (AssistantSessionProtocol.isActivateAction(intent.action)) {
             val id = intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
                 ?: UUID.randomUUID().toString()
+            if (AssistantAppSessionState.active.value &&
+                !AssistantSessionPersistence.matchesActivation(context, id)
+            ) {
+                return
+            }
+            AssistantLaunchActivity.markSessionAccepted()
             val startNewSession = intent.getBooleanExtra(
                 AssistantSessionProtocol.EXTRA_START_NEW_SESSION,
                 true,
             )
+            val manualMic = intent.getBooleanExtra(AssistantSessionProtocol.EXTRA_MANUAL_MIC, false)
+            val expectScreenContext = intent.getBooleanExtra(
+                AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
+                false,
+            )
             AssistantSessionPersistence.setActive(context, true)
-            AssistantSessionPersistence.setActivation(context, id, startNewSession)
+            AssistantSessionPersistence.setActivation(
+                context,
+                id,
+                startNewSession,
+                manualMic,
+                expectScreenContext,
+            )
             AssistantAppSessionState.setActive(true)
             HermesVoiceInteractionService.setVoiceSessionActive(true)
             val application = context.applicationContext as HermesRelayApp
@@ -319,6 +418,8 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
             application.runtime.requestVoiceActivation(
                 activationId = id,
                 startNewSession = startNewSession,
+                manualMic = manualMic,
+                expectScreenContext = expectScreenContext,
                 onFailure = { failure ->
                     AssistantSessionProtocol.publish(
                         application,
@@ -336,12 +437,45 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
             HermesVoiceInteractionService.setVoiceSessionActive(true)
             return
         }
-        if (!AssistantSessionProtocol.isFinishAction(intent.action)) return
-        AssistantSessionPersistence.setActive(context, false)
-        if (AssistantSessionProtocol.shouldCancelVoice(intent)) {
-            val application = context.applicationContext as HermesRelayApp
-            application.runtime.cancelVoice()
+        val application = context.applicationContext as HermesRelayApp
+        if (AssistantSessionProtocol.isStartListeningAction(intent.action)) {
+            intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)?.let {
+                application.runtime.startAssistantListening(it)
+            }
+            return
         }
+        if (AssistantSessionProtocol.isStopListeningAction(intent.action)) {
+            intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)?.let {
+                application.runtime.stopAssistantListening(it)
+            }
+            return
+        }
+        if (AssistantSessionProtocol.isHeartbeatAction(intent.action)) {
+            intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)?.let {
+                application.runtime.recordAssistantHeartbeat(it)
+            }
+            return
+        }
+        if (AssistantSessionProtocol.isFullVoiceHandoffAction(intent.action)) {
+            intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)?.let {
+                application.runtime.transferAssistantHeartbeatToFullVoice(it)
+            }
+            return
+        }
+        if (AssistantSessionProtocol.isRetryVoiceAction(intent.action)) {
+            intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)?.let {
+                application.runtime.retryAssistantVoiceAfterFailure(it)
+            }
+            return
+        }
+        if (!AssistantSessionProtocol.isFinishAction(intent.action)) return
+        val activationId = intent.getStringExtra(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
+        if (activationId != null && !AssistantSessionPersistence.matchesActivation(context, activationId)) {
+            return
+        }
+        val cancelVoice = AssistantSessionProtocol.shouldCancelVoice(intent)
+        AssistantSessionPersistence.setActive(context, false)
+        application.runtime.finishAssistantActivation(activationId, cancelVoice)
         AssistantAppSessionState.setActive(false)
         HermesVoiceInteractionService.setVoiceSessionActive(false)
     }
@@ -352,6 +486,8 @@ object AssistantSessionPersistence {
     private const val KEY_ACTIVE_SINCE = "active_since"
     private const val KEY_ACTIVATION_ID = "activation_id"
     private const val KEY_START_NEW_SESSION = "start_new_session"
+    private const val KEY_MANUAL_MIC = "manual_mic"
+    private const val KEY_EXPECT_SCREEN_CONTEXT = "expect_screen_context"
     private const val STALE_AFTER_MS = 30 * 60 * 1_000L
 
     fun setActive(context: Context, active: Boolean) {
@@ -363,14 +499,22 @@ object AssistantSessionPersistence {
         }
     }
 
-    fun setActivation(context: Context, id: String, startNewSession: Boolean) {
+    fun setActivation(
+        context: Context,
+        id: String,
+        startNewSession: Boolean,
+        manualMic: Boolean = false,
+        expectScreenContext: Boolean = false,
+    ) {
         context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit(commit = true) {
             putString(KEY_ACTIVATION_ID, id)
             putBoolean(KEY_START_NEW_SESSION, startNewSession)
+            putBoolean(KEY_MANUAL_MIC, manualMic)
+            putBoolean(KEY_EXPECT_SCREEN_CONTEXT, expectScreenContext)
         }
     }
 
-    fun restoreActivation(context: Context): WakeWordActivation? {
+    fun restoreActivation(context: Context): RestoredAssistantActivation? {
         if (!isActive(context)) return null
         val store = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
         val id = store.getString(KEY_ACTIVATION_ID, null) ?: return null
@@ -379,8 +523,23 @@ object AssistantSessionPersistence {
             startNewSession = store.getBoolean(KEY_START_NEW_SESSION, true),
             profileRouting = WakeWordProfileRouting(),
             source = WakeWordActivationSource.SystemAssistant,
-        )
+        ).let { activation ->
+            RestoredAssistantActivation(
+                id = activation.id,
+                startNewSession = activation.startNewSession,
+                manualMic = store.getBoolean(KEY_MANUAL_MIC, false),
+                expectScreenContext = store.getBoolean(KEY_EXPECT_SCREEN_CONTEXT, false),
+            )
+        }
     }
+
+    internal fun matchesActivation(context: Context, id: String): Boolean =
+        context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+            .getString(KEY_ACTIVATION_ID, null) == id
+
+    internal fun activationId(context: Context): String? =
+        context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+            .getString(KEY_ACTIVATION_ID, null)
 
     fun isActive(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         val since = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
@@ -390,6 +549,25 @@ object AssistantSessionPersistence {
 
     internal fun isFresh(sinceMs: Long, nowMs: Long): Boolean =
         sinceMs > 0L && nowMs - sinceMs in 0..STALE_AFTER_MS
+}
+
+data class RestoredAssistantActivation(
+    val id: String,
+    val startNewSession: Boolean,
+    val manualMic: Boolean,
+    val expectScreenContext: Boolean,
+)
+
+internal enum class AssistantMicAction {
+    Start,
+    Stop,
+    Disabled,
+}
+
+internal fun assistantMicAction(phase: AssistantSessionPhase): AssistantMicAction = when (phase) {
+    AssistantSessionPhase.Idle -> AssistantMicAction.Start
+    AssistantSessionPhase.Listening -> AssistantMicAction.Stop
+    else -> AssistantMicAction.Disabled
 }
 
 object AssistantAppSessionState {

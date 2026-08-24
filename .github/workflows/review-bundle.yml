@@ -6,6 +6,8 @@ on:
       - dev
     types:
       - labeled
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
@@ -17,7 +19,11 @@ concurrency:
 
 jobs:
   resolve:
-    if: ${{ github.event.label.name == 'review-candidate' }}
+    if: >-
+      ${{
+        (github.event.action == 'labeled' && github.event.label.name == 'review-candidate') ||
+        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'review-candidate'))
+      }}
     name: Resolve exact source
     runs-on: ubuntu-latest
     outputs:
@@ -29,7 +35,7 @@ jobs:
       source_kind: ${{ steps.source.outputs.source_kind }}
       source_value: ${{ steps.source.outputs.source_value }}
     steps:
-      - name: Resolve pull request or exact SHA
+      - name: Resolve exact pull request head
         id: source
         uses: actions/github-script@v8
         with:
@@ -117,7 +123,7 @@ jobs:
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
           test -x "$aapt"
           "$aapt" dump badging "$apk" | grep -F "package: name='com.axiomlabs.hermesrelay.sideload.candidate'"
-          "$aapt" dump badging "$apk" | grep -F "application-label:'Hermes Candidate'"
+          "$aapt" dump badging "$apk" | grep -F "application-label:'HR Candidate'"
 
       - name: Assemble review bundle
         env:

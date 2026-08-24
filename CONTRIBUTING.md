@@ -32,10 +32,18 @@ scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ### Review bundles
 
 Maintainers can produce a matched Android + Relay handoff for one pull request
-without cutting a release. Run **Actions → Build Review Bundle** with the PR
-number or an exact 40-character SHA. The short-lived artifact contains a
-side-by-side Candidate APK, Relay packages/source from the same commit,
-provenance, checksums, and install/rollback guidance.
+without cutting a release. Apply the `review-candidate` label to an open PR
+targeting `dev`. The short-lived artifact contains a side-by-side
+**HR Candidate** APK, Relay packages/source from the same exact PR commit,
+provenance, checksums, and install/rollback guidance. While the label remains
+applied, a new PR head commit automatically replaces any in-progress build with
+a bundle for the new head.
+For a first-time fork contributor, GitHub may hold the first run for explicit
+maintainer approval before any untrusted code executes.
+When an opted-in candidate run completes, a separate trusted reporter creates or
+updates one PR comment with the exact source SHA, artifact link, expiry, and
+concise install and rollback guidance. Skipped workflow shells for unlabeled PRs
+do not create comments.
 
 Review bundles never bump versions, create tags, upload to Play, or replace the
 stable Android app. Relay review still requires a staging Hermes instance or an
@@ -131,18 +139,27 @@ After the plugin is in place, restart hermes and verify pairing with `hermes-pai
 We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 
 **Branching model: `main` + `dev`.** Feature branches — `feature/<name>`,
-`fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back
-into `dev` via merge-commit/no-ff PRs. This includes small documentation fixes.
+`fix/<name>`, `docs/<name>`, `chore/<name>` — branch from current `origin/dev`
+and merge back into `dev` via merge-commit/no-ff PRs. This includes small
+documentation fixes.
 `main` is release history, not the normal contribution target; it receives
 approved release PRs from `dev` and focused hotfix PRs based on production tags.
+
+`origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
+fast-forward-only mirror and create each task in its own branch/worktree from the
+current `origin/dev`. Do not accumulate unpublished commits on local `dev`. If a
+maintainer needs to combine several reviewed branches, use a temporary
+`integration/<batch>` branch and merge that branch through a normal PR to `dev`.
+See [docs/worktree-workflow.md](docs/worktree-workflow.md) for the concurrent
+worktree procedure.
 
 Feature completion means merged and verified on `dev`; it does not mean the
 change has been released. A separate Forge release issue/session owns release
 preparation, the `dev` → `main` release PR, tagging, artifacts, rollout or
-deployment, and live verification. Release-prep commits land on `dev`; tags are
-cut from the resulting `main` tip as `android-vX.Y.Z`, `server-vX.Y.Z`, or
-`desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release and hotfix
-procedures.
+deployment, and live verification. Release-prep commits use a dedicated branch
+and PR into `dev`; tags are cut from the resulting `main` tip as
+`android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See
+[RELEASE.md](RELEASE.md) for the full release and hotfix procedures.
 
 ## Stale PR salvage and contributor credit
 

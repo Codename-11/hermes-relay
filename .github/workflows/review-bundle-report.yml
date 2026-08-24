@@ -1,0 +1,55 @@
+name: Report Review Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Completed Build Review Bundle run ID to report
+        required: true
+        type: string
+  workflow_run:
+    workflows:
+      - Build Review Bundle
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: review-bundle-report-${{ github.event.workflow_run.id || inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event.workflow_run.event == 'pull_request'
+      }}
+    name: Update pull request comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Check out only the trusted default branch. Never check out the PR head or
+      # execute/download its candidate artifact in this write-capable workflow.
+      - name: Checkout trusted reporter
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Test trusted reporter
+        run: node .github/scripts/review-bundle-report.test.cjs
+
+      - name: Report candidate status
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const reporter = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/review-bundle-report.cjs`
+            );
+            await reporter.reportReviewBundle({ github, context, core });

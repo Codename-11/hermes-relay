@@ -31,14 +31,26 @@ class StatefulFakeCua implements CuaProcessRunner {
     this.calls.push({ args: [...args], payload, signal: options.signal })
     if (options.signal?.aborted) throw new CuaRuntimeError('fake action cancelled', 'transport')
     const command = args.join(' ')
-    if (command === '--version') return ok('cua-driver 0.19.3')
+    if (command === '--version') return ok('cua-driver 0.21.0')
     if (command === 'manifest --pretty') {
-      return ok(JSON.stringify({ schema_version: '1', binary_version: '0.19.3', binary_path: this.binary }))
+      return ok(JSON.stringify({
+        schema_version: '1', binary_version: '0.21.0', binary_path: this.binary,
+        mcp_invocation: { command: this.binary, args: ['mcp'] },
+        subcommands: [
+          { name: 'mcp', args: [{ name: '--socket' }, { name: '--grant' }] },
+          { name: 'serve', args: [
+            { name: '--socket' }, { name: '--permission-mode' },
+            { name: '--capability-manifest' }, { name: '--approve-capability-manifest' },
+            { name: '--embedded' }
+          ] },
+          { name: 'stop', args: [{ name: '--socket' }] }
+        ]
+      }))
     }
     if (command === 'list-tools') return ok(tools.map(tool => `${tool}: fake`).join('\n'))
     if (command === 'status') return ok('permission mode: bounded')
     if (command === 'call health_report') {
-      return ok(JSON.stringify({ schema_version: '1', driver_version: '0.19.3', overall: 'ok' }))
+      return ok(JSON.stringify({ schema_version: '1', driver_version: '0.21.0', overall: 'ok' }))
     }
     if (command === 'call get_window_state') {
       return ok(JSON.stringify({
@@ -63,7 +75,7 @@ async function harness(): Promise<{
   cleanup(): Promise<void>
 }> {
   const home = await mkdtemp(join(tmpdir(), 'hermes-cua-integration-'))
-  const release = join(home, '.cua-driver', 'packages', 'releases', '0.19.3-test')
+  const release = join(home, '.cua-driver', 'packages', 'releases', '0.21.0-test')
   await mkdir(release, { recursive: true })
   const binary = join(release, 'cua-driver.exe')
   await writeFile(binary, '')

@@ -58,7 +58,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     if (command === 'check_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: true, latest_version: '0.4.0-alpha.2', installed: false, needs_restart: false } as T
     if (command === 'install_desktop_update') return { current: '0.4.0-alpha.3', up_to_date: true, ahead_of_latest: false, installed: true, needs_restart: true } as T
     if (command === 'test_host_route') return { best: { label: 'LAN', url: 'ws://172.16.24.250:8767', reachable: true, elapsed_ms: 36, encrypted: false, security: 'Unencrypted relay connection' }, routes: [] } as T
-    if (command === 'computer_cua_status') return { installed: false, stale_path_shim: false, compatible: false, compatibility_reason: 'CUA Driver is not installed', supported_range: { minimum: '0.19.3', maximum_exclusive: '0.20.0' } } as T
+    if (command === 'computer_cua_status') return { installed: false, stale_path_shim: false, compatible: false, compatibility_reason: 'CUA Driver is not installed', supported_range: { minimum: '0.20.0', maximum_exclusive: null } } as T
     if (command === 'computer_cua_health') return { state: 'degraded', checkedAt: new Date().toISOString(), overall: 'degraded', reason: 'UI Automation desktop enumeration exceeded 2000ms.', temporaryWindowsCompatibility: true } as T
     return undefined as T
   }
@@ -1060,7 +1060,7 @@ function SettingsPage({ daemon, computerControl, startup, daemonAutostart, activ
         ? `Version ${update.current} · up to date`
         : update?.latest_version
           ? `${update.current} → ${update.latest_version} available`
-          : 'Check the desktop release channel.'
+          : 'Check the CLI+UI release channel.'
 
   const cuaReady = computerControl?.available === true && computerControl.state === 'ready'
   const engineState = computerControl?.state ?? 'not_installed'

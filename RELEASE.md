@@ -14,15 +14,15 @@ with optional prerelease identifiers.
 - Prerelease suffixes: `-alpha`, `-beta`, `-rc.N` (e.g. `0.2.0-beta.1`)
 
 Hermes-Relay ships three independently versioned production surfaces. Public
-GitHub Release titles use product names (`Hermes-Relay-Android`,
-`Hermes-Relay-Server`, `Hermes-Relay-Desktop`); immutable tag prefixes select
-the corresponding build and deployment lane.
+GitHub Release titles use `Hermes-Relay <Surface> v<version>` (for example,
+`Hermes-Relay Android v1.13.0-rc.1`); immutable tag prefixes select the
+corresponding build and deployment lane.
 
 | Surface | Tag prefix | Version source | Bump script | Release workflow |
 |---|---|---|---|---|
-| Hermes-Relay-Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
-| Hermes-Relay-Server | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-plugin-version.sh` | `.github/workflows/release-plugin.yml` |
-| Hermes-Relay-Desktop | `desktop-v*` | `desktop/package.json` | `cd desktop && npm version --no-git-tag-version <version>` | `.github/workflows/release-cli.yml` |
+| Hermes-Relay Android | `android-v*` | `gradle/libs.versions.toml` | `scripts/bump-android-version.sh` | `.github/workflows/release-android.yml` |
+| Hermes-Relay Plugin | `server-v*` | `pyproject.toml` plus checked plugin/dashboard metadata | `scripts/bump-plugin-version.sh` | `.github/workflows/release-plugin.yml` |
+| Hermes-Relay CLI+UI | `desktop-v*` | `desktop/package.json` | `cd desktop && npm version --no-git-tag-version <version>` | `.github/workflows/release-cli.yml` |
 
 This split is intentional. The plugin carries relay features for both Android
 and CLI clients, so plugin fixes can ship without forcing an Android app
@@ -88,7 +88,7 @@ lockstep:
 | `plugin/dashboard/package.json` | `"version": "..."` | dashboard build/package metadata |
 | `plugin/dashboard/package-lock.json` | `"version": "..."` | locked dashboard package metadata |
 
-Always bump Server releases via:
+Always bump Plugin releases via:
 
 ```bash
 bash scripts/bump-plugin-version.sh 0.6.2
@@ -106,23 +106,23 @@ Check all release tracks at once with:
 python scripts/check-version-tracks.py
 ```
 
-This aggregate check reports Android, Server, and Desktop versions
+This aggregate check reports Android, Plugin, and CLI+UI versions
 side by side and validates that each track's own source files are internally
 consistent. It deliberately does not require all three tracks to share the same
 SemVer.
 
 The `server-v*` release workflow validates the tag against the same metadata,
 runs plugin tests, builds a wheel and sdist, generates checksums, and
-publishes a `Hermes-Relay-Server vX.Y.Z` GitHub Release with the package
+publishes a `Hermes-Relay Plugin vX.Y.Z` GitHub Release with the package
 artifacts.
 
 ### CLI / tray versioning
 
-`desktop/package.json` is the Desktop/CLI release track's source of truth. Its version
+`desktop/package.json` is the CLI+UI release track's source of truth. Its version
 must match the generated CLI and Windows tray metadata. The tray is a compact
 management popup over the installed CLI and shared state; it has no chat,
 embedded terminal, plugins, voice, or separate desktop product surface. The public
-release remains one `Hermes-Relay-Desktop` track containing CLI binaries plus the
+release remains one `Hermes-Relay CLI+UI` track containing CLI binaries plus the
 optional Windows installer.
 
 | File | Purpose |
@@ -137,8 +137,8 @@ optional Windows installer.
 | `desktop/tray/package.json` | tray UI package version |
 | `desktop/tray/package-lock.json` | locked tray UI package version |
 
-Prepare a new CLI version on `dev` without creating a tag or npm-generated
-commit:
+Prepare a new CLI version on its release-prep branch targeting `dev`, without
+creating a tag or npm-generated commit:
 
 ```powershell
 cd desktop
@@ -185,14 +185,17 @@ never create a staging branch. Stable production tags are cut only from the new
 
 ### Normal contribution and release flow
 
-1. Branch `feature/*`, `fix/*`, `docs/*`, or `chore/*` from `dev`.
+1. Fetch `origin/dev` and branch `feature/*`, `fix/*`, `docs/*`, or `chore/*`
+   from that exact ref in a dedicated worktree.
 2. Open the PR into `dev` and require CI to pass.
 3. Merge with a merge commit/no-ff according to repository policy.
 4. Accumulate user-facing work under `CHANGELOG.md` `[Unreleased]`.
 5. Treat the feature as complete when it is merged and verified on `dev`.
 6. Start a separate Forge release issue/session when a release train is approved.
-7. Prepare the affected surface release on `dev`, including its version and notes.
-8. Open and approve the release PR from `dev` into `main`.
+7. Create `release/<surface-version>` from current `origin/dev`, prepare the
+   affected surface version and notes there, and merge its PR into `dev`.
+8. Fast-forward local `dev` to the exact merged `origin/dev`, then open and
+   approve the release PR from `dev` into `main`.
 9. Tag the new `main` tip with the affected surface prefix.
 10. Build and publish that surface's artifacts, roll out or deploy from the
     immutable tag, and verify the release and live environment.
@@ -205,10 +208,12 @@ never create a staging branch. Stable production tags are cut only from the new
 | `fix/<name>` | Focused bug fix | `fix/media-projection-fgs` |
 | `docs/<name>` | Docs-only changes larger than a typo | `docs/sideload-guide` |
 | `chore/<name>` | Cleanup / refactor / tooling | `chore/sync-version-sources` |
+| `integration/<batch>` | Maintainer-owned batch of reviewed branches | `integration/android-routing-batch` |
+| `release/<surface-version>` | Surface release preparation targeting `dev` | `release/android-1.13.0` |
 
-All of the above branch off `dev` and merge back to `dev`. There is no
-straight-to-main exemption — even single-file typos go through a feature
-branch and PR into `dev`.
+All of the above branch from current `origin/dev` and merge back to `dev`.
+There is no straight-to-main exemption — even single-file typos go through a
+task branch and PR into `dev`.
 
 ### Merge style: `--no-ff`
 
@@ -226,7 +231,7 @@ preserves the branch context as a visible merge commit in
 
 Squash merges lose that detail and are **not** the house style.
 
-### Version bumps happen at release-prep on `dev`, NOT on feature branches
+### Version bumps happen on release-prep branches, NOT feature branches
 
 Feature branches **never** touch `gradle/libs.versions.toml`,
 plugin-owned version metadata, or `desktop/package.json`.
@@ -234,8 +239,9 @@ If two feature branches both bumped a release version, they'd collide on
 version files and, for Android, on `appVersionCode` (which must be
 monotonic).
 
-Version-bump commits live on `dev` as the last commit of release-prep
-work. Android commits use `release(android): android-vX.Y.Z`; server commits
+Version-bump commits land on `dev` through the release-prep PR as the final
+release-preparation commit. Android commits use
+`release(android): android-vX.Y.Z`; server commits
 use `release(server): server-vX.Y.Z`; desktop commits use
 `release(desktop): desktop-vX.Y.Z`. A release PR then merges `dev` →
 `main` with `--no-ff`, and the matching tag is cut from the resulting
@@ -422,14 +428,15 @@ the threshold is intent-driven, not event-driven.
 If you want to dogfood a frozen `dev` release candidate without declaring GA,
 tag the exact release-prepared `dev` commit with a **prerelease** tag such as
 `android-vX.Y.Z-rc.N` or `server-vX.Y.Z-rc.N`. Android prereleases publish the
-side-by-side Candidate app and never upload to Play. Server prereleases publish
-opt-in packages for staging and do not automatically replace production.
+side-by-side **HR Candidate** app and never upload to Play. Plugin prereleases
+publish opt-in packages for staging and do not automatically replace production.
 See [Review builds and release candidates](docs/review-candidates.md).
 
-For one-PR review, do not bump versions or create a tag. Run **Build Review
-Bundle** for the PR number or exact SHA. It produces one short-lived matched
-Android + Relay artifact; the Candidate app uses a separate application ID and
-the Relay package requires an explicit staging or snapshot/rollback install.
+For one-PR review, do not bump versions or create a tag. Apply the
+`review-candidate` label to an open PR targeting `dev`. It produces one
+short-lived matched Android + Relay artifact; the **HR Candidate** app uses a
+separate application ID and the Relay package requires an explicit staging or
+snapshot/rollback install.
 
 ## Release train ownership
 
@@ -586,7 +593,7 @@ Optional device smoke test: `scripts\dev.bat release` then
 ### 4. Run the private Play preflight from `dev`
 
 The release-prep commit lands on `dev` first. Before any public tag or GitHub
-Release exists, open **Actions → Play Preflight — Android**, choose **Run
+Release exists, open **Actions → Hermes-Relay Android Play Preflight**, choose **Run
 workflow**, select the final `dev` branch, and enter the prepared version.
 
 The preflight workflow:
@@ -629,11 +636,11 @@ git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
 git commit -m "release(android): android-v0.6.2"
 git push origin dev
 
-# Run Play Preflight — Android from dev and require a successful workflow.
+# Run Hermes-Relay Android Play Preflight from dev and require a successful workflow.
 # Open the release PR (dev -> main) and merge with --no-ff.
 ```
 
-Then open **Actions → Approve Android Release**, choose **Run workflow**, select
+Then open **Actions → Hermes-Relay Android Release Approval**, choose **Run workflow**, select
 `main`, and enter the version. Starting the workflow is the release approval. It
 verifies that `main` has the exact preflighted tree and creates the
 `android-v<version>` tag. Because tags created with `GITHUB_TOKEN` do not trigger
@@ -653,7 +660,7 @@ publication.
 Plugin/Python version files are intentionally not part of an Android app
 release unless the plugin package itself is also being released.
 
-### Server / Python package release
+### Plugin / Python package release
 
 Use this when plugin or relay behavior changes independently of Android app
 delivery, for example CLI channel support, bridge routes, pairing server fixes,
@@ -664,6 +671,8 @@ First **rewrite `PLUGIN_RELEASE_NOTES.md`** — it is the GitHub Release body fo
 Summary and the Added/Changed/Fixed groups from the plugin-relevant bullets in the
 promoted `CHANGELOG.md` block, keep the `__VERSION__` token in the Install command
 (the workflow substitutes it), and apply the same public-distribution scrub as §2.
+Name the promoted changelog heading `## [Plugin <version>]`; the compatibility
+tag remains `server-v<version>`.
 
 ```bash
 git checkout dev
@@ -688,15 +697,16 @@ validates all plugin-owned version metadata with
 `python scripts/check-version-tracks.py` locally before tagging when a change
 touches more than one release surface. The workflow also runs plugin tests,
 builds a wheel and sdist, generates `SHA256SUMS.txt`, and creates a GitHub
-Release named `Hermes-Relay-Server v<version>` for the server/plugin package.
+Release named `Hermes-Relay Plugin v<version>` for the plugin package.
 
-### CLI / Windows systray release
+### CLI+UI release
 
 Use this when the standalone CLI, daemon, desktop tools, or Windows tray changes.
 Android and plugin versions do not need to move with it.
 
-First rewrite `CLI_RELEASE_NOTES.md` for the new Desktop release and promote only
-CLI/tray-relevant changelog bullets into the release block. Then:
+First rewrite `CLI_RELEASE_NOTES.md` for the new CLI+UI release and promote only
+CLI/tray-relevant changelog bullets into the release block. The compatibility
+tag and source directory remain `desktop-v<version>` and `desktop/`. Then:
 
 ```powershell
 git switch dev
@@ -850,7 +860,7 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
 5. Generates `SHA256SUMS.txt` covering the two attached files.
 6. For stable releases only, promotes the exact preflighted Production draft to
    `completed`; prereleases never upload to Play.
-7. Creates a GitHub Release named `Hermes-Relay-Android v<version>` with `RELEASE_NOTES.md` as
+7. Creates a GitHub Release named `Hermes-Relay Android v<version>` with `RELEASE_NOTES.md` as
    the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
    containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.
 8. Prints a `$GITHUB_STEP_SUMMARY` with the release and Play result.
@@ -865,7 +875,7 @@ On every push of a tag matching `server-v*`,
 2. Runs plugin syntax checks and the focused route/auth/session test slice.
 3. Builds the Python wheel and sdist with `python -m build`.
 4. Generates `dist/SHA256SUMS.txt`.
-5. Creates a GitHub Release named `Hermes-Relay-Server v<version>` with the wheel,
+5. Creates a GitHub Release named `Hermes-Relay Plugin v<version>` with the wheel,
    sdist, and checksum file attached.
 
 On every push of a tag matching `desktop-v*`,
@@ -933,13 +943,13 @@ For an Android app hotfix:
    `dev`'s `appVersionCode` lags behind `main` and the next app release
    bump collides.
 
-For a Server hotfix, branch from the affected `server-v*` tag, apply
+For a Plugin hotfix, branch from the affected `server-v*` tag, apply
 the fix, run `bash scripts/bump-plugin-version.sh <next-version>`, merge to
 `main`, tag `server-v<next-version>`, verify the package/deployment, and merge
 `main` back to `dev`. Do not touch
 `gradle/libs.versions.toml` unless an Android app release is also shipping.
 
-For a Desktop hotfix, branch from the affected `desktop-v*` tag, update only
+For a CLI+UI hotfix, branch from the affected `desktop-v*` tag, update only
 `desktop/package.json` and its generated lock/runtime/tray metadata, merge to
 `main`, tag `desktop-v<next-version>`, verify all binaries and the installer,
 then merge `main` back to `dev`.

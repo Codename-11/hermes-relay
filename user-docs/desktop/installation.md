@@ -18,7 +18,7 @@ irm https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scri
 By default the script installs the Windows CLI **and** management UI through the checksum-verified NSIS package. It:
 
 1. Detects architecture (x64; ARM64 lands once Bun's cross-compile target stabilizes).
-2. Resolves the **latest** Desktop release by querying the GitHub Releases API directly and picking the SemVer-max `desktop-v*` tag, with a migration fallback to historical `cli-v*` releases. Prereleases are included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
+2. Resolves the **latest** CLI+UI release by querying the GitHub Releases API directly and picking the SemVer-max `desktop-v*` tag, with a migration fallback to historical `cli-v*` releases. Prereleases are included, so alpha builds aren't skipped (see CHANGELOG entry on alpha.11 for why this matters).
 3. Downloads `hermes-relay-windows-x64-setup.exe` and verifies SHA256 against the published `SHA256SUMS.txt`.
 4. Runs the per-user installer. No administrator access is required.
 5. Installs `hermes-relay.exe`, `hermes-relay-tray.exe`, and the uninstaller to `%USERPROFILE%\.hermes\bin`.
@@ -80,12 +80,13 @@ hermes-relay computer-use cua update --yes
 ```
 
 Install is pinned to the minimum compatible release. Update first asks the
-installed driver's native update service which release is current, then refuses
-to apply it if it falls outside Hermes-Relay's supported range (`>=0.19.3,
-<0.20.0`). Hermes downloads the versioned GitHub release manifest and installer,
+installed driver's native update service which release is current. Following
+Hermes, compatibility requires CUA Driver `>=0.20.0` and has no hardcoded upper
+version ceiling; each build must continue to advertise the required manifest,
+daemon/MCP arguments, and tool contract. Hermes-Relay downloads the versioned GitHub release manifest and installer,
 checks the manifest repository/product/version and the installer's SHA-256, and
 then verifies the canonical binary path, version, driver manifest, required
-tools, and permission mode. Accessibility health remains an explicit recheck
+tools, and direct standard-mode MCP launch. Accessibility health remains an explicit recheck
 while the temporary Windows compatibility workaround is active. These are release-metadata and
 checksum integrity checks, not a Windows publisher signature.
 
@@ -179,7 +180,7 @@ See [Uninstall](#uninstall) below — the curl one-liner reverses install.sh, wi
 Once installed, you don't have to keep re-running the `curl | sh` one-liner. The binary self-updates:
 
 ```bash
-hermes-relay update             # download + verify + swap to latest desktop-v*
+hermes-relay update             # download + verify + swap to latest CLI+UI release (desktop-v*)
 hermes-relay update --check     # dry-run: print available version, don't install
 hermes-relay update --yes       # skip confirm prompt
 hermes-relay update --json      # machine-readable status

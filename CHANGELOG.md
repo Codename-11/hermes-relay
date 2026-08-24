@@ -6,10 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
+
+### Changed
+
+- **Release and candidate names use one public product hierarchy.** Future releases use `Hermes-Relay Android`, `Hermes-Relay Plugin`, or `Hermes-Relay CLI+UI` display names, while isolated Android review and release-candidate installs use `HR Candidate`, without changing immutable tags, package identities, updater contracts, or artifact filenames.
+- **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
+- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
+
 ### Fixed
 
 - **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
 - **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
+- **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
+- **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
 
 ## [Android 1.12.1] - 2026-08-22
 
