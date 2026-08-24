@@ -6,6 +6,51 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify Android assistant screen context on physical firmware
+
+Host-side tests prove strict WEB_SEARCH classification, show-flag policy, bounded
+extraction and screenshot framing, fail-soft store semantics, manual microphone
+protocol, heartbeat expiry and Full Voice ownership, Gateway text/image upload
+ordering plus one-shot acceptance, preflight retention, proactive-route rejection,
+and draft-isolated submission. One Android 15 automotive device also verifies
+WEB_SEARCH dispatch, foreground-screen preservation, a persistent transparent
+session, AssistStructure plus screenshot delivery, explicit mic start, contextual
+model use, and one-shot consumption. Complete the remaining edge-case matrix before
+claiming broad OEM compatibility:
+
+- Verify unlocked AssistStructure plus screenshot delivery, secure-window null
+  screenshots, assist-blocked/password exclusion, secondary assist callbacks,
+  rotation, cancellation, process recreation, and callbacks arriving before show.
+- Inspect the resulting Hermes turn to confirm visible semantic text is labeled
+  untrusted, the screenshot is attached only when captured, composer drafts remain
+  untouched, and no second voice turn receives the activation context.
+- Force attachment/preflight failure, verify the overlay says screen context is
+  ready rather than sent, then use Try again and confirm the same staged context is
+  accepted and consumed exactly once.
+- Open Full Voice, kill the separate assistant-session process, wait beyond the
+  session heartbeat grace, and confirm the main-app voice turn remains active and
+  completes normally.
+- Verify gesture, wake-word, power-button, and keyguard assistant invocations retain
+  their existing automatic-listening behavior and never capture keyguard context.
+- Exercise repeated explicit WEB_SEARCH launches from another foreground app. The
+  exported OEM-compatible trampoline cannot use a signature permission, so verify
+  exact-action/role gating, request coalescing, single-session admission, and manual
+  microphone behavior prevent useful escalation or unbounded churn.
+
+---
+
+## Reassess Play Console data safety for assistant screen context
+
+Before the next Google Play submission, review the current Console questionnaire
+for optional User content and sharing against the documented flow: after the user
+selects Hermes as Android Assistant, compatible unlocked manual firmware can send
+voice, bounded visible screen text, and a screenshot to the user-configured Hermes
+server and its configured AI provider for one Standard turn. Record the final
+Console answers in `docs/play-store-listing.md`; do not reuse the previous blanket
+“no data collection or sharing” declaration.
+
+---
+
 ## Certify Android Gateway missing-terminal recovery on physical devices
 
 Deterministic fake-Gateway coverage now proves that a foreground turn with
@@ -1388,4 +1433,3 @@ Follow-ups:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
   - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
-

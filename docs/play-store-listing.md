@@ -28,7 +28,7 @@ Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign
 
 GOOGLE PLAY BUILD
 
-The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService Device Control: it cannot read your screen, tap, type, swipe, screenshot, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play.
+The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService or MediaProjection Device Control and cannot tap, type, swipe, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play. If you explicitly choose Hermes as Android's Digital Assistant, compatible firmware can provide bounded visible screen text and a screenshot for one manually started Standard voice turn; that context is sent to your configured Hermes server and its configured AI provider.
 
 FEATURES
 
@@ -36,7 +36,7 @@ FEATURES
 
 ◆ Manage Your Agent — the Hermes dashboard on your phone: switch models from your provider catalog, manage provider keys (masked), edit profiles, and browse, install, and update skills.
 
-◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection; Relay-paired setups add per-profile voices and an experimental realtime engine.
+◆ Voice Mode — talk hands-free using your server's speech providers, no plugin needed. Optionally choose Hermes as Android's Digital Assistant or enable local "Hey Hermes" detection. Compatible unlocked manual assistant controls may include one-turn screen context; ordinary wake and keyguard invocations do not. Relay-paired setups add per-profile voices and an experimental realtime engine.
 
 ◆ Floating Pets — browse and install Petdex companions or import your own. Keep the pet separate from your agent identity, drag it anywhere, or let it roam across UI-aware ledges.
 
@@ -65,6 +65,8 @@ SECURITY &amp; PRIVACY
 • No telemetry, ads, tracking, or third-party analytics SDKs
 
 • Notification access and the microphone are optional and user-controlled
+
+• Android Assistant screen context requires selecting Hermes in Android settings and an explicit compatible manual invocation
 
 • All app traffic goes only to servers you configure
 
@@ -199,7 +201,13 @@ The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the
 
 ### Data safety
 
-No data collection or sharing to declare: no telemetry, ads, or third-party analytics SDKs; all traffic goes only to user-configured servers; credentials are stored in encrypted on-device storage. Mirror the **Security &amp; Privacy** section above when filling the Data safety form.
+There is no telemetry, advertising, or third-party analytics SDK. App traffic goes
+to user-configured Hermes servers, which may use AI providers configured by the
+user. The optional Android Assistant path can transmit user voice, bounded visible
+screen text, and a screenshot for one explicitly invoked Standard voice turn.
+Before the next Play submission, review the Console's current User content and
+data-sharing questions against this exact flow rather than reusing the previous
+categorical “no data collection or sharing” answer.
 
 ### Sensitive / runtime permissions in the Play build
 
@@ -207,4 +215,3 @@ No data collection or sharing to declare: no telemetry, ads, or third-party anal
 - `POST_NOTIFICATIONS` — chat input, turn-complete, and keep-alive notifications, requested on API 33+.
 - `CAMERA` — QR pairing / attachments, requested at use.
 - Notification listener (companion) — user-enabled in system settings.
-

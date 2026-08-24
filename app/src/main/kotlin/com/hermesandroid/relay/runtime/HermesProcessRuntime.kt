@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.runtime
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import com.hermesandroid.relay.HermesRelayApp
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,6 +50,9 @@ class HermesProcessRuntime internal constructor(
     private var activationGeneration = 0L
     private var currentActivationId: String? = null
     private var activationJob: Job? = null
+    private var assistantHeartbeatJob: Job? = null
+    private var lastAssistantHeartbeatElapsedMs = 0L
+    private var assistantHeartbeatOwnership = AssistantHeartbeatOwnership.None
     private val runtimeJob = SupervisorJob()
     private val binder by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         HermesRuntimeBinder(application, this)
@@ -132,6 +137,8 @@ class HermesProcessRuntime internal constructor(
     fun requestVoiceActivation(
         activationId: String,
         startNewSession: Boolean = true,
+        manualMic: Boolean = false,
+        expectScreenContext: Boolean = false,
         timeoutMs: Long = DEFAULT_VOICE_ACTIVATION_TIMEOUT_MS,
         onFailure: (Throwable) -> Unit = {},
     ) {
@@ -139,16 +146,26 @@ class HermesProcessRuntime internal constructor(
             // The assistant session process can replay the same activation while
             // being recreated. That replay must not re-arm the recorder.
             if (currentActivationId == activationId) return
+            if (currentActivationId != null) {
+                onFailure(IllegalStateException("Another assistant activation is already active"))
+                return
+            }
 
             activationJob?.cancel()
             activationGeneration += 1
             val generation = activationGeneration
             currentActivationId = activationId
+            lastAssistantHeartbeatElapsedMs = SystemClock.elapsedRealtime()
+            assistantHeartbeatOwnership = AssistantHeartbeatOwnership.Session
+            startAssistantHeartbeatWatchdog(activationId, generation)
             coroutineScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     ensureInitialized()
                     binder.activateVoice(
+                        activationId = activationId,
                         startNewSession = startNewSession,
+                        manualMic = manualMic,
+                        expectScreenContext = expectScreenContext,
                         timeoutMs = timeoutMs,
                         isCurrent = {
                             synchronized(activationLock) {
@@ -160,6 +177,16 @@ class HermesProcessRuntime internal constructor(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    synchronized(activationLock) {
+                        if (activationGeneration == generation && currentActivationId == activationId) {
+                            currentActivationId = null
+                            activationJob = null
+                            assistantHeartbeatJob?.cancel()
+                            assistantHeartbeatJob = null
+                            lastAssistantHeartbeatElapsedMs = 0L
+                            assistantHeartbeatOwnership = AssistantHeartbeatOwnership.None
+                        }
+                    }
                     onFailure(failure)
                 }
             }.also { activationJob = it }
@@ -168,14 +195,128 @@ class HermesProcessRuntime internal constructor(
     }
 
     fun cancelVoice() {
-        synchronized(activationLock) {
+        finishAssistantActivation(expectedActivationId = null, cancelVoice = true)
+    }
+
+    fun finishAssistantActivation(expectedActivationId: String?, cancelVoice: Boolean) {
+        val discardedActivationId = synchronized(activationLock) {
+            if (expectedActivationId != null && currentActivationId != expectedActivationId) {
+                return
+            }
+            val id = currentActivationId
             activationGeneration += 1
             currentActivationId = null
             activationJob?.cancel()
             activationJob = null
+            assistantHeartbeatJob?.cancel()
+            assistantHeartbeatJob = null
+            lastAssistantHeartbeatElapsedMs = 0L
+            assistantHeartbeatOwnership = AssistantHeartbeatOwnership.None
+            id
         }
-        if (_initializationState.value != HermesRuntimeInitializationState.Uninitialized) {
+        discardedActivationId?.let { id ->
+            coroutineScope.launch(Dispatchers.IO) {
+                com.hermesandroid.relay.assistant.assistantContextStore(application).discard(id)
+            }
+        }
+        if (cancelVoice &&
+            _initializationState.value != HermesRuntimeInitializationState.Uninitialized
+        ) {
             binder.cancelVoice()
+        }
+    }
+
+    fun startAssistantListening(activationId: String) {
+        val isCurrent = synchronized(activationLock) { currentActivationId == activationId }
+        if (isCurrent && _initializationState.value == HermesRuntimeInitializationState.Ready) {
+            binder.startAssistantListening()
+        }
+    }
+
+    fun stopAssistantListening(activationId: String) {
+        val isCurrent = synchronized(activationLock) { currentActivationId == activationId }
+        if (isCurrent && _initializationState.value == HermesRuntimeInitializationState.Ready) {
+            binder.stopAssistantListening()
+        }
+    }
+
+    fun recordAssistantHeartbeat(
+        activationId: String,
+        nowElapsedMs: Long = SystemClock.elapsedRealtime(),
+    ) {
+        synchronized(activationLock) {
+            if (currentActivationId == activationId &&
+                assistantHeartbeatOwnership == AssistantHeartbeatOwnership.Session
+            ) {
+                lastAssistantHeartbeatElapsedMs = nowElapsedMs
+            }
+        }
+    }
+
+    fun transferAssistantHeartbeatToFullVoice(activationId: String) {
+        synchronized(activationLock) {
+            if (currentActivationId != activationId) return
+            assistantHeartbeatOwnership = AssistantHeartbeatOwnership.FullVoice
+            assistantHeartbeatJob?.cancel()
+            assistantHeartbeatJob = null
+            lastAssistantHeartbeatElapsedMs = 0L
+        }
+    }
+
+    fun retryAssistantVoiceAfterFailure(activationId: String) {
+        val isCurrent = synchronized(activationLock) { currentActivationId == activationId }
+        if (isCurrent && _initializationState.value == HermesRuntimeInitializationState.Ready) {
+            binder.retryAssistantVoiceAfterFailure()
+        }
+    }
+
+    private fun startAssistantHeartbeatWatchdog(activationId: String, generation: Long) {
+        assistantHeartbeatJob?.cancel()
+        assistantHeartbeatJob = coroutineScope.launch {
+            while (true) {
+                delay(ASSISTANT_HEARTBEAT_CHECK_MS)
+                val observedHeartbeat = synchronized(activationLock) {
+                    if (currentActivationId != activationId ||
+                        activationGeneration != generation ||
+                        assistantHeartbeatOwnership != AssistantHeartbeatOwnership.Session
+                    ) {
+                        return@launch
+                    }
+                    lastAssistantHeartbeatElapsedMs
+                }
+                if (!assistantHeartbeatExpired(
+                        observedHeartbeat,
+                        SystemClock.elapsedRealtime(),
+                        ASSISTANT_HEARTBEAT_GRACE_MS,
+                    )
+                ) {
+                    continue
+                }
+                // Allow queued broadcasts to run after a suspended main process resumes.
+                delay(ASSISTANT_HEARTBEAT_RECHECK_MS)
+                val stillExpired = synchronized(activationLock) {
+                    assistantHeartbeatShouldCancel(
+                        ownership = assistantHeartbeatOwnership,
+                        expectedActivationId = activationId,
+                        currentActivationId = currentActivationId,
+                        expectedGeneration = generation,
+                        currentGeneration = activationGeneration,
+                        observedHeartbeatElapsedMs = observedHeartbeat,
+                        currentHeartbeatElapsedMs = lastAssistantHeartbeatElapsedMs,
+                        nowElapsedMs = SystemClock.elapsedRealtime(),
+                        graceMs = ASSISTANT_HEARTBEAT_GRACE_MS,
+                    )
+                }
+                if (stillExpired) {
+                    com.hermesandroid.relay.assistant.AssistantSessionPersistence
+                        .setActive(application, false)
+                    com.hermesandroid.relay.assistant.AssistantAppSessionState.setActive(false)
+                    com.hermesandroid.relay.assistant.HermesVoiceInteractionService
+                        .setVoiceSessionActive(false)
+                    finishAssistantActivation(activationId, cancelVoice = true)
+                    return@launch
+                }
+            }
         }
     }
 
@@ -190,6 +331,10 @@ class HermesProcessRuntime internal constructor(
             currentActivationId = null
             activationJob?.cancel()
             activationJob = null
+            assistantHeartbeatJob?.cancel()
+            assistantHeartbeatJob = null
+            lastAssistantHeartbeatElapsedMs = 0L
+            assistantHeartbeatOwnership = AssistantHeartbeatOwnership.None
         }
         if (_initializationState.value != HermesRuntimeInitializationState.Uninitialized) {
             binder.clear()
@@ -201,8 +346,41 @@ class HermesProcessRuntime internal constructor(
 
     private companion object {
         const val DEFAULT_VOICE_ACTIVATION_TIMEOUT_MS = 20_000L
+        const val ASSISTANT_HEARTBEAT_CHECK_MS = 15_000L
+        const val ASSISTANT_HEARTBEAT_GRACE_MS = 60_000L
+        const val ASSISTANT_HEARTBEAT_RECHECK_MS = 5_000L
     }
 }
+
+internal fun assistantHeartbeatExpired(
+    lastHeartbeatElapsedMs: Long,
+    nowElapsedMs: Long,
+    graceMs: Long,
+): Boolean = lastHeartbeatElapsedMs > 0L &&
+    nowElapsedMs >= lastHeartbeatElapsedMs &&
+    nowElapsedMs - lastHeartbeatElapsedMs > graceMs
+
+internal enum class AssistantHeartbeatOwnership {
+    None,
+    Session,
+    FullVoice,
+}
+
+internal fun assistantHeartbeatShouldCancel(
+    ownership: AssistantHeartbeatOwnership,
+    expectedActivationId: String,
+    currentActivationId: String?,
+    expectedGeneration: Long,
+    currentGeneration: Long,
+    observedHeartbeatElapsedMs: Long,
+    currentHeartbeatElapsedMs: Long,
+    nowElapsedMs: Long,
+    graceMs: Long,
+): Boolean = ownership == AssistantHeartbeatOwnership.Session &&
+    currentActivationId == expectedActivationId &&
+    currentGeneration == expectedGeneration &&
+    currentHeartbeatElapsedMs == observedHeartbeatElapsedMs &&
+    assistantHeartbeatExpired(currentHeartbeatElapsedMs, nowElapsedMs, graceMs)
 
 enum class HermesRuntimeInitializationState {
     Uninitialized,
