@@ -797,6 +797,11 @@ class GatewayChatClient(
      */
     fun hasActiveTurn(): Boolean = activeTurn?.ended == false || backgroundTurns.isNotEmpty()
 
+    /** True only when [storedId] still owns a foreground or deliberately detached turn. */
+    fun hasActiveTurnForSession(storedId: String): Boolean =
+        (activeTurn?.ended == false && storedSessionId == storedId) ||
+            backgroundTurns.values.any { it.storedSessionId == storedId }
+
     /** Live id to persist beside a durable stored id while a turn is active. */
     fun currentLiveSessionId(storedId: String): String? =
         liveSessionId?.takeIf { storedSessionId == storedId }

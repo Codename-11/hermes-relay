@@ -396,6 +396,7 @@ class ChatViewModel : ViewModel() {
 
     private var firstTokenNotified = false
     private var toolHistoryJob: Job? = null
+    private var gatewayComposerSettlementJob: Job? = null
     private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
@@ -3403,6 +3404,8 @@ class ChatViewModel : ViewModel() {
         if (this.chatHandler !== chatHandler) {
             checkpointStatusJob?.cancel()
             checkpointStatusJob = null
+            gatewayComposerSettlementJob?.cancel()
+            gatewayComposerSettlementJob = null
         }
         this.chatHandler = chatHandler
         ensureCheckpointObservers()
@@ -3452,6 +3455,26 @@ class ChatViewModel : ViewModel() {
                     .take(TOOL_CALL_HISTORY_LIMIT)
                 _toolCallHistory.value = events
                 scheduleCheckpointWrite()
+            }
+        }
+        gatewayComposerSettlementJob?.cancel()
+        gatewayComposerSettlementJob = viewModelScope.launch {
+            chatHandler.messages.collect { messages ->
+                val storedSessionId = chatHandler.currentSessionId.value ?: return@collect
+                val client = gatewayClient ?: return@collect
+                if (
+                    streamingEndpoint == "gateway" &&
+                    chatHandler.isStreaming.value &&
+                    messages.none { it.isStreaming || it.isThinkingStreaming } &&
+                    !client.hasActiveTurnForSession(storedSessionId)
+                ) {
+                    // A terminal bubble with no matching live or detached
+                    // Gateway owner is an orphaned handler-wide busy bit. Clear
+                    // it without disturbing a different session's active turn.
+                    chatHandler.clearStreamingStatus()
+                    _steerableTurn.value = false
+                    _steerNotice.value = null
+                }
             }
         }
     }
