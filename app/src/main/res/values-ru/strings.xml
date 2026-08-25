@@ -948,6 +948,10 @@
     <string name="drawer_search_sessions">Поиск сессий</string>
     <string name="drawer_activity_working">Выполняется</string>
     <string name="drawer_activity_needs_input">Требуется ввод</string>
+    <string name="drawer_activity_starting">Запуск</string>
+    <string name="drawer_activity_background_work">Фоновая работа</string>
+    <string name="drawer_activity_checking">Проверка</string>
+    <string name="drawer_activity_unavailable">Недоступно</string>
     <string name="drawer_new_thread">Новая ветка</string>
     <string name="drawer_chats_not_named">Чаты не автоматически именуются на этом соединении — используйте ⋮ → Переименовать.</string>
     <string name="drawer_loading_sessions">Загрузка сессий…</string>
@@ -977,7 +981,7 @@
     <string name="drawer_filter_pinned">Закрепленные</string>
     <string name="drawer_filter_archive">Архив</string>
     <string name="drawer_filter_sessions">Сессии</string>
-    <string name="drawer_timestamp_active">Активен</string>
+    <string name="drawer_timestamp_updated">Обновлено</string>
     <string name="drawer_timestamp_started">Начат</string>
     <string name="drawer_just_now">Только что</string>
     <string name="bridge_back">Назад</string>

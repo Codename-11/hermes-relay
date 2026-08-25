@@ -15,6 +15,7 @@ class ScenarioError(ValueError):
 
 
 _STEP_OPS = {"event", "persist", "sleep", "close", "set_running"}
+_LIVE_STATUSES = {"starting", "working", "waiting", "idle"}
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_.-]{1,120}")
 
 
@@ -27,6 +28,8 @@ class Scenario:
     contract_requirements: tuple[str, ...]
     initial_history: tuple[dict[str, Any], ...]
     turns: tuple[dict[str, Any], ...]
+    active_list_supported: bool
+    active_list_snapshots: tuple[tuple[dict[str, Any], ...], ...]
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Scenario":
@@ -34,8 +37,8 @@ class Scenario:
         missing = [key for key in required if key not in raw]
         if missing:
             raise ScenarioError(f"missing scenario fields: {', '.join(missing)}")
-        if not isinstance(raw["turns"], list) or not raw["turns"]:
-            raise ScenarioError("turns must be a non-empty list")
+        if not isinstance(raw["turns"], list):
+            raise ScenarioError("turns must be a list")
         if not isinstance(raw["name"], str) or not _SAFE_NAME.fullmatch(raw["name"]):
             raise ScenarioError("name must be a short metadata-safe scenario identifier")
         for turn_index, turn in enumerate(raw["turns"]):
@@ -76,6 +79,41 @@ class Scenario:
             raise ScenarioError("contract_requirements must be a list of non-empty strings")
         if len(set(requirements)) != len(requirements):
             raise ScenarioError("contract_requirements must not contain duplicates")
+        active_list = raw.get("active_list", {})
+        if not isinstance(active_list, dict):
+            raise ScenarioError("active_list must be an object")
+        active_list_supported = active_list.get("supported", False)
+        if not isinstance(active_list_supported, bool):
+            raise ScenarioError("active_list supported must be a boolean")
+        snapshots = active_list.get("snapshots", [])
+        if not isinstance(snapshots, list):
+            raise ScenarioError("active_list snapshots must be a list")
+        if not active_list_supported and snapshots:
+            raise ScenarioError("unsupported active_list cannot declare snapshots")
+        validated_snapshots: list[tuple[dict[str, Any], ...]] = []
+        for snapshot_index, snapshot in enumerate(snapshots):
+            if not isinstance(snapshot, list):
+                raise ScenarioError(f"active_list snapshot {snapshot_index} must be a list")
+            validated_rows: list[dict[str, Any]] = []
+            for row_index, row in enumerate(snapshot):
+                if not isinstance(row, dict):
+                    raise ScenarioError(
+                        f"active_list snapshot {snapshot_index} row {row_index} must be an object"
+                    )
+                if not isinstance(row.get("id"), str) or not row["id"]:
+                    raise ScenarioError(
+                        f"active_list snapshot {snapshot_index} row {row_index} requires an id"
+                    )
+                if not isinstance(row.get("session_key"), str) or not row["session_key"]:
+                    raise ScenarioError(
+                        f"active_list snapshot {snapshot_index} row {row_index} requires a session_key"
+                    )
+                if row.get("status") not in _LIVE_STATUSES:
+                    raise ScenarioError(
+                        f"active_list snapshot {snapshot_index} row {row_index} has invalid status"
+                    )
+                validated_rows.append(dict(row))
+            validated_snapshots.append(tuple(validated_rows))
         return cls(
             name=str(raw["name"]),
             live_session_id=str(raw["live_session_id"]),
@@ -84,6 +122,8 @@ class Scenario:
             contract_requirements=tuple(requirements),
             initial_history=tuple(dict(row) for row in history),
             turns=tuple(dict(turn) for turn in raw["turns"]),
+            active_list_supported=active_list_supported,
+            active_list_snapshots=tuple(validated_snapshots),
         )
 
 

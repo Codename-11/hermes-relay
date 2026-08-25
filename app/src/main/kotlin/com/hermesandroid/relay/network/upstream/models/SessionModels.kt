@@ -250,6 +250,7 @@ data class SessionItem(
     @SerialName("output_tokens") val outputTokens: Int? = null,
     @SerialName("actual_cost_usd") val actualCostUsd: Double? = null,
     @SerialName("estimated_cost_usd") val estimatedCostUsd: Double? = null,
+    /** REST recency heuristic from upstream; not live Gateway execution state. */
     @SerialName("is_active") val isActive: Boolean = false,
     @SerialName("has_model_config")
     @Serializable(with = FlexibleBooleanSerializer::class)

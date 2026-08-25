@@ -922,6 +922,10 @@
     <string name="drawer_search_sessions">搜索会话</string>
     <string name="drawer_activity_working">正在处理</string>
     <string name="drawer_activity_needs_input">需要输入</string>
+    <string name="drawer_activity_starting">正在启动</string>
+    <string name="drawer_activity_background_work">后台工作</string>
+    <string name="drawer_activity_checking">正在检查</string>
+    <string name="drawer_activity_unavailable">不可用</string>
     <string name="drawer_new_thread">新话题</string>
     <string name="drawer_chats_not_named">此连接上的对话不会自动命名——使用 ⋮ → 重命名。</string>
     <string name="drawer_loading_sessions">正在加载会话…</string>
@@ -951,7 +955,7 @@
     <string name="drawer_filter_pinned">已固定</string>
     <string name="drawer_filter_archive">归档</string>
     <string name="drawer_filter_sessions">会话</string>
-    <string name="drawer_timestamp_active">活跃</string>
+    <string name="drawer_timestamp_updated">更新</string>
     <string name="drawer_timestamp_started">已开始</string>
     <string name="drawer_just_now">刚刚</string>
 

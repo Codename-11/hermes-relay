@@ -451,7 +451,8 @@ data class ChatSession(
     val outputTokens: Int = 0,
     val actualCostUsd: Double? = null,
     val estimatedCostUsd: Double? = null,
-    val isActive: Boolean = false,
+    /** Upstream REST five-minute recency hint; never evidence that a turn is running. */
+    val recentlyActive: Boolean = false,
     val updatedAt: Long = 0L,
     val startedAt: Long = 0L,
     val lastActivityAt: Long = 0L,

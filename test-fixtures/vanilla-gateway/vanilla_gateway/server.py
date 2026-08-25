@@ -42,6 +42,11 @@ class GatewayFixture:
         self._tickets: set[str] = set()
         self._history_rows = [dict(row) for row in scenario.initial_history]
         self._turns = deque(dict(turn) for turn in scenario.turns)
+        self._active_list_snapshots = deque(
+            [dict(row) for row in snapshot]
+            for snapshot in scenario.active_list_snapshots
+        )
+        self._last_active_list_snapshot: list[dict[str, Any]] = []
         self._queued: deque[_QueuedTurn] = deque()
         self._running = False
         self._turn_active = False
@@ -137,6 +142,13 @@ class GatewayFixture:
         elif method == "session.interrupt":
             self._running = False
             result = {"ok": True}
+        elif method == "session.active_list" and self.scenario.active_list_supported:
+            if self._active_list_snapshots:
+                self._last_active_list_snapshot = self._active_list_snapshots.popleft()
+            result = {"sessions": [dict(row) for row in self._last_active_list_snapshot]}
+            self.evidence.add(
+                "activity", connection=connection, method=method, outcome="snapshot",
+            )
         else:
             await self._rpc_error(socket, request_id, -32601, f"Method not found: {method}")
             return
@@ -290,6 +302,8 @@ class GatewayFixture:
                 "remaining_turns": len(self._turns),
                 "queued_turns": len(self._queued),
                 "history_rows": len(self._history_rows),
+                "profile": self.scenario.profile,
+                "remaining_active_list_snapshots": len(self._active_list_snapshots),
             },
         )
 
