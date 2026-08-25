@@ -12,19 +12,29 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -37,15 +47,18 @@ import com.hermesandroid.relay.data.GitDiff
 import com.hermesandroid.relay.data.GitFile
 import com.hermesandroid.relay.data.GitRepo
 import com.hermesandroid.relay.data.GitStatus
+import com.hermesandroid.relay.viewmodel.GitConfirmationStrings
 import com.hermesandroid.relay.viewmodel.GitContentViewState
+import com.hermesandroid.relay.viewmodel.GitMutationState
 import com.hermesandroid.relay.viewmodel.GitRepoDetailState
 import com.hermesandroid.relay.viewmodel.GitStateUiState
 import com.hermesandroid.relay.viewmodel.GitStateViewModel
 
 /**
- * Read-only Git State screen: repo picker → working-tree status/branches →
- * per-file diff or content. Bounded by the server's truncation caps, shown as
- * a notice when flagged.
+ * Git State screen (read + write): repo picker → working-tree status/branches →
+ * per-file diff or content. Writes require the ``plugin.api.write`` grant and
+ * destructive ops (discard/push/dirty-checkout) require an explicit per-use
+ * confirmation dialog; the fixed confirmation token is sent only on confirm.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +69,12 @@ fun GitStateScreen(
     val reposState by viewModel.repos.collectAsState()
     val detailState by viewModel.detail.collectAsState()
     val contentState by viewModel.content.collectAsState()
+    val mutationState by viewModel.mutation.collectAsState()
+    val hasGrant = viewModel.hasWriteGrant()
+
+    // Hoisted at screen level so confirmation/commit dialogs are modal.
+    var pendingConfirm by remember { mutableStateOf<ConfirmationRequest?>(null) }
+    var showCommitDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -94,18 +113,165 @@ fun GitStateScreen(
                         GitRepoDetailState.Idle -> Unit
                         GitRepoDetailState.Loading -> CenteredSpinner()
                         is GitRepoDetailState.Error -> ErrorText(current.message)
-                        is GitRepoDetailState.Ready -> RepoDetail(
-                            status = current.status,
-                            branches = current.branches,
-                            onShowDiff = viewModel::loadDiff,
-                            onShowFile = viewModel::loadFile,
-                        )
+                        is GitRepoDetailState.Ready -> {
+                            MutationBanner(
+                                mutation = mutationState,
+                                onClear = viewModel::clearMutationError,
+                            )
+                            if (!hasGrant) {
+                                WriteGrantNotice()
+                            }
+                            RepoDetail(
+                                status = current.status,
+                                branches = current.branches,
+                                hasGrant = hasGrant,
+                                onShowDiff = viewModel::loadDiff,
+                                onShowFile = viewModel::loadFile,
+                                onStage = { path -> viewModel.stage(listOf(path)) },
+                                onUnstage = { path -> viewModel.unstage(listOf(path)) },
+                                onDiscard = { paths, deleteUntracked ->
+                                    pendingConfirm = ConfirmationRequest.Discard(paths, deleteUntracked)
+                                },
+                                onCommitRequest = { showCommitDialog = true },
+                                onFetch = { viewModel.fetch() },
+                                onPull = { viewModel.pull() },
+                                onPush = { pendingConfirm = ConfirmationRequest.Push },
+                                onSwitchBranch = { ref ->
+                                    val dirty = current.status.counts.staged > 0 ||
+                                        current.status.counts.modified > 0 ||
+                                        current.status.counts.untracked > 0
+                                    if (dirty) {
+                                        pendingConfirm = ConfirmationRequest.DirtyCheckout(ref)
+                                    } else {
+                                        viewModel.checkout(ref)
+                                    }
+                                },
+                                onCreateBranch = { name, track ->
+                                    viewModel.checkout("", newBranch = name, track = track)
+                                },
+                            )
+                        }
                     }
                     ContentView(state = contentState)
                 }
             }
         }
     }
+
+    if (showCommitDialog) {
+        CommitDialog(
+            onDismiss = { showCommitDialog = false },
+            onCommit = { message ->
+                showCommitDialog = false
+                viewModel.commit(message)
+            },
+        )
+    }
+
+    pendingConfirm?.let { request ->
+        val onDismiss = { pendingConfirm = null }
+        when (request) {
+            is ConfirmationRequest.Discard -> AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text(stringResource(R.string.git_state_confirm_discard_title)) },
+                text = { Text(stringResource(R.string.git_state_confirm_discard_text)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingConfirm = null
+                        viewModel.discard(
+                            request.paths,
+                            GitConfirmationStrings.DISCARD,
+                            request.deleteUntracked,
+                        )
+                    }) {
+                        Text(stringResource(R.string.git_state_confirm_discard_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.git_state_cancel))
+                    }
+                },
+            )
+            ConfirmationRequest.Push -> AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text(stringResource(R.string.git_state_confirm_push_title)) },
+                text = { Text(stringResource(R.string.git_state_confirm_push_text)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingConfirm = null
+                        viewModel.push(GitConfirmationStrings.PUSH)
+                    }) {
+                        Text(stringResource(R.string.git_state_confirm_push_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.git_state_cancel))
+                    }
+                },
+            )
+            is ConfirmationRequest.DirtyCheckout -> AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text(stringResource(R.string.git_state_confirm_checkout_dirty_title)) },
+                text = { Text(stringResource(R.string.git_state_confirm_checkout_dirty_text)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingConfirm = null
+                        viewModel.checkout(request.ref, GitConfirmationStrings.DIRTY_CHECKOUT)
+                    }) {
+                        Text(stringResource(R.string.git_state_confirm_checkout_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.git_state_cancel))
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** A destructive action awaiting explicit user confirmation. */
+private sealed interface ConfirmationRequest {
+    data class Discard(val paths: List<String>, val deleteUntracked: Boolean) : ConfirmationRequest
+    data object Push : ConfirmationRequest
+    data class DirtyCheckout(val ref: String) : ConfirmationRequest
+}
+
+@Composable
+private fun CommitDialog(
+    onDismiss: () -> Unit,
+    onCommit: (String) -> Unit,
+) {
+    var message by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.git_state_commit_title)) },
+        text = {
+            OutlinedTextField(
+                value = message,
+                onValueChange = { message = it },
+                label = { Text(stringResource(R.string.git_state_commit_message_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCommit(message) },
+                enabled = message.isNotBlank(),
+            ) {
+                Text(stringResource(R.string.git_state_commit_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.git_state_cancel))
+            }
+        },
+    )
 }
 
 @Composable
@@ -135,11 +301,92 @@ private fun RepoPicker(
 }
 
 @Composable
+private fun MutationBanner(
+    mutation: GitMutationState,
+    onClear: () -> Unit,
+) {
+    when (mutation) {
+        GitMutationState.Idle -> Unit
+        is GitMutationState.InProgress -> Card(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(strokeWidth = 2.dp)
+                Text(
+                    stringResource(R.string.git_state_mutation_in_progress, displayLabel(mutation.label)),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        is GitMutationState.Success -> Card(Modifier.fillMaxWidth()) {
+            Text(
+                stringResource(
+                    R.string.git_state_mutation_success,
+                    displayLabel(mutation.label),
+                    mutation.head,
+                ),
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        is GitMutationState.Error -> Card(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(
+                        R.string.git_state_mutation_failed,
+                        displayLabel(mutation.label),
+                        mutation.message,
+                    ),
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                TextButton(onClick = onClear) {
+                    Text(stringResource(R.string.git_state_cancel))
+                }
+            }
+        }
+    }
+}
+
+private fun displayLabel(label: String): String =
+    label.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+
+@Composable
+private fun WriteGrantNotice() {
+    Card(Modifier.fillMaxWidth()) {
+        Text(
+            stringResource(R.string.git_state_write_grant_required),
+            modifier = Modifier.padding(16.dp),
+            color = MaterialTheme.colorScheme.tertiary,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
 private fun RepoDetail(
     status: GitStatus,
     branches: List<GitBranch>,
+    hasGrant: Boolean,
     onShowDiff: (String, String) -> Unit,
     onShowFile: (String) -> Unit,
+    onStage: (String) -> Unit,
+    onUnstage: (String) -> Unit,
+    onDiscard: (List<String>, Boolean) -> Unit,
+    onCommitRequest: () -> Unit,
+    onFetch: () -> Unit,
+    onPull: () -> Unit,
+    onPush: () -> Unit,
+    onSwitchBranch: (String) -> Unit,
+    onCreateBranch: (String, Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Card(Modifier.fillMaxWidth()) {
@@ -159,34 +406,198 @@ private fun RepoDetail(
                 }
                 status.staged.takeIf { it.isNotEmpty() }?.let { staged ->
                     GroupHeader(stringResource(R.string.git_state_staged))
-                    staged.forEach { onShowDiff(it.path, "staged") }
+                    staged.forEach { file ->
+                        StatusRow(
+                            path = file.path,
+                            primaryLabel = stringResource(R.string.git_state_unstage),
+                            onPrimary = { onUnstage(file.path) },
+                            secondaryLabel = stringResource(R.string.git_state_discard),
+                            onSecondary = { onDiscard(listOf(file.path), false) },
+                            onOpen = { onShowDiff(file.path, "staged") },
+                            enabled = hasGrant,
+                        )
+                    }
                 }
                 status.modified.takeIf { it.isNotEmpty() }?.let { modified ->
                     GroupHeader(stringResource(R.string.git_state_modified))
-                    modified.forEach { onShowDiff(it.path, "unstaged") }
+                    modified.forEach { file ->
+                        StatusRow(
+                            path = file.path,
+                            primaryLabel = stringResource(R.string.git_state_stage),
+                            onPrimary = { onStage(file.path) },
+                            secondaryLabel = stringResource(R.string.git_state_discard),
+                            onSecondary = { onDiscard(listOf(file.path), false) },
+                            onOpen = { onShowDiff(file.path, "unstaged") },
+                            enabled = hasGrant,
+                        )
+                    }
                 }
                 status.untracked.takeIf { it.isNotEmpty() }?.let { untracked ->
                     GroupHeader(stringResource(R.string.git_state_untracked))
-                    untracked.forEach { onShowFile(it.path) }
+                    untracked.forEach { file ->
+                        StatusRow(
+                            path = file.path,
+                            primaryLabel = stringResource(R.string.git_state_stage),
+                            onPrimary = { onStage(file.path) },
+                            secondaryLabel = stringResource(R.string.git_state_discard),
+                            onSecondary = { onDiscard(listOf(file.path), true) },
+                            onOpen = { onShowFile(file.path) },
+                            enabled = hasGrant,
+                        )
+                    }
+                }
+
+                // Commit + sync controls (writes; all gated by the grant).
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = onFetch,
+                        enabled = hasGrant && status.counts.untracked == 0,
+                    ) {
+                        Text(stringResource(R.string.git_state_fetch))
+                    }
+                    OutlinedButton(onClick = onPull, enabled = hasGrant) {
+                        Text(stringResource(R.string.git_state_pull))
+                    }
+                    OutlinedButton(
+                        onClick = onPush,
+                        enabled = hasGrant && status.counts.staged == 0,
+                    ) {
+                        Text(stringResource(R.string.git_state_push))
+                    }
+                }
+                Button(
+                    onClick = onCommitRequest,
+                    enabled = hasGrant && status.counts.staged > 0,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.git_state_commit))
                 }
             }
         }
 
         if (branches.isNotEmpty()) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            BranchCard(
+                branches = branches,
+                hasGrant = hasGrant,
+                onSwitch = onSwitchBranch,
+                onCreate = onCreateBranch,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusRow(
+    path: String,
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    secondaryLabel: String,
+    onSecondary: () -> Unit,
+    onOpen: () -> Unit,
+    enabled: Boolean,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onOpen, modifier = Modifier.weight(1f)) {
+            Text(
+                path,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+            )
+        }
+        TextButton(onClick = onPrimary, enabled = enabled) {
+            Text(primaryLabel)
+        }
+        TextButton(onClick = onSecondary, enabled = enabled) {
+            Text(secondaryLabel)
+        }
+    }
+}
+
+@Composable
+private fun BranchCard(
+    branches: List<GitBranch>,
+    hasGrant: Boolean,
+    onSwitch: (String) -> Unit,
+    onCreate: (String, Boolean) -> Unit,
+) {
+    var newBranchName by rememberSaveable { mutableStateOf("") }
+    var track by rememberSaveable { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                stringResource(R.string.git_state_branches),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            branches.forEach { branch ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        stringResource(R.string.git_state_branches),
-                        style = MaterialTheme.typography.titleSmall,
+                        branchLabel(branch),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
                     )
-                    branches.forEach { branch ->
+                    if (branch.isCurrent) {
                         Text(
-                            branchLabel(branch),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
+                            stringResource(R.string.git_state_current),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall,
                         )
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSwitch(branch.name) },
+                            enabled = hasGrant,
+                        ) {
+                            Text(stringResource(R.string.git_state_switch))
+                        }
                     }
                 }
+            }
+
+            // Create a new branch (optionally tracking the remote).
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = newBranchName,
+                    onValueChange = { newBranchName = it },
+                    label = { Text(stringResource(R.string.git_state_new_branch_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = {
+                        val name = newBranchName.trim()
+                        if (name.isNotEmpty()) {
+                            onCreate(name, track)
+                            newBranchName = ""
+                            track = false
+                        }
+                    },
+                    enabled = hasGrant && newBranchName.isNotBlank(),
+                ) {
+                    Text(stringResource(R.string.git_state_create_branch))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = track, onCheckedChange = { track = it }, enabled = hasGrant)
+                Text(stringResource(R.string.git_state_track_remote))
             }
         }
     }

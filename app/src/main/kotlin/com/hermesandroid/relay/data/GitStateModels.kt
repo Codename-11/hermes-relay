@@ -74,3 +74,11 @@ internal data class ReposResponse(
 internal data class BranchesResponse(
     val branches: List<GitBranch> = emptyList(),
 )
+
+/** A mutation response: fresh HEAD oid + working-tree status (+ branches). */
+@Serializable
+data class GitMutationResult(
+    val head: String = "",
+    val status: GitStatus = GitStatus(),
+    val branches: List<GitBranch> = emptyList(),
+)

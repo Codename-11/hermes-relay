@@ -194,7 +194,9 @@ import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.plugins.runtime.PLUGIN_API_WRITE_CAPABILITY
 import com.hermesandroid.relay.viewmodel.PluginsViewModel
+import com.hermesandroid.relay.viewmodel.PluginsHubState
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -767,6 +769,20 @@ fun RelayApp() {
             .takeIf { it.isNotBlank() }
             ?.let { connectionViewModel.dashboardClientForActive(it) }
         gitStateViewModel.configure(dashboard)
+    }
+
+    // Mirror the plugin.api.write grant into the Git view model so write
+    // mutations are refused client-side until the user grants write access
+    // (matches the plug-in's grant gating in PluginsViewModel).
+    val pluginsHubState by pluginsViewModel.hubState.collectAsState()
+    LaunchedEffect(pluginsHubState) {
+        val granted = (pluginsHubState as? PluginsHubState.Ready)
+            ?.plugins
+            ?.firstOrNull { it.catalog.id == "hermes-relay" }
+            ?.preferences
+            ?.grants
+            ?.contains(PLUGIN_API_WRITE_CAPABILITY) == true
+        gitStateViewModel.setWriteGrant(granted)
     }
 
     // What's New auto-show

@@ -48,6 +48,33 @@ class GitStateError(ValueError):
     """A caller supplied an invalid repo id, path, or diff kind."""
 
 
+class GitError(GitStateError):
+    """A mutation failed in a way git or the security gate reported.
+
+    ``code`` is a stable, machine-readable taxonomy tag the UI can map to a
+    readable message without ever rendering a raw stack trace or JSON dump:
+    ``non-repo``, ``dirty``, ``conflict``, ``auth``, ``network``,
+    ``invalid-input``, ``missing-confirmation``, ``wrong-confirmation``.
+    """
+
+    _CODES = {
+        "non-repo",
+        "dirty",
+        "conflict",
+        "auth",
+        "network",
+        "invalid-input",
+        "missing-confirmation",
+        "wrong-confirmation",
+    }
+
+    def __init__(self, message: str, code: str = "invalid-input") -> None:
+        if code not in self._CODES:
+            raise ValueError(f"unknown git error code: {code}")
+        super().__init__(message)
+        self.code = code
+
+
 def base_path() -> Path:
     """Resolve the configured discovery base path (default ``~/projects``)."""
     raw = raw_config_value(_BASE_PATH_ENV) or DEFAULT_BASE_PATH
@@ -321,6 +348,306 @@ def read_file(repo: Path, path: str) -> dict[str, Any]:
         raise GitStateError(f"file is not valid UTF-8 text: {safe_path}") from exc
 
     return {"path": safe_path, "content": content, "truncated": truncated}
+
+
+# ── Write (mutation) surface ──────────────────────────────────────────────
+# Every mutation requires the plugin's ``plugin.api.write`` grant (enforced at
+# the router boundary, matching the app's existing grant gating). Destructive
+# operations additionally require a per-use confirmation string echoed by the
+# app/tab. The confirmation values are fixed opaque tokens chosen here; the
+# client shows the human-readable description and sends the token back.
+CONFIRM_DISCARD = "discard"
+CONFIRM_PUSH = "push"
+CONFIRM_DIRTY_CHECKOUT = "checkout-dirty"
+
+# Bounds keeping payloads and subprocess argv lists bounded.
+MAX_MUTATION_PATHS = 200
+MAX_COMMIT_MESSAGE = 500
+
+# Return-code markers used to classify git failures into the structured error
+# taxonomy the UI renders (non-repo, dirty, conflict, auth, network).
+_DIRTY_MARKERS = (
+    "local changes",
+    "would be overwritten",
+    "cannot pull with rebase",
+    "Your local changes to the following files would be overwritten",
+    "You have unstaged changes",
+    "contains uncommitted changes",
+    "working tree contains modifications",
+)
+_CONFLICT_MARKERS = (
+    "merge conflict",
+    "CONFLICT",
+    "Automatic merge failed",
+    "fix conflicts",
+    "Merge conflict",
+)
+_AUTH_MARKERS = (
+    "Authentication failed",
+    "could not read Username",
+    "Permission denied (publickey)",
+    "does not appear to be a git repository",
+    "Repository not found",
+    "Invalid username or password",
+    "authentication failed",
+    "could not read Password",
+)
+_NETWORK_MARKERS = (
+    "Could not resolve host",
+    "Connection timed out",
+    "Network is unreachable",
+    "Operation timed out",
+    "Could not read from remote repository",
+    "unable to access",
+    "Failed to connect",
+    "Name or service not known",
+    "getaddrinfo",
+    "Temporary failure in name resolution",
+)
+
+
+def _classify_git_failure(stderr: str) -> str:
+    """Map a git stderr to a stable taxonomy code."""
+    for marker in _DIRTY_MARKERS:
+        if marker in stderr:
+            return "dirty"
+    for marker in _CONFLICT_MARKERS:
+        if marker in stderr:
+            return "conflict"
+    for marker in _AUTH_MARKERS:
+        if marker in stderr:
+            return "auth"
+    for marker in _NETWORK_MARKERS:
+        if marker in stderr:
+            return "network"
+    return "invalid-input"
+
+
+def _require_confirmation(confirmation: str | None, expected: str) -> None:
+    """Enforce the per-use confirmation string for a destructive mutation."""
+    if not confirmation:
+        raise GitError("this action requires confirmation", code="missing-confirmation")
+    if confirmation != expected:
+        raise GitError("confirmation did not match", code="wrong-confirmation")
+
+
+def _validate_paths(paths: list[str] | None) -> list[str]:
+    """Normalize a bounded list of repo-relative paths with traversal checks."""
+    if not paths:
+        raise GitStateError("paths are required")
+    if len(paths) > MAX_MUTATION_PATHS:
+        raise GitStateError(f"too many paths (max {MAX_MUTATION_PATHS})")
+    return [resolve_repo_path(Path("."), p) for p in paths]
+
+
+def _is_git_repo(path: Path) -> bool:
+    """True if ``path`` is a git work tree (has a .git entry)."""
+    return (path / ".git").exists()
+
+
+def _run_mutation(repo: Path, args: list[str]) -> str:
+    """Run a mutating ``git -C <repo> <args>``; raise a classified GitError.
+
+    Arg lists only (never shell interpolation); bounded by a timeout.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GitError(f"git timed out for {repo.name}", code="network") from exc
+    except OSError as exc:
+        raise GitError(f"could not run git for {repo.name}: {exc}", code="non-repo") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or result.stdout.strip()
+        raise GitError(
+            f"git {args[0] if args else 'command'} failed for {repo.name}: {stderr}",
+            code=_classify_git_failure(stderr),
+        )
+    return result.stdout
+
+
+def _mutate(repo: Path, args: list[str]) -> str:
+    """Validate ``repo`` is a real git work tree, then run the mutation."""
+    if not _is_git_repo(repo):
+        raise GitError(f"not a git repository: {repo.name}", code="non-repo")
+    return _run_mutation(repo, args)
+
+
+def _is_dirty(repo: Path) -> bool:
+    try:
+        return bool(_git(repo, "status", "--porcelain").strip())
+    except GitError:
+        return False
+
+
+def _validate_commit_message(message: str) -> str:
+    if not isinstance(message, str) or not message.strip():
+        raise GitError("commit message must not be empty", code="invalid-input")
+    return message.strip()[:MAX_COMMIT_MESSAGE]
+
+
+def _fresh_mutation_result(
+    repo: Path,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Post-mutation snapshot: new HEAD oid + fresh working-tree status."""
+    head = ""
+    try:
+        head = _git(repo, "rev-parse", "HEAD").strip()
+    except GitError:
+        # Unborn branch — no HEAD yet.
+        pass
+    result: dict[str, Any] = {"head": head, "status": repo_status(repo)}
+    if extra:
+        result.update(extra)
+    return result
+
+
+def stage(repo: Path, paths: list[str]) -> dict[str, Any]:
+    """Stage ``paths`` (repo-relative) and return fresh status."""
+    safe = _validate_paths(paths)
+    _mutate(repo, ["add", "--"] + safe)
+    return _fresh_mutation_result(repo)
+
+
+def unstage(repo: Path, paths: list[str]) -> dict[str, Any]:
+    """Unstage ``paths`` and return fresh status."""
+    safe = _validate_paths(paths)
+    _mutate(repo, ["restore", "--staged", "--"] + safe)
+    return _fresh_mutation_result(repo)
+
+
+def discard(
+    repo: Path,
+    paths: list[str],
+    confirmation: str | None,
+    delete_untracked: bool = False,
+) -> dict[str, Any]:
+    """Discard local changes to ``paths`` (confirmation required).
+
+    With ``delete_untracked`` the named untracked files are removed from disk.
+    Returns fresh status.
+    """
+    _require_confirmation(confirmation, CONFIRM_DISCARD)
+    safe = _validate_paths(paths)
+    tracked: list[str] = []
+    for path in safe:
+        try:
+            _git(repo, "ls-files", "--error-unmatch", "--", path)
+            tracked.append(path)
+        except GitStateError:
+            # Untracked path — only touched when delete_untracked is set.
+            if not delete_untracked:
+                continue
+            root = repo.resolve()
+            candidate = (repo / path).resolve()
+            if candidate != root and root not in candidate.parents:
+                raise GitStateError(f"path escapes repository: {path}")
+            if candidate.is_file():
+                candidate.unlink()
+    # Revert tracked modifications for the given paths.
+    if tracked:
+        _mutate(repo, ["checkout", "--"] + tracked)
+    return _fresh_mutation_result(repo)
+
+
+def commit(repo: Path, message: str) -> dict[str, Any]:
+    """Create a commit from the staged index. Empty message is rejected."""
+    message = _validate_commit_message(message)
+    _mutate(repo, ["commit", "-m", message])
+    return _fresh_mutation_result(repo)
+
+
+def commit_selected(repo: Path, message: str, paths: list[str]) -> dict[str, Any]:
+    """Commit only the given ``paths`` (staged + modified) under ``message``."""
+    message = _validate_commit_message(message)
+    safe = _validate_paths(paths)
+    _mutate(repo, ["commit", "-m", message, "--"] + safe)
+    return _fresh_mutation_result(repo)
+
+
+def fetch(repo: Path, remote: str = "origin") -> dict[str, Any]:
+    """Fetch from ``remote`` (default origin) and return fresh status/branches."""
+    _mutate(repo, ["fetch", "--prune", remote])
+    return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
+
+
+def pull(repo: Path, remote: str = "origin", branch: str = "") -> dict[str, Any]:
+    """Pull from ``remote``/``branch`` (defaults: origin + current branch).
+
+    Pull never clobbers local work: a tree git refuses to fast-forward without
+    discarding local changes surfaces as a structured ``dirty`` GitError.
+    """
+    args = ["pull", "--ff-only", remote]
+    if branch:
+        args.append(branch)
+    try:
+        _mutate(repo, args)
+    except GitError as exc:
+        if exc.code == "dirty":
+            raise GitError(
+                "Pull would overwrite local changes — commit or discard them first.",
+                code="dirty",
+            ) from exc
+        raise
+    return _fresh_mutation_result(repo)
+
+
+def push(
+    repo: Path,
+    remote: str = "origin",
+    branch: str = "",
+    confirmation: str | None = None,
+) -> dict[str, Any]:
+    """Push to ``remote``/``branch``. Confirmation is required.
+
+    Auth/network failures surface as classified GitErrors; fresh status/branches
+    are returned so the UI can reflect ahead/behind after a successful push.
+    """
+    _require_confirmation(confirmation, CONFIRM_PUSH)
+    args = ["push", remote]
+    if branch:
+        args.append(branch)
+    _mutate(repo, args)
+    return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
+
+
+def checkout(
+    repo: Path,
+    ref: str,
+    confirmation: str | None = None,
+    new_branch: str = "",
+    track: bool = False,
+) -> dict[str, Any]:
+    """Switch to ``ref`` (optionally creating ``new_branch``, optionally --track).
+
+    A dirty tree switch requires confirmation. Git still refuses to overwrite
+    conflicting local changes, so there is no data-loss path.
+    """
+    if not ref:
+        raise GitStateError("ref is required")
+    if new_branch:
+        args = ["checkout", "-b", new_branch]
+        if track:
+            args.append("--track")
+        _mutate(repo, args)
+        return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
+
+    if _is_dirty(repo):
+        _require_confirmation(confirmation, CONFIRM_DIRTY_CHECKOUT)
+    args = ["checkout"]
+    if track:
+        # ``git checkout --track <remote>/<branch>`` creates a local tracking
+        # branch; only meaningful when the target is a remote-tracking ref.
+        args.append("--track")
+    args.append(ref)
+    _mutate(repo, args)
+    return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
 
 def repo_remotes(repo: Path) -> list[dict[str, str]]:

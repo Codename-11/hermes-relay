@@ -1,0 +1,379 @@
+"""Tests for the write (mutation) surface of git_state.
+
+Security denials are tested FIRST: destructive mutations (discard, push, dirty
+checkout) reject when their confirmation string is missing or wrong. Then happy
+paths, then error branches. Fixtures build REAL throwaway git repos and bare
+remotes in tmp_path — git itself is never mocked.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import unittest
+from pathlib import Path
+
+from plugin import git_state
+
+
+def _run(cmd: list[str], cwd: Path) -> str:
+    result = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _git(repo: Path, *args: str) -> str:
+    return _run(["git", "-C", str(repo), *args], repo)
+
+
+def _init_repo(root: Path, name: str) -> Path:
+    repo = root / name
+    repo.mkdir(parents=True)
+    _run(["git", "init", "-q", "-b", "main"], repo)
+    _run(["git", "config", "user.email", "test@example.com"], repo)
+    _run(["git", "config", "user.name", "Test User"], repo)
+    (repo / "README.md").write_text("# Hello\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "initial commit")
+    return repo
+
+
+def _init_bare_remote(root: Path, name: str) -> Path:
+    remote = root / name
+    remote.mkdir(parents=True, exist_ok=True)
+    _run(["git", "init", "-q", "--bare", "-b", "main"], remote)
+    return remote
+
+
+class _MutationBase(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.base = Path(self._td.name) / "projects"
+        self.base.mkdir(parents=True)
+        self.repo = _init_repo(self.base, "write-repo")
+
+    def _make_change(self, path: str = "feature.txt", content: str = "hello") -> None:
+        (self.repo / path).write_text(content, encoding="utf-8")
+        _git(self.repo, "add", path)
+
+    def _head(self) -> str:
+        return _git(self.repo, "rev-parse", "HEAD")
+
+
+class StageUnstageTests(_MutationBase):
+    def test_stage_moves_untracked_to_staged(self) -> None:
+        (self.repo / "new.txt").write_text("x", encoding="utf-8")
+        git_state.stage(self.repo, ["new.txt"])
+        status = git_state.repo_status(self.repo)
+        self.assertIn("new.txt", [e["path"] for e in status["staged"]])
+        self.assertNotIn("new.txt", [e["path"] for e in status["untracked"]])
+
+    def test_stage_accepts_multiple_paths(self) -> None:
+        (self.repo / "a.txt").write_text("a", encoding="utf-8")
+        (self.repo / "b.txt").write_text("b", encoding="utf-8")
+        git_state.stage(self.repo, ["a.txt", "b.txt"])
+        status = git_state.repo_status(self.repo)
+        staged = {e["path"] for e in status["staged"]}
+        self.assertTrue({"a.txt", "b.txt"} <= staged)
+
+    def test_unstage_returns_to_modified(self) -> None:
+        (self.repo / "tracked.txt").write_text("v1", encoding="utf-8")
+        _git(self.repo, "add", "tracked.txt")
+        _git(self.repo, "commit", "-q", "-m", "add tracked")
+        (self.repo / "tracked.txt").write_text("v2", encoding="utf-8")
+        _git(self.repo, "add", "tracked.txt")
+        git_state.unstage(self.repo, ["tracked.txt"])
+        status = git_state.repo_status(self.repo)
+        self.assertNotIn("tracked.txt", [e["path"] for e in status["staged"]])
+        self.assertIn("tracked.txt", [e["path"] for e in status["modified"]])
+
+    def test_stage_rejects_traversal_path(self) -> None:
+        with self.assertRaises(git_state.GitStateError):
+            git_state.stage(self.repo, ["../outside"])
+
+
+class CommitTests(_MutationBase):
+    def test_commit_creates_a_real_commit(self) -> None:
+        before = self._head()
+        (self.repo / "feature.txt").write_text("feature", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        git_state.commit(self.repo, "add feature")
+        after = self._head()
+        self.assertNotEqual(before, after)
+        message = _git(self.repo, "log", "-1", "--format=%s")
+        self.assertEqual("add feature", message)
+
+    def test_commit_rejects_empty_message(self) -> None:
+        (self.repo / "feature.txt").write_text("feature", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        with self.assertRaises(git_state.GitStateError):
+            git_state.commit(self.repo, "   ")
+
+    def test_commit_returns_fresh_status(self) -> None:
+        (self.repo / "feature.txt").write_text("feature", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        result = git_state.commit(self.repo, "add feature")
+        self.assertEqual(result["head"], self._head())
+        self.assertEqual(result["status"]["counts"]["staged"], 0)
+        self.assertEqual(result["status"]["counts"]["modified"], 0)
+
+    def test_commit_selected_commits_only_given_paths(self) -> None:
+        (self.repo / "kept.txt").write_text("keep", encoding="utf-8")
+        (self.repo / "skip.txt").write_text("skip", encoding="utf-8")
+        _git(self.repo, "add", "kept.txt", "skip.txt")
+        git_state.commit_selected(self.repo, "commit kept only", ["kept.txt"])
+        head_files = _git(self.repo, "ls-tree", "-r", "--name-only", "HEAD")
+        self.assertIn("kept.txt", head_files)
+        self.assertNotIn("skip.txt", head_files)
+
+    def test_commit_selected_returns_fresh_status(self) -> None:
+        (self.repo / "a.txt").write_text("a", encoding="utf-8")
+        git_state.stage(self.repo, ["a.txt"])
+        result = git_state.commit_selected(self.repo, "commit a", ["a.txt"])
+        self.assertEqual(result["head"], self._head())
+        self.assertEqual(result["status"]["counts"]["staged"], 0)
+
+    def test_commit_selected_rejects_empty_message(self) -> None:
+        (self.repo / "a.txt").write_text("a", encoding="utf-8")
+        git_state.stage(self.repo, ["a.txt"])
+        with self.assertRaises(git_state.GitError):
+            git_state.commit_selected(self.repo, "", ["a.txt"])
+
+
+class DiscardConfirmationTests(_MutationBase):
+    def test_discard_requires_confirmation_string(self) -> None:
+        (self.repo / "tracked.txt").write_text("dirty", encoding="utf-8")
+        with self.assertRaises(git_state.GitError) as ctx:
+            git_state.discard(self.repo, ["tracked.txt"], confirmation="")
+        self.assertIn("confirmation", str(ctx.exception).lower())
+
+    def test_discard_rejects_wrong_confirmation(self) -> None:
+        (self.repo / "tracked.txt").write_text("dirty", encoding="utf-8")
+        with self.assertRaises(git_state.GitError):
+            git_state.discard(self.repo, ["tracked.txt"], confirmation="wrong")
+
+    def test_discard_with_confirmation_reverts_tracked_changes(self) -> None:
+        (self.repo / "tracked.txt").write_text("v1", encoding="utf-8")
+        _git(self.repo, "add", "tracked.txt")
+        _git(self.repo, "commit", "-q", "-m", "add tracked")
+        (self.repo / "tracked.txt").write_text("v2", encoding="utf-8")
+        git_state.discard(self.repo, ["tracked.txt"], confirmation=git_state.CONFIRM_DISCARD)
+        content = (self.repo / "tracked.txt").read_text(encoding="utf-8")
+        self.assertEqual("v1", content)
+
+    def test_discard_delete_untracked_removes_untracked(self) -> None:
+        (self.repo / "untracked.txt").write_text("new", encoding="utf-8")
+        git_state.discard(
+            self.repo,
+            ["untracked.txt"],
+            confirmation=git_state.CONFIRM_DISCARD,
+            delete_untracked=True,
+        )
+        self.assertFalse((self.repo / "untracked.txt").exists())
+
+    def test_discard_returns_fresh_status(self) -> None:
+        (self.repo / "tracked.txt").write_text("v1", encoding="utf-8")
+        _git(self.repo, "add", "tracked.txt")
+        _git(self.repo, "commit", "-q", "-m", "add tracked")
+        (self.repo / "tracked.txt").write_text("v2", encoding="utf-8")
+        result = git_state.discard(
+            self.repo,
+            ["tracked.txt"],
+            confirmation=git_state.CONFIRM_DISCARD,
+        )
+        self.assertEqual(result["status"]["counts"]["modified"], 0)
+
+
+class FetchPullPushTests(_MutationBase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.remote = _init_bare_remote(self.base, "origin-bare")
+        _git(self.repo, "remote", "add", "origin", str(self.remote))
+        _git(self.repo, "push", "-q", "origin", "main")
+        _git(self.repo, "branch", "-q", "--set-upstream-to=origin/main", "main")
+
+    def test_fetch_updates_remote_refs(self) -> None:
+        # Advance the remote from a descendant clone (not an independent repo:
+        # an independent root has its own "initial commit" SHA, and when it
+        # lands in a different second than the remote's initial commit the push
+        # is rejected as non-fast-forward, flaking the test).
+        other = self.base / "other"
+        _run(["git", "clone", "-q", str(self.remote), str(other)], self.base)
+        _git(other, "config", "user.email", "test@example.com")
+        _git(other, "config", "user.name", "Test User")
+        (other / "remote.txt").write_text("remote change fetch", encoding="utf-8")
+        _git(other, "add", "remote.txt")
+        _git(other, "commit", "-q", "-m", "remote change fetch")
+        _git(other, "push", "-q", "origin", "main")
+
+        git_state.fetch(self.repo, "origin")
+        remote_main = _git(self.repo, "rev-parse", "origin/main")
+        self.assertNotEqual(remote_main, self._head())
+
+    def test_pull_brings_remote_commits(self) -> None:
+        other = self.base / "other"
+        _run(["git", "clone", "-q", str(self.remote), str(other)], self.base)
+        _git(other, "config", "user.email", "test@example.com")
+        _git(other, "config", "user.name", "Test User")
+        (other / "remote.txt").write_text("remote change pull", encoding="utf-8")
+        _git(other, "add", "remote.txt")
+        _git(other, "commit", "-q", "-m", "remote change pull")
+        _git(other, "push", "-q", "origin", "main")
+
+        git_state.pull(self.repo, "origin", "main")
+        self.assertIn("remote.txt", _git(self.repo, "ls-tree", "-r", "--name-only", "HEAD"))
+
+    def test_push_requires_confirmation(self) -> None:
+        (self.repo / "feature.txt").write_text("f", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        git_state.commit(self.repo, "feature")
+        with self.assertRaises(git_state.GitError) as ctx:
+            git_state.push(self.repo, "origin", "main", confirmation="")
+        self.assertIn("confirmation", str(ctx.exception).lower())
+
+    def test_push_rejects_wrong_confirmation(self) -> None:
+        (self.repo / "feature.txt").write_text("f", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        git_state.commit(self.repo, "feature")
+        with self.assertRaises(git_state.GitError):
+            git_state.push(self.repo, "origin", "main", confirmation="nope")
+
+    def test_push_with_confirmation_updates_remote(self) -> None:
+        (self.repo / "feature.txt").write_text("f", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        git_state.commit(self.repo, "feature")
+        git_state.push(self.repo, "origin", "main", confirmation=git_state.CONFIRM_PUSH)
+        remote_head = _run(["git", "ls-remote", str(self.remote), "refs/heads/main"], self.remote)
+        self.assertIn(self._head(), remote_head)
+
+    def test_pull_with_local_changes_yields_structured_dirty_error(self) -> None:
+        # Repo tracks a file, then the remote advances it. A local uncommitted
+        # edit to that file must never be clobbered by pull → structured dirty.
+        (self.repo / "tracked.txt").write_text("base", encoding="utf-8")
+        _git(self.repo, "add", "tracked.txt")
+        _git(self.repo, "commit", "-q", "-m", "add tracked")
+        _git(self.repo, "push", "-q", "origin", "main")
+
+        # Advance the remote from a clean clone whose history descends from it.
+        other = self.base / "other"
+        _run(["git", "clone", "-q", str(self.remote), str(other)], self.base)
+        _git(other, "config", "user.email", "test@example.com")
+        _git(other, "config", "user.name", "Test User")
+        (other / "tracked.txt").write_text("remote", encoding="utf-8")
+        _git(other, "add", "tracked.txt")
+        _git(other, "commit", "-q", "-m", "remote tracked")
+        _git(other, "push", "-q", "origin", "main")
+
+        # Local uncommitted change to tracked.txt → git refuses to clobber.
+        (self.repo / "tracked.txt").write_text("uncommitted", encoding="utf-8")
+        with self.assertRaises(git_state.GitError) as ctx:
+            git_state.pull(self.repo, "origin", "main")
+        self.assertEqual("dirty", ctx.exception.code)
+
+    def test_push_auth_failure_maps_to_auth_error(self) -> None:
+        (self.repo / "feature.txt").write_text("f", encoding="utf-8")
+        git_state.stage(self.repo, ["feature.txt"])
+        git_state.commit(self.repo, "feature")
+        # Point origin at a host that will reject credentials.
+        _git(self.repo, "remote", "set-url", "origin", "https://invalid.invalid/x.git")
+        with self.assertRaises(git_state.GitError) as ctx:
+            git_state.push(self.repo, "origin", "main", confirmation=git_state.CONFIRM_PUSH)
+        self.assertIn(ctx.exception.code, ("auth", "network"))
+
+
+class CheckoutTests(_MutationBase):
+    def test_checkout_switches_branch(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        git_state.checkout(self.repo, "feature", confirmation="")
+        self.assertEqual("feature", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_checkout_new_branch_creates_branch(self) -> None:
+        git_state.checkout(
+            self.repo,
+            "main",
+            new_branch="exp",
+            confirmation="",
+        )
+        self.assertEqual("exp", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_checkout_clean_tree_needs_no_confirmation(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        git_state.checkout(self.repo, "feature", confirmation="")
+        self.assertEqual("feature", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_checkout_dirty_tree_requires_confirmation(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        (self.repo / "tracked.txt").write_text("dirty", encoding="utf-8")
+        with self.assertRaises(git_state.GitError) as ctx:
+            git_state.checkout(self.repo, "feature", confirmation="")
+        self.assertIn("confirmation", str(ctx.exception).lower())
+
+    def test_checkout_dirty_tree_wrong_confirmation_rejected(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        (self.repo / "tracked.txt").write_text("dirty", encoding="utf-8")
+        with self.assertRaises(git_state.GitError):
+            git_state.checkout(self.repo, "feature", confirmation="wrong")
+
+    def test_checkout_dirty_tree_with_confirmation_switches(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        (self.repo / "tracked.txt").write_text("dirty", encoding="utf-8")
+        git_state.checkout(
+            self.repo,
+            "feature",
+            confirmation=git_state.CONFIRM_DIRTY_CHECKOUT,
+        )
+        self.assertEqual("feature", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_checkout_track_sets_upstream(self) -> None:
+        self.remote = _init_bare_remote(self.base, "remote-bare.git")
+        _git(self.repo, "remote", "add", "origin", str(self.remote))
+        _git(self.repo, "push", "-q", "origin", "main")
+        # Create origin/feature remotely via a second clone.
+        other = _init_repo(self.base, "other")
+        _git(other, "remote", "add", "origin", str(self.remote))
+        _git(other, "checkout", "-q", "-b", "feature")
+        (other / "feature.txt").write_text("f", encoding="utf-8")
+        _git(other, "add", "feature.txt")
+        _git(other, "commit", "-q", "-m", "feature")
+        _git(other, "push", "-q", "origin", "feature")
+        # Bring the remote-tracking ref into this repo, then track it.
+        git_state.fetch(self.repo, "origin")
+        git_state.checkout(
+            self.repo,
+            "origin/feature",
+            confirmation="",
+            track=True,
+        )
+        current = _git(self.repo, "symbolic-ref", "--short", "HEAD")
+        self.assertEqual("feature", current)
+        upstream = _git(self.repo, "rev-parse", "--abbrev-ref", "feature@{upstream}")
+        self.assertEqual("origin/feature", upstream)
+
+
+class AllowlistTests(_MutationBase):
+    def test_mutations_reject_unknown_repo(self) -> None:
+        with self.assertRaises(git_state.GitStateError):
+            git_state.stage(Path("/nonexistent"), ["x.txt"])
+        with self.assertRaises(git_state.GitStateError):
+            git_state.discard(
+                Path("/nonexistent"),
+                ["x.txt"],
+                confirmation=git_state.CONFIRM_DISCARD,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

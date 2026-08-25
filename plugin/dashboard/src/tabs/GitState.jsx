@@ -8,7 +8,20 @@ import {
   getGitBranches,
   getGitDiff,
   getGitFile,
+  gitStage,
+  gitUnstage,
+  gitDiscard,
+  gitCommit,
+  gitFetch,
+  gitPull,
+  gitPush,
+  gitCheckout,
 } from "../lib/api.js";
+import {
+  normalizeMutationResult,
+  requiresConfirmation,
+  confirmationFor,
+} from "../lib/git-state.mjs";
 import {
   Alert,
   AlertTitle,
@@ -102,6 +115,100 @@ function BranchesRow({ branches }) {
   );
 }
 
+/**
+ * Write controls for the GitState tab. Every mutation is gated by the
+ * plugin.api.write grant (the tab is only reachable after the user grants it)
+ * and destructive ops (discard/push/dirty-checkout) are confirmed via the
+ * per-use confirmation-string mechanics before the POST is sent.
+ */
+function WriteControls({
+  status,
+  selected,
+  commitMessage,
+  onCommitMessageChange,
+  newBranch,
+  onNewBranchChange,
+  branchRef,
+  onBranchRefChange,
+  mutating,
+  onStageAll,
+  onStage,
+  onUnstage,
+  onDiscard,
+  onCommit,
+  onFetch,
+  onPull,
+  onPush,
+  onCheckout,
+}) {
+  const staged = (status && status.staged || []).map((e) => e.path);
+  const modified = (status && status.modified || []).map((e) => e.path);
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Write controls
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={mutating || modified.length === 0} onClick={() => modified.forEach(onStage)}>
+          Stage modified
+        </Button>
+        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={() => staged.forEach(onUnstage)}>
+          Unstage staged
+        </Button>
+        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={() => staged.forEach(onDiscard)}>
+          Discard staged
+        </Button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={commitMessage}
+          onChange={(e) => onCommitMessageChange(e.target.value)}
+          placeholder="Commit message"
+          className="w-full rounded-md border px-2 py-1 text-xs"
+        />
+        <Button size="sm" disabled={mutating || !commitMessage.trim()} onClick={onCommit}>
+          Commit
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={branchRef}
+          onChange={(e) => onBranchRefChange(e.target.value)}
+          placeholder="Branch to switch to"
+          className="w-40 rounded-md border px-2 py-1 text-xs"
+        />
+        <input
+          type="text"
+          value={newBranch}
+          onChange={(e) => onNewBranchChange(e.target.value)}
+          placeholder="New branch name"
+          className="w-40 rounded-md border px-2 py-1 text-xs"
+        />
+        <Button size="sm" variant="outline" disabled={mutating || !branchRef.trim()} onClick={onCheckout}>
+          Checkout
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={mutating} onClick={onFetch}>
+          Fetch
+        </Button>
+        <Button size="sm" variant="outline" disabled={mutating} onClick={onPull}>
+          Pull
+        </Button>
+        <Button size="sm" variant="destructive" disabled={mutating} onClick={onPush}>
+          Push
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function GitState({ autoRefresh }) {
   const [repos, setRepos] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -185,6 +292,108 @@ export default function GitState({ autoRefresh }) {
     }
   }, [selected]);
 
+  // ── Write controls (gated by plugin.api.write + confirmations) ───────────
+  const [commitMessage, setCommitMessage] = useState("");
+  const [newBranch, setNewBranch] = useState("");
+  const [branchRef, setBranchRef] = useState("");
+  const [mutating, setMutating] = useState(false);
+  const [mutationError, setMutationError] = useState(null);
+
+  const refreshDetail = useCallback(async (repoId) => {
+    const [st, br] = await Promise.all([
+      getGitStatus(repoId),
+      getGitBranches(repoId),
+    ]);
+    setStatus(st);
+    setBranches(br && br.branches);
+  }, []);
+
+  const applyMutation = useCallback(
+    async (op, paths, opts) => {
+      if (!selected) return;
+      setMutationError(null);
+      setMutating(true);
+      try {
+        if (op === "stage") await gitStage(selected, paths);
+        else if (op === "unstage") await gitUnstage(selected, paths);
+        else if (op === "fetch") await gitFetch(selected, opts?.remote || "origin");
+        else if (op === "pull") await gitPull(selected, opts?.remote || "origin", opts?.branch || "");
+        else if (op === "commit") await gitCommit(selected, opts?.message);
+        else if (op === "commitSelected") await gitCommitSelected(selected, opts?.message, paths);
+        else if (op === "discard") await gitDiscard(selected, paths, opts?.confirmation, opts?.deleteUntracked);
+        else if (op === "push") await gitPush(selected, opts?.confirmation, opts?.remote || "origin", opts?.branch || "");
+        else if (op === "dirty-checkout") {
+          await gitCheckout(selected, opts.ref, {
+            confirmation: opts.confirmation,
+            newBranch: opts.newBranch,
+            track: opts.track,
+          });
+        }
+        await refreshDetail(selected);
+      } catch (err) {
+        setMutationError(err && err.message ? err.message : String(err));
+      } finally {
+        setMutating(false);
+      }
+    },
+    [selected, refreshDetail],
+  );
+
+  /**
+   * Destructive ops (discard, push, dirty-checkout) gate on a per-use
+   * confirmation echoed back to the server. Matches the dashboard's existing
+   * confirm-before-destructive pattern (see RelayManagement onRevoke) and the
+   * plugin's confirmation-string mechanics.
+   */
+  const requestMutation = useCallback((op, opts) => {
+    if (requiresConfirmation(op)) {
+      const description =
+        op === "discard"
+          ? "Discard local changes? This cannot be undone."
+          : op === "push"
+          ? "Push local commits to the remote repository?"
+          : "Working tree has uncommitted changes. Switch branches anyway?";
+      if (!window.confirm(description)) return;
+      const token = confirmationFor(op);
+      if (op === "discard") applyMutation("discard", opts?.paths, { confirmation: token, deleteUntracked: opts?.deleteUntracked });
+      else if (op === "push") applyMutation("push", [], { confirmation: token, remote: opts?.remote, branch: opts?.branch });
+      else if (op === "dirty-checkout") applyMutation("dirty-checkout", [], { ...opts, confirmation: token });
+      return;
+    }
+    applyMutation(op, opts?.paths, opts);
+  }, [applyMutation]);
+
+  const doCommit = useCallback(async () => {
+    const message = commitMessage.trim();
+    if (!message) {
+      setMutationError("Commit message must not be empty.");
+      return;
+    }
+    const stagedPaths = (status && status.staged || []).map((e) => e.path);
+    if (stagedPaths.length > 0) {
+      await applyMutation("commitSelected", stagedPaths, { message });
+    } else {
+      await applyMutation("commit", [], { message });
+    }
+    setCommitMessage("");
+  }, [commitMessage, status, applyMutation]);
+
+  const doCheckout = useCallback(async () => {
+    const ref = branchRef.trim();
+    if (!ref) return;
+    const dirty = status && (status.counts.modified + status.counts.staged + status.counts.untracked) > 0;
+    const opts = { ref, newBranch: newBranch.trim(), track: false };
+    if (dirty && !opts.newBranch) {
+      requestMutation("dirty-checkout", opts);
+      setBranchRef("");
+      setNewBranch("");
+      return;
+    }
+    await applyMutation("checkout", [], opts);
+    setBranchRef("");
+    setNewBranch("");
+  }, [branchRef, newBranch, status, applyMutation, requestMutation]);
+
   if (loading && repos === null) {
     return <div className="text-sm text-muted-foreground">Loading repositories…</div>;
   }
@@ -252,8 +461,37 @@ export default function GitState({ autoRefresh }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {mutationError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Git mutation failed</AlertTitle>
+                <AlertDescription>
+                  <pre className="whitespace-pre-wrap text-xs">{mutationError}</pre>
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <StatusRow status={status} />
             <BranchesRow branches={branches} />
+            <WriteControls
+              status={status}
+              branches={branches}
+              selected={selected}
+              commitMessage={commitMessage}
+              onCommitMessageChange={setCommitMessage}
+              newBranch={newBranch}
+              onNewBranchChange={setNewBranch}
+              branchRef={branchRef}
+              onBranchRefChange={setBranchRef}
+              mutating={mutating}
+              onStageAll={() => requestMutation("stage", { paths: (status && status.modified || []).map((e) => e.path) })}
+              onStage={(path) => requestMutation("stage", { paths: [path] })}
+              onUnstage={(path) => requestMutation("unstage", { paths: [path] })}
+              onDiscard={(path) => requestMutation("discard", { paths: [path], deleteUntracked: false })}
+              onCommit={doCommit}
+              onFetch={() => requestMutation("fetch", {})}
+              onPull={() => requestMutation("pull", {})}
+              onPush={() => requestMutation("push", {})}
+              onCheckout={doCheckout}
+            />
 
             {status && (status.staged || []).length > 0 ? (
               <div>

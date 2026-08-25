@@ -58,3 +58,51 @@ export function branchLabel(branch) {
 export function isTruncated(status) {
   return !!(status && status.truncated);
 }
+
+/**
+ * Fixed per-use confirmation tokens for destructive git mutations. These
+ * mirror the plugin's server-side constants (plugin/git_state.py) and are
+ * sent in the POST body so the server can enforce the destructive gate.
+ * The dashboard tab shows a human-readable description before echoing these.
+ */
+export const CONFIRMATIONS = {
+  discard: "discard",
+  push: "push",
+  dirtyCheckout: "checkout-dirty",
+};
+
+/** Ops that require a per-use confirmation string before the POST is sent. */
+const DESTRUCTIVE_OPS = new Set(["discard", "push", "dirty-checkout"]);
+
+/**
+ * True when the named mutation requires a per-use confirmation string.
+ * The tab must not send the POST without it (matches the server gate).
+ */
+export function requiresConfirmation(op) {
+  return DESTRUCTIVE_OPS.has(op);
+}
+
+/**
+ * Return the fixed confirmation token for a destructive op, or null when the
+ * op is non-destructive (no confirmation needed).
+ */
+export function confirmationFor(op) {
+  if (!requiresConfirmation(op)) return null;
+  if (op === "discard") return CONFIRMATIONS.discard;
+  if (op === "push") return CONFIRMATIONS.push;
+  return CONFIRMATIONS.dirtyCheckout;
+}
+
+/**
+ * Normalize a mutation response ({head, status, branches}) into a stable
+ * shape, filling missing groups so the tab can render without defensive
+ * branching.
+ */
+export function normalizeMutationResult(data) {
+  const src = data && typeof data === "object" ? data : {};
+  return {
+    head: typeof src.head === "string" ? src.head : "",
+    status: normalizeStatus(src.status),
+    branches: normalizeBranches(src.branches),
+  };
+}
