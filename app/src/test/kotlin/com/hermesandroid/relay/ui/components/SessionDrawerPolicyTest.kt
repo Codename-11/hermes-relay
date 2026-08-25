@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionDrawerPolicyTest {
@@ -142,6 +143,17 @@ class SessionDrawerPolicyTest {
                 ).map { it.session.sessionId },
             )
         }
+    }
+
+    @Test
+    fun `full row border is limited to foreground live work`() {
+        assertTrue(sessionActivityShowsRowBorder(SessionActivityState.Starting))
+        assertTrue(sessionActivityShowsRowBorder(SessionActivityState.Working))
+        assertFalse(sessionActivityShowsRowBorder(SessionActivityState.NeedsInput))
+        assertFalse(sessionActivityShowsRowBorder(SessionActivityState.BackgroundWork))
+        assertFalse(sessionActivityShowsRowBorder(SessionActivityState.Checking))
+        assertFalse(sessionActivityShowsRowBorder(SessionActivityState.Unavailable))
+        assertFalse(sessionActivityShowsRowBorder(null))
     }
 
     @Test

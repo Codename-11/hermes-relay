@@ -84,6 +84,10 @@ internal fun sessionDrawerStatus(
     null -> SessionDrawerStatus.Idle
 }
 
+/** Desktop-style row emphasis is reserved for an actual foreground turn. */
+internal fun sessionActivityShowsRowBorder(state: SessionActivityState?): Boolean =
+    state == SessionActivityState.Starting || state == SessionActivityState.Working
+
 /**
  * Normalizes live activity to the drawer's profile-scoped row identity.
  *
