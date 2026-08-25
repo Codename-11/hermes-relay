@@ -388,6 +388,16 @@ fun SupervisedControlsScreen(
                 )
             }
 
+            if (policy.enabled) {
+                SupervisedNavigationRow(
+                    icon = Icons.Filled.Lock,
+                    title = "Return to supervised view",
+                    subtitle = "Lock parent access and open the pinned agent chat",
+                    onClick = onReturnToSupervisedView,
+                    isDarkTheme = isDarkTheme,
+                )
+            }
+
             Text(
                 "This mode restricts this Android client. The selected Hermes profile remains responsible for agent tools and content policy.",
                 style = MaterialTheme.typography.bodySmall,
@@ -746,15 +756,6 @@ fun SupervisedControlsScreen(
                 }
             }
 
-            if (policy.enabled) {
-                TextButton(
-                    onClick = onReturnToSupervisedView,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Lock, contentDescription = null)
-                    Text("Return to supervised view", modifier = Modifier.padding(start = 8.dp))
-                }
-            }
             Spacer(Modifier.height(16.dp))
         }
     }
