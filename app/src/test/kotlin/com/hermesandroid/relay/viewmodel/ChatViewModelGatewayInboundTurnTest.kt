@@ -333,7 +333,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun unsupportedActiveListProjectsUnavailableInsteadOfRestWorking() {
+    fun unsupportedActiveListLeavesRowsNeutralAcrossDirectoryRefresh() {
         bindActivityTestDirectory()
         handler.updateSessions(
             listOf(SessionItem(id = STORED_SESSION_ID, title = "Recent", isActive = true)),
@@ -344,9 +344,14 @@ class ChatViewModelGatewayInboundTurnTest {
         gatewayHarness.awaitRpc("session.active_list")
 
         awaitCondition {
-            viewModel.backgroundSessionActivityStates.value["default:$STORED_SESSION_ID"] ==
-                SessionActivityState.Unavailable
+            "default:$STORED_SESSION_ID" !in viewModel.backgroundSessionActivityStates.value
         }
+
+        viewModel.updateSessionActivityDirectory(
+            rows = listOf("default" to STORED_SESSION_ID),
+        )
+
+        assertFalse("default:$STORED_SESSION_ID" in viewModel.backgroundSessionActivityStates.value)
     }
 
     @Test
