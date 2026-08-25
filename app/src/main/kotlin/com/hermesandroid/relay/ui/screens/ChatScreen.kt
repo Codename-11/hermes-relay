@@ -726,6 +726,7 @@ fun ChatScreen(
     // existing test/preview call sites keep compiling.
     onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
+    onNavigateToBotMode: () -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
@@ -2344,6 +2345,10 @@ fun ChatScreen(
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
                 onRefresh = { chatViewModel.refreshSessions() },
+                onOpenBotMode = {
+                    scope.launch { drawerState.close() }
+                    onNavigateToBotMode()
+                },
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }

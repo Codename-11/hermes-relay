@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
 ### Changed
@@ -19,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Android fresh chats no longer inherit a stale busy composer.** New-chat navigation settles visible streaming ownership even when a Gateway turn has already lost its live handle, and Stop remains an immediate escape hatch after the terminal bubble has settled. (#416, #418)
+- **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
+- **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
+- **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
 - **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
 - **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
 

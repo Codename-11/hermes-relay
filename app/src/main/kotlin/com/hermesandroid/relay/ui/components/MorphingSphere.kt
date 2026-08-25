@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -25,6 +26,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import kotlinx.coroutines.delay
+import kotlin.math.sin
 
 /**
  * ASCII morphing sphere — the visual embodiment of the AI agent.
@@ -53,6 +56,32 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
 private const val SPHERE_TIME_UNITS_PER_SEC = 1f
 private const val SPHERE_TWO_PI = 6.2832f
 private const val SPHERE_COLOR_RADIANS_PER_SEC = 0.7854f
+private const val SPHERE_IDLE_BREATH_RADIANS_PER_SEC = 0.72f
+private const val SPHERE_IDLE_BREATH_SCALE = 0.012f
+private const val SPHERE_IDLE_LAYER_FRAME_INTERVAL_MS = 184L
+
+internal enum class SphereMotionMode {
+    Still,
+    AmbientLayer,
+    Procedural,
+}
+
+internal fun sphereMotionMode(
+    state: SphereState,
+    voiceMode: Boolean,
+    motionVisible: Boolean,
+    fixedTime: Float?,
+    fixedColorPhase: Float?,
+): SphereMotionMode {
+    if (!motionVisible || fixedTime != null || fixedColorPhase != null) {
+        return SphereMotionMode.Still
+    }
+    return if (state == SphereState.Idle && !voiceMode) {
+        SphereMotionMode.AmbientLayer
+    } else {
+        SphereMotionMode.Procedural
+    }
+}
 
 @Composable
 fun MorphingSphere(
@@ -64,7 +93,8 @@ fun MorphingSphere(
     voiceMode: Boolean = false,
     skin: SphereSkin = LocalSphereSkin.current,
     fixedTime: Float? = null,
-    fixedColorPhase: Float? = null
+    fixedColorPhase: Float? = null,
+    motionVisible: Boolean = true,
 ) {
     val brand = LocalBrand.current
     // Gate reactive inputs on what the skin declares it honors — this is the
@@ -104,16 +134,21 @@ fun MorphingSphere(
     val cg2 by animateFloatAsState(targetC.g2, spec, label = "cg2")
     val cb2 by animateFloatAsState(targetC.b2, spec, label = "cb2")
 
-    // Continuous motion runs only for active agent/voice states. Idle is a
-    // stable frame: the 58x34 text grid is expensive enough that even a
-    // throttled cosmetic drift dominated measured screen-on CPU. Active states
-    // retain full display-rate motion and dt-based timing.
+    // Active states retain the full procedural animation. Visible Idle uses a
+    // lightweight graphics-layer breath: redrawing the 58x34 glyph grid just
+    // for ambient drift was the measured screen-on hotspot, while transforming
+    // its cached layer preserves the intended living Sphere at far lower cost.
     val animatedTime = remember { mutableFloatStateOf(0f) }
     val animatedColorPhase = remember { mutableFloatStateOf(0f) }
-    val fullFrameRate = state != SphereState.Idle || effVoiceMode
-    val driveAnimation = (fixedTime == null || fixedColorPhase == null) && fullFrameRate
-    if (driveAnimation) {
-        LaunchedEffect(fullFrameRate) {
+    val motionMode = sphereMotionMode(
+        state = state,
+        voiceMode = effVoiceMode,
+        motionVisible = motionVisible,
+        fixedTime = fixedTime,
+        fixedColorPhase = fixedColorPhase,
+    )
+    if (motionMode == SphereMotionMode.Procedural) {
+        LaunchedEffect(motionMode) {
             var lastNanos = withFrameNanos { it }
             while (true) {
                 val now = withFrameNanos { it }
@@ -127,6 +162,25 @@ fun MorphingSphere(
             }
         }
     }
+    val idleBreathPhase = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(motionMode) {
+        if (motionMode != SphereMotionMode.AmbientLayer) {
+            idleBreathPhase.floatValue = 0f
+            return@LaunchedEffect
+        }
+        var lastNanos = withFrameNanos { it }
+        while (true) {
+            val now = withFrameNanos { it }
+            val dtSec = (now - lastNanos).coerceAtLeast(0L) / 1_000_000_000f
+            lastNanos = now
+            idleBreathPhase.floatValue =
+                (idleBreathPhase.floatValue + dtSec * SPHERE_IDLE_BREATH_RADIANS_PER_SEC) %
+                SPHERE_TWO_PI
+            // The frame wait plus this delay caps the gentle layer-only pulse
+            // near 5fps while active procedural states retain display-rate motion.
+            delay(SPHERE_IDLE_LAYER_FRAME_INTERVAL_MS)
+        }
+    }
 
     val time = fixedTime ?: animatedTime.floatValue
     val colorPhase = fixedColorPhase ?: animatedColorPhase.floatValue
@@ -138,7 +192,18 @@ fun MorphingSphere(
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
     val glyphStrings = remember { HashMap<Char, String>(32) }
 
-    Canvas(modifier = modifier.fillMaxSize().clipToBounds()) {
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                if (motionMode == SphereMotionMode.AmbientLayer) {
+                    val scale = 1f + sin(idleBreathPhase.floatValue) * SPHERE_IDLE_BREATH_SCALE
+                    scaleX = scale
+                    scaleY = scale
+                }
+            }
+            .clipToBounds(),
+    ) {
         val canvasW = size.width
         val canvasH = size.height
         val cellW = canvasW / cols
