@@ -1,0 +1,267 @@
+# Reconcile a completed stable hotfix into dev without adding a ceremonial PR
+# merge commit. Normal dev -> main releases are detected and intentionally no-op.
+# A conflicted merge, failed exact-tree CI, stale dev ref, or denied branch update
+# stops without mutating dev and falls back to the normal reconciliation PR path.
+
+name: Release Backmerge
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Published stable tag to reconcile (android-v*, server-v*, or desktop-v*)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-backmerge-dev
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare exact backmerge candidate
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      outcome: ${{ steps.prepare.outputs.outcome }}
+      base_dev_sha: ${{ steps.prepare.outputs.base_dev_sha }}
+      candidate_branch: ${{ steps.prepare.outputs.candidate_branch }}
+      candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
+      release_commit: ${{ steps.prepare.outputs.release_commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate release and prepare merge commit
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^(android|server|desktop)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release Backmerge accepts stable SemVer production tags only; got $RELEASE_TAG"
+            exit 1
+          fi
+
+          git fetch origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/dev:refs/remotes/origin/dev" \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          release_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          base_dev_sha="$(git rev-parse origin/dev)"
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+          echo "base_dev_sha=$base_dev_sha" >> "$GITHUB_OUTPUT"
+
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "::error::$RELEASE_TAG ($release_commit) is not contained in origin/main"
+            exit 1
+          fi
+
+          read -r is_draft is_prerelease < <(
+            gh release view "$RELEASE_TAG" --json isDraft,isPrerelease \
+              --jq '[.isDraft, .isPrerelease] | @tsv'
+          )
+          if [ "$is_draft" != "false" ] || [ "$is_prerelease" != "false" ]; then
+            echo "::error::$RELEASE_TAG is not a published stable GitHub release"
+            exit 1
+          fi
+
+          plan="$(
+            python3 scripts/plan_release_backmerge.py \
+              --release-commit "$release_commit" \
+              --dev-commit "$base_dev_sha"
+          )"
+          case "$plan" in
+            already-contained)
+              echo "outcome=noop" >> "$GITHUB_OUTPUT"
+              echo "## Release backmerge not needed" >> "$GITHUB_STEP_SUMMARY"
+              echo "\`$RELEASE_TAG\` is already contained in \`dev\`." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            normal-release)
+              echo "outcome=noop" >> "$GITHUB_OUTPUT"
+              echo "## Normal release: no backmerge" >> "$GITHUB_STEP_SUMMARY"
+              echo "The released merge's integration parent is already contained in \`dev\`." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            hotfix) ;;
+            *)
+              echo "::error::Unknown release-backmerge plan: $plan"
+              exit 1
+              ;;
+          esac
+
+          candidate_branch="chore/release-backmerge/${RELEASE_TAG}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --detach "$base_dev_sha"
+
+          set +e
+          git merge --no-ff -m "chore: back-merge ${RELEASE_TAG}" "$release_commit"
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U | paste -sd ', ' -)"
+            echo "outcome=conflict" >> "$GITHUB_OUTPUT"
+            echo "::error::Automatic backmerge conflicts: ${conflicts:-unknown}. Open a reconciliation PR."
+            echo "## Manual reconciliation PR required" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$RELEASE_TAG\` conflicts with current \`dev\`: ${conflicts:-unknown}." >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort || true
+            exit 1
+          fi
+
+          candidate_sha="$(git rev-parse HEAD)"
+          first_parent="$(git rev-parse HEAD^1)"
+          second_parent="$(git rev-parse HEAD^2)"
+          if [ "$first_parent" != "$base_dev_sha" ] || [ "$second_parent" != "$release_commit" ]; then
+            echo "::error::Candidate parents do not match dev + release commit"
+            exit 1
+          fi
+
+          git push origin "$candidate_sha:refs/heads/$candidate_branch"
+          echo "outcome=candidate" >> "$GITHUB_OUTPUT"
+          echo "candidate_branch=$candidate_branch" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+          echo "## Backmerge candidate prepared" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: \`$RELEASE_TAG\` (\`$release_commit\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Dev base: \`$base_dev_sha\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate: \`$candidate_sha\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Temporary ref: \`$candidate_branch\`" >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    name: Run exact-tree required checks
+    needs: prepare
+    if: needs.prepare.outputs.outcome == 'candidate'
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      check_run_id: ${{ steps.gate.outputs.check_run_id }}
+    steps:
+      - name: Dispatch and await Required checks
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_DEV_SHA: ${{ needs.prepare.outputs.base_dev_sha }}
+          CANDIDATE_BRANCH: ${{ needs.prepare.outputs.candidate_branch }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run ci-required.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$CANDIDATE_BRANCH" \
+            -f base_sha="$BASE_DEV_SHA" \
+            -f head_sha="$CANDIDATE_SHA"
+
+          check_run_id=""
+          for _ in {1..20}; do
+            check_run_id="$(
+              gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --workflow ci-required.yml \
+                --branch "$CANDIDATE_BRANCH" \
+                --event workflow_dispatch \
+                --limit 20 \
+                --json databaseId,headSha \
+                --jq ".[] | select(.headSha == \"$CANDIDATE_SHA\") | .databaseId" \
+                | head -n 1
+            )"
+            if [ -n "$check_run_id" ]; then
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$check_run_id" ]; then
+            echo "::error::Required checks dispatch was not observed for $CANDIDATE_SHA"
+            exit 1
+          fi
+
+          echo "check_run_id=$check_run_id" >> "$GITHUB_OUTPUT"
+          gh run watch "$check_run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+  promote:
+    name: Compare-and-swap dev
+    needs: [prepare, gate]
+    if: needs.prepare.outputs.outcome == 'candidate' && needs.gate.result == 'success'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fast-forward dev to the tested candidate
+        env:
+          BASE_DEV_SHA: ${{ needs.prepare.outputs.base_dev_sha }}
+          CANDIDATE_BRANCH: ${{ needs.prepare.outputs.candidate_branch }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.release_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin --no-tags \
+            "+refs/heads/dev:refs/remotes/origin/dev" \
+            "+refs/heads/$CANDIDATE_BRANCH:refs/remotes/origin/$CANDIDATE_BRANCH"
+          current_dev="$(git rev-parse origin/dev)"
+          remote_candidate="$(git rev-parse "origin/$CANDIDATE_BRANCH")"
+
+          if [ "$current_dev" != "$BASE_DEV_SHA" ]; then
+            echo "::error::dev moved from $BASE_DEV_SHA to $current_dev; rerun or open a reconciliation PR"
+            exit 1
+          fi
+          if [ "$remote_candidate" != "$CANDIDATE_SHA" ]; then
+            echo "::error::Candidate ref moved from $CANDIDATE_SHA to $remote_candidate"
+            exit 1
+          fi
+          if [ "$(git rev-parse "$CANDIDATE_SHA^1")" != "$BASE_DEV_SHA" ] || \
+             [ "$(git rev-parse "$CANDIDATE_SHA^2")" != "$RELEASE_COMMIT" ]; then
+            echo "::error::Candidate ancestry changed after verification"
+            exit 1
+          fi
+
+          # The explicit lease is the atomic stale-base guard. The update is a
+          # fast-forward from BASE_DEV_SHA; no unrelated history can be replaced.
+          git push \
+            --force-with-lease="refs/heads/dev:$BASE_DEV_SHA" \
+            origin "$CANDIDATE_SHA:refs/heads/dev"
+
+          git push origin --delete "$CANDIDATE_BRANCH" || \
+            echo "::warning::Could not remove temporary branch $CANDIDATE_BRANCH"
+
+          echo "## Release backmerge complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "Fast-forwarded \`dev\` from \`$BASE_DEV_SHA\` to tested merge \`$CANDIDATE_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+
+  fallback:
+    name: Report PR fallback
+    needs: [prepare, gate, promote]
+    if: always() && needs.prepare.outputs.outcome == 'candidate' && needs.promote.result != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve safe fallback instructions
+        env:
+          CANDIDATE_BRANCH: ${{ needs.prepare.outputs.candidate_branch }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          CHECK_RUN_ID: ${{ needs.gate.outputs.check_run_id }}
+        run: |
+          echo "## Automatic backmerge stopped" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`dev\` was not updated. Open or refresh a reconciliation PR after addressing the failed/stale gate." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate ref: \`${CANDIDATE_BRANCH:-not-created}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate SHA: \`${CANDIDATE_SHA:-n/a}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Required-check run: \`${CHECK_RUN_ID:-n/a}\`" >> "$GITHUB_STEP_SUMMARY"
