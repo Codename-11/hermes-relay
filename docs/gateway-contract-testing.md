@@ -38,6 +38,9 @@ the upstream contract identifiers it depends on.
 | `scope_rejection_inputs` | Exact, foreign, and unscoped event inputs |
 | `terminal_gap_activate` | Socket closes after live output; replacement `session.activate` reports `running=false`; history is authoritative |
 | `terminal_gap_session_info` | Scoped `session.info {running:false}` settles a turn without `message.complete` |
+| `active_status_lifecycle` | `session.active_list` reports starting, working, waiting, and idle, then a complete empty process-wide snapshot permits removal of unambiguously owned prior rows |
+| `active_status_profile_scope` | A row has no profile metadata and a caller profile hint has no effect; the client must use exact client-held ownership and reject invented attribution |
+| `active_status_unsupported` | An older Gateway returns JSON-RPC method-not-found; the client retains Unknown rather than inventing Idle or Working |
 
 Fixture evidence is a bounded metadata-only ring. It records sequence,
 connection number, RPC method, event type, scope classification, and outcome.
@@ -124,6 +127,16 @@ python scripts/check-gateway-scenario-conformance.py `
 The check is source-only and non-mutating. It starts no runtime, creates no
 sessions, and uses no provider or authentication credentials. It fails closed
 for dirty, fork-marked, or non-vanilla checkouts.
+
+For activity scenarios, the adapter confirms that current upstream owns
+`session.active_list`, emits `starting`, `working`, `waiting`, and `idle`, lets
+pending input outrank running work, accepts only `current_session_id` as its
+optional selector, and returns both the live runtime id and durable session key
+from the process-local registry. The runtime fixture then
+tests client reconciliation, including successful disappearance and explicit
+method-not-found behavior. Because rows normally carry no profile, partial
+ownership resolution may update exact matches but cannot infer absence for an
+unresolved scope. Source inspection alone does not claim a client pass.
 
 ## Planned extensions
 

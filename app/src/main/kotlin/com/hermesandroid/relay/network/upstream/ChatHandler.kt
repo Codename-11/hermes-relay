@@ -2075,7 +2075,7 @@ class ChatHandler {
                 outputTokens = item.outputTokens ?: 0,
                 actualCostUsd = item.actualCostUsd,
                 estimatedCostUsd = item.estimatedCostUsd,
-                isActive = item.isActive,
+                recentlyActive = item.isActive,
                 updatedAt = activityAtMs,
                 startedAt = startedAtMs,
                 lastActivityAt = lastActivityAtMs,

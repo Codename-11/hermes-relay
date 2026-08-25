@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import java.util.Locale
@@ -23,7 +24,11 @@ internal enum class SessionDrawerOrdering {
 
 internal enum class SessionDrawerStatus {
     NeedsInput,
+    Starting,
     Working,
+    BackgroundWork,
+    Checking,
+    Unavailable,
     Idle,
 }
 
@@ -55,7 +60,7 @@ internal data class SessionDrawerGroup(
 )
 
 internal fun sessionRowKey(row: ProfileSessionRow): String =
-    "${row.profile.lowercase(Locale.ROOT)}:${row.session.sessionId}"
+    "${AgentDisplay.profileSessionKey(row.profile).lowercase(Locale.ROOT)}:${row.session.sessionId}"
 
 internal fun sessionProjectLabel(session: ChatSession): String {
     val raw = (session.gitRepoRoot ?: session.workingDirectory)
@@ -69,12 +74,34 @@ internal fun sessionProjectLabel(session: ChatSession): String {
 internal fun sessionDrawerStatus(
     row: ProfileSessionRow,
     activityStates: Map<String, SessionActivityState>,
-): SessionDrawerStatus = when (
-    activityStates[sessionRowKey(row)] ?: activityStates[row.session.sessionId]
-) {
+): SessionDrawerStatus = when (activityStates[sessionRowKey(row)]) {
     SessionActivityState.NeedsInput -> SessionDrawerStatus.NeedsInput
+    SessionActivityState.Starting -> SessionDrawerStatus.Starting
     SessionActivityState.Working -> SessionDrawerStatus.Working
-    null -> if (row.session.isActive) SessionDrawerStatus.Working else SessionDrawerStatus.Idle
+    SessionActivityState.BackgroundWork -> SessionDrawerStatus.BackgroundWork
+    SessionActivityState.Checking -> SessionDrawerStatus.Checking
+    SessionActivityState.Unavailable -> SessionDrawerStatus.Unavailable
+    null -> SessionDrawerStatus.Idle
+}
+
+/**
+ * Normalizes live activity to the drawer's profile-scoped row identity.
+ *
+ * A selected-profile drawer may accept the legacy bare session id because every row belongs
+ * to that one explicit profile. All Profiles must use composite keys exclusively: session ids
+ * are only unique inside their owning profile.
+ */
+internal fun scopedSessionActivityStates(
+    rows: List<ProfileSessionRow>,
+    activityStates: Map<String, SessionActivityState>,
+    allowBareSessionIds: Boolean,
+): Map<String, SessionActivityState> = buildMap {
+    rows.forEach { row ->
+        val rowKey = sessionRowKey(row)
+        val state = activityStates[rowKey]
+            ?: activityStates[row.session.sessionId].takeIf { allowBareSessionIds }
+        state?.let { put(rowKey, it) }
+    }
 }
 
 internal fun sessionDrawerPrState(session: ChatSession): SessionDrawerPrState = when {
@@ -98,8 +125,12 @@ internal fun filterAndSortSessionRows(
         .toList()
     val statusRank = mapOf(
         SessionDrawerStatus.NeedsInput to 0,
-        SessionDrawerStatus.Working to 1,
-        SessionDrawerStatus.Idle to 2,
+        SessionDrawerStatus.Starting to 1,
+        SessionDrawerStatus.Working to 2,
+        SessionDrawerStatus.BackgroundWork to 3,
+        SessionDrawerStatus.Checking to 4,
+        SessionDrawerStatus.Unavailable to 5,
+        SessionDrawerStatus.Idle to 6,
     )
     val comparator = when (options.ordering) {
         SessionDrawerOrdering.Updated -> compareByDescending<ProfileSessionRow> { it.session.activityTimestamp }
@@ -149,7 +180,11 @@ internal fun groupSessionRows(
 private val SessionDrawerStatus.displayLabel: String
     get() = when (this) {
         SessionDrawerStatus.NeedsInput -> "Needs input"
+        SessionDrawerStatus.Starting -> "Starting"
         SessionDrawerStatus.Working -> "Working"
+        SessionDrawerStatus.BackgroundWork -> "Background work"
+        SessionDrawerStatus.Checking -> "Checking"
+        SessionDrawerStatus.Unavailable -> "Unavailable"
         SessionDrawerStatus.Idle -> "Idle"
     }
 

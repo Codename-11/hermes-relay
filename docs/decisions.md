@@ -3793,3 +3793,70 @@ an upstream Hermes change, while vanilla/current Hermes retains a bounded
 single-account fallback. Merely configuring a provider credential does not
 expose tokens to paired devices. The Android UI can add providers without
 adding provider-specific screens or silently treating missing data as zero usage.
+
+---
+
+## ADR 68 — Android session activity has one profile-scoped authority
+
+**Status:** Accepted (2026-08-25).
+
+**Context.** Dashboard and API-server session lists expose `is_active`, but
+upstream defines it as an unended persisted row updated within the last five
+minutes. It is useful recency metadata, not proof that a model turn is running.
+Android nevertheless used it as a fallback for **Working**, while local
+composer state, detached-turn checkpoints, pending requests, and drawer rows
+each derived activity independently. A completed turn could therefore remain
+Working, a restart could restore an unverified busy state, and an All Profiles
+row could inherit another profile's live status through a bare session id.
+
+Current upstream exposes live authority through the process-wide Gateway
+`session.active_list`. It reports attachable in-memory runtimes as `starting`,
+`working`, `waiting`, or `idle`, with both the live id and durable session key.
+It accepts only an optional `current_session_id`; rows normally have no profile
+metadata or filter. Exact pending-request events carry more specific
+Needs-input ownership. Exact turn terminals and `session.info {running:false}`
+can settle a matching generation. `process.list` is a different contract: a
+background process may remain after its parent model turn is idle.
+
+**Decision.** Android owns one composite activity registry keyed by stable
+connection identity, normalized profile, and durable session id. Runtime ids
+are aliases only within that owner. The same reducer drives drawer badges and
+filters, visible composer state, animation, and accessibility.
+
+The precedence is:
+
+1. An exact pending approval, clarify, sudo, secret, or MCP request is **Needs input**.
+2. A successfully resolved process-wide `session.active_list` row supplies
+   **Starting**, **Working**, or **Idle** to its exact client-owned profile
+   record. Waiting without an exact pending payload remains a conservative
+   needs-input state until the request detail arrives or clears.
+3. An exact terminal event, `session.info {running:false}`, or
+   `session.activate {running:false}` settles only the matching runtime
+   generation.
+4. A matching `process.list` row may add **Background work** independently; it
+   never keeps the conversation Working.
+5. A checkpoint restored after process recreation is **Checking** until
+   revalidated. A failed or unsupported live refresh is **Unavailable**.
+
+Android resolves each active-list row through exact foreground or detached
+ownership already held by that client, or explicit profile metadata if a
+future upstream sends it. A bounded REST directory never proves that a durable
+`session_key` is globally unique. Ambiguous or unresolved rows apply no status.
+Resolved rows from a partial snapshot may update their exact owners, but they
+cannot infer absence. A missing row clears stale live state for a scope only
+when the successful process-wide snapshot was complete and every relevant row
+was unambiguously resolved. A failed refresh does not settle anything. REST
+`is_active`, `last_active`, and relative timestamps never influence execution
+state. Old socket generations, late refreshes, and unscoped session ids cannot
+revive a newer settled entry.
+
+**Consequences.** Working and Needs input describe current upstream-owned
+runtime state instead of recent persistence. All Profiles remains isolated,
+restart recovery is honest about uncertainty, and background processes stay
+visible without mislabeling their parent turn. Older Gateways remain usable
+but show Unavailable when no exact local terminal truth exists. Declarative
+Gateway scenarios cover all four upstream states, complete-snapshot
+disappearance, client-side profile isolation, and method-not-found; physical
+and current-host certification remains tracked in `TODO.md`. An upstream
+profile field/filter or explicitly owned aggregate activity route would remove
+the remaining ambiguity for multi-profile clients.

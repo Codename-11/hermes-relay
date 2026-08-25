@@ -200,6 +200,47 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.get("session_id") == "fixture-foreign-session" for event in events))
         self.assertEqual(fixture.scenario.live_session_id, events[-1]["session_id"])
 
+    async def test_active_list_exposes_all_live_states_then_authoritative_absence(self) -> None:
+        _, base_url = await self.start("active_status_lifecycle")
+        ws, _ = await self.connect(base_url)
+
+        await self.rpc(ws, 1, "session.active_list", {"current_session_id": "fixture-live-working"})
+        first = (await ws.receive_json())["result"]["sessions"]
+        self.assertEqual(
+            ["starting", "working", "waiting", "idle"],
+            [row["status"] for row in first],
+        )
+
+        await self.rpc(ws, 2, "session.active_list", {"current_session_id": "fixture-live-working"})
+        second = (await ws.receive_json())["result"]["sessions"]
+        self.assertEqual([], second)
+
+        # An exhausted script remains on its last successful snapshot so polling
+        # cannot accidentally resurrect an earlier live row.
+        await self.rpc(ws, 3, "session.active_list")
+        third = (await ws.receive_json())["result"]["sessions"]
+        self.assertEqual([], third)
+
+    async def test_active_list_rows_require_client_owned_profile_resolution(self) -> None:
+        fixture, base_url = await self.start("active_status_profile_scope")
+        ws, _ = await self.connect(base_url)
+
+        # Upstream accepts current_session_id, not a profile filter. The fixture
+        # deliberately ignores this extra hint and returns an unscoped row.
+        await self.rpc(ws, 1, "session.active_list", {"profile": "default"})
+        rows = (await ws.receive_json())["result"]["sessions"]
+
+        self.assertEqual("research", fixture.scenario.profile)
+        self.assertEqual("fixture-shared-stored-session", rows[0]["session_key"])
+        self.assertNotIn("profile", rows[0])
+
+    async def test_active_list_unsupported_is_explicit_method_not_found(self) -> None:
+        _, base_url = await self.start("active_status_unsupported")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.active_list")
+        frame = await ws.receive_json()
+        self.assertEqual(-32601, frame["error"]["code"])
+
     async def test_evidence_is_bounded_and_contains_no_rpc_payloads(self) -> None:
         _, base_url = await self.start("ordinary_turn")
         ws, _ = await self.connect(base_url)
@@ -221,6 +262,9 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
 class ScenarioTestCase(unittest.TestCase):
     def test_all_bundled_scenarios_validate(self) -> None:
         for name in (
+            "active_status_lifecycle",
+            "active_status_profile_scope",
+            "active_status_unsupported",
             "ordinary_turn",
             "rapid_tools_interims",
             "terminal_gap_activate",
@@ -231,6 +275,21 @@ class ScenarioTestCase(unittest.TestCase):
             scenario = load_scenario(name)
             self.assertEqual(name, scenario.name)
             self.assertTrue(scenario.contract_requirements)
+
+    def test_active_list_scenario_rejects_unknown_status(self) -> None:
+        scenario = {
+            "name": "invalid_activity",
+            "live_session_id": "live",
+            "stored_session_id": "stored",
+            "turns": [],
+            "active_list": {
+                "supported": True,
+                "snapshots": [[{"id": "live", "session_key": "stored", "status": "recent"}]],
+            },
+        }
+        with self.assertRaisesRegex(ScenarioError, "invalid status"):
+            from vanilla_gateway.scenario import Scenario
+            Scenario.from_dict(scenario)
 
     def test_terminal_gap_manifests_select_upstream_contracts(self) -> None:
         self.assertEqual(

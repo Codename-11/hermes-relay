@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-08-20
+Updated: 2026-08-25
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is vanilla upstream
@@ -23,6 +23,9 @@ Verified upstream source snapshot:
   `hermes_cli/plugins_cmd.py`
 - Additive Manage contracts were rechecked at upstream MCP hosted-OAuth commits
   through `4dc2b7be0` and custom-endpoint commit `3d9789357`.
+- Session activity contracts were rechecked against upstream `main` at
+  `d736f5d53f1d33fabad5a17cb070eb138b618fb8` in `tui_gateway/server.py`,
+  `tui_gateway/methods_session.py`, and `hermes_cli/web_routers/sessions.py`.
 
 ## Ownership
 
@@ -35,6 +38,7 @@ Verified upstream source snapshot:
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Authenticated read-only API-server skill/toolset inventory; Android Diagnostics summarizes enabled toolsets and Relay tool visibility. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. `message.complete` is the ordinary terminal event; `session.info {running:false}` is the authoritative settle backstop when a replacement socket missed that terminal frame. A reconnect reactivates the exact live runtime with `session.activate`; durable `session.resume` remains the cold-open path and an explicit rejection never creates a replacement context. |
+| Gateway `session.active_list` | Upstream tui_gateway | No | Authoritative process-wide live activity | Returns attachable runtimes across the Gateway process, with live `id`, durable `session_key`, and `starting`, `working`, `waiting`, or `idle`. The only optional selector is `current_session_id`; rows normally carry no profile metadata. Android attributes a row only from exact foreground/detached ownership already held by that client, or from explicit profile metadata if a future upstream sends it. A bounded REST directory never proves global uniqueness. Unresolved rows remain unattributed, and absence settles a scope only after a complete, unambiguously resolved successful snapshot. Method-not-found or refresh failure is Unavailable, not Idle. Pending input outranks running work. |
 | Dashboard `model.options` / `/api/model/*` | Upstream dashboard/tui_gateway | No | Provider/model inventory and selection | Source of truth for coherent provider/model identities. A reasoning boolean or exact effort list is consumed when present; clients do not infer provider identity from a model string alone. |
 | Gateway `pet.info`, `pet.gallery`, `pet.select`, `pet.disable` | Upstream tui_gateway | No | Profile-scoped animated companion | `pet.info` supplies bounded PNG/WebP sheet bytes, revision, geometry, real frame counts, loop timing, scale, and row taxonomy. Android passes `knownRevision` to avoid duplicate sheet transfer, renders the active pet through its native activity-aware companion, and keeps phone-local pet packs separate. All four RPCs carry the effective profile. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak-stream`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. Assistant text streams into upstream speech when available; older hosts fall back to whole-request speech before audio starts. API server has no `/v1/audio/*` route today. |
@@ -190,6 +194,17 @@ connections. Legacy API-first QRs remain importable; when their optional
 URL for compatibility.
 
 ## API Fallback Compatibility Details
+
+- Dashboard/API session-list `is_active` is a persistence-recency hint: an
+  unended row whose `last_active` is less than five minutes old. It is not a
+  running-turn signal and must never produce Working, Waiting, or Starting.
+- Gateway `process.list` describes separately running background processes. A
+  process may outlive its parent model turn, so clients present that as
+  Background work without keeping the conversation in Working.
+- Upstream can make multi-profile clients safer and simpler by adding profile
+  metadata or a profile filter to `session.active_list`, or by publishing an
+  aggregate activity route with explicit profile ownership. Until then,
+  clients must fail closed on duplicate or unresolved durable keys.
 
 - Android accepts the API server's final-response image data URLs for PNG,
   JPEG, GIF, WebP, and BMP. Decoding is strict: MIME and file signatures must

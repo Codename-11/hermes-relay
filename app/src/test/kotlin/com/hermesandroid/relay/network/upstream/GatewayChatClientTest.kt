@@ -196,6 +196,11 @@ class GatewayClientHarness(
     }
 
     @Volatile
+    var activeSessionListPayload: JsonObject = buildJsonObject {
+        put("sessions", JsonArray(emptyList()))
+    }
+
+    @Volatile
     var profileCreatePayload: JsonObject = buildJsonObject {
         put("ok", true)
         put("name", "operator")
@@ -316,6 +321,7 @@ class GatewayClientHarness(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
                 "session.list" -> sessionListPayload
+                "session.active_list" -> activeSessionListPayload
                 "session.title" -> buildJsonObject { put("ok", true) }
                 "prompt.submit" -> promptSubmitPayload
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
@@ -1512,6 +1518,112 @@ class GatewayChatClientTest {
         val refreshParams = harness.awaitRpcCount("model.options", 2).last()
         assertEquals("openai", refreshed.currentProvider)
         assertTrue((refreshParams["refresh"] as? JsonPrimitive)?.booleanOrNull == true)
+    }
+
+    @Test
+    fun `active session list parses every authoritative upstream state`() = runBlocking {
+        harness.activeSessionListPayload = buildJsonObject {
+            put("sessions", buildJsonArray {
+                listOf("idle", "starting", "working", "waiting").forEachIndexed { index, status ->
+                    add(buildJsonObject {
+                        put("id", "runtime-$index")
+                        put("session_key", "stored-$index")
+                        put("status", status)
+                        put("last_active", 1_774_000_000.25 + index)
+                    })
+                }
+            })
+        }
+
+        val result = client.listActiveSessions()
+        val rows = (result as GatewayActiveSessionsResult.Success).sessions
+
+        assertEquals(GatewayActiveSessionCapability.Supported, client.activeSessionCapability.value)
+        assertEquals(
+            listOf(
+                GatewayActiveSessionStatus.Idle,
+                GatewayActiveSessionStatus.Starting,
+                GatewayActiveSessionStatus.Working,
+                GatewayActiveSessionStatus.Waiting,
+            ),
+            rows.map(GatewayActiveSession::status),
+        )
+        assertEquals("runtime-2", rows[2].runtimeSessionId)
+        assertEquals("stored-2", rows[2].storedSessionId)
+        assertEquals(1_774_000_002.25, rows[2].lastActiveEpochSeconds, 0.0)
+        assertTrue(rows.all { it.profile == null })
+    }
+
+    @Test
+    fun `active session list treats empty successful snapshot as authoritative`() = runBlocking {
+        val result = client.listActiveSessions()
+
+        assertEquals(emptyList<GatewayActiveSession>(), (result as GatewayActiveSessionsResult.Success).sessions)
+        assertEquals(GatewayActiveSessionCapability.Supported, client.activeSessionCapability.value)
+    }
+
+    @Test
+    fun `active session list stays process wide and never synthesizes fixed profile`() = runBlocking {
+        val routeHarness = GatewayClientHarness()
+        routeHarness.activeSessionListPayload = buildJsonObject {
+            put("sessions", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "runtime-operator")
+                    put("session_key", "stored-shared")
+                    put("status", "working")
+                    put("last_active", 1_774_000_000.0)
+                })
+            })
+        }
+        val routeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val routeClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = routeHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            fixedSessionProfile = "operator",
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { it() },
+            scope = routeScope,
+        )
+        try {
+            val result = routeClient.listActiveSessions() as GatewayActiveSessionsResult.Success
+            val params = routeHarness.awaitRpc("session.active_list")
+            val requests = List(2) { routeHarness.server.takeRequest(5, TimeUnit.SECONDS) }
+
+            assertFalse(params.containsKey("profile"))
+            assertNull(result.sessions.single().profile)
+            assertTrue(requests.filterNotNull().any { it.path?.contains("profile=operator") == true })
+        } finally {
+            routeClient.shutdown()
+            routeScope.cancel()
+            routeHarness.shutdown()
+        }
+    }
+
+    @Test
+    fun `active session method not found is explicit and sticky for current socket`() = runBlocking {
+        harness.methodNotFound += "session.active_list"
+
+        assertEquals(GatewayActiveSessionsResult.Unsupported, client.listActiveSessions())
+        assertEquals(GatewayActiveSessionCapability.Unsupported, client.activeSessionCapability.value)
+        assertEquals(1, harness.rpcLog.count { it.first == "session.active_list" })
+
+        assertEquals(GatewayActiveSessionsResult.Unsupported, client.listActiveSessions())
+        assertEquals(1, harness.rpcLog.count { it.first == "session.active_list" })
+    }
+
+    @Test
+    fun `active session transient error stays distinct from unsupported`() = runBlocking {
+        harness.rpcErrors["session.active_list"] = 5036 to "could not enumerate active sessions"
+
+        val failed = client.listActiveSessions()
+
+        assertTrue(failed is GatewayActiveSessionsResult.TransientFailure)
+        assertEquals(GatewayActiveSessionCapability.Unknown, client.activeSessionCapability.value)
+        harness.rpcErrors.remove("session.active_list")
+        assertTrue(client.listActiveSessions() is GatewayActiveSessionsResult.Success)
+        assertEquals(2, harness.rpcLog.count { it.first == "session.active_list" })
     }
 
     @Test
@@ -4027,6 +4139,10 @@ class GatewayChatClientTest {
         harness.awaitRpc("prompt.submit")
 
         assertTrue(client.backgroundActiveTurn())
+        assertEquals(
+            GatewayKnownSessionOwner("20260612_120000_abc123", "coder"),
+            client.knownSessionOwner("live-1"),
+        )
         client.clearSession()
         client.sessionProfileProvider = { "writer" }
 

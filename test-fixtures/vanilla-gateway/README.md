@@ -47,7 +47,8 @@ distribution, and trust installation are deliberately outside this fixture.
 - `POST /api/auth/ws-ticket` mints a fresh, single-use 30-second ticket.
 - `GET /api/ws?ticket=...` upgrades to WebSocket and sends `gateway.ready`.
 - JSON-RPC methods: `session.create`, `session.resume`, `session.activate`,
-  `prompt.submit`, and `session.interrupt`.
+  `session.active_list`, `prompt.submit`, and `session.interrupt` when the
+  selected scenario enables them.
 - `GET /api/sessions/{stored-id}/messages` returns persisted, paginated history
   and accepts the upstream `profile`, `limit`, `offset`, and `order` query shape.
 - Unknown RPC methods return JSON-RPC `-32601`; wrong live/durable identities
@@ -70,6 +71,13 @@ ordered `steps` list using these operations:
 | `set_running` | Change the authoritative session running state. |
 | `close` | Create a fixture-controlled socket gap without replaying later frames. |
 
+An optional `active_list` object scripts process-wide live-runtime snapshots.
+`supported: false` returns JSON-RPC `-32601`, matching an older Gateway.
+`supported: true` returns each declared `snapshots` entry in order and retains
+the final successful snapshot for later polls. Rows use upstream's
+`starting`/`working`/`waiting`/`idle` vocabulary. A successful empty snapshot
+is therefore distinct from a failed or unsupported refresh.
+
 Every bundled manifest also declares a top-level `contract_requirements` string
 array. Its values use the contract names accepted by the on-demand upstream
 conformance adapter (for example, `gateway.settled_session_info` and
@@ -79,6 +87,18 @@ the upstream adapter consumes this requirements array from the same file.
 The initial catalog covers ordinary streaming, rapid chunks/reasoning/tool
 events, queued turns, scoped and foreign/unscoped inputs, persisted history,
 and both issue #365 terminal-gap forms:
+
+- `active_status_lifecycle`: one successful live snapshot contains starting,
+  working, waiting, and idle rows; the next successful snapshot is empty so a
+  client can prove a complete, unambiguously resolved snapshot clears prior
+  live state.
+- `active_status_profile_scope`: a process-wide row has no profile metadata and
+  ignores a caller-supplied profile hint. Client adapters must resolve it from
+  exact foreground/detached ownership already held by that client (or future
+  explicit upstream profile metadata); a bounded directory must not invent an
+  owner from apparent uniqueness.
+- `active_status_unsupported`: `session.active_list` returns method-not-found so
+  older-host fallback remains explicit rather than being mistaken for Idle.
 
 - `terminal_gap_activate`: live deltas arrive, history persists, the socket
   closes before `message.complete`, and replacement `session.activate` reports

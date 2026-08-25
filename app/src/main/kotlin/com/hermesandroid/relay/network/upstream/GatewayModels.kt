@@ -320,6 +320,69 @@ enum class GatewayProcessCapability {
     Unsupported,
 }
 
+/** Authoritative execution state reported by upstream `session.active_list`. */
+enum class GatewayActiveSessionStatus(val wireValue: String) {
+    Idle("idle"),
+    Starting("starting"),
+    Working("working"),
+    Waiting("waiting");
+
+    companion object {
+        fun fromWire(value: String?): GatewayActiveSessionStatus? = when (value?.trim()?.lowercase()) {
+            "idle" -> Idle
+            "starting" -> Starting
+            "working" -> Working
+            "waiting" -> Waiting
+            else -> null
+        }
+    }
+}
+
+/**
+ * One in-memory runtime returned by upstream `session.active_list`.
+ *
+ * The RPC is process-wide in current upstream Hermes. Its rows do not normally
+ * identify their profile, so [profile] stays null unless a future gateway
+ * explicitly sends one. Callers must resolve [storedSessionId] against their
+ * own profile-scoped session registry and fail closed when ownership is
+ * ambiguous; the transport never synthesizes profile attribution.
+ */
+data class GatewayActiveSession(
+    /** Per-process runtime id used by live Gateway events and session RPCs. */
+    val runtimeSessionId: String,
+    /** Durable history id (`session_key`) used by the REST/session database. */
+    val storedSessionId: String,
+    val status: GatewayActiveSessionStatus,
+    /** Unix epoch seconds from upstream's in-memory runtime record. */
+    val lastActiveEpochSeconds: Double,
+    /** Future-compatible only; null for the current upstream contract. */
+    val profile: String? = null,
+)
+
+/** Exact owner already known by this client for a foreground or detached runtime. */
+data class GatewayKnownSessionOwner(
+    val storedSessionId: String,
+    val profile: String?,
+)
+
+/** Whether the current Gateway socket exposes `session.active_list`. */
+enum class GatewayActiveSessionCapability {
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
+/**
+ * Result of one process-wide live-session snapshot request. Unsupported is
+ * intentionally distinct from transport/protocol failure so callers can use
+ * another source only for older gateways, while failures remain Unknown.
+ */
+sealed interface GatewayActiveSessionsResult {
+    data class Success(val sessions: List<GatewayActiveSession>) : GatewayActiveSessionsResult
+    data object Unsupported : GatewayActiveSessionsResult
+    data class TransientFailure(val error: Throwable) : GatewayActiveSessionsResult
+}
+
 /**
  * Connection-level background-process events. These are deliberately separate
  * from [GatewayTurnCallbacks]: output and completion notifications can arrive

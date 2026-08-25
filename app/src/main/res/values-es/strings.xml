@@ -840,6 +840,10 @@
     <string name="drawer_search_sessions">Buscar sesiones</string>
     <string name="drawer_activity_working">En curso</string>
     <string name="drawer_activity_needs_input">Requiere intervención</string>
+    <string name="drawer_activity_starting">Iniciando</string>
+    <string name="drawer_activity_background_work">Trabajo en segundo plano</string>
+    <string name="drawer_activity_checking">Comprobando</string>
+    <string name="drawer_activity_unavailable">No disponible</string>
     <string name="drawer_new_thread">Nuevo hilo</string>
     <string name="drawer_chats_not_named">Los chats no tienen nombre automático en esta conexión. Utiliza «→Renombrar».</string>
     <string name="drawer_loading_sessions">Cargando sesiones…</string>
@@ -869,7 +873,7 @@
     <string name="drawer_filter_pinned">Fijado</string>
     <string name="drawer_filter_archive">Archivo</string>
     <string name="drawer_filter_sessions">Sesiones</string>
-    <string name="drawer_timestamp_active">Activo</string>
+    <string name="drawer_timestamp_updated">Actualizado</string>
     <string name="drawer_timestamp_started">Comenzó</string>
     <string name="drawer_just_now">En este momento</string>
     <string name="bridge_back">Atrás</string>

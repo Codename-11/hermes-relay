@@ -1,0 +1,15 @@
+{
+  "name": "active_status_unsupported",
+  "live_session_id": "fixture-live-unsupported",
+  "stored_session_id": "fixture-stored-unsupported",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.session_active_list"
+  ],
+  "initial_history": [],
+  "turns": [],
+  "active_list": {
+    "supported": false,
+    "snapshots": []
+  }
+}

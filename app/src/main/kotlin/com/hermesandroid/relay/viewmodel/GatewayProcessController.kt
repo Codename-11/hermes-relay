@@ -110,6 +110,10 @@ internal class GatewayProcessController(
         resetForSession(sessionId, scopeKey)
     }
 
+    /** True only when the published process snapshot belongs to this exact owner. */
+    fun ownsSnapshot(sessionId: String, scopeKey: String?): Boolean =
+        selectedSessionId == sessionId && selectedScopeKey == scopeKey && readySessionId == sessionId
+
     /**
      * Admit process RPCs for [sessionId] after the gateway has created/resumed
      * that chat's live session. Stale ready callbacks are ignored.
