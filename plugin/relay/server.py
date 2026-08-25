@@ -1185,7 +1185,7 @@ async def handle_provider_usage(request: web.Request) -> web.Response:
             request.query.get("profile"),
         )
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc)) from exc
+        raise web.HTTPBadRequest(text="invalid or unknown profile") from exc
     return web.json_response(
         await collect_provider_usage(
             profile_home=profile_home,
