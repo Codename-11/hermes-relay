@@ -1,6 +1,20 @@
 {
  "versions": [
   {
+   "version": "1.13.2",
+   "title": "Clear session activity",
+   "date": "2026-08-25",
+   "sections": [
+    {
+     "header": "Show only confirmed activity",
+     "bullets": [
+      "Keep session rows neutral while optional live activity is unavailable or still loading.",
+      "Show full-row activity borders only during actual Starting or Working turns."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.13.1",
    "title": "Accurate session activity",
    "date": "2026-08-25",

@@ -1,5 +1,4 @@
-v1.13.1 - Accurate session activity
+v1.13.2 - Clear session activity
 
-* Follow live Hermes runtime state for Working, Starting, Needs input, and Idle.
-* Keep stale activity visible until a complete, unambiguous snapshot clears it.
-* Distinguish Checking, Unavailable, and Background work in the session drawer.
+* Keep session rows neutral while optional live activity is unavailable or loading.
+* Show full-row activity borders only during actual Starting or Working turns.

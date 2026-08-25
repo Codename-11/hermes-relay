@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.13.1 - Accurate session activity
+v1.13.2 - Clear session activity
 
-Session activity now follows live Hermes runtime state instead of a recent-activity estimate. Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work stay accurate, and stale state clears only after a complete, unambiguous update.
+Session rows now stay neutral while optional live activity is unavailable or still loading. Full-row activity borders appear only for actual Starting or Working turns.
 ```
 ## Category
 

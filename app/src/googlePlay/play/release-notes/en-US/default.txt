@@ -1,1 +1,1 @@
-Session activity now follows live Hermes runtime state instead of a recent-activity estimate. Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work stay accurate, and stale state clears only after a complete, unambiguous update.
+Session rows now stay neutral while optional live activity is unavailable or still loading. Full-row activity borders appear only for actual Starting or Working turns.

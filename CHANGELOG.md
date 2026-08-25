@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.13.2] - 2026-08-25
+
 ### Fixed
 
 - **Android session rows stay neutral when optional live activity is unavailable or still loading.** Directory refreshes no longer restore a persistent Checking state, and full-row activity borders are reserved for actual Starting or Working turns.
