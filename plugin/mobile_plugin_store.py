@@ -336,6 +336,8 @@ class MobilePluginStore:
             if required:
                 raise MobilePluginNotFoundError(plugin_id)
             return {}
+        except MobilePluginStoreError:
+            raise
         except (OSError, ValueError, json.JSONDecodeError):
             if required:
                 raise MobilePluginNotFoundError(plugin_id)

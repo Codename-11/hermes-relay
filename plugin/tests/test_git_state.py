@@ -328,16 +328,23 @@ class GitStateFileTests(unittest.TestCase):
         self.assertIn("not valid UTF-8 text", str(ctx.exception))
 
     def test_read_tracked_link_outside_repo_is_rejected(self) -> None:
-        outside = self.base / "outside"
-        outside.mkdir()
-        (outside / "secret.txt").write_text("secret", encoding="utf-8")
-        link = self.repo / "leak"
-        _link_directory(link, outside)
-        _git(self.repo, "add", "leak/secret.txt")
+        if os.name == "nt":
+            outside = self.base / "outside"
+            outside.mkdir()
+            (outside / "secret.txt").write_text("secret", encoding="utf-8")
+            link = self.repo / "leak"
+            _link_directory(link, outside)
+            tracked_path = "leak/secret.txt"
+        else:
+            outside = self.base / "outside.txt"
+            outside.write_text("secret", encoding="utf-8")
+            (self.repo / "leak.txt").symlink_to(outside)
+            tracked_path = "leak.txt"
+        _git(self.repo, "add", tracked_path)
         _git(self.repo, "commit", "-q", "-m", "track link")
 
         with self.assertRaisesRegex(git_state.GitStateError, "escapes repository"):
-            git_state.read_file(self.repo, "leak/secret.txt")
+            git_state.read_file(self.repo, tracked_path)
 
     def test_read_tracked_file_is_bounded_during_read(self) -> None:
         (self.repo / "large.txt").write_text("x" * (git_state.MAX_FILE_BYTES + 100), encoding="utf-8")
