@@ -258,6 +258,19 @@ class ProviderUsageEndpointTests(AioHTTPTestCase):
         response = await self.client.get("/usage/providers")
         self.assertEqual(response.status, 401)
 
+    async def test_invalid_profile_error_does_not_reflect_request_input(self) -> None:
+        token = await self._mint()
+        response = await self.client.get(
+            "/usage/providers?profile=../private-token",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        body = await response.text()
+        self.assertEqual(response.status, 400 if self.usage_enabled else 404)
+        if self.usage_enabled:
+            self.assertEqual(body, "invalid or unknown profile")
+        self.assertNotIn("private-token", body)
+
     @mock.patch(
         "plugin.relay.server.collect_provider_usage",
         new=mock.AsyncMock(return_value={"schema_version": 1, "providers": []}),

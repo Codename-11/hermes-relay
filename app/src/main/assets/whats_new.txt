@@ -1,6 +1,6 @@
-v1.12.1 - Sharing and recovery that work
+v1.13.0 - Bots, usage, and reliable chat
 
-* Open shared links, text, images, and files as a reviewable draft without auto-sending.
-* Add or renew a connection without getting stuck during secure setup.
-* See clear recovery guidance when chat or profile history is unavailable.
-* Find secret-free secure-storage fallback and recovery evidence in Diagnostics.
+* Use Bot Mode across saved Hermes gateways without changing the foreground connection.
+* Review Codex, Nous, and OpenCode Go usage from one provider-neutral screen.
+* Include bounded visible text and an available screenshot in compatible Assistant turns.
+* Keep the composer accurate when Gateway completion frames and visible bubbles settle separately.
