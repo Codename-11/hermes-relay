@@ -466,6 +466,7 @@ class ChatViewModel : ViewModel() {
         // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
         private const val MEDIA_FETCH_TIMEOUT_MS = 120_000L
+        private val WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX = Regex("""^[A-Za-z]:[\\/].+""")
 
         /** Upper bound on the rolling tool-call history flow. */
         const val TOOL_CALL_HISTORY_LIMIT = 10
@@ -8977,11 +8978,10 @@ class ChatViewModel : ViewModel() {
      * Re-run the fetch for an attachment that's in the "Tap to download"
      * deferred state. Used by the inbound-media card's CTA on cellular.
      *
-     * Works for both flavors of inbound attachment: if the stored key starts
-     * with `/` it's an absolute path (bare-media form, use
-     * [RelayHttpClient.fetchMediaByPath]); otherwise it's a relay token
-     * (use [RelayHttpClient.fetchMedia]). `secrets.token_urlsafe` never
-     * produces `/` so the prefix check is unambiguous.
+     * Works for both flavors of inbound attachment: POSIX paths start with `/`
+     * and Windows paths match `C:\...`; both use
+     * [RelayHttpClient.fetchMediaByPath]. Everything else is an opaque relay
+     * token and uses [RelayHttpClient.fetchMedia].
      */
     fun manualFetchAttachment(messageId: String, attachmentIndex: Int) {
         if (supervisedModePolicy.enabled &&
@@ -9017,7 +9017,10 @@ class ChatViewModel : ViewModel() {
                 settings,
                 expectedRole = expectedRole,
             ) {
-                if (fetchKey.startsWith("/")) {
+                if (
+                    fetchKey.startsWith("/") ||
+                    WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX.matches(fetchKey)
+                ) {
                     relay.fetchMediaByPath(fetchKey)
                 } else {
                     relay.fetchMedia(fetchKey)
@@ -9120,9 +9123,9 @@ class ChatViewModel : ViewModel() {
             },
             content = "",
             state = AttachmentState.LOADING,
-            // Reuse relayToken as a generic inbound-fetch key. Paths always
-            // start with `/`, real tokens never do — downstream helpers
-            // that need to distinguish can check the prefix.
+            // Reuse relayToken as a generic inbound-fetch key. Downstream
+            // helpers distinguish POSIX or Windows absolute paths from opaque
+            // relay tokens.
             relayToken = originalPath,
             fileName = originalPath.substringAfterLast('/').substringAfterLast('\\').ifBlank { null }
         )

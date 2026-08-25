@@ -62,6 +62,18 @@ automotive device verified foreground preservation, AssistStructure and screensh
 delivery, immediate listening, contextual response, and one-shot consumption;
 broader firmware certification remains tracked in `TODO.md`.
 
+## 2026-08-23 — Windows attachment retry and Hermes-home resolution
+
+Android now recognizes Windows absolute paths during manual inbound-media retry.
+Cellular-deferred `MEDIA:C:\...` documents use Relay's authenticated
+`/media/by-path` route instead of being sent to the opaque-token route and
+misreported as expired. A Robolectric/MockWebServer regression covers a spaced
+Markdown filename and asserts the exact route and decoded path query.
+
+Relay configuration now derives its default `config.yaml` and session-persistence
+paths from `HERMES_HOME` when present. `RELAY_HERMES_CONFIG` remains the explicit
+override. Focused Python tests cover both resolution paths.
+
 ## 2026-08-23 — GitHub Discussions community surface
 
 GitHub Discussions is enabled as the repository's lightweight community surface.

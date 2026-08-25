@@ -160,6 +160,12 @@ class RelayConfig:
     @classmethod
     def from_env(cls) -> RelayConfig:
         """Build config from environment variables, falling back to defaults."""
+        hermes_home = (os.getenv("HERMES_HOME") or "").strip()
+        default_hermes_config = (
+            str(Path(hermes_home).expanduser() / "config.yaml")
+            if hermes_home
+            else cls.hermes_config_path
+        )
         config = cls(
             host=os.getenv("RELAY_HOST", cls.host),
             port=int(os.getenv("RELAY_PORT", str(cls.port))),
@@ -167,7 +173,7 @@ class RelayConfig:
             ssl_key=os.getenv("RELAY_SSL_KEY"),
             webapi_url=os.getenv("RELAY_WEBAPI_URL", cls.webapi_url),
             hermes_config_path=os.getenv(
-                "RELAY_HERMES_CONFIG", cls.hermes_config_path
+                "RELAY_HERMES_CONFIG", default_hermes_config
             ),
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
