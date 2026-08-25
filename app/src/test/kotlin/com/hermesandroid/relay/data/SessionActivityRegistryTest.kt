@@ -10,22 +10,35 @@ class SessionActivityRegistryTest {
     private val scope = SessionActivityScope.of("connection-a", "default")
 
     @Test
-    fun `directory owner is checking until status is unavailable or confirms idle`() {
+    fun `directory owner stays neutral until status confirms live activity`() {
         val checking = SessionActivityRegistry().reduce(
             SessionActivityUpdate.ObserveOwner(owner, generation = 1, observedAtMillis = 1),
         )
         assertEquals(SessionActivityPhase.Idle, checking.record(owner)?.phase())
-        assertEquals(SessionActivityState.Checking, checking.record(owner)?.presentationState())
+        assertEquals(SessionActivityFreshness.Revalidating, checking.record(owner)?.freshness)
+        assertNull(checking.record(owner)?.presentationState())
 
         val unavailable = checking.reduce(
             SessionActivityUpdate.StatusUnavailable(scope, generation = 1, observedAtMillis = 2),
         )
-        assertEquals(SessionActivityState.Unavailable, unavailable.record(owner)?.presentationState())
+        assertEquals(SessionActivityFreshness.Unavailable, unavailable.record(owner)?.freshness)
+        assertNull(unavailable.record(owner)?.presentationState())
 
         val confirmedIdle = checking.reduce(activeList(scope, generation = 1))
         assertEquals(SessionActivityPhase.Idle, confirmedIdle.record(owner)?.phase())
         assertEquals(SessionActivityFreshness.Confirmed, confirmedIdle.record(owner)?.freshness)
         assertNull(confirmedIdle.record(owner)?.presentationState())
+    }
+
+    @Test
+    fun `directory refresh cannot restore checking after active status is unavailable`() {
+        val state = SessionActivityRegistry()
+            .reduce(SessionActivityUpdate.ObserveOwner(owner, generation = 1, observedAtMillis = 1))
+            .reduce(SessionActivityUpdate.StatusUnavailable(scope, generation = 1, observedAtMillis = 2))
+            .reduce(SessionActivityUpdate.ObserveOwner(owner, generation = 1, observedAtMillis = 3))
+
+        assertEquals(SessionActivityFreshness.Unavailable, state.record(owner)?.freshness)
+        assertNull(state.record(owner)?.presentationState())
     }
 
     @Test
@@ -184,7 +197,7 @@ class SessionActivityRegistryTest {
     }
 
     @Test
-    fun `failed or unsupported status refresh is unavailable rather than idle`() {
+    fun `failed or unsupported status refresh preserves evidence but presents a neutral row`() {
         val state = SessionActivityRegistry()
             .reduce(
                 SessionActivityUpdate.LiveState(
@@ -206,7 +219,7 @@ class SessionActivityRegistryTest {
 
         assertEquals(SessionActivityPhase.Working, state.record(owner)?.phase())
         assertEquals(SessionActivityFreshness.Unavailable, state.record(owner)?.freshness)
-        assertEquals(SessionActivityState.Unavailable, state.record(owner)?.presentationState())
+        assertNull(state.record(owner)?.presentationState())
     }
 
     @Test
@@ -226,7 +239,7 @@ class SessionActivityRegistryTest {
     }
 
     @Test
-    fun `presentation keeps starting background and revalidation distinct from working`() {
+    fun `presentation keeps starting and background distinct while revalidation stays neutral`() {
         val starting = SessionActivityRegistry().reduce(
             SessionActivityUpdate.LocalSend(owner, generation = 1, observedAtMillis = 1),
         )
@@ -240,7 +253,7 @@ class SessionActivityRegistryTest {
         val checking = starting.reduce(
             SessionActivityUpdate.BeginGeneration(scope, generation = 2, observedAtMillis = 2),
         )
-        assertEquals(SessionActivityState.Checking, checking.record(owner)?.presentationState())
+        assertNull(checking.record(owner)?.presentationState())
     }
 
     @Test
@@ -287,7 +300,7 @@ class SessionActivityRegistryTest {
     }
 
     @Test
-    fun `restored needs-input checkpoint stays checking until live confirmation`() {
+    fun `restored needs-input checkpoint stays neutral until live confirmation`() {
         val state = SessionActivityRegistry().reduce(
             SessionActivityUpdate.RestoreCheckpoint(
                 owner = owner,
@@ -298,7 +311,7 @@ class SessionActivityRegistryTest {
             ),
         )
 
-        assertEquals(SessionActivityState.Checking, state.record(owner)?.presentationState())
+        assertNull(state.record(owner)?.presentationState())
     }
 
     @Test
@@ -323,7 +336,7 @@ class SessionActivityRegistryTest {
                 ),
             )
 
-        assertEquals(SessionActivityState.Checking, state.record(owner)?.presentationState())
+        assertNull(state.record(owner)?.presentationState())
 
         state = state.reduce(
             SessionActivityUpdate.PendingInputOpened(
