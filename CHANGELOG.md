@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android fresh chats no longer inherit a stale busy composer.** New-chat navigation settles visible streaming ownership even when a Gateway turn has already lost its live handle, and Stop remains an immediate escape hatch after the terminal bubble has settled. (#416, #418)
 - **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
 - **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
 - **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
