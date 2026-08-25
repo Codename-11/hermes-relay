@@ -106,3 +106,35 @@ export function normalizeMutationResult(data) {
     branches: normalizeBranches(src.branches),
   };
 }
+
+/**
+ * Normalize a /git/commit_message response into {message, notice, stashed}.
+ * Missing fields degrade safely so the tab can render without branching.
+ */
+export function normalizeCommitMessage(data) {
+  const src = data && typeof data === "object" ? data : {};
+  return {
+    message: typeof src.message === "string" ? src.message : "",
+    notice: typeof src.notice === "string" ? src.notice : "",
+  };
+}
+
+/**
+ * True when a commit-message suggestion is usable (non-empty message).
+ */
+export function hasCommitSuggestion(result) {
+  return !!(result && result.message && result.message.trim());
+}
+
+/**
+ * Normalize a /git/stash_checkout response: the standard mutation shape plus
+ * {stashed, stash_message}.
+ */
+export function normalizeStashCheckout(data) {
+  const src = data && typeof data === "object" ? data : {};
+  return {
+    ...normalizeMutationResult(data),
+    stashed: !!src.stashed,
+    stashMessage: typeof src.stash_message === "string" ? src.stash_message : "",
+  };
+}

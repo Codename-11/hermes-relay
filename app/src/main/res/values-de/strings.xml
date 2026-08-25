@@ -4044,6 +4044,10 @@
     <string name="git_state_confirm_checkout_dirty_title">Branch mit lokalen Änderungen wechseln?</string>
     <string name="git_state_confirm_checkout_dirty_text">Der Arbeitsbaum enthält nicht committete Änderungen. Beim Wechseln werden sie möglicherweise auf den Zielbranch übertragen.</string>
     <string name="git_state_confirm_checkout_confirm">Wechseln</string>
+    <string name="git_state_generate_message">Commit-Nachricht generieren</string>
+    <string name="git_state_generating_message">Commit-Nachricht wird generiert…</string>
+    <string name="git_state_push_after_commit">Nach Commit pushen</string>
+    <string name="git_state_switch_stash">Wechseln (bei Änderungen stashen)</string>
     <string name="support_bundle_review">Supportinformationen prüfen</string>
     <string name="support_bundle_title">Supportinformationen</string>
     <string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfen Sie den lokalen Export mit bis zu %1$d Berichten.</string>

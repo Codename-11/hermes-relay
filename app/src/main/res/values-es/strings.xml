@@ -3729,6 +3729,10 @@
     <string name="git_state_confirm_checkout_dirty_title">¿Cambiar de rama con cambios locales?</string>
     <string name="git_state_confirm_checkout_dirty_text">El árbol de trabajo tiene cambios sin confirmar. Cambiar puede trasladarlos a la rama de destino.</string>
     <string name="git_state_confirm_checkout_confirm">Cambiar</string>
+    <string name="git_state_generate_message">Generar mensaje de confirmación</string>
+    <string name="git_state_generating_message">Generando mensaje de confirmación…</string>
+    <string name="git_state_push_after_commit">Enviar después de confirmar</string>
+    <string name="git_state_switch_stash">Cambiar (guardar en stash si hay cambios)</string>
     <string name="support_bundle_review">Revisar información de soporte</string>
     <string name="support_bundle_title">Información de soporte</string>
     <string name="support_bundle_privacy">Nada se sube automáticamente. Revisa la exportación local con hasta %1$d informes.</string>

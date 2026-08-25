@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -433,6 +433,113 @@ class GitWriteApiTests(unittest.TestCase):
         paths = [f"f{i}.txt" for i in range(201)]
         response = self.client.post(
             "/git/stage", json={"repo": "alpha", "paths": paths}
+        )
+        self.assertEqual(400, response.status_code, response.text)
+
+
+class GitExtrasApiTests(unittest.TestCase):
+    """Endpoints for the Phase 3 extras surface (AI messages + stash-checkout)."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name) / "projects"
+        self.base.mkdir(parents=True)
+        self.repo = _init_repo(self.base, "alpha")
+        self.env = patch.dict(
+            os.environ,
+            {"HERMES_HOME": self.temp.name, "GIT_STATE_BASE_PATH": str(self.base)},
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        app = FastAPI()
+        app.include_router(git_api.router)
+        self.client = TestClient(app)
+
+    def _staged(self, path: str, content: str) -> None:
+        (self.repo / path).write_text(content, encoding="utf-8")
+        self.client.post("/git/stage", json={"repo": "alpha", "paths": [path]})
+
+    def test_commit_message_empty_staged_returns_notice_without_model(self) -> None:
+        # Clean tree → nothing staged → no model needed, no 500.
+        response = self.client.post("/git/commit_message", json={"repo": "alpha"})
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual("", body["message"])
+        self.assertEqual("nothing staged", body["notice"])
+
+    def test_commit_message_with_staged_diff_generates_message(self) -> None:
+        self._staged("feature.txt", "new feature\n")
+        with patch.object(git_state, "_llm_call", new=AsyncMock(return_value="resp")), patch.object(
+            git_state, "_llm_extract", return_value="feat: add feature"
+        ):
+            response = self.client.post(
+                "/git/commit_message", json={"repo": "alpha"}
+            )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("feat: add feature", response.json()["message"])
+
+    def test_commit_message_model_failure_degrades_gracefully(self) -> None:
+        self._staged("a.txt", "x\n")
+        with patch.object(
+            git_state, "_llm_call", new=AsyncMock(side_effect=RuntimeError("no model"))
+        ):
+            response = self.client.post(
+                "/git/commit_message", json={"repo": "alpha"}
+            )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual("", body["message"])
+        self.assertIn("model", body["notice"].lower())
+
+    def test_commit_message_selected_honors_only_given_paths(self) -> None:
+        self._staged("kept.txt", "kept\n")
+        self._staged("skip.txt", "skip\n")
+        with patch.object(git_state, "_llm_call", new=AsyncMock(return_value="ok")), patch.object(
+            git_state, "_llm_extract", return_value="add kept"
+        ):
+            response = self.client.post(
+                "/git/commit_message_selected",
+                json={"repo": "alpha", "paths": ["kept.txt"]},
+            )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("add kept", response.json()["message"])
+
+    def test_commit_message_unknown_repo_is_400(self) -> None:
+        response = self.client.post(
+            "/git/commit_message", json={"repo": "bogus"}
+        )
+        self.assertEqual(400, response.status_code, response.text)
+
+    def test_stash_checkout_dirty_tree_returns_stash_notice(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        (self.repo / "README.md").write_text("dirty", encoding="utf-8")
+        response = self.client.post(
+            "/git/stash_checkout", json={"repo": "alpha", "ref": "feature"}
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertTrue(body["stashed"])
+        self.assertEqual("git-state: feature", body["stash_message"])
+        self.assertEqual("feature", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+        self.assertIn("git-state: feature", _git(self.repo, "stash", "list"))
+
+    def test_stash_checkout_clean_tree_plain_checkout(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+        response = self.client.post(
+            "/git/stash_checkout", json={"repo": "alpha", "ref": "feature"}
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertFalse(body["stashed"])
+        self.assertEqual("", body["stash_message"])
+        self.assertEqual("feature", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_stash_checkout_bad_ref_is_400(self) -> None:
+        response = self.client.post(
+            "/git/stash_checkout", json={"repo": "alpha", "ref": "nope"}
         )
         self.assertEqual(400, response.status_code, response.text)
 

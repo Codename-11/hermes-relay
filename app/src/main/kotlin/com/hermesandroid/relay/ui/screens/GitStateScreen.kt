@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -49,6 +50,7 @@ import com.hermesandroid.relay.data.GitRepo
 import com.hermesandroid.relay.data.GitStatus
 import com.hermesandroid.relay.viewmodel.GitConfirmationStrings
 import com.hermesandroid.relay.viewmodel.GitContentViewState
+import com.hermesandroid.relay.viewmodel.GitMessageGenerationState
 import com.hermesandroid.relay.viewmodel.GitMutationState
 import com.hermesandroid.relay.viewmodel.GitRepoDetailState
 import com.hermesandroid.relay.viewmodel.GitStateUiState
@@ -75,6 +77,14 @@ fun GitStateScreen(
     // Hoisted at screen level so confirmation/commit dialogs are modal.
     var pendingConfirm by remember { mutableStateOf<ConfirmationRequest?>(null) }
     var showCommitDialog by remember { mutableStateOf(false) }
+    var pushAfterCommit by rememberSaveable { mutableStateOf(false) }
+
+    // Staged paths for the AI magic-wand (commit_message_selected) + commit.
+    val stagedPaths = (detailState as? GitRepoDetailState.Ready)
+        ?.status?.staged?.map { it.path } ?: emptyList()
+
+    val messageGenerationState by viewModel.messageGeneration.collectAsState()
+    val stashNotice by viewModel.stashNotice.collectAsState()
 
     Scaffold(
         topBar = {
@@ -118,6 +128,16 @@ fun GitStateScreen(
                                 mutation = mutationState,
                                 onClear = viewModel::clearMutationError,
                             )
+                            stashNotice?.let { notice ->
+                                Card(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        notice,
+                                        modifier = Modifier.padding(16.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            }
                             if (!hasGrant) {
                                 WriteGrantNotice()
                             }
@@ -146,6 +166,9 @@ fun GitStateScreen(
                                         viewModel.checkout(ref)
                                     }
                                 },
+                                onStashSwitchBranch = { ref ->
+                                    viewModel.stashCheckout(ref)
+                                },
                                 onCreateBranch = { name, track ->
                                     viewModel.checkout("", newBranch = name, track = track)
                                 },
@@ -161,9 +184,23 @@ fun GitStateScreen(
     if (showCommitDialog) {
         CommitDialog(
             onDismiss = { showCommitDialog = false },
+            hasStaged = stagedPaths.isNotEmpty(),
+            generatingMessage = messageGenerationState is GitMessageGenerationState.Loading,
+            onGenerate = {
+                viewModel.generateCommitMessage(
+                    if (stagedPaths.isNotEmpty()) stagedPaths else null,
+                )
+            },
+            generatedMessage = (messageGenerationState as? GitMessageGenerationState.Ready)?.message ?: "",
+            generationNotice = (messageGenerationState as? GitMessageGenerationState.Ready)?.notice,
+            pushAfterCommit = pushAfterCommit,
+            onPushAfterCommitChange = { pushAfterCommit = it },
             onCommit = { message ->
                 showCommitDialog = false
                 viewModel.commit(message)
+                if (pushAfterCommit) {
+                    pendingConfirm = ConfirmationRequest.Push
+                }
             },
         )
     }
@@ -243,20 +280,59 @@ private sealed interface ConfirmationRequest {
 @Composable
 private fun CommitDialog(
     onDismiss: () -> Unit,
+    hasStaged: Boolean,
+    generatingMessage: Boolean,
+    onGenerate: () -> Unit,
+    generatedMessage: String,
+    generationNotice: String?,
+    pushAfterCommit: Boolean,
+    onPushAfterCommitChange: (Boolean) -> Unit,
     onCommit: (String) -> Unit,
 ) {
     var message by rememberSaveable { mutableStateOf("") }
+    // Pre-fill with the latest generated suggestion when it arrives.
+    if (generatedMessage.isNotEmpty() && message.isBlank()) {
+        message = generatedMessage
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.git_state_commit_title)) },
         text = {
-            OutlinedTextField(
-                value = message,
-                onValueChange = { message = it },
-                label = { Text(stringResource(R.string.git_state_commit_message_hint)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    label = { Text(stringResource(R.string.git_state_commit_message_hint)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = false,
+                    trailingIcon = {
+                        IconButton(onClick = onGenerate, enabled = hasStaged && !generatingMessage) {
+                            Icon(
+                                Icons.Filled.AutoAwesome,
+                                stringResource(R.string.git_state_generate_message),
+                            )
+                        }
+                    },
+                )
+                if (generatingMessage) {
+                    Text(
+                        stringResource(R.string.git_state_generating_message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                generationNotice?.let { notice ->
+                    Text(
+                        notice,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = pushAfterCommit, onCheckedChange = onPushAfterCommitChange)
+                    Text(stringResource(R.string.git_state_push_after_commit))
+                }
+            }
         },
         confirmButton = {
             TextButton(
@@ -386,6 +462,7 @@ private fun RepoDetail(
     onPull: () -> Unit,
     onPush: () -> Unit,
     onSwitchBranch: (String) -> Unit,
+    onStashSwitchBranch: (String) -> Unit,
     onCreateBranch: (String, Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -485,6 +562,7 @@ private fun RepoDetail(
                 branches = branches,
                 hasGrant = hasGrant,
                 onSwitch = onSwitchBranch,
+                onStashSwitch = onStashSwitchBranch,
                 onCreate = onCreateBranch,
             )
         }
@@ -529,6 +607,7 @@ private fun BranchCard(
     branches: List<GitBranch>,
     hasGrant: Boolean,
     onSwitch: (String) -> Unit,
+    onStashSwitch: (String) -> Unit,
     onCreate: (String, Boolean) -> Unit,
 ) {
     var newBranchName by rememberSaveable { mutableStateOf("") }
@@ -563,6 +642,12 @@ private fun BranchCard(
                             enabled = hasGrant,
                         ) {
                             Text(stringResource(R.string.git_state_switch))
+                        }
+                        OutlinedButton(
+                            onClick = { onStashSwitch(branch.name) },
+                            enabled = hasGrant,
+                        ) {
+                            Text(stringResource(R.string.git_state_switch_stash))
                         }
                     }
                 }

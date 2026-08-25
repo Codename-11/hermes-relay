@@ -650,6 +650,152 @@ def checkout(
     return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
 
+def _staged_diff(repo: Path, paths: list[str] | None) -> tuple[str, bool]:
+    """Return the bounded staged diff for ``paths`` (or all staged when None).
+
+    Returns ``(diff_text, truncated)``. The diff is capped at MAX_DIFF_BYTES so
+    the LLM prompt stays bounded. Untracked/modified-but-unstaged content is
+    never included: only what is staged is eligible for a commit message.
+    """
+    args = ["diff", "--cached", "--no-color"]
+    if paths:
+        args.append("--")
+        args.extend(paths)
+    output = _git(repo, *args)
+    truncated = len(output) > MAX_DIFF_BYTES
+    if truncated:
+        output = output[:MAX_DIFF_BYTES]
+    return output, truncated
+
+
+def _llm_call(messages: list[dict[str, str]]):
+    """Call the agent's in-process LLM on a chat ``messages`` list.
+
+    Reuses the plugin's existing upstream plumbing: ``agent.auxiliary_client``
+    (the same in-process helper the upstream tools use). The import is deferred
+    so the module stays importable in test envs without the agent package; the
+    message-generation tests monkeypatch ``_llm_call``/``_llm_extract``.
+    """
+    client = _resolve_llm()
+    return client(messages=messages)
+
+
+def _llm_extract(response: Any) -> str:
+    from agent.auxiliary_client import extract_content_or_reasoning
+
+    return extract_content_or_reasoning(response)
+
+
+def _resolve_llm():
+    """Resolve the deferred async model client callable (raises if absent)."""
+    from agent.auxiliary_client import async_call_llm
+
+    return async_call_llm
+
+
+async def _generate_message(diff: str) -> dict[str, Any]:
+    """Build the LLM prompt for a bounded staged diff and return the suggestion.
+
+    A missing model or failed call degrades to an empty message with a
+    ``model unavailable`` notice — never an exception/500.
+    """
+    if not diff.strip():
+        return {"message": "", "notice": "nothing staged"}
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "Write a conventional commit message for the staged diff below. "
+                "Return ONLY the message: a subject line under 72 characters in "
+                "the form 'type: summary', then a blank line, then an optional "
+                "body describing what and why. Do not wrap in quotes.\n\n"
+                f"<staged diff>\n{diff}\n</staged diff>"
+            ),
+        }
+    ]
+    try:
+        response = await _llm_call(messages=messages)
+        text = _llm_extract(response).strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("commit message generation unavailable: %s", exc)
+        return {"message": "", "notice": "model unavailable for commit messages"}
+    if not text:
+        return {"message": "", "notice": "model returned no suggestion"}
+    return {"message": text, "notice": ""}
+
+
+async def commit_message(repo: Path) -> dict[str, Any]:
+    """Generate a conventional-style commit-message suggestion from the staged diff.
+
+    Empty staged diff → ``{"message": "", "notice": "nothing staged"}`` WITHOUT
+    calling the LLM. A missing model or failed call degrades to an empty message
+    with a ``model unavailable`` notice — never an exception/500. Only staged
+    content is ever sent.
+    """
+    diff, _ = _staged_diff(repo, None)
+    return await _generate_message(diff)
+
+
+async def commit_message_selected(
+    repo: Path, paths: list[str]
+) -> dict[str, Any]:
+    """Generate a commit-message suggestion from the staged diff of ``paths``.
+
+    Only the given paths' staged content is considered; a path with nothing
+    staged contributes nothing. Empty staged diff → no LLM call.
+    """
+    safe = _validate_paths(paths)
+    diff, _ = _staged_diff(repo, safe)
+    return await _generate_message(diff)
+
+
+def stash_checkout(
+    repo: Path,
+    ref: str,
+    new_branch: str = "",
+    track: bool = False,
+) -> dict[str, Any]:
+    """Checkout that auto-stashes a dirty tree first.
+
+    Dirty tree: ``git stash push -m "git-state: <ref>"`` then checkout; returns
+    ``{stashed: true, stash_message}`` so the UI can surface the stash. Clean
+    tree: plain checkout with ``{stashed: false}``. No confirmation is required
+    because a stash is recoverable (``git stash``), unlike discard — documented
+    in the endpoint and UI. Git still refuses to overwrite conflicting changes,
+    so there is no data-loss path. ``new_branch``/``track`` mirror the plain
+    checkout surface.
+    """
+    if not ref:
+        raise GitStateError("ref is required")
+
+    stashed = False
+    stash_message = ""
+    if _is_dirty(repo):
+        stash_message = f"git-state: {ref}"
+        _mutate(repo, ["stash", "push", "-m", stash_message])
+        stashed = True
+
+    if new_branch:
+        args = ["checkout", "-b", new_branch]
+        if track:
+            args.append("--track")
+        _mutate(repo, args)
+        return {
+            **{"stashed": stashed, "stash_message": stash_message},
+            **_fresh_mutation_result(repo, {"branches": repo_branches(repo)}),
+        }
+
+    args = ["checkout"]
+    if track:
+        args.append("--track")
+    args.append(ref)
+    _mutate(repo, args)
+    return {
+        **{"stashed": stashed, "stash_message": stash_message},
+        **_fresh_mutation_result(repo, {"branches": repo_branches(repo)}),
+    }
+
+
 def repo_remotes(repo: Path) -> list[dict[str, str]]:
     """Return remote names + URLs with embedded userinfo scrubbed."""
     raw = _git(repo, "remote", "-v")
@@ -749,6 +895,8 @@ __all__ = [
     "MAX_STATUS_ENTRIES",
     "base_path",
     "build_git_document",
+    "commit_message",
+    "commit_message_selected",
     "read_file",
     "repo_branches",
     "repo_diff",
@@ -758,4 +906,5 @@ __all__ = [
     "resolve_repo",
     "resolve_repo_path",
     "scan_repos",
+    "stash_checkout",
 ]

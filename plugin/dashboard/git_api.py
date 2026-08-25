@@ -241,6 +241,57 @@ async def post_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         raise _bad_request(exc) from exc
 
 
+@router.post("/stash_checkout")
+async def post_stash_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Checkout that auto-stashes a dirty tree first.
+
+    Unlike a plain dirty checkout, no confirmation is required: a stash is
+    recoverable (``git stash pop``), so this is not a data-loss path. The
+    response carries ``stashed`` + ``stash_message`` so the UI can surface the
+    stash after a successful switch.
+    """
+    try:
+        return git_state.stash_checkout(
+            _require_repo(body),
+            _ref(body),
+            new_branch=_str_opt(body, "new_branch"),
+            track=bool(body.get("track", False)),
+        )
+    except git_state.GitError as exc:
+        raise _write_error(exc) from exc
+    except git_state.GitStateError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/commit_message")
+async def post_commit_message(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Generate a conventional-style commit message from the staged diff.
+
+    Empty staged diff → ``{message:"", notice:"nothing staged"}`` without calling
+    the model. A missing/failed model degrades to an empty message + a
+    ``model unavailable`` notice — never a 500. Only staged content is sent.
+    """
+    try:
+        return await git_state.commit_message(_require_repo(body))
+    except git_state.GitStateError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/commit_message_selected")
+async def post_commit_message_selected(
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Generate a message from the staged diff of the given ``paths`` only."""
+    try:
+        return await git_state.commit_message_selected(
+            _require_repo(body), _paths(body)
+        )
+    except git_state.GitError as exc:
+        raise _write_error(exc) from exc
+    except git_state.GitStateError as exc:
+        raise _bad_request(exc) from exc
+
+
 def _paths(body: dict[str, Any]) -> list[str]:
     paths = body.get("paths")
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):

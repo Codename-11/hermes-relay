@@ -12,6 +12,9 @@ import {
   gitUnstage,
   gitDiscard,
   gitCommit,
+  gitCommitMessage,
+  gitCommitMessageSelected,
+  gitStashCheckout,
   gitFetch,
   gitPull,
   gitPush,
@@ -19,6 +22,9 @@ import {
 } from "../lib/api.js";
 import {
   normalizeMutationResult,
+  normalizeCommitMessage,
+  normalizeStashCheckout,
+  hasCommitSuggestion,
   requiresConfirmation,
   confirmationFor,
 } from "../lib/git-state.mjs";
@@ -126,11 +132,16 @@ function WriteControls({
   selected,
   commitMessage,
   onCommitMessageChange,
+  generatingMessage,
+  onGenerateMessage,
+  commitNotice,
   newBranch,
   onNewBranchChange,
   branchRef,
   onBranchRefChange,
   mutating,
+  pushAfterCommit,
+  onPushAfterCommitChange,
   onStageAll,
   onStage,
   onUnstage,
@@ -140,6 +151,7 @@ function WriteControls({
   onPull,
   onPush,
   onCheckout,
+  onStashCheckout,
 }) {
   const staged = (status && status.staged || []).map((e) => e.path);
   const modified = (status && status.modified || []).map((e) => e.path);
@@ -161,17 +173,41 @@ function WriteControls({
         </Button>
       </div>
 
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={commitMessage}
-          onChange={(e) => onCommitMessageChange(e.target.value)}
-          placeholder="Commit message"
-          className="w-full rounded-md border px-2 py-1 text-xs"
-        />
-        <Button size="sm" disabled={mutating || !commitMessage.trim()} onClick={onCommit}>
-          Commit
-        </Button>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={commitMessage}
+            onChange={(e) => onCommitMessageChange(e.target.value)}
+            placeholder="Commit message"
+            className="w-full rounded-md border px-2 py-1 text-xs"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={mutating || generatingMessage || staged.length === 0}
+            onClick={onGenerateMessage}
+            title="Generate a commit message from the staged diff"
+          >
+            {generatingMessage ? "Generating…" : "Generate"}
+          </Button>
+        </div>
+        {commitNotice ? (
+          <div className="text-xs text-amber-600">{commitNotice}</div>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={pushAfterCommit}
+              onChange={(e) => onPushAfterCommitChange(e.target.checked)}
+            />
+            Push after commit
+          </label>
+          <Button size="sm" disabled={mutating || !commitMessage.trim()} onClick={onCommit}>
+            Commit
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -191,6 +227,15 @@ function WriteControls({
         />
         <Button size="sm" variant="outline" disabled={mutating || !branchRef.trim()} onClick={onCheckout}>
           Checkout
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={mutating || !branchRef.trim()}
+          onClick={onStashCheckout}
+          title="Switch branches, auto-stashing a dirty tree first"
+        >
+          Stash-checkout
         </Button>
       </div>
 
@@ -298,6 +343,9 @@ export default function GitState({ autoRefresh }) {
   const [branchRef, setBranchRef] = useState("");
   const [mutating, setMutating] = useState(false);
   const [mutationError, setMutationError] = useState(null);
+  const [generatingMessage, setGeneratingMessage] = useState(false);
+  const [commitNotice, setCommitNotice] = useState(null);
+  const [pushAfterCommit, setPushAfterCommit] = useState(false);
 
   const refreshDetail = useCallback(async (repoId) => {
     const [st, br] = await Promise.all([
@@ -340,6 +388,65 @@ export default function GitState({ autoRefresh }) {
   );
 
   /**
+   * Generate a commit-message suggestion from the staged diff (AI). Empty
+   * staged diff / model-unavailable degrade to a notice, never an error.
+   */
+  const generateMessage = useCallback(async () => {
+    if (!selected) return;
+    setGeneratingMessage(true);
+    setCommitNotice(null);
+    try {
+      const stagedPaths = (status && status.staged || []).map((e) => e.path);
+      const data = stagedPaths.length > 0
+        ? await gitCommitMessageSelected(selected, stagedPaths)
+        : await gitCommitMessage(selected);
+      const result = normalizeCommitMessage(data);
+      if (hasCommitSuggestion(result)) {
+        setCommitMessage(result.message);
+        setCommitNotice(result.notice || null);
+      } else {
+        setCommitNotice(result.notice || "Nothing staged to generate a message from.");
+      }
+    } catch (err) {
+      setCommitNotice(err && err.message ? err.message : String(err));
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }, [selected, status]);
+
+  /**
+   * Stash-checkout: switch branches, auto-stashing a dirty tree first. No
+   * confirmation is needed because a stash is recoverable (git stash pop).
+   * On success, surface the stash message so the user can pop it later.
+   */
+  const doStashCheckout = useCallback(async () => {
+    const ref = branchRef.trim();
+    if (!ref || !selected) return;
+    setMutationError(null);
+    setCommitNotice(null);
+    setMutating(true);
+    try {
+      const data = await gitStashCheckout(selected, ref, {
+        newBranch: newBranch.trim(),
+        track: false,
+      });
+      const result = normalizeStashCheckout(data);
+      if (result.stashed) {
+        setCommitNotice(
+          `Stashed changes on ${ref} as “${result.stashMessage}”. Use “git stash pop” to restore them.`,
+        );
+      }
+      await refreshDetail(selected);
+    } catch (err) {
+      setMutationError(err && err.message ? err.message : String(err));
+    } finally {
+      setMutating(false);
+      setBranchRef("");
+      setNewBranch("");
+    }
+  }, [selected, branchRef, newBranch, refreshDetail]);
+
+  /**
    * Destructive ops (discard, push, dirty-checkout) gate on a per-use
    * confirmation echoed back to the server. Matches the dashboard's existing
    * confirm-before-destructive pattern (see RelayManagement onRevoke) and the
@@ -376,7 +483,13 @@ export default function GitState({ autoRefresh }) {
       await applyMutation("commit", [], { message });
     }
     setCommitMessage("");
-  }, [commitMessage, status, applyMutation]);
+    // Push-after-commit: when the toggle is ON, immediately start the existing
+    // push confirmation flow. Confirmation is still required (never bypassed);
+    // the toggle only auto-starts it after a successful commit.
+    if (pushAfterCommit) {
+      requestMutation("push", {});
+    }
+  }, [commitMessage, status, applyMutation, pushAfterCommit, requestMutation]);
 
   const doCheckout = useCallback(async () => {
     const ref = branchRef.trim();
@@ -477,11 +590,16 @@ export default function GitState({ autoRefresh }) {
               selected={selected}
               commitMessage={commitMessage}
               onCommitMessageChange={setCommitMessage}
+              generatingMessage={generatingMessage}
+              onGenerateMessage={generateMessage}
+              commitNotice={commitNotice}
               newBranch={newBranch}
               onNewBranchChange={setNewBranch}
               branchRef={branchRef}
               onBranchRefChange={setBranchRef}
               mutating={mutating}
+              pushAfterCommit={pushAfterCommit}
+              onPushAfterCommitChange={setPushAfterCommit}
               onStageAll={() => requestMutation("stage", { paths: (status && status.modified || []).map((e) => e.path) })}
               onStage={(path) => requestMutation("stage", { paths: [path] })}
               onUnstage={(path) => requestMutation("unstage", { paths: [path] })}
@@ -491,6 +609,7 @@ export default function GitState({ autoRefresh }) {
               onPull={() => requestMutation("pull", {})}
               onPush={() => requestMutation("push", {})}
               onCheckout={doCheckout}
+              onStashCheckout={doStashCheckout}
             />
 
             {status && (status.staged || []).length > 0 ? (

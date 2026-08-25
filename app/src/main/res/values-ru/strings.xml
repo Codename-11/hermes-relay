@@ -3765,6 +3765,10 @@
     <string name="git_state_confirm_checkout_dirty_title">Переключить ветку с локальными изменениями?</string>
     <string name="git_state_confirm_checkout_dirty_text">В рабочем дереве есть незакоммиченные изменения. Переключение может перенести их в целевую ветку.</string>
     <string name="git_state_confirm_checkout_confirm">Переключить</string>
+    <string name="git_state_generate_message">Создать сообщение коммита</string>
+    <string name="git_state_generating_message">Создание сообщения коммита…</string>
+    <string name="git_state_push_after_commit">Отправить после коммита</string>
+    <string name="git_state_switch_stash">Переключить (сохранить изменения, если есть)</string>
     <string name="support_bundle_review">Проверить сведения для поддержки</string>
     <string name="support_bundle_title">Сведения для поддержки</string>
     <string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с не более чем %1$d отчётами.</string>

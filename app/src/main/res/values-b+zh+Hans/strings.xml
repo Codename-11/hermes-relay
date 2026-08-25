@@ -3972,6 +3972,10 @@
     <string name="git_state_confirm_checkout_dirty_title">切换包含本地更改的分支？</string>
     <string name="git_state_confirm_checkout_dirty_text">工作区有未提交的更改。切换后，这些更改可能会被带到目标分支。</string>
     <string name="git_state_confirm_checkout_confirm">切换</string>
+    <string name="git_state_generate_message">生成提交信息</string>
+    <string name="git_state_generating_message">正在生成提交信息…</string>
+    <string name="git_state_push_after_commit">提交后推送</string>
+    <string name="git_state_switch_stash">切换（有更改时暂存）</string>
     <string name="support_bundle_review">查看支持信息</string>
     <string name="support_bundle_title">支持信息</string>
     <string name="support_bundle_privacy">不会自动上传任何内容。请查看最多包含 %1$d 个报告的本地导出。</string>

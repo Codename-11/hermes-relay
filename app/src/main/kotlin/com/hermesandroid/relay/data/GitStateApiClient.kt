@@ -130,4 +130,34 @@ class GitStateApiClient(
         if (newBranch.isNotEmpty()) put("new_branch", newBranch)
         put("track", track)
     }).mapCatching { json.decodeFromJsonElement<GitMutationResult>(it) }
+
+    // ── Phase 3 extras ─────────────────────────────────────────────────────
+
+    /** Generate a commit-message suggestion from the staged diff. */
+    suspend fun commitMessage(repo: String): Result<GitCommitMessage> =
+        scoped.post("git/commit_message", buildJsonObject {
+            put("repo", repo)
+        }).mapCatching { json.decodeFromJsonElement<GitCommitMessage>(it) }
+
+    /** Generate a commit-message suggestion from the given paths' staged diff. */
+    suspend fun commitMessageSelected(
+        repo: String,
+        paths: List<String>,
+    ): Result<GitCommitMessage> = scoped.post("git/commit_message_selected", buildJsonObject {
+        put("repo", repo)
+        put("paths", pathsArray(paths))
+    }).mapCatching { json.decodeFromJsonElement<GitCommitMessage>(it) }
+
+    /** Checkout that auto-stashes a dirty tree first. */
+    suspend fun stashCheckout(
+        repo: String,
+        ref: String,
+        newBranch: String = "",
+        track: Boolean = false,
+    ): Result<GitStashCheckoutResult> = scoped.post("git/stash_checkout", buildJsonObject {
+        put("repo", repo)
+        put("ref", ref)
+        if (newBranch.isNotEmpty()) put("new_branch", newBranch)
+        put("track", track)
+    }).mapCatching { json.decodeFromJsonElement<GitStashCheckoutResult>(it) }
 }

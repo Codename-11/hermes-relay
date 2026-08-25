@@ -48,6 +48,13 @@ sealed interface GitMutationState {
     data class Success(val label: String, val head: String) : GitMutationState
 }
 
+/** A commit-message generation attempt (AI magic-wand). */
+sealed interface GitMessageGenerationState {
+    data object Idle : GitMessageGenerationState
+    data object Loading : GitMessageGenerationState
+    data class Ready(val message: String, val notice: String) : GitMessageGenerationState
+}
+
 /** Fixed per-use confirmation tokens matching the plugin's server constants. */
 object GitConfirmationStrings {
     const val DISCARD = "discard"
@@ -78,6 +85,16 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
 
     private val _mutation = MutableStateFlow<GitMutationState>(GitMutationState.Idle)
     val mutation: StateFlow<GitMutationState> = _mutation.asStateFlow()
+
+    private val _messageGeneration =
+        MutableStateFlow<GitMessageGenerationState>(GitMessageGenerationState.Idle)
+    val messageGeneration: StateFlow<GitMessageGenerationState> = _messageGeneration.asStateFlow()
+
+    private val _pushAfterCommit = MutableStateFlow(false)
+    val pushAfterCommit: StateFlow<Boolean> = _pushAfterCommit.asStateFlow()
+
+    private val _stashNotice = MutableStateFlow<String?>(null)
+    val stashNotice: StateFlow<String?> = _stashNotice.asStateFlow()
 
     private var api: GitStateApiClient? = null
     private var loadJob: Job? = null
@@ -240,11 +257,15 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         }
 
     fun commit(message: String) = runMutation("Commit") { c, r ->
-        c.commit(r, message).map { GitMutationState.Success("commit", it.head) }
+        c.commit(r, message).map {
+            GitMutationState.Success("commit", it.head)
+        }
     }
 
     fun commitSelected(message: String, paths: List<String>) = runMutation("Commit") { c, r ->
-        c.commitSelected(r, message, paths).map { GitMutationState.Success("commit", it.head) }
+        c.commitSelected(r, message, paths).map {
+            GitMutationState.Success("commit", it.head)
+        }
     }
 
     fun fetch(remote: String = "origin") = runMutation("Fetch") { c, r ->
@@ -269,6 +290,108 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         c.checkout(r, ref, confirmation, newBranch, track)
             .map { GitMutationState.Success("checkout", it.head) }
     }
+
+    // ── Phase 3 extras ─────────────────────────────────────────────────────
+
+    /** Toggle the push-after-commit flow (default OFF; never bypasses confirm). */
+    fun setPushAfterCommit(enabled: Boolean) {
+        _pushAfterCommit.value = enabled
+    }
+
+    /**
+     * Generate a commit-message suggestion from the staged diff (AI magic-wand).
+     * Empty staged diff / model-unavailable degrade to a notice, never an error.
+     * Uses the shared write grant gate (a POST is never sent without the grant).
+     */
+    fun generateCommitMessage(paths: List<String>? = null) {
+        val client = api ?: run {
+            _messageGeneration.value =
+                GitMessageGenerationState.Ready("", "Dashboard connection unavailable")
+            return
+        }
+        val repoId = selectedRepoId ?: run {
+            _messageGeneration.value = GitMessageGenerationState.Ready("", "No repository selected")
+            return
+        }
+        if (!writeGrant) {
+            _messageGeneration.value = GitMessageGenerationState.Ready(
+                "",
+                "Allow plugin changes (plugin.api.write) before using this action.",
+            )
+            return
+        }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _messageGeneration.value = GitMessageGenerationState.Loading
+            val result = if (paths != null) {
+                client.commitMessageSelected(repoId, paths)
+            } else {
+                client.commitMessage(repoId)
+            }
+            result.fold(
+                onSuccess = { msg ->
+                    _messageGeneration.value = GitMessageGenerationState.Ready(msg.message, msg.notice)
+                },
+                onFailure = { error ->
+                    _messageGeneration.value = GitMessageGenerationState.Ready(
+                        "",
+                        error.message ?: "Could not generate a commit message.",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Checkout that auto-stashes a dirty tree first. No confirmation is needed
+     * because a stash is recoverable. Surfaces the stash message via [stashNotice].
+     */
+    fun stashCheckout(ref: String, newBranch: String = "", track: Boolean = false) {
+        val client = api ?: run {
+            _mutation.value = GitMutationState.Error("Stash Checkout", "Dashboard connection unavailable")
+            return
+        }
+        val repoId = selectedRepoId ?: run {
+            _mutation.value = GitMutationState.Error("Stash Checkout", "No repository selected")
+            return
+        }
+        if (!writeGrant) {
+            _mutation.value = GitMutationState.Error(
+                "Stash Checkout",
+                "Allow plugin changes (plugin.api.write) before using this action.",
+            )
+            return
+        }
+        _stashNotice.value = null
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _mutation.value = GitMutationState.InProgress("Stash Checkout")
+            client.stashCheckout(repoId, ref, newBranch, track).fold(
+                onSuccess = { result ->
+                    if (result.stashed) {
+                        _stashNotice.value =
+                            "Stashed changes on $ref as \"${result.stashMessage}\". Use \"git stash pop\" to restore them."
+                    }
+                    _mutation.value = GitMutationState.Success("stash-checkout", result.head)
+                    _content.value = GitContentViewState.Idle
+                    refreshDetail(repoId)
+                },
+                onFailure = { error ->
+                    _mutation.value = GitMutationState.Error(
+                        "Stash Checkout",
+                        error.message ?: "Git action failed",
+                    )
+                },
+            )
+        }
+    }
+
+    fun clearStashNotice() {
+        _stashNotice.value = null
+    }
+
+    /** True when the push-after-commit toggle is currently enabled. */
+    fun isPushAfterCommitEnabled(): Boolean = _pushAfterCommit.value
 
     /** True when the named destructive op needs a confirmation echo. */
     fun requiresConfirmation(op: String): Boolean = op in setOf("discard", "push", "dirty-checkout")

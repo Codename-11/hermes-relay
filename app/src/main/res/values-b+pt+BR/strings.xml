@@ -3884,6 +3884,10 @@
     <string name="git_state_confirm_checkout_dirty_title">Alternar ramificação com alterações locais?</string>
     <string name="git_state_confirm_checkout_dirty_text">A árvore de trabalho tem alterações não confirmadas. A alternância pode carregá-las para a ramificação de destino.</string>
     <string name="git_state_confirm_checkout_confirm">Alternar</string>
+    <string name="git_state_generate_message">Gerar mensagem de commit</string>
+    <string name="git_state_generating_message">Gerando mensagem de commit…</string>
+    <string name="git_state_push_after_commit">Enviar após o commit</string>
+    <string name="git_state_switch_stash">Alternar (guardar se houver alterações)</string>
     <string name="support_bundle_review">Revisar informações de suporte</string>
     <string name="support_bundle_title">Informações de suporte</string>
     <string name="support_bundle_privacy">Nada é enviado automaticamente. Revise a exportação local com até %1$d relatórios.</string>

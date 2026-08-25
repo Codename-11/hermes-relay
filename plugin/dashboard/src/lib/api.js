@@ -226,3 +226,24 @@ export function gitCheckout(repo, ref, opts = {}) {
   };
   return postGit("/git/checkout", body);
 }
+
+// ── Git State Phase 3 extras ───────────────────────────────────────────────
+// AI commit-message suggestions + auto-stashing checkout.
+
+export function gitCommitMessage(repo) {
+  return postGit("/git/commit_message", { repo });
+}
+
+export function gitCommitMessageSelected(repo, paths) {
+  return postGit("/git/commit_message_selected", { repo, paths });
+}
+
+export function gitStashCheckout(repo, ref, opts = {}) {
+  const body = {
+    repo,
+    ref,
+    new_branch: opts.newBranch || "",
+    track: !!opts.track,
+  };
+  return postGit("/git/stash_checkout", body);
+}

@@ -82,3 +82,20 @@ data class GitMutationResult(
     val status: GitStatus = GitStatus(),
     val branches: List<GitBranch> = emptyList(),
 )
+
+/** A /git/commit_message suggestion: generated message + optional notice. */
+@Serializable
+data class GitCommitMessage(
+    val message: String = "",
+    val notice: String = "",
+)
+
+/** A /git/stash_checkout result: standard mutation shape + stash flag/message. */
+@Serializable
+data class GitStashCheckoutResult(
+    val head: String = "",
+    val status: GitStatus = GitStatus(),
+    val branches: List<GitBranch> = emptyList(),
+    val stashed: Boolean = false,
+    @SerialName("stash_message") val stashMessage: String = "",
+)

@@ -4242,6 +4242,10 @@
     <string name="git_state_confirm_checkout_dirty_title">Switch branch with local changes?</string>
     <string name="git_state_confirm_checkout_dirty_text">The working tree has uncommitted changes. Switching may carry them onto the target branch.</string>
     <string name="git_state_confirm_checkout_confirm">Switch</string>
+    <string name="git_state_generate_message">Generate commit message</string>
+    <string name="git_state_generating_message">Generating commit message…</string>
+    <string name="git_state_push_after_commit">Push after commit</string>
+    <string name="git_state_switch_stash">Switch (stash if dirty)</string>
 
     <string name="support_bundle_review">Review support information</string>
     <string name="support_bundle_title">Support information</string>
