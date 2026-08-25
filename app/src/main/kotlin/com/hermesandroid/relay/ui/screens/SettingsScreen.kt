@@ -460,23 +460,6 @@ fun SettingsScreen(
                 modifier = Modifier.settingsPetSurface("settings-card:profile-lock"),
             )
 
-            SettingsCategoryRow(
-                icon = Icons.Filled.Security,
-                title = stringResource(R.string.settings_advanced),
-                subtitle = when {
-                    supervisedPolicy?.isActive == true -> "On · ${supervisedPolicy.pinnedProfileName}"
-                    supervisedPolicy?.isConfigured == true -> "Ready · ${supervisedPolicy.pinnedProfileName}"
-                    else -> stringResource(R.string.settings_advanced_desc)
-                },
-                badge = supervisedPolicy?.takeIf { it.isActive }?.let {
-                    SettingsStatusPillModel(
-                        label = "On",
-                        tone = SettingsStatusTone.Good,
-                    )
-                },
-                onClick = onNavigateToAdvancedSettings,
-                isDarkTheme = isDarkTheme,
-            )
 
             // ── Quick Controls ─────────────────────────────────────────
             // The switches flipped most often, pinned to the top-level Settings
@@ -634,6 +617,24 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_appearance),
                 subtitle = stringResource(R.string.settings_appearance_desc),
                 onClick = onNavigateToAppearanceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = stringResource(R.string.settings_advanced),
+                subtitle = when {
+                    supervisedPolicy?.isActive == true -> "On · ${supervisedPolicy.pinnedProfileName}"
+                    supervisedPolicy?.isConfigured == true -> "Ready · ${supervisedPolicy.pinnedProfileName}"
+                    else -> stringResource(R.string.settings_advanced_desc)
+                },
+                badge = supervisedPolicy?.takeIf { it.isActive }?.let {
+                    SettingsStatusPillModel(
+                        label = "On",
+                        tone = SettingsStatusTone.Good,
+                    )
+                },
+                onClick = onNavigateToAdvancedSettings,
                 isDarkTheme = isDarkTheme,
             )
 

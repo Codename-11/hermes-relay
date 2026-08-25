@@ -2558,7 +2558,6 @@ fun RelayApp() {
                             },
                             onBack = { navController.popBackStack() },
                             onReturnToSupervisedView = {
-                                parentAccessUnlocked = false
                                 navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                     popUpTo(Screen.Chat.route) { inclusive = false }
                                     launchSingleTop = true
