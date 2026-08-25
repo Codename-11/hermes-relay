@@ -3,12 +3,36 @@ package com.hermesandroid.relay.viewmodel.connection
 import android.content.Context
 import io.mockk.mockk
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
 class UpstreamTransportControllerAuthClientTest {
+    @Test
+    fun dashboardCookieStoresRemainConnectionScoped() {
+        val requestedKeys = mutableMapOf<String, String>()
+        val controller = UpstreamTransportController(
+            context = mockk<Context>(relaxed = true),
+            activeConnectionIdProvider = { null },
+            dashboardUrlProvider = { null },
+            gatewayKeepAliveProvider = { false },
+            tokenStoreKeyProvider = { connectionId ->
+                "token-store-$connectionId".also { requestedKeys[connectionId] = it }
+            },
+        )
+
+        val firstA = controller.dashboardCookieStoreFor("connection-a")
+        val secondA = controller.dashboardCookieStoreFor("connection-a")
+        val storeB = controller.dashboardCookieStoreFor("connection-b")
+
+        assertSame(firstA, secondA)
+        assertNotSame(firstA, storeB)
+        assertEquals("token-store-connection-a", requestedKeys["connection-a"])
+        assertEquals("token-store-connection-b", requestedKeys["connection-b"])
+    }
+
     @Test
     fun dashboardHttpClient_isReusedUntilRouteChangesThenDisposed() {
         var dashboardUrl = "https://hermes.example.test"

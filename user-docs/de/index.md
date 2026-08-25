@@ -8,7 +8,7 @@ titleTemplate: Hermes-Relay Dokumentation auf Deutsch
 hero:
   name: Dokumentation
   text: Beginne mit dem Gerät, das du verbinden möchtest.
-  tagline: Verbinde die Android-App oder die CLI mit deinem bestehenden Hermes Agent. Der optionale Relay-Weg kommt erst hinzu, wenn du zusätzliche Werkzeuge brauchst.
+  tagline: Verbinde Android und CLI mit deinem Hermes Agent und ergänze die empfohlene Relay-Erweiterung für den vollständigen aktuellen Funktionsumfang.
   actions:
     - theme: brand
       text: Android-Schnellstart
@@ -25,8 +25,8 @@ features:
     details: Chat, Manage und Standard-Voice verbinden sich direkt mit einem unveränderten Hermes Agent.
   - title: Eine klare App-Auswahl
     details: Google Play ist der empfohlene Weg. Sideload ergänzt Device Control für Bildschirmlesen, Tippen und Navigation.
-  - title: Relay bleibt optional
-    details: Installiere das Relay-Plugin nur für Terminal, Gerätesteuerung, Medien, Benachrichtigungen oder erweiterte Remote-Werkzeuge.
+  - title: Relay wird für den vollen Umfang empfohlen
+    details: Upstream bleibt Standard für Chat, Manage und Voice; Relay ergänzt Terminal/TUI, Benachrichtigungen, Medien, Desktop-Werkzeuge und Device Control.
 ---
 
 ## Umfang dieser Übersetzung

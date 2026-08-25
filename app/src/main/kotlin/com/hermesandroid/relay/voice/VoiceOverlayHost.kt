@@ -92,7 +92,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.distinctVoiceRouteParts
 import com.hermesandroid.relay.ui.components.voiceRouteDisplayLabel
-import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.PersistedHermesRelayTheme
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceUiState
@@ -167,7 +167,7 @@ class VoiceOverlayHost(context: Context) {
         val compose = ComposeView(appContext).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent {
-                HermesRelayTheme {
+                PersistedHermesRelayTheme {
                     val activeSession by sessionState.collectAsState()
                     activeSession?.let {
                         VoiceFloatingOverlayPill(

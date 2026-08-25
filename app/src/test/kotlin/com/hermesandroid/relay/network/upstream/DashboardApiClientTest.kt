@@ -76,6 +76,7 @@ class DashboardApiClientTest {
                     """
                     {
                       "version": "0.16.0",
+                      "install_id": "  install-a  ",
                       "auth_required": true,
                       "auth_providers": ["basic", "nous"]
                     }
@@ -92,6 +93,7 @@ class DashboardApiClientTest {
         assertEquals(listOf("basic", "nous"), status.authProviders)
         assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
+        assertEquals("install-a", status.installId)
     }
 
     @Test
@@ -327,6 +329,7 @@ class DashboardApiClientTest {
         val wsUrl = DashboardApiClient.gatewayWebSocketUrl(
             baseUrl = "https://example.com/hermes/",
             ticket = "abc/123",
+            profile = "research bot",
         )
         val landingPath = DashboardApiClient.authLandingPath("https://example.com/hermes/")
 
@@ -335,7 +338,7 @@ class DashboardApiClientTest {
             authUrl,
         )
         assertEquals(
-            "wss://example.com/hermes/api/ws?ticket=abc%2F123",
+            "wss://example.com/hermes/api/ws?ticket=abc%2F123&profile=research%20bot",
             wsUrl,
         )
         assertEquals("/hermes/", landingPath)

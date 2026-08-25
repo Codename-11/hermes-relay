@@ -11,6 +11,7 @@
   <strong>简体中文</strong> · <a href="README.md">English</a><br>
   <a href="https://hermes-relay.dev/docs/zh-CN/">中文文档</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">版本下载</a> ·
+  <a href="https://github.com/Codename-11/hermes-relay/discussions">社区讨论</a> ·
   <a href="CHANGELOG.md">更新日志</a>
 </p>
 
@@ -79,6 +80,8 @@ hermes pair
 已安装的 Hermes 插件可通过已认证的 Dashboard 向 Android 提供由应用安全渲染的原生页面，无需在手机上运行插件代码。Relay 1.5.0 另支持需用户确认的代理创建页面草稿。
 
 完整说明请阅读[中文快速开始](https://hermes-relay.dev/docs/zh-CN/guide/quick-start)；远程访问、协议和高级配置暂时链接到英文参考文档。
+
+安装问题、早期想法、一般交流和作品分享请使用 [GitHub Discussions](https://github.com/Codename-11/hermes-relay/discussions)。可复现的错误和明确、可执行的功能请求请提交到 [Issues](https://github.com/Codename-11/hermes-relay/issues/new)。
 
 ## 中文界面
 

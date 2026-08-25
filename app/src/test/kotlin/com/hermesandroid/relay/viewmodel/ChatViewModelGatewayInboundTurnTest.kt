@@ -3,6 +3,7 @@ package com.hermesandroid.relay.viewmodel
 import android.os.Handler
 import android.os.Looper
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -13,6 +14,8 @@ import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -41,6 +44,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -51,6 +55,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.Base64
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -80,6 +85,7 @@ class ChatViewModelGatewayInboundTurnTest {
     @Volatile
     private var holdCompletionsStream = false
     private val apiCompletionsRequestCount = AtomicInteger(0)
+    private val apiMessageRequestCount = AtomicInteger(0)
 
     @Before
     fun setUp() {
@@ -89,6 +95,9 @@ class ChatViewModelGatewayInboundTurnTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.path == "/v1/chat/completions") {
                         apiCompletionsRequestCount.incrementAndGet()
+                    }
+                    if (request.path?.contains("/messages") == true) {
+                        apiMessageRequestCount.incrementAndGet()
                     }
                     return if (holdCompletionsStream && request.path == "/v1/chat/completions") {
                         MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
@@ -117,6 +126,7 @@ class ChatViewModelGatewayInboundTurnTest {
         persistedHistory = emptyList()
         holdCompletionsStream = false
         apiCompletionsRequestCount.set(0)
+        apiMessageRequestCount.set(0)
         viewModel = ChatViewModel().also {
             it.initialize(
                 HermesApiClient(apiServer.url("/").toString(), "test-key"),
@@ -133,8 +143,157 @@ class ChatViewModelGatewayInboundTurnTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
+    @Test
+    fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
+        DiagnosticsLog.clear()
+        viewModel.updateGatewayClient(null)
+        viewModel.initialize(null, handler)
+        viewModel.streamingEndpoint = "gateway"
+
+        viewModel.sendMessage("Retry this after reconnect")
+
+        val failure = viewModel.chatFailure.value
+        assertEquals(STORED_SESSION_ID, failure?.sessionId)
+        assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
+        assertTrue(failure?.recoverable == true)
+        assertTrue(failure?.rawError.orEmpty().contains("no API fallback"))
+        assertEquals("Retry this after reconnect", handler.lastSentMessage.value)
+        assertTrue(handler.messages.value.isEmpty())
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
+        assertEquals("gateway", diagnostic.endpointRole)
+        assertEquals("chat response", diagnostic.operation)
+    }
+
+    @Test
+    fun explicitProfileHistoryFailureSurfacesAndNeverFallsBackAcrossProfiles() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val owner = Profile(name = "owner", model = "model-a", description = "Owner")
+        viewModel.setSelectedProfileProvider { owner }
+        viewModel.setSessionProfileNameProvider { owner.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            assertEquals(owner.name, profileName)
+            assertEquals("owner-session", sessionId)
+            Result.failure(IllegalStateException("profile history unavailable"))
+        }
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = owner.name,
+                profile = owner,
+                contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+                sessionId = "owner-session",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.turnId == "history-owner-session" }
+        val failure = viewModel.chatFailure.value
+        assertEquals("owner-session", failure?.sessionId)
+        assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
+        assertFalse(failure?.recoverable ?: true)
+        assertTrue(failure?.rawError.orEmpty().contains("profile history unavailable"))
+        assertEquals(0, apiMessageRequestCount.get())
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
+        assertEquals("Hermes chat history failed", diagnostic.title)
+        assertEquals("load chat history", diagnostic.operation)
+        assertEquals("gateway", diagnostic.endpointRole)
+    }
+
+    @Test
+    fun missingRequiredProfileHistoryLoaderFailsClosedWithoutApiRead() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val owner = Profile(name = "owner", model = "model-a", description = "Owner")
+        viewModel.setSelectedProfileProvider { owner }
+        viewModel.setSessionProfileNameProvider { owner.name }
+        viewModel.clearProfileMessageLoader()
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = owner.name,
+                profile = owner,
+                contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+                sessionId = "missing-loader-session",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.sessionId == "missing-loader-session" }
+        assertFalse(viewModel.chatFailure.value?.recoverable ?: true)
+        assertTrue(
+            viewModel.chatFailure.value?.rawError.orEmpty()
+                .contains("Profile-scoped conversation history is unavailable"),
+        )
+        assertEquals(0, apiMessageRequestCount.get())
+    }
+
+    @Test
+    fun ordinarySessionSwitchFailureSettlesLoadingAndSurfacesError() {
+        DiagnosticsLog.clear()
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            Result.failure(IllegalStateException("history failed for $sessionId"))
+        }
+
+        viewModel.switchSession("failed-switch-session")
+
+        awaitCondition {
+            !viewModel.isLoadingHistory.value &&
+                viewModel.chatFailure.value?.sessionId == "failed-switch-session"
+        }
+        val failure = viewModel.chatFailure.value
+        assertFalse(failure?.recoverable ?: true)
+        assertTrue(failure?.rawError.orEmpty().contains("failed-switch-session"))
+        assertEquals("failed-switch-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun supersededHistoryFailureCannotClearOrErrorNewerSession() {
+        DiagnosticsLog.clear()
+        val oldLoadStarted = CompletableDeferred<Unit>()
+        val releaseOldLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            when (sessionId) {
+                "old-session" -> {
+                    oldLoadStarted.complete(Unit)
+                    releaseOldLoad.await()
+                    Result.failure(IllegalStateException("stale history failure"))
+                }
+                "new-session" -> Result.success(
+                    listOf(
+                        MessageItem(
+                            id = "new-answer",
+                            sessionId = sessionId,
+                            role = "assistant",
+                            content = JsonPrimitive("New session transcript"),
+                        ),
+                    ),
+                )
+                else -> Result.success(emptyList())
+            }
+        }
+
+        viewModel.switchSession("old-session")
+        awaitCondition { oldLoadStarted.isCompleted }
+        viewModel.switchSession("new-session")
+        awaitCondition {
+            !viewModel.isLoadingHistory.value &&
+                handler.messages.value.any { it.content == "New session transcript" }
+        }
+
+        releaseOldLoad.complete(Unit)
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+
+        assertEquals("new-session", handler.currentSessionId.value)
+        assertTrue(handler.messages.value.any { it.content == "New session transcript" })
+        assertNull(viewModel.chatFailure.value)
+        assertTrue(
+            DiagnosticsLog.recent(setOf(DiagnosticCategory.Session))
+                .none { it.detail.orEmpty().contains("stale history failure") },
+        )
+    }
+
     @After
     fun tearDown() {
+        DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
         gatewayClient.shutdown()
         gatewayScope.cancel()
@@ -151,7 +310,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun allProfilesOpenKeepsGlobalSelectionButScopesHistoryResumeAndSendToOwner() {
+    fun allProfilesOpenScopesHistoryResumeAndSendToSelectedOwner() {
         val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
         val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
         var loadedProfile: String? = null
@@ -172,16 +331,16 @@ class ChatViewModelGatewayInboundTurnTest {
         )
 
         awaitCondition { loadedProfile == owner.name }
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals(owner.name, gatewayClient.sessionProfileProvider())
         assertEquals("X-bot", handler.activeAgentName)
-        assertEquals("unchanged", persistedSession)
+        assertEquals("x-bot-session", persistedSession)
 
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", global.name),
             sessionId = null,
         )
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
 
         viewModel.openProfileSession(
@@ -190,15 +349,208 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
             sessionId = "x-bot-session",
         )
-        assertEquals(owner.name, viewModel.openedSessionProfileName.value)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
 
         viewModel.createNewChat()
-        assertEquals(null, viewModel.openedSessionProfileName.value)
+        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
         assertEquals(global.name, gatewayClient.sessionProfileProvider())
     }
 
     @Test
-    fun allProfilesNewChatUsesLiteralDefaultWithoutChangingGlobalSelection() {
+    fun allProfilesSwitchBetweenDifferentOwnersReplacesVisibleIdentity() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        var selected = beta
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = requireNotNull(profile)
+            true
+        }
+
+        viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+        assertEquals(alpha, selected)
+        assertEquals(alpha.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("Alpha", handler.activeAgentName)
+
+        viewModel.openProfileSession(
+            profileName = beta.name,
+            profile = beta,
+            contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            sessionId = "beta-session",
+        )
+
+        assertEquals(beta, selected)
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
+        assertEquals(beta.name, gatewayClient.sessionProfileProvider())
+        assertEquals("Beta", handler.activeAgentName)
+        assertEquals("beta-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun profileLockRejectsCrossProfileOpenBeforeSelectionOrChatStateChanges() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        var selectionCalls = 0
+        viewModel.setSelectedProfileProvider { beta }
+        viewModel.setSessionProfileNameProvider { beta.name }
+        viewModel.setLockedProfileNameProvider { beta.name }
+        viewModel.setProfileSelectionHandler {
+            selectionCalls += 1
+            true
+        }
+
+        val opened = viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+
+        assertFalse(opened)
+        assertEquals(0, selectionCalls)
+        assertFalse(viewModel.conversationBinding.value.isBound)
+        assertEquals(STORED_SESSION_ID, handler.currentSessionId.value)
+    }
+
+    @Test
+    fun lifecycleReconciliationKeepsExplicitOwnerAndScopesDrawerRefreshToIt() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var listedProfile: String? = null
+        var persistedSession = "unchanged"
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.onSessionChanged = { persistedSession = it ?: "cleared" }
+        viewModel.setProfileSessionLister { profileName ->
+            listedProfile = profileName
+            Result.success(emptyList())
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.refreshSessions()
+
+        awaitCondition { listedProfile == owner.name }
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.switchSession("x-bot-sibling")
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-sibling", persistedSession)
+    }
+
+    @Test
+    fun lifecycleReconciliationDuringHydrationCannotMoveOrEraseExplicitSession() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val loadStarted = CompletableDeferred<Unit>()
+        val releaseLoad = CompletableDeferred<Unit>()
+        var loadedProfile: String? = null
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            loadedProfile = profileName
+            loadStarted.complete(Unit)
+            releaseLoad.await()
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "owned-answer",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Owned transcript"),
+                    ),
+                ),
+            )
+        }
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        awaitCondition { loadStarted.isCompleted }
+
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        releaseLoad.complete(Unit)
+
+        awaitCondition { handler.messages.value.any { it.content == "Owned transcript" } }
+        assertEquals(owner.name, loadedProfile)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertEquals("x-bot-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun explicitOwnerScopesSessionMetadataWritesAfterLifecycleReconciliation() {
+        val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
+        val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        val writtenProfiles = java.util.Collections.synchronizedList(mutableListOf<String?>())
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.profileSessionRenamer = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionPinner = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionArchiver = { profileName, _, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        viewModel.profileSessionDeleter = { profileName, _, _ ->
+            writtenProfiles += profileName
+            true
+        }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "x-bot-session",
+                title = "Owned session",
+                model = null,
+            ),
+        )
+
+        viewModel.openProfileSession(
+            profileName = owner.name,
+            profile = owner,
+            contextKey = AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        viewModel.reconcileProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", global.name),
+            sessionId = STORED_SESSION_ID,
+        )
+        viewModel.renameSession("x-bot-session", "Renamed")
+        viewModel.setSessionPinned("x-bot-session", true)
+        viewModel.setSessionArchived("x-bot-session", true)
+        viewModel.deleteSession("x-bot-session")
+
+        awaitCondition { writtenProfiles.size == 4 }
+        assertEquals(listOf(owner.name, owner.name, owner.name, owner.name), writtenProfiles)
+    }
+
+    @Test
+    fun explicitDefaultDraftUsesLiteralDefaultProfile() {
         val global = Profile(name = "victor", model = "grok-4.5", description = "Victor")
         val rootDefault = Profile(name = "default", model = "gpt-5.5", description = "Hermes")
         var persistedSession = "unchanged"
@@ -212,7 +564,7 @@ class ChatViewModelGatewayInboundTurnTest {
             contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
         )
 
-        assertEquals("default", viewModel.openedSessionProfileName.value)
+        assertEquals("default", viewModel.conversationBinding.value.profileName)
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
         assertEquals("Hermes", handler.activeAgentName)
@@ -649,6 +1001,33 @@ class ChatViewModelGatewayInboundTurnTest {
         shadowOf(Looper.getMainLooper()).idleFor(250, TimeUnit.MILLISECONDS)
         assertFalse(handler.messages.value.any { it.content == "Canceled answer" })
         assertTrue(handler.messages.value.any { "Stopped" in it.badges })
+    }
+
+    @Test
+    fun stopClearsStaleBusyStateAfterTerminalBubbleAlreadySettled() {
+        handler.onTextDelta("stale-answer", "Finished answer")
+        handler.onTurnComplete("stale-answer")
+        assertTrue(handler.isStreaming.value)
+        assertFalse(handler.messages.value.single().isStreaming)
+
+        viewModel.cancelStream()
+
+        assertFalse(handler.isStreaming.value)
+        assertNull(handler.turnStatus.value)
+    }
+
+    @Test
+    fun newChatClearsStaleBusyStateWhenNoLiveGatewayTurnRemains() {
+        handler.onTextDelta("stale-answer", "Finished answer")
+        handler.onTurnComplete("stale-answer")
+        assertTrue(handler.isStreaming.value)
+        assertFalse(gatewayClient.hasActiveTurn())
+
+        viewModel.createNewChat()
+
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.isEmpty())
+        assertNull(handler.currentSessionId.value)
     }
 
     @Test
@@ -1462,7 +1841,7 @@ class ChatViewModelGatewayInboundTurnTest {
                 updatedAt = System.currentTimeMillis(),
             ),
         )
-        viewModel.profileSessionDeleter = { true }
+        viewModel.profileSessionDeleter = { _, _, _ -> true }
 
         viewModel.sendMessage("Run before delete")
         gatewayHarness.awaitRpc("prompt.submit")
@@ -1565,12 +1944,240 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun foregroundMultiTurnRecoversWhenReconnectReportsSettledWithoutMessageComplete() {
+        viewModel.setChatVisible(true)
+        viewModel.sendMessage("Run a long foreground task")
+        gatewayHarness.awaitRpc("prompt.submit")
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "tool.start",
+                buildJsonObject {
+                    put("tool_id", "tool-foreground")
+                    put("name", "terminal")
+                },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Partial foreground answer") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        // The authoritative turn is already persisted when the replacement
+        // socket activates. No message.complete is replayed to that socket.
+        persistedHistory = persistedAnswerHistory()
+        gatewayHarness.recoveryRunning = false
+        serverWs.close(1011, "foreground network gap")
+        gatewayHarness.awaitServerSocket()
+        gatewayHarness.awaitRpc("session.activate")
+
+        awaitCondition { !handler.isStreaming.value }
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.id == "persisted-background-answer"
+        }
+        assertEquals(BACKGROUND_ANSWER, handler.messages.value.single().content)
+        assertEquals(0, apiCompletionsRequestCount.get())
+    }
+
+    @Test
     fun gatewayVoiceTurnDoesNotRequireApiFallback() {
-        viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
+        val result = viewModel.sendVoiceMessage(
+            "local voice turn",
+            "Respond for spoken playback",
+        )
         val params = gatewayHarness.awaitRpc("prompt.submit")
 
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
         assertEquals(JsonPrimitive("local voice turn"), params["text"])
         assertEquals(0, apiCompletionsRequestCount.get())
+    }
+
+    @Test
+    fun gatewayVoiceTurn_uploadsUntrustedTextAndScreenshotBeforePromptSubmit() {
+        val accepted = AtomicInteger(0)
+        gatewayHarness.fileAttachPayload = buildJsonObject {
+            put("attached", true)
+            put("ref_text", "@file:current-screen-context.txt")
+        }
+        val framed = """
+            [UNTRUSTED SCREEN CONTENT]
+            Visible screen text:
+            Vehicle settings
+            Attached current-screen image: untrusted user-provided screen content.
+            [/UNTRUSTED SCREEN CONTENT]
+        """.trimIndent()
+        val contextBytes = framed.toByteArray()
+        val contextAttachment = Attachment(
+            contentType = "text/plain",
+            content = Base64.getEncoder().encodeToString(contextBytes),
+            fileName = "current-screen-context.txt",
+            fileSize = contextBytes.size.toLong(),
+        )
+        val screenshot = Attachment(
+            contentType = "image/jpeg",
+            content = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)),
+            fileName = "current-screen.jpg",
+            fileSize = 3,
+        )
+
+        val result = viewModel.sendVoiceMessage(
+            text = "What is on screen?",
+            interfaceContextPrompt = framed,
+            attachments = listOf(screenshot),
+            gatewayAttachments = listOf(contextAttachment),
+            hasScreenContext = true,
+            onTransportAccepted = { accepted.incrementAndGet() },
+        )
+        val submit = gatewayHarness.awaitRpc("prompt.submit")
+        val fileAttach = gatewayHarness.awaitRpc("file.attach")
+        gatewayHarness.awaitRpc("image.attach_bytes")
+
+        val methods = gatewayHarness.rpcLog.map { it.first }
+        assertTrue(methods.indexOf("file.attach") < methods.indexOf("prompt.submit"))
+        assertTrue(methods.indexOf("image.attach_bytes") < methods.indexOf("prompt.submit"))
+        val dataUrl = (fileAttach["data_url"] as JsonPrimitive).content
+        val uploadedText = String(Base64.getDecoder().decode(dataUrl.substringAfter(',')))
+        assertEquals(framed, uploadedText)
+        assertEquals(
+            "@file:current-screen-context.txt\n\nWhat is on screen?",
+            (submit["text"] as JsonPrimitive).content,
+        )
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
+        awaitCondition { accepted.get() == 1 }
+        assertEquals(1, accepted.get())
+        assertEquals(
+            listOf(screenshot),
+            handler.messages.value.last { it.role == MessageRole.USER }.attachments,
+        )
+        assertEquals(listOf(screenshot), viewModel.messages.value.last { it.role == MessageRole.USER }.attachments)
+    }
+
+    @Test
+    fun voiceTurnExplicitAttachment_doesNotConsumeComposerDraftAttachment() {
+        val draft = Attachment("text/plain", "ZHJhZnQ=", "draft.txt")
+        val screen = Attachment("image/jpeg", "c2NyZWVu", "current-screen.jpg")
+        viewModel.addAttachment(draft)
+
+        val submitted = viewModel.sendVoiceMessage(
+            "What is on screen?",
+            "Untrusted screen context",
+            listOf(screen),
+        )
+
+        assertTrue(submitted is VoiceMessageSubmissionResult.Submitted)
+        assertEquals(listOf(draft), viewModel.pendingAttachments.value)
+        assertEquals(listOf(screen), handler.messages.value.last { it.role == MessageRole.USER }.attachments)
+    }
+
+    @Test
+    fun gatewayVoiceAttachmentPreflightFailure_doesNotAcceptContext() {
+        gatewayHarness.methodNotFound.add("image.attach_bytes")
+        gatewayHarness.methodNotFound.add("image.attach.bytes")
+        val accepted = AtomicInteger(0)
+        val failed = AtomicInteger(0)
+
+        val result = viewModel.sendVoiceMessage(
+            text = "Inspect this screen",
+            interfaceContextPrompt = "[UNTRUSTED SCREEN CONTENT]",
+            attachments = listOf(
+                Attachment(
+                    contentType = "image/jpeg",
+                    content = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)),
+                    fileName = "current-screen.jpg",
+                )
+            ),
+            hasScreenContext = true,
+            onTransportAccepted = { accepted.incrementAndGet() },
+            onTransportFailed = { failed.incrementAndGet() },
+        )
+
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
+        awaitCondition { failed.get() == 1 }
+        assertEquals(0, accepted.get())
+        assertEquals(1, failed.get())
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun voiceTurnDuringActiveTurn_isRejectedAndRetainsComposerDraft() {
+        val draft = Attachment("text/plain", "ZHJhZnQ=", "draft.txt")
+        viewModel.sendMessage("First turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.addAttachment(draft)
+
+        val submitted = viewModel.sendVoiceMessage(
+            "Second voice turn",
+            "Untrusted screen context",
+            listOf(Attachment("image/jpeg", "c2NyZWVu")),
+        )
+
+        assertTrue(submitted is VoiceMessageSubmissionResult.Rejected)
+        assertEquals(listOf(draft), viewModel.pendingAttachments.value)
+        assertEquals(1, handler.messages.value.count { it.role == MessageRole.USER })
+    }
+
+    @Test
+    fun phoneThreadVoiceContext_isRejectedBeforeLocalTurnCreation() {
+        assertNotNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = true,
+                activeSessionSource = null,
+                hasIsolatedContext = true,
+            )
+        )
+        assertNotNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = false,
+                activeSessionSource = "phone",
+                hasIsolatedContext = true,
+            )
+        )
+        assertNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = true,
+                activeSessionSource = null,
+                hasIsolatedContext = false,
+            )
+        )
+
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "phone-thread",
+                title = "Phone thread",
+                model = null,
+                source = "phone",
+            )
+        )
+        handler.setSessionId("phone-thread")
+        val beforeUsers = handler.messages.value.count { it.role == MessageRole.USER }
+
+        val result = viewModel.sendVoiceMessage(
+            text = "Use this screen",
+            interfaceContextPrompt = "[UNTRUSTED SCREEN CONTENT]",
+            gatewayAttachments = listOf(Attachment("text/plain", "Y29udGV4dA==")),
+            hasScreenContext = true,
+        )
+
+        assertTrue(result is VoiceMessageSubmissionResult.Rejected)
+        assertEquals(beforeUsers, handler.messages.value.count { it.role == MessageRole.USER })
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+
+        val proactiveCalls = AtomicInteger(0)
+        viewModel.onProactiveReply = { _, _, _, _ -> proactiveCalls.incrementAndGet() }
+        val ordinaryVoice = viewModel.sendVoiceMessage(
+            text = "Ordinary context-free voice",
+            interfaceContextPrompt = "Respond for spoken playback",
+            hasScreenContext = false,
+        )
+
+        assertTrue(ordinaryVoice is VoiceMessageSubmissionResult.Submitted)
+        assertEquals(1, proactiveCalls.get())
     }
 
     @Test

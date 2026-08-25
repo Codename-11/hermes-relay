@@ -9,14 +9,18 @@ Phone (WS)       → Hermes dashboard (:9119)    [preferred — gateway chat, li
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [fallback — sessions / runs / completions]
 ```
 
-Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The optional Relay plugin is never involved in chat — it only adds terminal, device control, media, and the like.
+Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The Relay plugin is not the owner of standard chat. It is the encouraged extension for current upstream gaps such as Terminal/TUI, notifications, media handoff, desktop tools, Relay sessions, enhanced voice, and optional Device Control; compatible upstream surfaces take precedence as they become available.
 
-## Share text into a new chat
+## Share into a new chat
 
-Hermes Relay appears as a target when another Android app shares text. Choosing
-it opens a new conversation for your currently active profile and places the
-shared text in the composer. Nothing is sent automatically: edit or discard the
-draft, then tap Send when it is ready.
+Hermes Relay appears as a target when another Android app shares a link, text,
+image, or file. Choosing it opens a new conversation for your currently active
+profile, places shared text in the composer, and adds up to ten shared files as
+reviewable attachments. Mixed text-and-file shares are supported; if more than
+ten eligible files are shared, the app adds the first ten and tells you the rest
+were omitted. Multi-text shares preserve each supplied text item in source order.
+Nothing is sent automatically: edit, remove, reorder, or discard the draft, then
+tap Send when it is ready.
 
 When it falls back, the app uses the Hermes `/api/sessions` REST API:
 

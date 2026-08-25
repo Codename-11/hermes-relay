@@ -6,6 +6,74 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Bot Mode follow-ups after multi-gateway aggregation
+
+Android Bot Mode now has an all-gateway roster, typed `(connectionId, profile)`
+ownership, install-identity collapse, source-qualified handles, offline cache,
+route-pooled Gateway clients, and dedicated owner-routed Bot Chats without a
+foreground connection switch. Keep autonomous cross-gateway delivery on
+upstream peer/server authority rather than making Android an unreliable
+background courier. Writable group rooms stay blocked until upstream publishes
+one canonical room read/write/control contract; do not reproduce Desktop's
+local orchestrator in the phone. Route-scoped outbound attachments, Relay media,
+voice, and proactive completion notifications can be added independently when
+their credential and lifecycle ownership is explicit.
+
+---
+
+## Certify Android assistant screen context on physical firmware
+
+Host-side coverage and one Android 15 automotive device prove the primary flow.
+Before claiming broad firmware compatibility:
+
+- Certify representative phone OEMs, secure-window behavior, rotation, cancellation,
+  process recreation, and callbacks that arrive before the session is shown.
+- Confirm hidden/password exclusion, untrusted labeling, draft isolation, retry after
+  attachment preflight failure, and exactly-once delivery across later voice turns.
+- Verify Full Voice survives assistant-process loss and that wake-word, power-button,
+  ordinary assistant, and keyguard paths never receive screen context.
+- Exercise repeated explicit WEB_SEARCH launches and confirm the permission, active
+  Assistant role, request coalescing, and single-session gates remain fail-closed.
+
+---
+
+## Reassess Play Console data safety for assistant screen context
+
+Before the next Google Play submission, reassess the Console's User content and
+data-sharing answers for optional Assistant voice, visible text, and screenshot
+delivery to the user-configured Hermes server and AI provider. Record the final
+answers in `docs/play-store-listing.md`.
+
+---
+
+## Certify Android Gateway missing-terminal recovery on physical devices
+
+Deterministic fake-Gateway coverage now proves that a foreground turn with
+rapid deltas and tool activity can lose its WebSocket before
+`message.complete`, reactivate the exact live runtime, observe authoritative
+`running=false`, and reconcile persisted history without navigation, API
+fallback, duplicate submission, or a silent streaming latch. Complete the
+remaining hardware matrix before treating issue #365 as device-certified:
+
+On-demand contract-lab certification passed on an Android 16 SM-S938U using
+the sideload app and instrumentation APK. The embedded device test exercised
+Activity `STARTED` to `RESUMED` while streaming; the external fixture test then
+proved prompt submission, controlled socket loss, exact activation,
+authoritative HTTP history, idle settlement, and no API fallback. The ADB
+runner separately completed launch, Home/foreground, force-stop, and process
+recreation without enabling radio mutation. This is deterministic fixture
+proof, not certification against the reporter's host/device or a live provider.
+
+- Re-run long multi-turn/tool-heavy chats against current vanilla upstream on
+  the originally reported Android/device family and one Android 14+ device.
+- Exercise foreground-open chat, background/foreground, Wi-Fi/cellular loss,
+  socket replacement, queued follow-ups, profile/session switches, and process
+  recreation while capturing the content-free Gateway recovery diagnostic.
+- Confirm selection, user-owned scrollback, streaming Markdown, and follow
+  behavior remain stable while authoritative history catches up.
+
+---
+
 ## Certify Android power fixes across the reported device matrix
 
 Issue #377's static estimates are not device measurements. The code now keeps
@@ -1360,4 +1428,3 @@ Follow-ups:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
   - **On-device verification (working + one-shots + intensity).** Best seen in clean mode (`AgentTextFlow` feeds `toolCallBurst` + `streamingIntensity` + state transitions). Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
-

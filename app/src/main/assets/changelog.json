@@ -1,6 +1,61 @@
 {
  "versions": [
   {
+   "version": "1.12.1",
+   "title": "Sharing and recovery that work",
+   "date": "2026-08-22",
+   "sections": [
+    {
+     "header": "Share complete drafts",
+     "bullets": [
+      "Open shared links, text, images, files, and mixed or multi-item shares as one fresh reviewable draft.",
+      "Keep every share in the composer until you review it; Hermes never sends shared content automatically."
+     ]
+    },
+    {
+     "header": "Recover connections and conversations",
+     "bullets": [
+      "Add or renew a connection without getting stuck during secure local preparation, with Retry and Cancel when setup cannot finish.",
+      "See clear recovery guidance when no chat route is available or a profile's conversation history cannot be reached."
+     ]
+    },
+    {
+     "header": "Understand secure storage",
+     "bullets": [
+      "Review secret-free Diagnostics evidence when Android falls back from Keystore storage, repairs encrypted storage, or can keep credentials only temporarily."
+     ]
+    }
+   ]
+  },
+  {
+   "version": "1.12.0",
+   "title": "Themes and identity that stay put",
+   "date": "2026-08-21",
+   "sections": [
+    {
+     "header": "Make the app yours",
+     "bullets": [
+      "Create and save custom themes with editable palette roles, Light or Dark ownership, shape, and a live chat preview.",
+      "Apply Soft, Balanced, or Sharp styling consistently across chat, settings, sheets, dialogs, terminal, voice, and Bridge."
+     ]
+    },
+    {
+     "header": "Keep the right agent active",
+     "bullets": [
+      "Selecting a session from All Profiles activates its owning agent with the correct header, avatar, transcript, draft, and routing.",
+      "Language changes preserve the exact active profile and session while relocalizing the persistent connection notification without reconnecting."
+     ]
+    },
+    {
+     "header": "Recover cleanly",
+     "bullets": [
+      "Settle and reconcile Gateway turns when a terminal completion frame is missed without resubmitting through fallback transport.",
+      "Normalize Relay base, /ws, and /health endpoint forms without producing duplicate route segments."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.11.0",
    "title": "Access with clear boundaries",
    "date": "2026-08-20",

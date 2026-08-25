@@ -6,16 +6,26 @@ profile-scoped backend; neither creates a second Relay service or state store.
 
 ## What It Is
 
-If your Hermes server runs the Dashboard Plugin System (upstream `axiom` branch), Hermes-Relay ships a plugin that auto-registers through the same `~/.hermes/plugins/hermes-relay` symlink created by `install.sh`. Restart the gateway and a new **Relay** tab appears alongside Chat, Skills, Memory, and the other dashboard tabs. Inside that tab you get four sub-tabs grouping the four things only the relay knows about.
+If your Hermes server runs the Dashboard Plugin System, the unified
+Hermes-Relay plugin contributes a **Relay** page alongside Chat, Skills, Memory,
+and the other Dashboard pages. The same package also contributes the official
+Hermes Desktop pane and the `hermes relay` / `hermes pair` CLI commands.
 
-The plugin is a thin observer — it never modifies state, never writes to your config, and can't do anything a phone-side operator can't already do. Its job is to save you from SSHing into the server to check "is my phone still paired?" or "what did the agent just do?".
+The plugin is the browser operator surface for Relay. It reads health, sessions,
+activity, media, and remote-access state, and performs explicit scoped actions:
+minting invites, revoking sessions, changing Relay-owned settings, and managing
+remote-access helpers. It never turns a viewed card into an implicit mutation;
+pairing, revocation, and configuration remain labeled user actions.
 
 ## Requirements
 
 **On your server:**
 
 - hermes-agent with the Dashboard Plugin System. `hermes dashboard start` must already work for you; the Relay tab uses the dashboard plugin mount and does not depend on the legacy session API branch.
-- The canonical Hermes-Relay install — if you ran the one-liner on the [Quick Start](/guide/getting-started), you're done. The installer symlinks `~/.hermes/plugins/hermes-relay` → the plugin subtree and the dashboard scanner picks up `plugin/dashboard/manifest.json` automatically.
+- The canonical plugin install:
+  `hermes plugins install Codename-11/hermes-relay/plugin --enable`. The
+  Dashboard scanner discovers `dashboard/manifest.json` from that unified
+  package.
 - A gateway restart after install: `systemctl --user restart hermes-gateway`.
 
 **On your phone:**
@@ -77,6 +87,46 @@ via the dashboard); memory file editing remains in the paired profile inspector.
 
 Server-side dashboard auth is owned by upstream Hermes. For current provider registration, Nous OAuth, username/password, and remote dashboard guidance, use the Hermes [Web Dashboard docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
 
+## Connect and pair clients
+
+The Relay page exposes two different setup actions. They intentionally do not
+share credentials:
+
+### Connect mobile app — standard upstream connection
+
+Use this first for Android:
+
+1. Click **Connect mobile app** in the Relay page header.
+2. In Android **Connect**, choose **Scan Hermes setup QR**.
+3. Scan the tokenless QR and sign in if prompted.
+
+The QR contains only the canonical Dashboard address. Android verifies that
+origin, then uses the upstream Dashboard/Gateway for Chat, sessions, Manage,
+sign-in, and standard voice. It contains no token, cookie, API key, password, or
+Relay pairing code.
+
+### Pair new device — Relay session
+
+Use this after the standard Android connection, or whenever pairing Android,
+the Desktop CLI, or another Relay client:
+
+1. Click **Pair new device** on the Management tab.
+2. Keep **Auto** mode unless you specifically want LAN-only, Tailscale-only, or
+   a pinned public route.
+3. Android scans the QR from **Settings → Connections → Pair Hermes Relay**.
+4. Desktop CLI users click **Copy invite**, then run:
+
+```bash
+hermes-relay pair --pair-qr "hermes-relay://pair?payload=…" --grant-tools
+```
+
+Official Hermes Desktop exposes the same backend in its **Relay** pane. Its
+**Pair new device** action shows the one-time code and copyable invite for a CLI
+or UI client; it does not need to render a camera QR.
+
+The invite is one-time and credential-bearing. Keep it private and mint a new
+one when it expires or has already been consumed.
+
 ## The Four Tabs
 
 ### Relay Management
@@ -92,22 +142,31 @@ The landing tab. Shows:
 
 #### Pairing a new device
 
-The **Pair new device** button on the Relay Management tab is an alternative to `/hermes-relay-pair` and the `hermes pair` CLI — same underlying pairing flow, just driven from a browser on your laptop instead of a chat or shell. Useful when you're already in the dashboard reviewing session state and want to onboard a phone without bouncing out to a terminal.
+The **Pair new device** button on Relay Management uses the same signed pairing
+contract as `/hermes-relay-pair` and `hermes pair`, driven from the browser
+instead of a chat or shell.
 
 **Click the button to open a PairDialog with:**
 
-- **The QR code** — freshly minted, signed, ready to scan from the Android app's onboarding or Settings → Connections → Add connection flow.
-- **The 6-character pairing code** — shown plain-text above the QR. Type this into the app's manual-entry path if your phone can't scan, or read it aloud if someone else is holding the phone.
-- **A 10-minute expiry countdown** — the code is one-shot and single-use. When it expires or after the phone claims it, close the dialog and click Pair new device again for a fresh code.
-- **A "reveal/hide" toggle on the QR** — defaults to hidden so bystanders in a shared screen can't silently scan it behind your back. Reveal explicitly when you're ready to scan.
+- **Mode** — defaults to **Auto**, which derives every configured reachable
+  candidate. LAN-only, Tailscale-only, and public-only modes remain available.
+- **Prefer role** — optionally promotes LAN, Tailscale, or public without
+  removing fallback candidates.
+- **A freshly minted QR** — scan it from Android **Settings → Connections →
+  Pair Hermes Relay**.
+- **The six-character code and copyable invite** — use these for manual Android
+  entry or Desktop CLI `--pair-qr` pairing.
+- **Endpoint receipt and expiry** — the invite is one-time and single-use. Mint
+  a fresh one after it expires or is consumed.
 
-**The "Override host / port / TLS" section** is what most non-default deploys need. By default the relay fills the QR with its own LAN-visible address (`http://<LAN-IP>:8642` for the API server + `ws://<LAN-IP>:8767` for the relay), which is correct for a straight home-LAN install. You need to override when:
+Leave **Auto** and natural ordering selected for the common case. Configure
+Tailscale and a pinned public URL on the **Remote Access** tab; PairDialog folds
+those server-owned values into the invite automatically.
 
-- **Reverse proxy in front of the relay** — e.g. a Traefik-fronted `wss://relay.example.com:443`, where the dashboard itself sees `127.0.0.1:8767` but the phone needs to reach the public hostname. Set Host to `relay.example.com`, Port to `443`, TLS to `on`, and the minted QR carries those coordinates while the relay still registers the pairing code locally.
-- **Tailscale / Wireguard VPN** — phone and server are both on the tailnet but the dashboard is rendering on a different network interface. Override Host to the tailnet IP / MagicDNS name so the phone connects over the tunnel.
-- **Multi-homed server** — the relay auto-detection picks one IP but you want the phone on a different interface (e.g. a separate VLAN for IoT devices). Override to pin the address.
-
-**Override persistence.** The dashboard stores the last-used host/port/TLS values in `localStorage` per-browser, so returning to the Pair dialog in the same browser session pre-fills your overrides. Different browsers (or cleared storage) start with the relay's auto-detected defaults. The overrides are never persisted server-side — they only shape the next QR's payload.
+The advanced host, port, and TLS override is for a deliberately pinned API
+fallback or unusual multi-homed/proxy topology. It is not the normal way to set
+the Relay URL and should remain collapsed unless automatic server configuration
+is wrong.
 
 **What the minted QR contains.** The current Relay-pairing payload retains its
 legacy top-level API fields for older phones and headless compatibility. New
@@ -116,7 +175,10 @@ endpoint nor its key is required for dashboard-primary chat. The nested `relay`
 block carries the Relay WSS URL and pairing code. See `docs/spec.md` §3.3.1 for
 the full backward-compatible wire format.
 
-**If the minted QR "doesn't do anything" when scanned**, the most common cause is that the host-side API port in the override section points at the wrong service — e.g. you accidentally entered `8767` (the relay's port) in the API Host/Port fields, so the phone tries to reach the API at the relay's address. The relay validates that the URL parses but can't verify the port is actually an API gateway, so this mistake surfaces as a silent pair failure. Double-check that Host points at something serving `/v1/runs` / `/v1/chat/completions`, not your relay.
+**If a manually overridden QR does not pair**, clear the advanced override and
+mint again with **Auto**. Port `8642` is the optional API fallback; port `8767`
+is Relay. Putting the Relay port in the API override sends the phone to the
+wrong service.
 
 <!-- TODO: replace with real screenshot — PairDialog with QR and override fields expanded -->
 
@@ -174,7 +236,11 @@ For the full wire-shape of each route (query params, response schemas, redaction
 
 **"Relay unreachable at 127.0.0.1:8767" on every tab.** The gateway can't see your relay process. Check `systemctl --user status hermes-relay` on the server; if the unit is inactive, `systemctl --user restart hermes-relay`. If you run the relay manually, confirm it's bound to `127.0.0.1:8767` and hasn't moved to a different port (override via `HERMES_RELAY_PORT` — the plugin reads this at import time).
 
-**No "Relay" tab appears after gateway restart.** Confirm the symlink resolves: `ls -lL ~/.hermes/plugins/hermes-relay/dashboard/manifest.json` should show the file. If it doesn't, the installer symlink was broken — re-run `hermes-relay-update` or the `install.sh` one-liner. Check the gateway log (`journalctl --user -u hermes-gateway -f`) for plugin-load errors during startup.
+**No "Relay" tab appears after gateway restart.** Confirm the unified plugin is
+enabled with `hermes plugins list`, then re-run
+`hermes plugins install Codename-11/hermes-relay/plugin --enable` and refresh or
+restart the Dashboard/Gateway plugin catalog. Check the gateway log for
+plugin-load errors if the manifest is installed but the page is absent.
 
 **The Relay tab appears but text, colors, or cards are hard to read.** Update the Hermes-Relay plugin and restart or rescan the dashboard plugin list. The plugin stylesheet is loaded by the upstream dashboard and follows its active theme tokens; stale `dist/style.css` files from older installs can render poorly after Hermes dashboard theme changes.
 

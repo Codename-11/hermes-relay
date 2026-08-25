@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.bridge.BridgeCapability
 import com.hermesandroid.relay.bridge.BridgeCapabilityPolicy
 
@@ -64,7 +65,7 @@ fun BridgeAgentAccessCard(
     val screenActive = timed.isNotEmpty()
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = appearanceRoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(
@@ -147,7 +148,7 @@ fun BridgeAndroidAccessSummaryCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth().clickable(onClick = onToggle),
-        shape = RoundedCornerShape(14.dp),
+        shape = appearanceRoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(
@@ -206,7 +207,7 @@ fun BridgeSelectedAndroidAccessCard(
     if (summary.missing.isEmpty()) return
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = appearanceRoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(

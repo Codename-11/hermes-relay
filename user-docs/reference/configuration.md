@@ -242,7 +242,7 @@ Each edited config is backed up to `<config>.yaml.bak`. Restart the affected gat
 
 ### Keeping the relay plugin updated
 
-The app, the relay plugin, and the desktop CLI version **independently** — they do not need to match. To see whether a newer plugin release exists:
+The Android app, Relay plugin, and CLI+UI have **independent versions** — they do not need to match. To see whether a newer plugin release exists:
 
 ```bash
 hermes relay update-check           # compares your version to the latest plugin release

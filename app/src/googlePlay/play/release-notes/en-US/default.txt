@@ -1,3 +1,1 @@
-v1.11.0 - More reliable chat
-
-Keep stored-session failures visible with route-aware retry details. Use Return for multiline prompts across more software keyboards. Preserve Stopped status when cancelling answer recovery. Reduce idle redraws and release capture and audio resources sooner.
+Shared links, text, images, and files now open as complete reviewable drafts without sending automatically. Add and Renew connection setup no longer stalls. Offline chat and profile-history failures surface clear recovery guidance instead of doing nothing or showing empty history. Diagnostics now reports secure-storage fallback and recovery without exposing credentials.

@@ -5,8 +5,11 @@ canonical_source: /guide/getting-started
 
 # Installation & Einrichtung
 
-Drei Schritte: App installieren, mit Hermes verbinden, erste Nachricht senden.
-Wenn Hermes bereits läuft, muss auf dem Server nichts zusätzlich installiert werden.
+Diese Seite ist die ausführliche Referenz für Build-Auswahl, manuelle
+Verbindung, Fernzugriff und Sicherheitsprüfungen. Wenn dein Hermes Dashboard
+bereits erreichbar ist, nutze den [Schnellstart](./quick-start).
+
+<AndroidSetupPath mode="reference" />
 
 ::: tip Übersetzungsstatus
 Diese kompakte Übersetzung beschreibt den üblichen Einstieg. Erweiterte
@@ -64,12 +67,17 @@ veröffentlichte `.ts.net`-Adresse kann ohne API-Server oder API-Schlüssel als 
 Dieselbe Anmeldung schaltet Chat, Sitzungen, Manage und Voice frei. Ein
 ungepaartes Relay und ein nicht verfügbarer API-Fallback sind normal.
 
-## Optional: Relay-Werkzeuge hinzufügen
+## Empfohlen: Mit Relay vervollständigen {#relay-server-optional}
 
-Installiere das Plugin nur für Terminal, Device Control, Medien,
-Benachrichtigungen oder erweiterte Remote-Werkzeuge. Die maßgeblichen Befehle
-sind `hermes plugins install Codename-11/hermes-relay/plugin --enable`,
+Der Upstream-Standardweg bleibt ohne Plugin funktionsfähig. Für Terminal/TUI,
+Benachrichtigungen, Medien, Desktop-Werkzeuge, erweiterte Voice, Relay-Sitzungen
+und optionales Device Control wird Relay empfohlen. Die maßgeblichen Befehle sind
+`hermes plugins install Codename-11/hermes-relay/plugin --enable`,
 `hermes relay doctor`, `hermes relay start --no-ssl` und `hermes pair`.
+
+Bevorzugt im Web Dashboard unter **Relay** zuerst **Connect mobile app** und
+danach **Pair new device** öffnen und beide QRs mit Android scannen. Ohne QR
+bleiben die URL-/Code-Eingabe und `hermes pair --register-code` verfügbar.
 
 Device Control benötigt **beides**: die Sideload-App und ein gepaartes Relay.
 

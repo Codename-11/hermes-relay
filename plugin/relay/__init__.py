@@ -16,10 +16,10 @@ See ``plugin/relay/server.py`` for the aiohttp server,
 # Canonical plugin version source is pyproject.toml's [project].version.
 # Keep this runtime constant in sync with pyproject.toml for server-v*
 # releases. Android releases use gradle/libs.versions.toml and android-v* tags;
-# Desktop releases use desktop/package.json and desktop-v* tags. The /health endpoint
+# CLI+UI releases use desktop/package.json and desktop-v* tags. The /health endpoint
 # reports this plugin version, and stale values make live diagnosis harder than
 # it should be.
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 from .server import create_app, main  # noqa: E402 — must come after __version__
 

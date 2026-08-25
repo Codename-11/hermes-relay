@@ -1,4 +1,4 @@
-name: Release Server
+name: Hermes-Relay Plugin Release
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Server release
+    name: Validate Plugin release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -24,24 +24,34 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/server-v}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Server version sync and changelog
+      - name: Verify Plugin version sync and changelog
         run: |
           python scripts/check-plugin-version-sync.py --expect "$TAG_VERSION"
-          if ! grep -Fq "## [$TAG_VERSION]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no release heading for $TAG_VERSION"
+          if ! grep -Eq "^## \[Plugin ${TAG_VERSION}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no Plugin release heading for $TAG_VERSION"
             exit 1
           fi
         env:
           TAG_VERSION: ${{ steps.version.outputs.version }}
 
-      - name: Verify tagged commit belongs to main
+      - name: Verify tag belongs to the correct integration branch
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          git fetch origin main --no-tags
           tag_commit="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "Server releases must be tagged from main; $tag_commit is not in origin/main" >&2
-            exit 1
+          if [[ "$TAG_VERSION" == *-* ]]; then
+            git fetch origin dev --no-tags
+            if ! git merge-base --is-ancestor "$tag_commit" origin/dev; then
+              echo "Plugin prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
+              exit 1
+            fi
+          else
+            git fetch origin main --no-tags
+            if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+              echo "Stable Plugin releases must be tagged from main; $tag_commit is not in origin/main" >&2
+              exit 1
+            fi
           fi
 
   test:
@@ -77,7 +87,9 @@ jobs:
           python -m pytest \
             plugin/tests/test_relay_security.py \
             plugin/tests/test_voice_routes.py \
-            plugin/tests/test_session_grants.py
+            plugin/tests/test_session_grants.py \
+            plugin/tests/test_proactive_channel.py \
+            plugin/tests/test_android_phone_status.py
 
   package:
     name: Build and publish Plugin package
@@ -117,7 +129,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Server v${{ needs.validate.outputs.version }}
+          name: Hermes-Relay Plugin v${{ needs.validate.outputs.version }}
           tag_name: server-v${{ needs.validate.outputs.version }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           fail_on_unmatched_files: true

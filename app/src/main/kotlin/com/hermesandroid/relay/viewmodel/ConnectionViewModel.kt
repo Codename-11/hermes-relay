@@ -27,6 +27,8 @@ import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.DemoContent
 import com.hermesandroid.relay.data.DemoMode
@@ -54,6 +56,8 @@ import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.BotChatTarget
+import com.hermesandroid.relay.data.BotModeState
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.SessionTransport
@@ -117,10 +121,12 @@ import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
+import com.hermesandroid.relay.viewmodel.connection.BotModeController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
 import java.net.URI
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -254,8 +260,43 @@ internal fun isChatTransportReady(
     gatewayAvailability == GatewayAvailability.Ready ||
         (apiClientPresent && apiReachable)
 
+internal fun recordDashboardGatewayFailure(
+    dashboardUrl: String,
+    detail: String,
+) {
+    val now = System.currentTimeMillis()
+    val duplicate = DiagnosticsLog.entries.value.lastOrNull {
+        it.category == DiagnosticCategory.Endpoint &&
+            it.operation == "Probe Dashboard / Gateway status"
+    }?.let { now - it.timestampMs < 60_000L } == true
+    if (duplicate) return
+    DiagnosticsLog.record(
+        category = DiagnosticCategory.Endpoint,
+        severity = DiagnosticSeverity.Error,
+        title = "Dashboard / Gateway is unavailable",
+        detail = detail,
+        operation = "Probe Dashboard / Gateway status",
+        endpointRole = "gateway",
+        configuredUrl = dashboardUrl,
+        requestUrl = "${dashboardUrl.trimEnd('/')}/api/status",
+        suggestion = "Open the active connection and verify its Dashboard route and sign-in state.",
+    )
+}
+
 internal fun hasConfiguredHermesConnection(connection: Connection?): Boolean =
     connection?.capabilities?.anySurfaceConfigured == true
+
+internal fun reusablePlaceholderForAdd(
+    preAllocatedId: String?,
+    connections: List<Connection>,
+): Connection? {
+    if (preAllocatedId != null) return null
+    return connections.firstOrNull { connection ->
+        connection.pairedAt == null &&
+            connection.apiServerUrl.isBlank() &&
+            connection.label == ConnectionViewModel.PLACEHOLDER_LABEL
+    }
+}
 
 /**
  * Resolve the Dashboard/Gateway surface for the route the resolver selected.
@@ -439,18 +480,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         const val PLACEHOLDER_LABEL = "New connection…"
 
         // Shared
-        private val KEY_THEME = stringPreferencesKey("theme")
         // Selected app theme id (palette/personality). Orthogonal to KEY_THEME,
         // which is the light/dark/auto mode axis honored by BOTH-mode themes.
-        private val KEY_APP_THEME = stringPreferencesKey("app_theme")
         // Optional RGB accent override applied on top of the selected preset.
         // Null means the preset's authored accent remains authoritative.
-        private val KEY_APPEARANCE_ACCENT = stringPreferencesKey("appearance_accent")
-        private val KEY_APPEARANCE_SHAPE = stringPreferencesKey("appearance_shape")
         // Selected app font id (body typeface). Resolved against AppFont at the
         // Compose theme root; defaults to Inter. Orthogonal to KEY_FONT_SCALE
         // (which scales sizes); this picks the family.
-        private val KEY_APP_FONT = stringPreferencesKey("app_font")
         // Selected sphere skin id. "auto" (SphereRegistry.AUTO_ID) follows the
         // active theme's preferred skin; any other id pins a specific skin.
         private val KEY_SPHERE_SKIN = stringPreferencesKey("sphere_skin")
@@ -471,7 +507,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val DEFAULT_PET_PLACEMENT = PetPlacement(PetLogicalEdge.End, 0.82f)
         private val KEY_PET_SPEED = floatPreferencesKey("pet_speed")
         private val KEY_PET_STABILIZE = booleanPreferencesKey("pet_stabilize")
-        private val KEY_FONT_SCALE = floatPreferencesKey("font_scale")
         const val DEFAULT_FONT_SCALE: Float = 1.0f
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
         private val KEY_LAST_SEEN_VERSION = stringPreferencesKey("last_seen_version")
@@ -768,6 +803,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         tokenStoreKeyProvider = { cid ->
             connectionStore.connections.value.firstOrNull { it.id == cid }?.tokenStoreKey
         },
+        trustedDashboardUrlProvider = { cid ->
+            if (connectionStore.activeConnectionId.value == cid) {
+                activeDashboardUrl()
+            } else {
+                connectionStore.connections.value.firstOrNull { it.id == cid }
+                    ?.resolvedDashboardUrl
+                    ?.takeIf(String::isNotBlank)
+            }
+        },
         pinnedClientProvider = { url, base ->
             pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
         },
@@ -793,6 +837,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         rebuildChatApiClient = { rebuildChatApiClient() },
         relayHttpClient = relayHttpClient,
         gatewayClientProvider = { upstreamTransport.activeGatewayChatClient() },
+    )
+
+    private val botModeController = BotModeController(
+        scope = viewModelScope,
+        connections = connectionStore.connections,
+        activeConnectionId = connectionStore.activeConnectionId,
+        dashboardUrlProvider = { connection ->
+            if (connectionStore.activeConnectionId.value == connection.id) {
+                activeDashboardUrl().orEmpty()
+            } else {
+                connection.resolvedDashboardUrl
+            }
+        },
+        dashboardClientFactory = upstreamTransport::dashboardClientFor,
+        gatewayLeaseFactory = upstreamTransport::acquireGatewayRoute,
     )
 
     // --- Relay connection state ---
@@ -1417,7 +1476,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // Theme preference — light/dark/auto mode axis.
     val theme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_THEME] ?: "auto"
+            preferences[AppearancePreferences.themeKey] ?: "auto"
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
@@ -1425,16 +1484,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // brand. Resolved against AppThemes.byId at the Compose theme root.
     val appTheme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_APP_THEME] ?: AppThemes.DEFAULT_ID
+            preferences[AppearancePreferences.appThemeKey] ?: AppThemes.DEFAULT_ID
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppThemes.DEFAULT_ID)
 
+    val customThemes: StateFlow<List<CustomThemePreset>> = AppearancePreferences.customThemes(application)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val activeCustomTheme: StateFlow<CustomThemePreset?> = combine(appTheme, customThemes) { themeId, presets ->
+        CustomThemePreset.idFromAppTheme(themeId)?.let { id -> presets.firstOrNull { it.id == id } }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
-        .map { preferences -> normalizeAccentHex(preferences[KEY_APPEARANCE_ACCENT]) }
+        .map { preferences -> normalizeAccentHex(preferences[AppearancePreferences.accentKey]) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val appearanceShape: StateFlow<String> = application.relayDataStore.data
-        .map { preferences -> AppearanceShape.fromId(preferences[KEY_APPEARANCE_SHAPE]).id }
+        .map { preferences -> AppearanceShape.fromId(preferences[AppearancePreferences.shapeKey]).id }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppearanceShape.DEFAULT.id)
 
     // Selected app font id (body typeface). Defaults to Inter. Resolved against
@@ -1442,7 +1508,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // whole app re-themes live when this changes.
     val appFont: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_APP_FONT] ?: AppFont.DEFAULT.id
+            preferences[AppearancePreferences.appFontKey] ?: AppFont.DEFAULT.id
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppFont.DEFAULT.id)
 
@@ -1551,7 +1617,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // TerminalWebView's LaunchedEffect on this flow.
     val fontScale: StateFlow<Float> = application.relayDataStore.data
         .map { preferences ->
-            preferences[KEY_FONT_SCALE] ?: DEFAULT_FONT_SCALE
+            preferences[AppearancePreferences.fontScaleKey] ?: DEFAULT_FONT_SCALE
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_FONT_SCALE)
 
@@ -1585,6 +1651,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // down, calling profileController.* in their original order.
 
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
+    val botModeState: StateFlow<BotModeState> get() = botModeController.state
+
+    fun refreshBotMode() = botModeController.refresh()
+
+    suspend fun ensureCanonicalBotChat(route: com.hermesandroid.relay.data.BotGatewayRoute): Result<BotChatTarget> =
+        botModeController.ensureCanonicalBotChat(route)
+
+    suspend fun createBot(
+        connectionId: String,
+        name: String,
+        title: String,
+        description: String,
+    ): Result<String> = botModeController.createBot(connectionId, name, title, description)
+
+    fun acquireBotGateway(
+        route: com.hermesandroid.relay.data.BotGatewayRoute,
+    ): Result<com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController.RouteGatewayLease> =
+        botModeController.acquireGateway(route)
+
+    fun botDashboardClient(
+        route: com.hermesandroid.relay.data.BotGatewayRoute,
+    ): Result<DashboardApiClient> = botModeController.dashboardClient(route)
 
     /**
      * Session namespace after resolving the Server-default UI sentinel through
@@ -1600,20 +1688,41 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
 
+    suspend fun listProfileScopedSessions(
+        profileName: String?,
+        limit: Int = 200,
+    ): Result<List<SessionItem>>? =
+        profileController.listProfileScopedSessions(profileName, limit)
+
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
 
-    suspend fun deleteSession(profileName: String, sessionId: String): Boolean =
-        profileController.deleteSession(profileName, sessionId)
+    suspend fun deleteSession(
+        profileName: String?,
+        sessionId: String,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.deleteSession(profileName, sessionId, expectedContextKey)
 
-    suspend fun renameSession(profileName: String, sessionId: String, title: String): Boolean =
-        profileController.renameSession(profileName, sessionId, title)
+    suspend fun renameSession(
+        profileName: String?,
+        sessionId: String,
+        title: String,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.renameSession(profileName, sessionId, title, expectedContextKey)
 
-    suspend fun setSessionPinned(profileName: String, sessionId: String, pinned: Boolean): Boolean =
-        profileController.setSessionPinned(profileName, sessionId, pinned)
+    suspend fun setSessionPinned(
+        profileName: String?,
+        sessionId: String,
+        pinned: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.setSessionPinned(profileName, sessionId, pinned, expectedContextKey)
 
-    suspend fun setSessionArchived(profileName: String, sessionId: String, archived: Boolean): Boolean =
-        profileController.setSessionArchived(profileName, sessionId, archived)
+    suspend fun setSessionArchived(
+        profileName: String?,
+        sessionId: String,
+        archived: Boolean,
+        expectedContextKey: String? = null,
+    ): Boolean = profileController.setSessionArchived(profileName, sessionId, archived, expectedContextKey)
 
     suspend fun loadProfileScopedMessages(
         sessionId: String,
@@ -1705,6 +1814,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** A local icon path for a specific profile identity on the active connection. */
     fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
+    fun profileIconFlow(connectionId: String, profileName: String) =
+        profileController.profileIconFlow(connectionId, profileName)
 
     val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
         get() = profileController.hostIconImportState
@@ -1738,6 +1849,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshGatewayProfiles() = profileController.refreshGatewayProfiles()
 
     fun selectProfile(profile: Profile?) = profileController.selectProfile(profile)
+
+    fun isProfileSelectionAllowed(profileName: String?): Boolean =
+        profileController.isProfileSelectionAllowed(profileName)
 
     // --- Profile lock (per-connection pin to one profile) ------------------
     //
@@ -3159,23 +3273,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@withLock existing.id
             }
 
-            val reusable = connectionStore.connections.value.firstOrNull { c ->
-                c.pairedAt == null &&
-                    c.apiServerUrl.isBlank() &&
-                    c.label == PLACEHOLDER_LABEL
-            }
-            if (reusable != null) {
-                android.util.Log.i(
-                    "ConnectionViewModel",
-                    "beginAddConnection: reusing placeholder id=${reusable.id} " +
-                        "instead of pre-allocated id=$preAllocatedId",
-                )
-                if (connectionStore.activeConnectionId.value != reusable.id) {
-                    switchConnection(reusable.id).join()
-                }
-                return@withLock reusable.id
-            }
-
             val placeholder = Connection(
                 id = preAllocatedId,
                 label = PLACEHOLDER_LABEL,
@@ -3200,11 +3297,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // id, the second `switchConnection` is a no-op (coordinator
         // short-circuits when id == activeConnectionId), and we
         // return the same string both times.
-        val existing = connectionStore.connections.value.firstOrNull { c ->
-            c.pairedAt == null &&
-                c.apiServerUrl.isBlank() &&
-                c.label == PLACEHOLDER_LABEL
-        }
+        val existing = reusablePlaceholderForAdd(
+            preAllocatedId = null,
+            connections = connectionStore.connections.value,
+        )
         if (existing != null) {
             android.util.Log.i(
                 "ConnectionViewModel",
@@ -3484,7 +3580,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         scrubConnectionArtifacts(removed, removedDeviceId)
+        upstreamTransport.disposeConnectionRouteClients(connectionId)
         connectionStore.removeConnection(connectionId)
+        botModeController.connectionRemoved(connectionId)
         // Clear the persisted profile selection for the removed connection
         // AFTER the switch-away above has finished. Ordering matters: if
         // we cleared first, any in-flight hydration from the just-swapped
@@ -4106,9 +4204,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // at a dead record.
         viewModelScope.launch {
             try {
-                // Let the legacy seed land first — it's a short
-                // writeMutex-guarded path, typically < 50ms.
-                val connections = connectionStore.connections.first()
+                // StateFlow is seeded empty, so reading connections.first()
+                // here can win the initial DataStore read and permanently
+                // miss persisted placeholders. Wait until the store has
+                // completed its initial read before deciding what is orphaned.
+                connectionStore.isHydrated.first { it }
+                val connections = connectionStore.connections.value
                 val orphans = connections.filter {
                     it.pairedAt == null &&
                         it.apiServerUrl.isBlank() &&
@@ -4650,6 +4751,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         try {
             val status = client.getStatus().getOrNull()
             if (status == null) {
+                recordDashboardGatewayFailure(
+                    dashboardUrl = dashboardUrl,
+                    detail = "Dashboard status probe returned no response.",
+                )
                 updateDashboardTopology(connectionId, null)
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
@@ -4695,6 +4800,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // app (see the currentSession() stale-connection crash). A probe
             // failure must only degrade the UI, never be fatal.
             android.util.Log.w("ConnectionVM", "probeStandardVoice failed: ${e.message}")
+            recordDashboardGatewayFailure(
+                dashboardUrl = dashboardUrl,
+                detail = "Dashboard status probe failed (${e.javaClass.simpleName}).",
+            )
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
             _standardAudioApiReachable.value = false
             _hostResourcePressure.value = HostResourcePressureStatus()
@@ -6796,7 +6905,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setTheme(theme: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_THEME] = theme
+                preferences[AppearancePreferences.themeKey] = theme
             }
         }
     }
@@ -6804,7 +6913,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppTheme(themeId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APP_THEME] = themeId
+                preferences[AppearancePreferences.appThemeKey] = themeId
             }
         }
     }
@@ -6813,7 +6922,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppFont(fontId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APP_FONT] = fontId
+                preferences[AppearancePreferences.appFontKey] = fontId
             }
         }
     }
@@ -6911,8 +7020,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
                 val normalized = normalizeAccentHex(accentHex)
-                if (normalized == null) preferences.remove(KEY_APPEARANCE_ACCENT)
-                else preferences[KEY_APPEARANCE_ACCENT] = normalized
+                if (normalized == null) preferences.remove(AppearancePreferences.accentKey)
+                else preferences[AppearancePreferences.accentKey] = normalized
             }
         }
     }
@@ -6920,7 +7029,69 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setAppearanceShape(shapeId: String) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_APPEARANCE_SHAPE] = AppearanceShape.fromId(shapeId).id
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.fromId(shapeId).id
+            }
+        }
+    }
+
+    fun saveCustomTheme(preset: CustomThemePreset, select: Boolean = true) {
+        val normalized = preset.normalized() ?: return
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val current = AppearancePreferences.decodeCustomThemes(
+                    preferences[AppearancePreferences.customThemesKey],
+                )
+                val updated = AppearancePreferences.upsertCustomTheme(current, normalized) ?: return@edit
+                preferences[AppearancePreferences.customThemesKey] =
+                    AppearancePreferences.encodeCustomThemes(updated)
+                if (select) {
+                    preferences[AppearancePreferences.appThemeKey] = normalized.appThemeId
+                    preferences[AppearancePreferences.themeKey] = normalized.mode
+                    preferences[AppearancePreferences.shapeKey] = normalized.shapeId
+                    preferences.remove(AppearancePreferences.accentKey)
+                }
+            }
+        }
+    }
+
+    fun duplicateCustomTheme(preset: CustomThemePreset) {
+        saveCustomTheme(
+            preset.copy(
+                id = UUID.randomUUID().toString(),
+                name = "${preset.name} copy".take(CustomThemePreset.MAX_NAME_LENGTH),
+            ),
+        )
+    }
+
+    fun deleteCustomTheme(id: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                val updated = AppearancePreferences.decodeCustomThemes(
+                    preferences[AppearancePreferences.customThemesKey],
+                ).filterNot { it.id == id }
+                preferences[AppearancePreferences.customThemesKey] =
+                    AppearancePreferences.encodeCustomThemes(updated)
+                if (CustomThemePreset.idFromAppTheme(preferences[AppearancePreferences.appThemeKey]) == id) {
+                    preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                    preferences[AppearancePreferences.themeKey] = "auto"
+                    preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
+                    preferences.remove(AppearancePreferences.accentKey)
+                }
+            }
+        }
+    }
+
+    fun selectCustomTheme(id: String) {
+        customThemes.value.firstOrNull { it.id == id }?.let { saveCustomTheme(it) }
+    }
+
+    fun resetAppearanceTheme() {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                preferences[AppearancePreferences.themeKey] = "auto"
+                preferences.remove(AppearancePreferences.accentKey)
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
             }
         }
     }
@@ -6979,7 +7150,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun setFontScale(scale: Float) {
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[KEY_FONT_SCALE] = scale
+                preferences[AppearancePreferences.fontScaleKey] = scale
             }
         }
     }
@@ -7087,7 +7258,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // intentionally contains zero connections.
                 dataManager.restoreConnectionBackup(backup)
                 getApplication<Application>().relayDataStore.edit { preferences ->
-                    preferences[KEY_THEME] = backup.theme
+                    preferences[AppearancePreferences.themeKey] = backup.theme
                     importedRelayUrl?.let { preferences[KEY_RELAY_URL] = it }
                     backup.apiServerUrl
                         ?.takeIf { backup.connections.isEmpty() }
@@ -7178,6 +7349,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionManager.shutdown()
         _apiClient.value?.shutdown()
         profileChatApiClient?.shutdown()
+        upstreamTransport.disposeAllRouteClients()
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread
         // built by ScreenCapture on the first /screenshot call. Without

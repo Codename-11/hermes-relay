@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
+import com.hermesandroid.relay.data.RelayEndpointContract
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -59,6 +60,9 @@ class RelayHttpClient(
      *  backwards-compat with call sites that don't need localization. */
     private val context: Context? = null,
 ) {
+
+    private fun relayHttpBaseOrNull(url: String): String? =
+        RelayEndpointContract.parseOrNull(url)?.httpBaseUrl
 
     companion object {
         private const val TAG = "RelayHttpClient"
@@ -181,10 +185,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
         val url = try {
             "$httpBase/chat/image-activity".toHttpUrl().newBuilder()
                 .addQueryParameter("profile", profile)
@@ -248,10 +250,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = "$httpBase/media/$token".toHttpUrlOrNull()
             ?: return@withContext Result.failure(
@@ -345,10 +345,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         // Build the URL via OkHttp's HttpUrl builder so query-param encoding
         // handles paths with slashes, spaces, and non-ASCII characters
@@ -443,10 +441,8 @@ class RelayHttpClient(
                 )
             }
 
-            val httpBase = relayUrl
-                .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-                .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-                .trimEnd('/')
+            val httpBase = relayHttpBaseOrNull(relayUrl)
+                ?: return@withContext Result.failure(IOException("Invalid relay URL"))
             val profile = profileName?.trim()?.ifBlank { null } ?: "default"
             val url = try {
                 "$httpBase/api/profiles".toHttpUrl().newBuilder()
@@ -544,10 +540,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = try {
             "$httpBase/context/injected".toHttpUrl()
@@ -636,10 +630,8 @@ class RelayHttpClient(
                 IllegalStateException("Relay not paired — session token missing")
             )
         }
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
         val url = try {
             "$httpBase/phone/threads".toHttpUrl()
         } catch (e: IllegalArgumentException) {
@@ -755,10 +747,8 @@ class RelayHttpClient(
         if (relayUrl.isEmpty() || token.isNullOrBlank()) {
             return@withContext Result.failure(IllegalStateException("Relay is not configured and paired"))
         }
-        val base = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val base = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
         val url = try { "$base/relay/info".toHttpUrl() } catch (e: IllegalArgumentException) {
             return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
         }
@@ -803,10 +793,8 @@ class RelayHttpClient(
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         val token = sessionTokenProvider()
         if (relayUrl.isEmpty() || token.isNullOrBlank()) return@withContext Result.success(null)
-        val base = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val base = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.success(null)
         val url = runCatching { "$base/relay/model-capabilities".toHttpUrl() }.getOrElse {
             return@withContext Result.success(null)
         }
@@ -859,10 +847,8 @@ class RelayHttpClient(
                 IllegalStateException("Relay not paired — session token missing")
             )
         }
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
         val url = try {
             "$httpBase/relay/update-check".toHttpUrl()
         } catch (e: IllegalArgumentException) {
@@ -945,10 +931,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = "$httpBase/sessions".toHttpUrlOrNull()
             ?: return@withContext Result.failure(
@@ -1028,10 +1012,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = try {
             "$httpBase/sessions/".toHttpUrl().newBuilder()
@@ -1122,10 +1104,8 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = relayUrl
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
 
         val url = try {
             "$httpBase/sessions/".toHttpUrl().newBuilder()
@@ -1242,28 +1222,23 @@ class RelayHttpClient(
             )
         }
 
-        val httpBase = trimmed
-            .replace(Regex("^wss://", RegexOption.IGNORE_CASE), "https://")
-            .replace(Regex("^ws://", RegexOption.IGNORE_CASE), "http://")
-            .trimEnd('/')
         val startedAtMs = System.currentTimeMillis()
-
-        val url = try {
-            "$httpBase/health".toHttpUrl()
-        } catch (e: IllegalArgumentException) {
+        val endpoints = RelayEndpointContract.parseOrNull(trimmed)
+        if (endpoints == null) {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
                 title = context?.getString(R.string.http_diag_url_invalid) ?: "Relay URL invalid",
-                detail = e.message,
+                detail = "Malformed or unsafe Relay URL",
                 operation = operation,
                 configuredUrl = relayUrl,
-                suggestion = "Enter a Relay URL beginning with ws:// or wss://.",
+                suggestion = "Enter a Relay URL with no credentials, query, or fragment.",
             )
             return@withContext Result.failure(
-                IOException("Invalid relay URL: ${e.message}")
+                IOException("Invalid relay URL")
             )
         }
+        val url = endpoints.healthUrl.toHttpUrl()
 
         // Fast-timeout client — we don't want Save & Test to hang the UI
         // for 10 seconds on a dead URL.

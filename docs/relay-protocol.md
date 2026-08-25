@@ -13,7 +13,8 @@ This is a formal write-up of the protocol that was implicit in the Android/Pytho
 
 ### 1.1 Connection Flow
 
-1. Client initiates WSS to `wss://<host>:<port>/ws` (or bare `wss://<host>:<port>/` — both accepted).
+1. Client normalizes the configured Relay URL (§5.3), then initiates WSS to
+   the derived socket route (normally `wss://<host>:<port>/ws`).
 2. Server accepts upgrade with 30s heartbeat.
 3. Client sends `auth` envelope (within 30s) on the `system` channel — carries pairing code OR session token.
 4. Server validates, mints session or looks up existing one.
@@ -949,6 +950,33 @@ Source: `plugin/pair.py`.
 The Tailscale helper fronts both loopback services with `tailscale serve`: relay `:8767` and Hermes API `:8642`. Serving only the relay makes pairing and terminal/bridge reachable but leaves chat, API-key voice auth, and API health probes broken off-LAN. CLI: `hermes-relay-tailscale enable|disable|status`; use `--relay-only` only for legacy relay-only deployments.
 
 Source: `plugin/relay/tailscale.py`.
+
+### 5.3 Relay URL normalization
+
+Android accepts a Relay base URL or an already-qualified Relay socket/health
+URL. The final `ws` or `health` path segment is treated as a route identifier,
+removed once, and then rebuilt from the preserved base path:
+
+| Configured input | WebSocket request | Health request |
+|---|---|---|
+| `wss://relay.example` | `wss://relay.example/ws` | `https://relay.example/health` |
+| `wss://relay.example/ws` | `wss://relay.example/ws` | `https://relay.example/health` |
+| `wss://relay.example/relay` | `wss://relay.example/relay/ws` | `https://relay.example/relay/health` |
+| `wss://relay.example/relay/ws` | `wss://relay.example/relay/ws` | `https://relay.example/relay/health` |
+| `https://relay.example/relay/health` | `wss://relay.example/relay/ws` | `https://relay.example/relay/health` |
+
+This preserves direct Relay/Tailscale Serve roots, public reverse-proxy path
+prefixes, custom prefixes, ports, and IPv6 authorities without probing
+alternate paths. Repeating normalization on either derived route produces the
+same pair. HTTP(S) inputs are accepted as route identities and converted to the
+corresponding WS(S) socket scheme. Plain `http://`/`ws://` remains subject to
+Android's explicit trusted-LAN/VPN insecure-mode gate; public routes still
+require HTTPS/WSS.
+
+User info, queries, fragments, malformed authorities, relative path segments,
+and ambiguous percent-encoded separators are rejected. Diagnostics retain the
+sanitized configured path and exact derived request path while replacing the
+authority with `[host]` and dropping secrets.
 
 ---
 

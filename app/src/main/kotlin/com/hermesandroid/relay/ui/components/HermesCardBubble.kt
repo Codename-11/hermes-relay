@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -78,6 +77,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.HermesCardDispatch
@@ -170,7 +170,7 @@ fun HermesCardBubble(
             width = 1.dp,
             color = MaterialTheme.colorScheme.outlineVariant,
         ),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
     ) {
         Row(
             modifier = Modifier
@@ -370,7 +370,7 @@ private fun ChoseRow(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
@@ -497,7 +497,7 @@ private fun CardInputSlot(
                         )
                     }
                 },
-                shape = RoundedCornerShape(10.dp),
+                shape = appearanceRoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(6.dp))
@@ -595,7 +595,7 @@ private fun InlineAnswerField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = appearanceRoundedCornerShape(16.dp)
     Box(
         modifier = modifier
             .clip(shape)
@@ -641,7 +641,7 @@ private fun HoldToConfirmButton(
 ) {
     val fill = remember { Animatable(0f) }
     val errorColor = MaterialTheme.colorScheme.error
-    val shape = RoundedCornerShape(20.dp)
+    val shape = appearanceRoundedCornerShape(20.dp)
 
     Box(
         modifier = modifier

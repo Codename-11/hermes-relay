@@ -1,8 +1,6 @@
-v1.11.0 - Access with clear boundaries
+v1.12.1 - Sharing and recovery that work
 
-* Choose explicit Bridge capability presets in sideload builds.
-* Allow screen inspection and control for a set time or explicitly keep access unlimited.
-* Keep stored-session failures visible with route-aware retry details.
-* Use Return for multiline prompts across more software keyboards.
-* Preserve Stopped status when cancelling answer recovery.
-* Reduce idle redraws and release capture and audio resources sooner.
+* Open shared links, text, images, and files as a reviewable draft without auto-sending.
+* Add or renew a connection without getting stuck during secure setup.
+* See clear recovery guidance when chat or profile history is unavailable.
+* Find secret-free secure-storage fallback and recovery evidence in Diagnostics.

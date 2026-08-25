@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.assistant
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
@@ -8,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,13 +24,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -44,6 +50,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
@@ -65,20 +74,24 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.annotation.RequiresApi
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.PersistedHermesRelayTheme
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HermesVoiceInteractionSessionService : VoiceInteractionSessionService() {
     override fun onNewSession(args: Bundle?): VoiceInteractionSession =
@@ -103,6 +116,14 @@ private class HermesVoiceInteractionSession(
     private var presentation = AssistantSessionPresentation.Inactive
     private val assistantSurfaceBounds = android.graphics.Rect()
     private var surfaceExpanded by mutableStateOf(false)
+    private var activationId: String? = null
+    private var manualMic = false
+    private var expectScreenContext: Boolean? = null
+    private var pendingSemantic = AssistantSemanticContext()
+    private var pendingScreenshot: ByteArray? = null
+    private var screenContextUi by mutableStateOf(AssistantScreenContextUi())
+    private val contextStore = assistantContextStore(service)
+    private var heartbeatJob: Job? = null
 
     init {
         scope.launch {
@@ -131,12 +152,19 @@ private class HermesVoiceInteractionSession(
         setViewTreeViewModelStoreOwner(viewOwner)
         setViewTreeSavedStateRegistryOwner(viewOwner)
         setContent {
-            HermesRelayTheme {
+            PersistedHermesRelayTheme {
                 AssistantSessionSurface(
                     expanded = surfaceExpanded,
+                    screenContext = screenContextUi,
                     onExpandedChange = { surfaceExpanded = it },
                     onCancel = { finishSession(cancelVoice = true) },
-                    onRetry = { launchVoice(startNewSession = true) },
+                    onMic = ::handleMic,
+                    onRetry = {
+                        assistantRetryActivationId(activationId)?.let { id ->
+                            AssistantSessionProtocol.retryVoice(service, id)
+                            launchVoice(id, startNewSession = true)
+                        }
+                    },
                     onOpenFullVoice = {
                         if (presentation == AssistantSessionPresentation.Overlay) {
                             openFullVoice()
@@ -168,20 +196,79 @@ private class HermesVoiceInteractionSession(
 
         surfaceExpanded = false
         AssistantSessionState.reset()
+        screenContextUi = AssistantScreenContextUi()
+        activationId = args?.getString(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
+            ?: UUID.randomUUID().toString()
+        manualMic = args?.getBoolean(AssistantSessionProtocol.EXTRA_MANUAL_MIC, false) ?: false
+        expectScreenContext = args?.getBoolean(
+            AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
+            false,
+        ) ?: false
+        if (expectScreenContext == true) {
+            flushPendingContext()
+        } else {
+            pendingSemantic = AssistantSemanticContext()
+            pendingScreenshot = null
+        }
         launchVoice(
-            activationId = args?.getString(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
-                ?: UUID.randomUUID().toString(),
+            activationId = activationId!!,
             startNewSession = args?.getBoolean(
                 AssistantSessionProtocol.EXTRA_START_NEW_SESSION,
                 true,
             ) ?: true,
         )
+        startHeartbeat()
     }
 
     override fun onComputeInsets(outInsets: Insets) {
         super.onComputeInsets(outInsets)
         outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
         outInsets.touchableRegion.set(assistantSurfaceBounds)
+    }
+
+    override fun onHandleAssist(
+        data: Bundle?,
+        structure: android.app.assist.AssistStructure?,
+        content: android.app.assist.AssistContent?,
+    ) {
+        if (expectScreenContext == false) return
+        stageAssistData(structure, content)
+    }
+
+    @RequiresApi(android.os.Build.VERSION_CODES.Q)
+    override fun onHandleAssist(state: AssistState) {
+        if (expectScreenContext == false) return
+        stageAssistState(state)
+    }
+
+    override fun onHandleAssistSecondary(
+        data: Bundle?,
+        structure: android.app.assist.AssistStructure?,
+        content: android.app.assist.AssistContent?,
+        index: Int,
+        count: Int,
+    ) {
+        if (expectScreenContext == false) return
+        stageAssistData(structure, content)
+    }
+
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        if (expectScreenContext == false) return
+        screenshot ?: return
+        val callbackActivationId = activationId
+        scope.launch {
+            val jpeg = withContext(Dispatchers.Default) {
+                AssistantScreenshotEncoder.encode(screenshot)
+            } ?: return@launch
+            if (expectScreenContext != true) return@launch
+            if (callbackActivationId != null && callbackActivationId != activationId) return@launch
+            pendingScreenshot = jpeg
+            flushPendingContext()
+        }
+    }
+
+    override fun onAssistStructureFailure(failure: Throwable) {
+        // Secure or assist-blocked windows are expected; content is never logged.
     }
 
     override fun onBackPressed() {
@@ -201,16 +288,25 @@ private class HermesVoiceInteractionSession(
 
     override fun onDestroy() {
         if (shouldCancelVoiceWhenSessionUiEnds(presentation)) {
-            AssistantSessionProtocol.finish(service, cancelVoice = true)
+            AssistantSessionProtocol.finish(
+                service,
+                cancelVoice = true,
+                activationId = activationId,
+            )
         }
         presentation = AssistantSessionPresentation.Inactive
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        pendingSemantic = AssistantSemanticContext()
+        pendingScreenshot = null
+        screenContextUi = AssistantScreenContextUi()
         viewOwner.stop()
         scope.cancel()
         super.onDestroy()
     }
 
     private fun launchVoice(
-        activationId: String = UUID.randomUUID().toString(),
+        activationId: String,
         startNewSession: Boolean,
     ) {
         runCatching {
@@ -218,6 +314,8 @@ private class HermesVoiceInteractionSession(
                 service,
                 activationId = activationId,
                 startNewSession = startNewSession,
+                manualMic = manualMic,
+                expectScreenContext = expectScreenContext == true,
             )
         }.onFailure {
             AssistantSessionState.update(
@@ -232,6 +330,9 @@ private class HermesVoiceInteractionSession(
     private fun openFullVoice() {
         runCatching {
             startVoiceActivity(AssistantSessionProtocol.fullVoiceIntent(service))
+            activationId?.let { AssistantSessionProtocol.fullVoiceHandoff(service, it) }
+            heartbeatJob?.cancel()
+            heartbeatJob = null
             presentation = AssistantSessionPresentation.FullVoice
             setUiEnabled(false)
         }.onFailure {
@@ -247,10 +348,91 @@ private class HermesVoiceInteractionSession(
     private fun finishSession(cancelVoice: Boolean) {
         if (presentation == AssistantSessionPresentation.Inactive) return
         presentation = AssistantSessionPresentation.Inactive
-        AssistantSessionProtocol.finish(service, cancelVoice)
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        AssistantSessionProtocol.finish(service, cancelVoice, activationId)
         finish()
     }
+
+    private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        val id = activationId ?: return
+        heartbeatJob = scope.launch {
+            while (presentation != AssistantSessionPresentation.Inactive) {
+                AssistantSessionProtocol.heartbeat(service, id)
+                delay(ASSISTANT_HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun handleMic() {
+        when (assistantMicAction(AssistantSessionState.snapshot.value.phase)) {
+            AssistantMicAction.Start -> activationId?.let {
+                AssistantSessionProtocol.startListening(service, it)
+            }
+            AssistantMicAction.Stop -> activationId?.let {
+                AssistantSessionProtocol.stopListening(service, it)
+            }
+            AssistantMicAction.Disabled -> Unit
+        }
+    }
+
+    @RequiresApi(android.os.Build.VERSION_CODES.Q)
+    private fun stageAssistState(state: AssistState) {
+        stageAssistData(state.assistStructure, state.assistContent)
+    }
+
+    private fun stageAssistData(
+        structure: android.app.assist.AssistStructure?,
+        content: android.app.assist.AssistContent?,
+    ) {
+        val semantic = AssistantSemanticContext(
+            visibleText = AssistantSemanticExtractor.extract(structure),
+            metadata = safeAssistMetadata(structure, content),
+        )
+        pendingSemantic = AssistantSemanticContext(
+            visibleText = sequenceOf(pendingSemantic.visibleText, semantic.visibleText)
+                .filter(String::isNotBlank)
+                .joinToString("\n")
+                .take(AssistantSemanticExtractor.MAX_TEXT_CHARS),
+            metadata = (pendingSemantic.metadata + semantic.metadata).distinct().take(8),
+        )
+        flushPendingContext()
+    }
+
+    private fun flushPendingContext() {
+        val id = activationId ?: return
+        val semantic = pendingSemantic.takeIf {
+            it.visibleText.isNotBlank() || it.metadata.isNotEmpty()
+        }
+        val screenshot = pendingScreenshot
+        pendingSemantic = AssistantSemanticContext()
+        if (screenshot != null) pendingScreenshot = null
+        if (semantic == null && screenshot == null) return
+        scope.launch {
+            val (semanticStaged, screenshotStaged) = withContext(Dispatchers.IO) {
+                val stagedSemantic = semantic?.let { contextStore.stageSemantic(id, it) } == true
+                val stagedScreenshot = screenshot?.let { contextStore.stageScreenshot(id, it) } == true
+                stagedSemantic to stagedScreenshot
+            }
+            if (activationId != id || presentation == AssistantSessionPresentation.Inactive) return@launch
+            screenContextUi = screenContextUi.copy(
+                included = screenContextUi.included || semanticStaged || screenshotStaged,
+                screenshotJpeg = screenContextUi.screenshotJpeg
+                    ?: screenshot.takeIf { screenshotStaged },
+            )
+        }
+    }
 }
+
+private data class AssistantScreenContextUi(
+    val included: Boolean = false,
+    val screenshotJpeg: ByteArray? = null,
+)
+
+internal fun assistantRetryActivationId(currentActivationId: String?): String? = currentActivationId
+
+private const val ASSISTANT_HEARTBEAT_INTERVAL_MS = 10_000L
 
 private class AssistantSessionViewOwner :
     LifecycleOwner,
@@ -281,24 +463,32 @@ private class AssistantSessionViewOwner :
 @Composable
 private fun AssistantSessionSurface(
     expanded: Boolean,
+    screenContext: AssistantScreenContextUi,
     onExpandedChange: (Boolean) -> Unit,
     onCancel: () -> Unit,
+    onMic: () -> Unit,
     onRetry: () -> Unit,
     onOpenFullVoice: () -> Unit,
     onSurfaceBoundsChanged: (android.graphics.Rect) -> Unit,
 ) {
     val snapshot by AssistantSessionState.snapshot.collectAsState()
     val status = assistantStatus(snapshot.phase)
+    val transmittedScreenContext = if (snapshot.screenContextSupported) {
+        screenContext
+    } else {
+        AssistantScreenContextUi()
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 12.dp)
             .navigationBarsPadding(),
-        contentAlignment = Alignment.BottomCenter,
+        contentAlignment = Alignment.BottomEnd,
     ) {
         Surface(
             modifier = Modifier
+                .widthIn(max = 520.dp)
                 .fillMaxWidth()
                 .animateContentSize()
                 .onGloballyPositioned { coordinates ->
@@ -322,8 +512,10 @@ private fun AssistantSessionSurface(
                 ExpandedAssistantSurface(
                     snapshot = snapshot,
                     status = status,
+                    screenContext = transmittedScreenContext,
                     onCollapse = { onExpandedChange(false) },
                     onCancel = onCancel,
+                    onMic = onMic,
                     onRetry = onRetry,
                     onOpenFullVoice = onOpenFullVoice,
                 )
@@ -331,8 +523,10 @@ private fun AssistantSessionSurface(
                 CompactAssistantSurface(
                     snapshot = snapshot,
                     status = status,
+                    screenContext = transmittedScreenContext,
                     onExpand = { onExpandedChange(true) },
                     onCancel = onCancel,
+                    onMic = onMic,
                 )
             }
         }
@@ -343,15 +537,21 @@ private fun AssistantSessionSurface(
 private fun CompactAssistantSurface(
     snapshot: AssistantSessionSnapshot,
     status: String,
+    screenContext: AssistantScreenContextUi,
     onExpand: () -> Unit,
     onCancel: () -> Unit,
+    onMic: () -> Unit,
 ) {
     Row(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        AssistantOrb(snapshot.phase)
+        if (screenContext.included) {
+            AssistantScreenContextIndicator(screenContext, compact = true)
+        } else {
+            AssistantOrb(snapshot.phase)
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = status,
@@ -376,7 +576,8 @@ private fun CompactAssistantSurface(
                 contentDescription = stringResource(R.string.assistant_session_expand),
             )
         }
-        AssistantStopButton(onClick = onCancel, compact = true)
+        AssistantMicButton(snapshot.phase, onMic)
+        AssistantCloseButton(onClick = onCancel, compact = true)
     }
 }
 
@@ -384,8 +585,10 @@ private fun CompactAssistantSurface(
 private fun ExpandedAssistantSurface(
     snapshot: AssistantSessionSnapshot,
     status: String,
+    screenContext: AssistantScreenContextUi,
     onCollapse: () -> Unit,
     onCancel: () -> Unit,
+    onMic: () -> Unit,
     onRetry: () -> Unit,
     onOpenFullVoice: () -> Unit,
 ) {
@@ -429,6 +632,10 @@ private fun ExpandedAssistantSurface(
 
         AssistantWaveform(snapshot.phase)
 
+        if (screenContext.included) {
+            AssistantScreenContextIndicator(screenContext, compact = false)
+        }
+
         snapshot.transcript?.takeIf { it.isNotBlank() }?.let { transcript ->
             AssistantTextRow(
                 icon = Icons.Filled.Person,
@@ -461,8 +668,9 @@ private fun ExpandedAssistantSurface(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AssistantStopButton(onClick = onCancel, compact = false)
+            AssistantCloseButton(onClick = onCancel, compact = false)
             Spacer(Modifier.weight(1f))
+            AssistantMicButton(snapshot.phase, onMic)
             if (snapshot.phase == AssistantSessionPhase.Error) {
                 TextButton(onClick = onRetry) {
                     Text(stringResource(R.string.assistant_session_retry))
@@ -572,7 +780,7 @@ private fun AssistantTextRow(
 }
 
 @Composable
-private fun AssistantStopButton(
+private fun AssistantCloseButton(
     onClick: () -> Unit,
     compact: Boolean,
 ) {
@@ -585,7 +793,7 @@ private fun AssistantStopButton(
                 .background(MaterialTheme.colorScheme.errorContainer),
         ) {
             Icon(
-                imageVector = Icons.Filled.Stop,
+                imageVector = Icons.Filled.Close,
                 contentDescription = stringResource(R.string.assistant_session_cancel),
                 tint = MaterialTheme.colorScheme.error,
             )
@@ -599,12 +807,75 @@ private fun AssistantStopButton(
             ),
         ) {
             Icon(
-                imageVector = Icons.Filled.Stop,
+                imageVector = Icons.Filled.Close,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(8.dp))
-            Text(stringResource(R.string.assistant_session_stop))
+            Text(stringResource(R.string.assistant_session_close))
+        }
+    }
+}
+
+@Composable
+private fun AssistantMicButton(
+    phase: AssistantSessionPhase,
+    onClick: () -> Unit,
+) {
+    val action = assistantMicAction(phase)
+    val listening = action == AssistantMicAction.Stop
+    IconButton(
+        onClick = onClick,
+        enabled = action != AssistantMicAction.Disabled,
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(
+                if (listening) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.primaryContainer
+            ),
+    ) {
+        Icon(
+            imageVector = if (listening) Icons.Filled.Stop else Icons.Filled.Mic,
+            contentDescription = stringResource(
+                if (listening) R.string.assistant_session_stop_listening
+                else R.string.assistant_session_start_listening
+            ),
+            tint = if (listening) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+    }
+}
+
+@Composable
+private fun AssistantScreenContextIndicator(
+    context: AssistantScreenContextUi,
+    compact: Boolean,
+) {
+    val bitmap = remember(context.screenshotJpeg) {
+        context.screenshotJpeg?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = stringResource(R.string.assistant_session_screen_thumbnail),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(if (compact) 52.dp else 72.dp)
+                .clip(RoundedCornerShape(14.dp)),
+        )
+    } else {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Text(
+                text = stringResource(R.string.assistant_session_screen_context_ready),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = if (compact) 2 else 1,
+            )
         }
     }
 }

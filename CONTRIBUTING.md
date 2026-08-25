@@ -29,6 +29,28 @@ scripts/dev.bat version    # Show current version
 scripts/dev.bat relay      # Start relay server (dev, no TLS)
 ```
 
+### Review bundles
+
+Maintainers can produce a matched Android + Relay handoff for one pull request
+without cutting a release. Apply the `review-candidate` label to an open PR
+targeting `dev`. The short-lived artifact contains a side-by-side
+**HR Candidate** APK, Relay packages/source from the same exact PR commit,
+provenance, checksums, and install/rollback guidance. While the label remains
+applied, a new PR head commit automatically replaces any in-progress build with
+a bundle for the new head.
+For a first-time fork contributor, GitHub may hold the first run for explicit
+maintainer approval before any untrusted code executes.
+When an opted-in candidate run completes, a separate trusted reporter creates or
+updates one PR comment with the exact source SHA, artifact link, expiry, and
+concise install and rollback guidance. Skipped workflow shells for unlabeled PRs
+do not create comments.
+
+Review bundles never bump versions, create tags, upload to Play, or replace the
+stable Android app. Relay review still requires a staging Hermes instance or an
+explicit immutable snapshot/rollback window because two Relay plugins cannot
+own the same tools and hooks in one Hermes process. See
+[Review builds and release candidates](docs/review-candidates.md).
+
 Linux/macOS equivalent lives at `scripts/dev.sh`.
 
 ### Fast Android iteration
@@ -117,18 +139,27 @@ After the plugin is in place, restart hermes and verify pairing with `hermes-pai
 We follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 
 **Branching model: `main` + `dev`.** Feature branches — `feature/<name>`,
-`fix/<name>`, `docs/<name>`, `chore/<name>` — branch off `dev` and merge back
-into `dev` via merge-commit/no-ff PRs. This includes small documentation fixes.
+`fix/<name>`, `docs/<name>`, `chore/<name>` — branch from current `origin/dev`
+and merge back into `dev` via merge-commit/no-ff PRs. This includes small
+documentation fixes.
 `main` is release history, not the normal contribution target; it receives
 approved release PRs from `dev` and focused hotfix PRs based on production tags.
+
+`origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
+fast-forward-only mirror and create each task in its own branch/worktree from the
+current `origin/dev`. Do not accumulate unpublished commits on local `dev`. If a
+maintainer needs to combine several reviewed branches, use a temporary
+`integration/<batch>` branch and merge that branch through a normal PR to `dev`.
+See [docs/worktree-workflow.md](docs/worktree-workflow.md) for the concurrent
+worktree procedure.
 
 Feature completion means merged and verified on `dev`; it does not mean the
 change has been released. A separate Forge release issue/session owns release
 preparation, the `dev` → `main` release PR, tagging, artifacts, rollout or
-deployment, and live verification. Release-prep commits land on `dev`; tags are
-cut from the resulting `main` tip as `android-vX.Y.Z`, `server-vX.Y.Z`, or
-`desktop-vX.Y.Z`. See [RELEASE.md](RELEASE.md) for the full release and hotfix
-procedures.
+deployment, and live verification. Release-prep commits use a dedicated branch
+and PR into `dev`; tags are cut from the resulting `main` tip as
+`android-vX.Y.Z`, `server-vX.Y.Z`, or `desktop-vX.Y.Z`. See
+[RELEASE.md](RELEASE.md) for the full release and hotfix procedures.
 
 ## Stale PR salvage and contributor credit
 
@@ -200,6 +231,10 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
   cycle; hosted CI remains the exhaustive all-variant gate.
 - **Focused Android unit test:** `scripts/dev.bat test-one "<fully-qualified-class-or-pattern>"`
 - **Android unit tests:** `scripts/dev.bat test` (runs the sideload debug JUnit + MockK + Compose suite)
+- **Gateway contract lab:** [`docs/gateway-contract-testing.md`](docs/gateway-contract-testing.md)
+  covers the on-demand vanilla-Gateway fixture, Android instrumentation,
+  upstream conformance, and physical-device ADB certification. No contract or
+  device lane is scheduled automatically.
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
 CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.
@@ -210,4 +245,5 @@ independent validation.
 ## Questions?
 
 - **Architecture context?** [docs/spec.md](docs/spec.md) covers protocols, UI layouts, and the channel model. [docs/decisions.md](docs/decisions.md) covers the forks in the road and why we picked what we did.
-- **Something unclear?** [Open an issue](https://github.com/Codename-11/hermes-relay/issues/new) — we read every one, and "this contributing guide is confusing" is a completely fair bug report.
+- Need help or want to explore an early idea? Start a [GitHub Discussion](https://github.com/Codename-11/hermes-relay/discussions).
+- Found a reproducible bug or have a specific, actionable feature request? [Open an issue](https://github.com/Codename-11/hermes-relay/issues/new).

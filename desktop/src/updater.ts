@@ -29,8 +29,8 @@ import { pipeline } from 'node:stream/promises'
 import { VERSION } from './version.js'
 
 const DEFAULT_REPO = 'Codename-11/hermes-relay'
-const RELEASES_API = (repo: string): string =>
-  `https://api.github.com/repos/${repo}/releases`
+const RELEASES_API = (repo: string, page: number): string =>
+  `https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}`
 
 export interface UpdateInfo {
   current: string
@@ -176,21 +176,24 @@ interface GhRelease {
 }
 
 async function fetchReleases(repo: string): Promise<GhRelease[]> {
-  const url = RELEASES_API(repo)
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': `hermes-relay-cli/${VERSION}`
+  const releases: GhRelease[] = []
+  for (let page = 1; ; page += 1) {
+    const res = await fetch(RELEASES_API(repo, page), {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `hermes-relay-cli/${VERSION}`
+      }
+    })
+    if (!res.ok) {
+      throw new Error(`GitHub Releases API ${res.status} ${res.statusText}`)
     }
-  })
-  if (!res.ok) {
-    throw new Error(`GitHub Releases API ${res.status} ${res.statusText}`)
+    const data = (await res.json()) as GhRelease[]
+    if (!Array.isArray(data)) {
+      throw new Error('unexpected Releases API response (not an array)')
+    }
+    releases.push(...data)
+    if (data.length < 100) return releases
   }
-  const data = (await res.json()) as GhRelease[]
-  if (!Array.isArray(data)) {
-    throw new Error('unexpected Releases API response (not an array)')
-  }
-  return data
 }
 
 export async function checkForUpdate(opts: { repo?: string; assetName?: string } = {}): Promise<UpdateInfo | null> {
@@ -396,9 +399,18 @@ export async function finalizePendingUpdate(): Promise<void> {
     // binary, nothing to swap.
     return
   }
+  await finalizePendingUpdateAt(target)
+}
+
+/** Path-level implementation used by the Windows startup hook and tests. */
+export async function finalizePendingUpdateAt(target: string): Promise<void> {
   const base = target.slice(0, -'.exe'.length)
   const newPath = `${base}.new.exe`
   const oldPath = `${base}.old.exe`
+
+  // Reap a backup from the prior cooperative swap even when no new update is
+  // staged. The prior process can keep the renamed image locked until exit.
+  try { await unlink(oldPath) } catch { /* absent or still locked */ }
 
   try {
     await stat(newPath)
@@ -407,10 +419,6 @@ export async function finalizePendingUpdate(): Promise<void> {
   }
 
   try {
-    // Reap any leftover .old.exe from a previous swap. Windows lets us delete
-    // it once the file handle from the prior run is released.
-    try { await unlink(oldPath) } catch { /* either absent or still locked */ }
-
     // Move running binary → .old.exe. This is allowed on Windows even for
     // the actively-executing image (the OS keeps the handle; the file just
     // gets a new name).

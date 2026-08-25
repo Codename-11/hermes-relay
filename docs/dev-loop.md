@@ -68,6 +68,25 @@ Rule of thumb: where a surface is CI-gateable, write the **failing test first**
 is the deliberate exception — CI only covers lint + unit there, so on-device
 verification stays a manual maintainer step and a fix is never "done" from CI alone.
 
+### Emulator UI evidence
+
+Hermes Android is dark-mode-first. Before emulator screenshots, animation
+review, or renderer performance measurements, explicitly enable Android dark
+mode and restart the app so evidence is not captured in the emulator's light
+default:
+
+```bash
+adb -s <emulator-serial> shell cmd uimode night yes
+adb -s <emulator-serial> shell am force-stop com.axiomlabs.hermesrelay.sideload
+adb -s <emulator-serial> shell am start -n \
+  com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
+adb -s <emulator-serial> shell cmd uimode night
+```
+
+Confirm the final command reports `Night mode: yes` before capturing evidence.
+Use host GPU acceleration where available; software rendering is useful for
+compatibility but is not representative performance evidence.
+
 ## Local bridge: `scripts/start-issue.sh`
 
 ```bash
@@ -84,7 +103,7 @@ branches can run concurrently. `ISSUE-BRIEF.md` is git-ignored. Tear down with
 
 ## Setup (one-time)
 
-The workflows can only apply labels that already exist. Create them once:
+Repository automation only recognizes labels that already exist. Create them once:
 
 ```bash
 gh label create "area:android"            -c "1d76db" -d "Kotlin app"
@@ -92,11 +111,15 @@ gh label create "area:cli"                -c "0e8a16" -d "desktop/ Node CLI"
 gh label create "area:plugin"             -c "fbca04" -d "plugin/ Python relay + tools"
 gh label create "area:dashboard"          -c "c5def5" -d "plugin/dashboard React UI"
 gh label create "area:docs"               -c "bfd4f2" -d "docs/ or user-docs/"
+gh label create "review-candidate"         -c "ffb300" -d "Build a side-by-side Android and Relay review bundle for this PR"
 ```
 
 ## Operational notes
 
 - **Manual issue labels.** Type and area labels are applied during maintainer
   triage; no issue-open workflow guesses ownership from keywords.
+- **Review-candidate PRs.** Applying `review-candidate` opts an open PR targeting
+  `dev` into exact-head Android and Relay review bundles until the label is
+  removed.
 - **No write-access escalation from issues.** Auto-attempting a fix from
   untrusted issue text remains intentionally out of scope.

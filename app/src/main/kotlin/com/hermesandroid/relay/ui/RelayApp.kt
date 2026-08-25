@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +50,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.Lifecycle
@@ -75,6 +78,7 @@ import androidx.navigation.navArgument
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.HermesRelayApp
 import com.hermesandroid.relay.ui.components.CrashReportGate
+import com.hermesandroid.relay.ui.components.CandidateBuildBanner
 import com.hermesandroid.relay.ui.components.DemoModeBanner
 import com.hermesandroid.relay.ui.components.DemoUnavailableContent
 import com.hermesandroid.relay.ui.components.MessageBannerHost
@@ -125,6 +129,7 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
@@ -141,6 +146,7 @@ import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
 import com.hermesandroid.relay.ui.screens.AnalyticsScreen
 import com.hermesandroid.relay.ui.screens.AppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.CustomThemeScreen
 import com.hermesandroid.relay.ui.screens.CustomPetGuideScreen
 import com.hermesandroid.relay.ui.screens.PetdexBrowseScreen
 import com.hermesandroid.relay.ui.screens.BridgeCoreScreen
@@ -148,6 +154,9 @@ import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
+import com.hermesandroid.relay.ui.screens.BotGroupDetailScreen
+import com.hermesandroid.relay.ui.screens.BotChatScreen
+import com.hermesandroid.relay.ui.screens.BotModeScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
@@ -211,6 +220,30 @@ suspend fun SnackbarHostState.showHumanError(err: HumanError): SnackbarResult {
 /** Startup chrome should wait for either standard chat surface, not Relay. */
 internal fun hasConfiguredStartupChat(connection: Connection?): Boolean =
     connection?.capabilities?.chatConfigured == true
+
+/**
+ * A Pair route is allowed to start once its target connection is active and
+ * persisted. Duplicate Renew may authorize one explicit existing-connection
+ * handoff; arbitrary active-id mismatches remain blocked so restored state
+ * cannot bypass connection/auth hydration.
+ */
+internal fun resolvePairSetupReady(
+    storeHydrated: Boolean,
+    connectionId: String?,
+    authorizedHandoffId: String?,
+    activeConnectionId: String?,
+    connectionIds: Set<String>,
+): Boolean = connectionId == null || storeHydrated && activeConnectionId != null &&
+    activeConnectionId in connectionIds &&
+    (activeConnectionId == connectionId || activeConnectionId == authorizedHandoffId)
+
+/** A user retry replaces even a still-active preparation attempt. */
+internal fun shouldStartPairPreparation(hasActiveJob: Boolean, retryRequested: Boolean): Boolean =
+    retryRequested || !hasActiveJob
+
+/** A replaced/canceled attempt must not evict the newer job from the route map. */
+internal fun isCurrentPairPreparation(mappedJob: Any?, completingJob: Any): Boolean =
+    mappedJob === completingJob
 
 /**
  * App-root chat health derived only from the two transports that can carry a
@@ -369,6 +402,28 @@ sealed class Screen(
             return if (params.isEmpty()) "chat" else "chat?${params.joinToString("&")}"
         }
     }
+    data object BotMode : Screen("bot_mode", "Bot Mode", Icons.Filled.Groups)
+    data object BotGroup : Screen(
+        "bot_mode/groups/{roomKey}",
+        "Bot group",
+        Icons.Filled.Groups,
+    ) {
+        const val ARG_ROOM_KEY: String = "roomKey"
+        fun route(roomKey: String): String =
+            "bot_mode/groups/${android.net.Uri.encode(roomKey)}"
+    }
+    data object BotChat : Screen(
+        "bot_mode/chat/{connectionId}/{profileName}/{sessionId}",
+        "Bot Chat",
+        Icons.AutoMirrored.Filled.Chat,
+    ) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        const val ARG_PROFILE_NAME: String = "profileName"
+        const val ARG_SESSION_ID: String = "sessionId"
+        fun route(connectionId: String, profileName: String, sessionId: String): String =
+            "bot_mode/chat/${android.net.Uri.encode(connectionId)}/" +
+                "${android.net.Uri.encode(profileName)}/${android.net.Uri.encode(sessionId)}"
+    }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
     data object Manage : Screen("manage", "Manage", Icons.Filled.Settings)
@@ -479,6 +534,7 @@ sealed class Screen(
     data object ProviderUsage : Screen("settings/usage", "Usage & limits", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
+    data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
     data object PetdexBrowse : Screen("settings/appearance/petdex", "Petdex", Icons.Filled.Settings)
     data object CustomPetGuide : Screen("settings/appearance/custom-pet", "Create a pet", Icons.Filled.Settings)
     data object Analytics : Screen("settings/analytics", "Analytics", Icons.Filled.Settings)
@@ -565,6 +621,26 @@ fun RelayApp() {
     val pendingAddConnectionJobs = remember {
         mutableMapOf<String, kotlinx.coroutines.Job>()
     }
+    val prepareAddConnection: (String, Boolean) -> Unit = { id, retryRequested ->
+        val existingJob = pendingAddConnectionJobs[id]
+        if (shouldStartPairPreparation(existingJob?.isActive == true, retryRequested)) {
+            if (retryRequested) {
+                pendingAddConnectionJobs.remove(id)?.cancel()
+            }
+            val job = connectionSwitchScope.launch(
+                start = kotlinx.coroutines.CoroutineStart.LAZY,
+            ) {
+                connectionViewModel.beginAddConnection(preAllocatedId = id)
+            }
+            job.invokeOnCompletion {
+                if (isCurrentPairPreparation(pendingAddConnectionJobs[id], job)) {
+                    pendingAddConnectionJobs.remove(id)
+                }
+            }
+            pendingAddConnectionJobs[id] = job
+            job.start()
+        }
+    }
 
     // One-time init: the terminal channel ViewModel registers with the shared
     // multiplexer and observes the relay connection state so it can attach/
@@ -624,6 +700,7 @@ fun RelayApp() {
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+    val connections by connectionViewModel.connections.collectAsState()
 
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
@@ -706,6 +783,7 @@ fun RelayApp() {
     val appFontId by connectionViewModel.appFont.collectAsState()
     val appearanceAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
+    val activeCustomTheme by connectionViewModel.activeCustomTheme.collectAsState()
 
     // Resolve the active sphere skin (built-in / adaptive / user-loaded) and
     // publish it + the full available set so every MorphingSphere picks it up
@@ -866,6 +944,7 @@ fun RelayApp() {
         appFontId = appFontId,
         accentHex = appearanceAccent,
         shapeId = appearanceShape,
+        customTheme = activeCustomTheme,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -1092,19 +1171,44 @@ fun RelayApp() {
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        val shareConnectionId by rememberUpdatedState(
+            activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline"
+        )
+        val shareProfileId by rememberUpdatedState(
+            selectedProfile?.name?.takeIf(String::isNotBlank)
+                ?: com.hermesandroid.relay.data.ChatComposerDraftKey.DEFAULT_PROFILE_ID
+        )
         // Android sharesheet handoff: wait until the configured chat context is
-        // settled, then ask ChatViewModel to own the new draft and composer
-        // prefill. Navigation is presentation-only; no composable writes chat
-        // stores or sends the shared text.
+        // settled, then create a fresh draft. The request remains identity-fenced
+        // until ChatScreen restores that exact draft and ingests its text/files.
         LaunchedEffect(navController, onboardingCompleted, initialChatSettled) {
             if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
-            com.hermesandroid.relay.util.SharedTextRequest.pending.collect { request ->
+            com.hermesandroid.relay.util.SharedContentRequest.pending.collect { request ->
                 request ?: return@collect
-                if (chatViewModel.openSharedTextDraft(request.text)) {
-                    navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                        launchSingleTop = true
+                val targetConnectionId = shareConnectionId
+                val targetProfileId = shareProfileId
+                if (!request.ready && !request.preparing && !request.failed) {
+                    com.hermesandroid.relay.util.SharedContentRequest.markPreparing(request.id)
+                    val opened = chatViewModel.openSharedContentDraft(
+                        onReady = { sessionId ->
+                            com.hermesandroid.relay.util.SharedContentRequest.markReady(
+                                id = request.id,
+                                targetConnectionId = targetConnectionId,
+                                targetProfileId = targetProfileId,
+                                targetSessionId = sessionId,
+                            )
+                        },
+                        onFailure = {
+                            com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
+                        },
+                    )
+                    if (opened) {
+                        navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                            launchSingleTop = true
+                        }
+                    } else {
+                        com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
                     }
-                    com.hermesandroid.relay.util.SharedTextRequest.consume(request.id)
                 }
             }
         }
@@ -1408,6 +1512,9 @@ fun RelayApp() {
             !suppressGlobalChrome &&
             !showStartupSphere &&
             !voiceUiState.voiceMode
+        val showCandidateBanner = CandidateBuild.isCandidate &&
+            !voiceUiState.voiceMode &&
+            !showStartupSphere
         // Persistent Demo-mode strip — visible on every demo surface so the
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
@@ -1596,7 +1703,8 @@ fun RelayApp() {
                     // The connection-status toast is now a floating overlay and
                     // doesn't occupy space above the Scaffold, so it no longer
                     // participates in the top-inset accounting.
-                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure || connectionChipVisible ||
+                    if (showUnattendedBanner || showDemoBanner || showHostResourcePressure ||
+                        connectionChipVisible ||
                         showMessageBanner
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
@@ -1826,12 +1934,18 @@ fun RelayApp() {
                                     .InteractionRequestNotifier.DEFAULT_PROFILE_ROUTE_VALUE
                             }
                             if (!profileSelectionSettled) return@LaunchedEffect
+                            if (!connectionViewModel.isProfileSelectionAllowed(targetProfile)) {
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                                backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                                return@LaunchedEffect
+                            }
                             if (effectiveSessionProfileName != targetProfile) {
                                 val selection = targetProfile?.let { name ->
                                     agentProfiles.firstOrNull { it.name == name }
                                 }
                                 if (targetProfile == null || selection != null) {
                                     connectionViewModel.selectProfile(selection)
+                                    chatViewModel.activateGatewayProfile(selection)
                                 }
                                 return@LaunchedEffect
                             }
@@ -1942,7 +2056,107 @@ fun RelayApp() {
                                 launchSingleTop = true
                             }
                         },
+                        onNavigateToBotMode = {
+                            navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
+                        },
                     )
+                }
+                composable(Screen.BotMode.route) {
+                    BotModeScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenBotChat = { route, sessionId ->
+                            navController.navigate(
+                                Screen.BotChat.route(
+                                    connectionId = route.connectionId,
+                                    profileName = route.profileName,
+                                    sessionId = sessionId,
+                                ),
+                            )
+                        },
+                        onOpenGroup = { roomKey ->
+                            navController.navigate(Screen.BotGroup.route(roomKey))
+                        },
+                    )
+                }
+                composable(
+                    route = Screen.BotGroup.route,
+                    arguments = listOf(
+                        navArgument(Screen.BotGroup.ARG_ROOM_KEY) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    val roomKey = entry.arguments?.getString(Screen.BotGroup.ARG_ROOM_KEY)
+                    val botModeState by connectionViewModel.botModeState.collectAsState()
+                    BotGroupDetailScreen(
+                        room = botModeState.roster.groups.firstOrNull { it.key == roomKey },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = Screen.BotChat.route,
+                    arguments = listOf(
+                        navArgument(Screen.BotChat.ARG_CONNECTION_ID) { type = NavType.StringType },
+                        navArgument(Screen.BotChat.ARG_PROFILE_NAME) { type = NavType.StringType },
+                        navArgument(Screen.BotChat.ARG_SESSION_ID) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    val connectionId = entry.arguments?.getString(Screen.BotChat.ARG_CONNECTION_ID).orEmpty()
+                    val profileName = entry.arguments?.getString(Screen.BotChat.ARG_PROFILE_NAME).orEmpty()
+                    val sessionId = entry.arguments?.getString(Screen.BotChat.ARG_SESSION_ID).orEmpty()
+                    val botModeState by connectionViewModel.botModeState.collectAsState()
+                    val connection = connections.firstOrNull { it.id == connectionId }
+                    val bot = botModeState.roster.bots.firstOrNull {
+                        it.route?.connectionId == connectionId && it.profile.name == profileName
+                    }
+                    val route = bot?.route ?: connection?.let {
+                        com.hermesandroid.relay.data.BotGatewayRoute(
+                            key = com.hermesandroid.relay.data.BotGatewayRouteKey(connectionId, profileName),
+                            connectionLabel = it.label,
+                        )
+                    }
+                    val currentRouteUrl = connection?.let {
+                        if (it.id == activeConnectionId) effectiveDashboardUrl else it.resolvedDashboardUrl
+                    }.orEmpty()
+                    val lease = remember(route?.key, currentRouteUrl) {
+                        route?.let(connectionViewModel::acquireBotGateway)?.getOrNull()
+                    }
+                    val botDashboardClient = remember(route?.key, currentRouteUrl) {
+                        route?.let(connectionViewModel::botDashboardClient)?.getOrNull()
+                    }
+                    DisposableEffect(lease, botDashboardClient) {
+                        onDispose {
+                            lease?.close()
+                            botDashboardClient?.shutdown()
+                        }
+                    }
+                    if (
+                        route == null || bot == null || lease == null ||
+                        botDashboardClient == null || sessionId.isBlank()
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                stringResource(R.string.bot_mode_chat_open_failed),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    } else {
+                        val botChatViewModel: ChatViewModel = viewModel(
+                            key = "bot-chat:${route.connectionId}:${route.profileName}:$sessionId",
+                        )
+                        BotChatScreen(
+                            route = route,
+                            bot = bot,
+                            sessionId = sessionId,
+                            gatewayClient = lease.client,
+                            dashboardClient = botDashboardClient,
+                            chatViewModel = botChatViewModel,
+                            connectionViewModel = connectionViewModel,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
                 }
                 composable(Screen.Manage.route) {
                     if (isDemoMode) {
@@ -2448,14 +2662,7 @@ fun RelayApp() {
                             // underneath the discovery UI instead of blocking
                             // navigation on encrypted-store/client setup.
                             navController.navigate(Screen.Pair.route(connectionId = id))
-                            val job = connectionSwitchScope.launch {
-                                try {
-                                    connectionViewModel.beginAddConnection(preAllocatedId = id)
-                                } finally {
-                                    pendingAddConnectionJobs.remove(id)
-                                }
-                            }
-                            pendingAddConnectionJobs[id] = job
+                            prepareAddConnection(id, false)
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status
@@ -2549,12 +2756,44 @@ fun RelayApp() {
                         ?.getString(Screen.Pair.ARG_AUTO_START)
                     val pairConnections by connectionViewModel.connections.collectAsState()
                     val pairActiveId by connectionViewModel.activeConnectionId.collectAsState()
-                    val pairSetupReady = connectionIdArg == null ||
-                        (pairActiveId == connectionIdArg && pairConnections.any { it.id == connectionIdArg })
+                    val pairStoreHydrated by connectionViewModel.connectionStore.isHydrated.collectAsState()
+                    // Duplicate Renew authorizes one explicit route handoff
+                    // before switching away from the placeholder. Persist the
+                    // identity, not a bare readiness boolean, so Activity
+                    // recreation remains safe and process restore still has
+                    // to hydrate a real matching connection row.
+                    var authorizedPairHandoffId by rememberSaveable(connectionIdArg) {
+                        mutableStateOf<String?>(null)
+                    }
+                    val pairSetupReady = resolvePairSetupReady(
+                        storeHydrated = pairStoreHydrated,
+                        connectionId = connectionIdArg,
+                        authorizedHandoffId = authorizedPairHandoffId,
+                        activeConnectionId = pairActiveId,
+                        connectionIds = pairConnections.mapTo(mutableSetOf()) { it.id },
+                    )
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
                         autoStart = autoStartArg,
                         setupReady = pairSetupReady,
+                        onSetupTimeout = if (connectionIdArg == null) null else ({
+                            DiagnosticsLog.record(
+                                category = DiagnosticCategory.Auth,
+                                severity = DiagnosticSeverity.Warning,
+                                title = "Connection setup did not become ready",
+                                detail = "targetPresent=${pairConnections.any { it.id == connectionIdArg }} " +
+                                    "activeMatches=${pairActiveId == connectionIdArg} " +
+                                    "activePresent=${pairActiveId != null}",
+                                operation = "Prepare connection-scoped local storage",
+                                suggestion = "Retry setup or cancel and add the connection again.",
+                            )
+                        }),
+                        onSetupRetry = if (connectionIdArg == null) null else ({
+                            prepareAddConnection(connectionIdArg, true)
+                        }),
+                        onConnectionTargetChanged = { existingId ->
+                            authorizedPairHandoffId = existingId
+                        },
                         // Offer demo only on the bare "Connect" entry (the
                         // "No Hermes connection" path) — not on add-connection /
                         // re-pair flows, which have a placeholder connection in
@@ -2616,6 +2855,13 @@ fun RelayApp() {
                         onBack = { navController.popBackStack() },
                         onBrowsePetdex = { navController.navigate(Screen.PetdexBrowse.route) },
                         onCreatePet = { navController.navigate(Screen.CustomPetGuide.route) },
+                        onOpenCustomTheme = { navController.navigate(Screen.CustomTheme.route) },
+                    )
+                }
+                composable(Screen.CustomTheme.route) {
+                    CustomThemeScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.PetdexBrowse.route) {
@@ -2857,6 +3103,13 @@ fun RelayApp() {
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars),
         ) {
+            AnimatedVisibility(
+                visible = showCandidateBanner,
+                enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
+                exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            ) {
+                CandidateBuildBanner()
+            }
             AnimatedVisibility(
                 visible = availableUpdateStatus != null && !suppressGlobalChrome &&
                     !showStartupSphere && !voiceUiState.voiceMode,

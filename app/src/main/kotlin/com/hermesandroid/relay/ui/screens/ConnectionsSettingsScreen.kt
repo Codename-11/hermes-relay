@@ -68,6 +68,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -115,7 +116,10 @@ fun ConnectionsSettingsScreen(
         val configured by connectionViewModel.relayConfigured.collectAsState()
         configured
     } else {
-        false
+        // Preview/screenshot hosts do not construct a ConnectionViewModel.
+        // Fall back to the persisted pairing metadata so their active card is
+        // honest instead of showing a connected Relay as "Optional".
+        connections.firstOrNull { it.id == activeConnectionId }?.hasConfiguredRelay() == true
     }
     val startupConnectionId: String? = if (connectionViewModel != null) {
         val startupId by connectionViewModel.startupConnectionId.collectAsState()
@@ -275,7 +279,7 @@ private fun StartupConnectionSelector(
                 .fillMaxWidth()
                 .clickable { expanded = true },
             color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -372,7 +376,7 @@ private fun ConnectionListCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = appearanceRoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(if (isSwitching || justSwitched) 1.5.dp else 0.dp, borderColor),
     ) {
@@ -565,7 +569,7 @@ private fun ConnectionSurfaceSummary(
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
 
-    val chatRuntimeStatus: ChatRuntimeStatus? = if (isActive) {
+    val chatRuntimeStatus: ChatRuntimeStatus? = if (isActive && activeConnectionViewModel != null) {
         resolveChatRuntimeStatus(
             gateway = when (gatewayAvailability) {
                 GatewayAvailability.Ready -> ChatTransportReadiness.Ready
@@ -700,7 +704,7 @@ private fun ConnectionStatusChip(
     Surface(
         modifier = modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),

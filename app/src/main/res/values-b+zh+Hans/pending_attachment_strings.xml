@@ -7,4 +7,5 @@
     <string name="pending_attachment_status_loading">正在准备预览</string>
     <string name="pending_attachment_status_ready">已就绪</string>
     <string name="pending_attachment_status_failed">预览不可用</string>
+    <string name="chat_shared_files_limited">仅添加了前 %1$d 个共享文件。</string>
 </resources>

@@ -1,14 +1,11 @@
 # Installation & Setup
 
-Three steps — install the app, point it at your Hermes, say hello. If your
-Hermes agent is already running, this takes about two minutes and needs nothing
-installed on the server.
+This is the detailed reference for choosing a build, preparing a Hermes host,
+connecting without QR, remote access, and security checks. If your Hermes
+Dashboard already runs and your phone can reach it, the [Quick Start](./quick-start)
+is the shorter recommended path.
 
-<ol class="gs-steps" aria-label="Setup progress">
-  <li><strong>01</strong><span>Install the app</span></li>
-  <li><strong>02</strong><span>Point it at Hermes</span></li>
-  <li><strong>03</strong><span>Connect &amp; chat</span></li>
-</ol>
+<AndroidSetupPath mode="reference" />
 
 ## 1. Install the app
 
@@ -300,33 +297,76 @@ Dashboard/Gateway chat route is ready. If the dot is red:
 More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
 [Connections](/features/connections).
 
-## 4. Optional — add Relay power tools {#relay-server-optional}
+## 4. Recommended — complete the setup with Relay {#relay-server-optional}
 
-Skip this unless you want **Terminal**, **Bridge** device control, **Relay
-sessions**, channel grants, or relay-backed device-control features. Chat, voice,
-and Manage all work without it.
+The unmodified Hermes Dashboard/Gateway remains authoritative for Chat,
+sessions, Manage, sign-in, and standard voice. The Relay plugin is an encouraged
+extension for capabilities upstream Hermes does not yet expose: Terminal/TUI,
+notifications, media handoff, desktop tools, Relay sessions, enhanced voice,
+and optional Device Control.
+
+Hermes-Relay follows an upstream-first rule: when upstream Hermes ships a
+compatible capability, the standard path should move there and Relay should
+stop duplicating it. Relay can be unavailable without blocking the upstream
+connection, but pairing it provides the intended full product experience today.
 
 ### Install the server plugin {#install-the-server-plugin}
 
-::::details Install the Relay plugin + pair
 On the Hermes host:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
 hermes relay doctor
 hermes relay start --no-ssl
+```
+
+`hermes pair` and `hermes relay` are supplied by the plugin through upstream
+Hermes' plugin CLI support; they are not Hermes core commands. Use `--no-ssl`
+only on a trusted LAN or VPN.
+
+### Recommended: pair from the Hermes Web Dashboard
+
+Restart or refresh the Dashboard/Gateway after installing the plugin, then:
+
+1. Open the Hermes Web Dashboard and select **Relay**.
+2. If the phone does not have its standard connection yet, click **Connect
+   mobile app** and scan that tokenless QR from Android **Connect → Scan Hermes
+   setup QR**. It contains only the Dashboard address.
+3. Click **Pair new device**. Leave mode on **Auto** for the usual LAN plus
+   configured remote candidates.
+4. In Android, open **Settings → Connections → Pair Hermes Relay → Scan QR** and
+   scan the one-time invite.
+
+These are deliberately separate actions: **Connect mobile app** configures the
+upstream Dashboard/Gateway connection; **Pair new device** grants a Relay
+session. Neither converts Dashboard credentials into Relay credentials.
+
+The Dashboard also shows the one-time code and a copyable invite for clients
+without a camera. Pairing codes expire and are single-use; mint a fresh invite
+instead of retrying a consumed code.
+
+### Alternative: generate the same QR from a terminal
+
+```bash
 hermes pair
 ```
 
-`hermes pair` is provided by the Hermes-Relay plugin through upstream Hermes'
-plugin CLI support; it is not a built-in Hermes core command. Then scan the QR in
-Android from **Settings → Connections → Pair Relay**, or from onboarding's **Scan
-setup QR** path. If the Relay isn't running, the plugin may still print a legacy
-API-first compatibility QR; dashboard-primary Chat does not depend on that
-payload and Relay can be added later.
-The QR should include `dashboard_url` for current dashboard-primary and custom
-reverse-proxy layouts; legacy payloads without it may derive the dashboard from
-the API host on port `9119`.
+The command prints a text receipt, a terminal QR, a PNG path, and a pasteable
+`hermes-relay://pair?...` invite. Scan the QR from Android. This uses the same
+signed pairing contract as the Web Dashboard.
+
+### Manual fallback when QR scanning is unavailable
+
+- In Android, choose **Enter a Relay pairing code** and enter the Relay URL plus
+  the code shown by the Dashboard or `hermes pair`.
+- Or choose **Show Relay code** in Android, run the displayed
+  `hermes pair --register-code <code>` command on the host, then tap **Connect**.
+
+Keep manual URL, port, TLS, API fallback, and route-priority overrides under the
+advanced path. The Dashboard's **Auto** pairing mode and the app's confirmed QR
+receipt should be the default.
+
+::::details Legacy installer and compatibility-only options
 
 Use the legacy installer only when you also want the systemd user service, shell
 shims, external skill-path registration, and the old clone/update workflow:
@@ -346,26 +386,8 @@ hermes relay compat install
 hermes relay compat remove
 ```
 
-::: tip Start the relay
-```bash
-# If you installed the hermes-relay plugin (recommended):
-hermes relay start --no-ssl
-
-# Or directly from a repo checkout:
-python -m plugin.relay --no-ssl
-```
-Run this on the same machine as hermes-agent. On current upstream Hermes installs
-with the plugin enabled, the plugin-provided `hermes pair` is available — when the
-relay is running, its URL and a fresh pairing code are embedded in the QR
-automatically.
-:::
-
 For persistent deployment, Docker, systemd, and TLS options, see the
 [Relay Server docs](/reference/relay-server).
-
-If you only saw an API-first QR earlier, start Relay and re-run `hermes pair` —
-the new QR will include the Relay block. Your Dashboard/Gateway connection stays
-the standard Chat path.
 ::::
 
 ::: tip Multiple Hermes servers

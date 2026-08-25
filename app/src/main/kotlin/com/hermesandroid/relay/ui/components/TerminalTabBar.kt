@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 
 /**
@@ -121,7 +122,7 @@ private fun TerminalTabChip(
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val shape = RoundedCornerShape(8.dp)
+    val shape = appearanceRoundedCornerShape(8.dp)
     Row(
         modifier = Modifier
             .height(32.dp)

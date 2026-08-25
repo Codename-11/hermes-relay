@@ -37,6 +37,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 /**
  * Phase 3 — safety-rails `bridge-safety-rails`
@@ -86,7 +87,7 @@ fun DestructiveVerbConfirmDialog(
                 .widthIn(max = 360.dp)
                 .fillMaxWidth(0.92f)
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
+            shape = appearanceRoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface,
             ),
@@ -126,7 +127,7 @@ fun DestructiveVerbConfirmDialog(
                         .fillMaxWidth()
                         .background(
                             MaterialTheme.colorScheme.surfaceVariant,
-                            RoundedCornerShape(10.dp)
+                            appearanceRoundedCornerShape(10.dp)
                         )
                         .padding(12.dp)
                 ) {
@@ -245,7 +246,7 @@ fun BridgeStatusOverlayChip(unattended: Boolean = false) {
         modifier = Modifier
             .background(
                 color = Color(0xFF1A1A2E).copy(alpha = 0.85f),
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
             )
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {

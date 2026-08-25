@@ -9,6 +9,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. The UI identifies Relay-plugin-enhanced data and explains which capabilities require the matching plugin. Provider credentials remain host-side.
+- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
+- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
+- **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
+- **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
+
+### Changed
+
+- **Release and candidate names use one public product hierarchy.** Future releases use `Hermes-Relay Android`, `Hermes-Relay Plugin`, or `Hermes-Relay CLI+UI` display names, while isolated Android review and release-candidate installs use `HR Candidate`, without changing immutable tags, package identities, updater contracts, or artifact filenames.
+- **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
+- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
+
+### Fixed
+
+- **README and Google Play onboarding now match the Dashboard-first product path.** Public setup copy names the two separate Dashboard QR actions, treats the API server as an advanced fallback, explains the encouraged Hermes-Relay extension without implying Play includes Device Control, and ships one current deterministic Android screenshot set.
+- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
+- **Android fresh chats no longer inherit a stale busy composer.** New-chat navigation settles visible streaming ownership even when a Gateway turn has already lost its live handle, and Stop remains an immediate escape hatch after the terminal bubble has settled. (#416, #418)
+- **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
+- **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
+- **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
+- **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
+- **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
+
+## [Android 1.12.1] - 2026-08-22
+
+### Fixed
+
+- **Android shares open as complete reviewable drafts.** Shared links and text now survive fresh-chat draft restoration, while single or multiple shared images and files enter the same composer attachment flow. Mixed text-and-file shares are supported and nothing is sent automatically.
+- **Adding or renewing an Android connection no longer stalls during local preparation.** Pair setup keeps its allocated target exact, performs an explicit validated handoff when renewing an existing connection, and continues with that connection's scoped authentication state.
+- **Unavailable Android chat routes now fail visibly.** Send attempts with no usable Gateway or API fallback expose a retryable failure, while required profile-scoped history reads report an error instead of treating the wrong or missing history as an empty conversation.
+- **Android Diagnostics reports secure-storage degradation and recovery without exposing credentials.** Keystore fallback, encrypted-store self-healing, and temporary in-memory storage are recorded with secret-free recovery guidance.
+
+## [Android 1.12.0] - 2026-08-21
+
+### Added
+
+- **Android can create and save custom themes.** The Custom workshop provides a live chat preview, editable Background, Surface, Accent, and Text roles, Light or Dark ownership, saved Soft/Balanced/Sharp shape, and bounded rename, duplicate, and delete actions. Up to 20 presets remain local to the device.
+- **Maintainers can build matched Android and Relay review candidates without cutting a release.** Candidate artifacts share exact source provenance and checksums, install beside stable builds with isolated data, and remain excluded from stable update prompts.
+
+### Changed
+
+- **Appearance shape now applies consistently across the app.** Soft, Balanced, and Sharp styling reaches chat, settings, sheets, dialogs, terminal, voice, Bridge, and other shared surfaces, while accent and shape changes apply immediately. (#385)
+- **Selecting an All Profiles session now activates its owning agent.** Header identity, avatar, transcript, drafts, routing, and persistence move together. Merely browsing All Profiles changes nothing, and a profile lock hides All Profiles and rejects cross-profile opens.
+
+### Fixed
+
+- **Language changes preserve the active profile and session.** Activity recreation retains the exact connection, agent, session, and All Profiles browser state without replacing them with stale persisted values. The persistent connection notification also relocalizes without reconnecting. (#381)
+- **Gateway chats recover when a terminal frame is missed.** An authoritative idle state settles the active turn, retains its durable session, and reconciles history without resubmitting through fallback transport. (#365)
+- **Relay endpoint forms normalize to the correct sibling routes.** Saved base, `/ws`, and `/health` URLs resolve idempotently without producing paths such as `/relay/ws/health`; malformed or ambiguous routes still fail closed. (#380)
+
+## [Server 1.9.0] - 2026-08-21
+
+### Added
+
+- **Reconnect-delivered phone messages carry explicit backlog context.** Relay marks messages flushed from its bounded offline queue and emits one ordered completion event so compatible clients can label delayed messages and summarize the batch without generating one banner per item.
+- **Phone status reports granular Bridge capability grants.** Human-readable status and the `android_phone_status` tool distinguish permanent, timed, and unlimited capabilities while retaining the existing Android permission and safety state.
 
 ## [1.11.0] - 2026-08-20
 

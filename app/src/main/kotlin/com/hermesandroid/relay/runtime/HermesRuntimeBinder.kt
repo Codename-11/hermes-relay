@@ -175,15 +175,26 @@ internal class HermesRuntimeBinder(
         }
         chat.setDisplayProfileProvider { connection.effectiveDisplayProfile.value }
         chat.setDisplayAliasProvider { connection.profileDisplayAlias.value }
-        chat.setProfileSessionLister { connection.listProfileScopedSessions() }
+        chat.setLockedProfileNameProvider { connection.lockedProfileName.value }
+        chat.setProfileSelectionHandler { profile ->
+            if (!connection.isProfileSelectionAllowed(profile?.name)) {
+                false
+            } else {
+                connection.selectProfile(profile)
+                true
+            }
+        }
+        chat.setProfileSessionLister { profileName ->
+            connection.listProfileScopedSessions(profileName)
+        }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
-        chat.profileSessionDeleter = connection::deleteProfileScopedSession
-        chat.profileSessionRenamer = connection::renameProfileScopedSession
-        chat.profileSessionPinner = connection::setProfileScopedSessionPinned
-        chat.profileSessionArchiver = connection::setProfileScopedSessionArchived
+        chat.profileSessionDeleter = connection::deleteSession
+        chat.profileSessionRenamer = connection::renameSession
+        chat.profileSessionPinner = connection::setSessionPinned
+        chat.profileSessionArchiver = connection::setSessionArchived
         chat.onSessionChanged = connection::saveLastSessionId
         chat.setDemoModeWiring(
             isDemo = { connection.isDemoMode.value },
@@ -283,20 +294,29 @@ internal class HermesRuntimeBinder(
             ) { ready, connectionId, profileName, sessionId ->
                 ProfileContextInputs(ready, connectionId, profileName, sessionId)
             }
-            combine(contextInputs, connection.profileSelectionSettled) { inputs, settled ->
-                inputs.copy(profileSelectionSettled = settled)
+            combine(
+                contextInputs,
+                connection.profileSelectionSettled,
+                connection.lockedProfileName,
+            ) { inputs, settled, lockedProfileName ->
+                inputs.copy(
+                    profileSelectionSettled = settled,
+                    profileLocked = lockedProfileName != null,
+                )
             }.collectLatest { inputs ->
                 profileContextReady.value = false
                 if (!inputs.chatReady) return@collectLatest
                 if (!inputs.profileSelectionSettled) delay(PROFILE_SETTLE_BACKSTOP_MS)
                 else delay(PROFILE_CONTEXT_COALESCE_MS)
-                chat.switchProfileContext(
-                    contextKey = AgentDisplay.profileContextKey(
-                        connectionId = inputs.connectionId,
-                        profileName = inputs.profileName,
-                    ),
-                    sessionId = inputs.sessionId,
+                val contextKey = AgentDisplay.profileContextKey(
+                    connectionId = inputs.connectionId,
+                    profileName = inputs.profileName,
                 )
+                if (inputs.profileLocked) {
+                    chat.switchProfileContext(contextKey, inputs.sessionId)
+                } else {
+                    chat.reconcileProfileContext(contextKey, inputs.sessionId)
+                }
                 chat.refreshSessions()
                 profileContextReady.value = true
             }
@@ -347,7 +367,11 @@ internal class HermesRuntimeBinder(
         }
         jobs += runtime.coroutineScope.launch {
             voice.uiState.collect { state ->
-                val snapshot = AssistantSessionProtocol.snapshotFromVoiceState(state)
+                val snapshot = AssistantSessionProtocol.snapshotFromVoiceState(state).copy(
+                    screenContextSupported = assistantCanTransmitScreenContext(
+                        VoiceEngineMode.fromStorage(voiceSettings.value.engineMode),
+                    ),
+                )
                 _assistantSnapshot.value = snapshot
                 if (!AssistantAppSessionState.active.value) return@collect
                 if (state.voiceMode) AssistantAppSessionState.markVoiceStarted()
@@ -366,7 +390,10 @@ internal class HermesRuntimeBinder(
     }
 
     suspend fun activateVoice(
+        activationId: String,
         startNewSession: Boolean,
+        manualMic: Boolean,
+        expectScreenContext: Boolean,
         timeoutMs: Long,
         isCurrent: () -> Boolean,
     ) {
@@ -390,6 +417,7 @@ internal class HermesRuntimeBinder(
 
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
+        check(!voice.uiState.value.voiceMode) { "Hermes voice is already active" }
         // Re-apply scope before entry. The readiness collector already observed
         // the scope's resolved settings, so Realtime prewarm cannot use defaults.
         voice.setVoicePrefsConnection(connection.activeConnectionId.value)
@@ -403,14 +431,38 @@ internal class HermesRuntimeBinder(
         }
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
-        voice.enterVoiceMode()
+        voice.enterVoiceMode(
+            activationId = activationId,
+            expectScreenContext = expectScreenContext &&
+                readiness.route != HermesVoiceActivationRoute.Realtime,
+        )
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
-        voice.startListening()
-        check(voice.uiState.value.state == VoiceState.Listening) {
-            voice.uiState.value.error ?: "Voice recorder did not enter Listening"
+        if (!manualMic) {
+            voice.startListening()
+            check(voice.uiState.value.state == VoiceState.Listening) {
+                voice.uiState.value.error ?: "Voice recorder did not enter Listening"
+            }
         }
         _voiceActivationReadiness.value = readiness
+    }
+
+    fun startAssistantListening() {
+        val voice = runtime.voiceViewModel
+        if (voice.uiState.value.voiceMode && voice.uiState.value.state == VoiceState.Idle) {
+            voice.startListening()
+        }
+    }
+
+    fun stopAssistantListening() {
+        val voice = runtime.voiceViewModel
+        if (voice.uiState.value.voiceMode && voice.uiState.value.state == VoiceState.Listening) {
+            voice.stopListening()
+        }
+    }
+
+    fun retryAssistantVoiceAfterFailure() {
+        runtime.voiceViewModel.retryAssistantVoiceAfterFailure()
     }
 
     fun cancelVoice() {
@@ -438,6 +490,7 @@ internal class HermesRuntimeBinder(
         val profileName: String?,
         val sessionId: String?,
         val profileSelectionSettled: Boolean = false,
+        val profileLocked: Boolean = false,
     )
 
     private companion object {
@@ -446,6 +499,9 @@ internal class HermesRuntimeBinder(
         const val GATEWAY_ROUTE_SETTLE_MS = 750L
     }
 }
+
+internal fun assistantCanTransmitScreenContext(engineMode: VoiceEngineMode): Boolean =
+    engineMode == VoiceEngineMode.HermesVoiceOutput
 
 sealed interface HermesVoiceActivationReadiness {
     data object Initializing : HermesVoiceActivationReadiness

@@ -1,0 +1,31 @@
+{
+  "name": "rapid_tools_interims",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "reasoning.delta", "payload": {"text": "Checking fixture state."}},
+        {"op": "event", "type": "tool.start", "payload": {"tool_id": "fixture-tool-1", "name": "terminal"}},
+        {"op": "event", "type": "message.delta", "payload": {"text": "First "}},
+        {"op": "event", "type": "message.delta", "payload": {"text": "interim. "}},
+        {"op": "event", "type": "tool.complete", "payload": {"tool_id": "fixture-tool-1", "name": "terminal", "summary": "fixture complete"}},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Final."}},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Exercise rapid events.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "First interim. Final.", "reasoning": "Checking fixture state.", "timestamp": 2.0}
+          ]
+        },
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "First interim. Final.", "status": "complete"}}
+      ]
+    }
+  ]
+}

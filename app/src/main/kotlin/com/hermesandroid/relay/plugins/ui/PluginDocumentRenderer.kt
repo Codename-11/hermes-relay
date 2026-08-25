@@ -68,6 +68,7 @@ import com.hermesandroid.relay.plugins.document.PluginSpacing
 import com.hermesandroid.relay.plugins.document.PluginTextStyle
 import com.hermesandroid.relay.plugins.document.PluginTone
 import com.hermesandroid.relay.plugins.document.PluginValue
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.components.rememberAccessibleMotionState
 
 sealed interface PluginInteraction {
@@ -340,7 +341,7 @@ private fun PluginProgress(
 private fun DefaultPluginAsset(contentDescription: String, modifier: Modifier) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appearanceRoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {

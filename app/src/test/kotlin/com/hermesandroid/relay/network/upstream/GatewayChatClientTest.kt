@@ -191,6 +191,11 @@ class GatewayClientHarness(
     }
 
     @Volatile
+    var sessionListPayload: JsonObject = buildJsonObject {
+        put("sessions", JsonArray(emptyList()))
+    }
+
+    @Volatile
     var profileCreatePayload: JsonObject = buildJsonObject {
         put("ok", true)
         put("name", "operator")
@@ -310,6 +315,8 @@ class GatewayClientHarness(
                 "session.activate" -> recoveryPayload(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "live-activated",
                 )
+                "session.list" -> sessionListPayload
+                "session.title" -> buildJsonObject { put("ok", true) }
                 "prompt.submit" -> promptSubmitPayload
                 "session.interrupt" -> buildJsonObject { put("ok", true) }
                 "process.list" -> buildJsonObject {
@@ -889,6 +896,165 @@ class GatewayChatClientTest {
         assertTrue(profiles.single().hasAvatar)
         assertEquals("#ff5500", (profiles.single().uiMeta["accent"] as JsonPrimitive).content)
         assertEquals(false, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `bot roster parses canonical chats activity and read only room projection`() = runBlocking {
+        harness.profilesListPayload = buildJsonObject {
+            put("bot_mode_protocol", true)
+            put("profiles", JsonArray(listOf(buildJsonObject {
+                put("name", "default")
+                put("display_name", "Hermes")
+                put("model", "gpt-5.6")
+                put("is_default", true)
+                put("canonical_session", buildJsonObject {
+                    put("id", "bot-root")
+                    put("resolved_id", "bot-tip")
+                    put("root_title", "Bot Chat")
+                    put("preview", "Release plan ready")
+                    put("last_active", 1_777_000_000)
+                    put("message_count", 8)
+                })
+                put("worker_session", buildJsonObject {
+                    put("id", "worker-1")
+                    put("title", "Build")
+                    put("last_active", 1_777_000_030)
+                })
+                put("ui_meta", buildJsonObject {
+                    put("hermes-bots", buildJsonObject { put("title", "Lucy") })
+                    put("hermes-bots-groups", buildJsonObject {
+                        put("version", 3)
+                        put("rooms", buildJsonObject {
+                            put("id:launch", buildJsonObject {
+                                put("name", "Launch Council")
+                                put("roomId", "launch")
+                                put("revision", 4)
+                                put("members", JsonArray(listOf(buildJsonObject {
+                                    put("name", "default")
+                                    put("handle", "hermes")
+                                })))
+                                put("log", JsonArray(listOf(buildJsonObject {
+                                    put("id", "message-1")
+                                    put("from", buildJsonObject {
+                                        put("kind", "member")
+                                        put("name", "Lucy")
+                                    })
+                                    put("text", "Rollout is clear")
+                                    put("at", 1_777_000_020)
+                                })))
+                            })
+                        })
+                    })
+                })
+            })))
+        }
+
+        val roster = client.listBotModeRoster().getOrThrow()
+
+        assertTrue(roster.botModeProtocolSupported)
+        assertEquals("Lucy", roster.bots.single().displayName)
+        assertEquals("bot-tip", roster.bots.single().canonicalSession?.resolvedId)
+        assertEquals(1_777_000_030_000L, roster.bots.single().workerSession?.lastActiveAtMs)
+        assertEquals("Launch Council", roster.groups.single().name)
+        assertEquals("Rollout is clear", roster.groups.single().latestMessage?.text)
+        assertEquals(true, (harness.awaitRpc("profiles.list")["include_sessions"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `canonical bot chat adopts exact title registry without creating`() = runBlocking {
+        harness.sessionListPayload = buildJsonObject {
+            put("sessions", JsonArray(listOf(buildJsonObject {
+                put("id", "bot-root")
+                put("resolved_id", "bot-tip")
+                put("root_title", "Bot Chat")
+            })))
+        }
+
+        val target = client.ensureCanonicalBotChat("operator").getOrThrow()
+
+        assertEquals("bot-root", target.storedSessionId)
+        assertEquals("bot-tip", target.resolvedSessionId)
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+        val lookup = harness.awaitRpc("session.list")
+        assertEquals("operator", (lookup["profile"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (lookup["title"] as JsonPrimitive).content)
+        assertEquals(true, (lookup["include_hidden"] as JsonPrimitive).booleanOrNull)
+    }
+
+    @Test
+    fun `canonical bot chat creates hidden row only after authoritative empty lookup`() = runBlocking {
+        harness.createdSessionProfileName = "operator"
+
+        val target = client.ensureCanonicalBotChat("operator").getOrThrow()
+
+        assertEquals("20260612_120000_abc123", target.storedSessionId)
+        val create = harness.awaitRpc("session.create")
+        assertEquals("operator", (create["profile"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (create["title"] as JsonPrimitive).content)
+        assertEquals(true, (create["hidden"] as JsonPrimitive).booleanOrNull)
+        val title = harness.awaitRpc("session.title")
+        assertEquals("live-1", (title["session_id"] as JsonPrimitive).content)
+        assertEquals("Bot Chat", (title["title"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `canonical bot chat lookup failure never creates replacement`() = runBlocking {
+        harness.rpcErrors["session.list"] = 5006 to "profile db unavailable"
+
+        assertTrue(client.ensureCanonicalBotChat("operator").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "session.create" })
+    }
+
+    @Test
+    fun `fixed route profile rides websocket URL and canonical RPC`() = runBlocking {
+        val routeClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = harness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            fixedSessionProfile = "research bot",
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { it() },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        )
+        try {
+            routeClient.ensureCanonicalBotChat("research bot").getOrThrow()
+            val requests = List(2) { harness.server.takeRequest(5, TimeUnit.SECONDS) }
+            assertTrue(requests.filterNotNull().any {
+                it.path?.contains("profile=research%20bot") == true
+            })
+            assertEquals(
+                "research bot",
+                (harness.awaitRpc("session.list")["profile"] as JsonPrimitive).content,
+            )
+        } finally {
+            routeClient.shutdown()
+        }
+    }
+
+    @Test
+    fun `canonical bot lookup on remote route never reaches active gateway`() = runBlocking {
+        val remoteHarness = GatewayClientHarness()
+        val remoteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val remoteClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = remoteHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            fixedSessionProfile = "default",
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { it() },
+            scope = remoteScope,
+        )
+        try {
+            remoteClient.ensureCanonicalBotChat("default").getOrThrow()
+            assertTrue(remoteHarness.rpcLog.any { it.first == "session.list" })
+            assertTrue(harness.rpcLog.none { it.first == "session.list" })
+        } finally {
+            remoteClient.shutdown()
+            remoteScope.cancel()
+            remoteHarness.shutdown()
+        }
     }
 
     @Test
@@ -1655,6 +1821,100 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `settled activation after a streamed socket gap completes without a terminal frame`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws1 = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        // The turn is known-live and has produced content, but the socket dies
+        // before message.complete. Current upstream session.activate reports
+        // running=false after the turn's finally block; it does not replay the
+        // terminal frame that was emitted while this socket was detached.
+        ws1.send(harness.eventFrame("message.start", null, "live-1"))
+        ws1.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "partial") },
+                "live-1",
+            ),
+        )
+        awaitCondition { r.textDeltas.contains("partial") }
+        harness.recoveryRunning = false
+        ws1.close(1011, "terminal frame lost")
+
+        harness.awaitServerSocket()
+        harness.awaitRpc("session.activate")
+
+        assertTrue(
+            "authoritative running=false must settle the recovered turn",
+            r.completeLatch.await(5, TimeUnit.SECONDS),
+        )
+        assertEquals(1, r.reconcileRequests.get())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.resume" })
+    }
+
+    @Test
+    fun `settled session info completes a live turn when message complete is absent`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        ws.send(harness.eventFrame("message.start", null, "live-1"))
+        ws.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "persisted answer") },
+                "live-1",
+            ),
+        )
+        ws.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("running", false) },
+                "live-1",
+            ),
+        )
+
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("persisted answer"), r.textDeltas.toList())
+        assertEquals(1, r.reconcileRequests.get())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `unscoped idle session info cannot settle an active turn`() {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        ws.send(harness.eventFrame("message.start", null, "live-1"))
+        ws.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("running", false) },
+                null,
+            ),
+        )
+
+        assertFalse(r.completeLatch.await(250, TimeUnit.MILLISECONDS))
+        ws.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "done") },
+                "live-1",
+            ),
+        )
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(0, r.reconcileRequests.get())
+    }
+
+    @Test
     fun `mid-turn activate method-not-found keeps legacy socket recovery`() {
         harness.methodNotFound += "session.activate"
         val r = Recorder()
@@ -2070,15 +2330,18 @@ class GatewayChatClientTest {
     @Test
     fun `image attachments upload between session establish and prompt submit`() {
         val r = Recorder()
+        val accepted = AtomicInteger(0)
         client.sendTurn(
             sessionId = null,
             text = "describe this",
             newSessionTitle = null,
             callbacks = r.callbacks,
             attachments = listOf(GatewayAttachment(name = "shot.png", base64 = "aGVsbG8=", ext = "png", contentType = "image/png")),
+            onTransportAccepted = { accepted.incrementAndGet() },
             onPreflightFailure = { r.preflightFailures += it },
         )
         harness.awaitRpc("prompt.submit")
+        awaitCondition { accepted.get() == 1 }
 
         val methods = harness.rpcLog.map { it.first }
         val createIdx = methods.indexOf("session.create")
@@ -2093,6 +2356,13 @@ class GatewayChatClientTest {
         assertEquals("shot.png", (attach["filename"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("png", (attach["ext"] as? JsonPrimitive)?.contentOrNull)
         assertTrue(r.preflightFailures.isEmpty())
+        assertEquals(1, accepted.get())
+
+        harness.awaitServerSocket().send(
+            harness.eventFrame("message.start", null, "live-1")
+        )
+        Thread.sleep(50)
+        assertEquals(1, accepted.get())
     }
 
     @Test
@@ -2141,12 +2411,14 @@ class GatewayChatClientTest {
         harness.methodNotFound.add("image.attach_bytes")
         harness.methodNotFound.add("image.attach.bytes")
         val r = Recorder()
+        val accepted = AtomicInteger(0)
         client.sendTurn(
             sessionId = null,
             text = "img",
             newSessionTitle = null,
             callbacks = r.callbacks,
             attachments = listOf(GatewayAttachment("a.png", "QQ==", "png", "image/png")),
+            onTransportAccepted = { accepted.incrementAndGet() },
             onPreflightFailure = {
                 r.preflightFailures += it
                 r.completeLatch.countDown()
@@ -2157,6 +2429,7 @@ class GatewayChatClientTest {
         // Nothing started server-side — the prompt was never submitted.
         assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
         assertTrue(r.errors.isEmpty())
+        assertEquals(0, accepted.get())
     }
 
     @Test
@@ -2726,7 +2999,9 @@ class GatewayChatClientTest {
             ),
         )
 
-        waitUntil { client.serverModel.value == "agnes-2" }
+        waitUntil {
+            client.serverModel.value == "agnes-2" && client.serverProvider.value == null
+        }
         assertNull(client.serverProvider.value)
         assertNull(client.serverModelIdentity.value)
     }

@@ -7,7 +7,7 @@ Android's declarative plugin surface is specified in
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-08-15
+**Updated:** 2026-08-22
 
 ---
 
@@ -164,6 +164,13 @@ to attach the PR a coding session created, then the repo-scoped read-only
 this metadata is optional; older Dashboard and API-server hosts retain the
 ordinary session row.
 
+Chat availability is derived only from the authenticated Gateway and supported
+API-server fallback routes. A Send with no usable route remains fail-closed and
+surfaces a retryable conversation failure plus secret-free Diagnostics evidence.
+Profile-owned Gateway history is required to load through that exact profile;
+an unavailable scoped reader surfaces a history failure instead of accepting an
+empty or different profile's transcript as authoritative.
+
 #### Channel: `terminal`
 PTY streaming — raw terminal I/O.
 
@@ -197,6 +204,9 @@ The app owns an ephemeral five-minute loopback callback and stores the resulting
 bearer session only for that connection and exact dashboard origin. Callback,
 code-exchange, hosted-gateway, transport, response-shape, and secure-storage
 failures surface as distinct secret-free recovery guidance.
+Unreadable secure stores may be cleared and rebuilt, with any Keystore fallback,
+self-heal, or temporary in-memory degradation recorded in Diagnostics without
+credential values, cookie contents, endpoint URLs, or storage identifiers.
 Self-hosted OIDC remains on the dashboard cookie flow: Android opens
 `/auth/login` in a full-screen embedded browser destination, lets the provider
 return through the public `/auth/callback`, imports only same-origin cookies,
@@ -209,6 +219,15 @@ one-time code through the active private route. The verified session is shared
 by Manage, Gateway tickets, and standard voice.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
+
+Each Android Add Pair route owns its exact allocated target connection identity.
+That target must be persisted and active before its wizard becomes ready; it is
+never silently replaced by a differently identified placeholder. Duplicate
+renewal performs one explicit validated handoff to the existing connection ID
+before switching, which keeps the Compose-owned wizard alive while all
+authentication stores follow that existing identity. The waiting surface is
+bounded: a target that does not become ready exposes Retry and Cancel and
+records only boolean, secret-free readiness evidence in Diagnostics.
 
 The primary secure remote path today is Tailscale Serve, which exposes Relay as
 WSS and the independently authenticated upstream API/Dashboard surfaces as
@@ -370,7 +389,7 @@ Implementation references:
 | Auth envelope | `{pairing_code, ttl_seconds, grants, device_name, device_id}` for pairing mode; `{session_token, device_name, device_id}` for session-mode re-auth. Host metadata wins over phone metadata when both are present. |
 | `auth.ok` response | `{session_token, expires_at, grants, transport_hint, profiles, server_version}`. `math.inf` expiries serialize as `null`. |
 | Rate limiting | 5 auth attempts / 60s → 5-min block. **`/pairing/register` clears all blocks on success** so legitimate re-pair after a relay restart works immediately. |
-| Token storage | `SessionTokenStore` — `KeystoreTokenStore` (StrongBox-preferred via `setRequestStrongBoxBacked`) with fallback to `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`). One-shot lossless migration on first launch post-upgrade. `hasHardwareBackedStorage` flag surfaced in UI. |
+| Token storage | `SessionTokenStore` — `KeystoreTokenStore` (StrongBox-preferred via `setRequestStrongBoxBacked`) with fallback to `LegacyEncryptedPrefsTokenStore` (TEE-backed `EncryptedSharedPreferences`). One-shot lossless migration on first launch post-upgrade. `hasHardwareBackedStorage` is surfaced in UI; fallback, self-heal, and temporary in-memory degradation produce secret-free Diagnostics events. |
 | Cert pinning | TOFU via `CertPinStore` — SHA-256 SPKI fingerprint recorded per `host:port` on first successful wss connect. Subsequent connects verify via OkHttp `CertificatePinner`. Pin wiped explicitly on QR re-pair (`applyServerIssuedCodeAndReset`). Plain ws:// short-circuits pinning entirely. |
 | QR integrity | HMAC-SHA256 over canonicalized payload. Host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phone parses + stores the signature but does NOT verify yet (secret distribution TBD). |
 | Tailscale detection | Informational only — `tailscale0` interface + `100.64.0.0/10` CGNAT + `.ts.net` hostname checks. Displayed as a Connection-section chip. Does NOT auto-change TTL defaults. |
@@ -411,6 +430,15 @@ Implementation references:
 - **Release:** Tag-triggered → version validation → signed APK → GitHub Release
 - **Patterns from ARC:** Concurrency groups, matrix builds, version sync check
 
+### Gateway contract certification (on demand)
+
+Gateway/session/streaming/reconnect behavior uses the client-neutral scenario
+fixture, current-upstream source conformance, Android instrumentation, and
+optional physical ADB evidence described in
+[`docs/gateway-contract-testing.md`](gateway-contract-testing.md). The layers
+separate protocol, client state, rendered lifecycle, and device/runtime proof.
+They are not scheduled automatically.
+
 ---
 
 ## 5. App Layout
@@ -444,7 +472,10 @@ Bottom navigation bar with 4 tabs:
 - **Profile creation** — Manage uses `profiles.create` on current Gateways and labels authentication as shared sign-in, copied credential snapshot, or isolated/no-copy. Android serializes `mirror_credentials` and `share_auth` explicitly, reports best-effort SOUL/model/credential results without claiming full success, and never receives or logs credentials. The user may explicitly enable the authenticated Dashboard create route as an older-host fallback only for the legacy shared/default choice; explicit isolation never degrades to an ambiguous older mutation.
 - **Deletion boundary** — Hermes exposes no `profiles.delete` Gateway RPC. Android continues to delete profiles only through authenticated Dashboard `DELETE /api/profiles/{name}`.
 - **Profile switch lifecycle** — selecting an inactive profile never changes Hermes' sticky server default and never hot-swaps a live session. Android switches connection/profile context, restores that profile's last session only from the compatible Gateway or SSE transport slot, or opens a fresh draft. Gateway turns detach and reconcile in their original durable session; live SSE switching is disabled. Model/provider, personality, reasoning, approval, Fast, and YOLO state are cleared before destination session truth re-seeds them.
-- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
+- **Bot Mode workspace** — the session drawer exposes one entry into a separate full-screen messenger surface; it does not add Bot or group rows to the ordinary session taxonomy. Android refreshes every saved Dashboard/Gateway with bounded concurrency, preserves last-good rows as visibly offline, and collapses duplicate routes by upstream `install_id` before assigning source-qualified handles. Every Bot carries an immutable `(connectionId, profile)` owner; labels, installation metadata, and the currently resolved URL are presentation/routing data rather than identity. All gateways and one-gateway filters never mutate the foreground connection.
+- **Canonical Bot Chat** — each individual row resolves the exact hidden session titled `Bot Chat` on its owning Gateway. Lookup failure is not absence, so Android creates and materializes the lazy row with `session.title` only after an authoritative empty exact-title result. The dedicated Bot Chat destination retains that route's pooled Gateway client, loads history through the same connection/profile Dashboard, sends only through Gateway, and returns directly to Bot Mode without rebinding Standard Chat or the global connection. `/new` or `/reset` compacts the canonical conversation instead of forking it. The route pool mints a fresh WebSocket ticket per dial, includes the immutable profile in the WebSocket URL, isolates credentials by exact trusted connection origin, and tears down only the removed connection's clients.
+- **Bot group projection** — Android merges the bounded `ui_meta["hermes-bots-groups"]` v3 projection across gateways by durable room identity and newest revision. Rooms and recent messages are visibly read-only; Android does not create, rename, disband, join, send, coordinate member turns, or become a second room-log authority. Binary room images are ignored at this metadata boundary.
+- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
 - **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible turn without sending `session.interrupt`; each running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Explicit Stop still interrupts. SSE fallback stays single-stream and cancels on navigation.
 - **Queued Gateway follow-ups** — every local queued item is immutably scoped to its originating connection, profile, stored session, transport, and run generation; only that run's completion can make it eligible, and switching sessions shows only that session's queue. Restored text queues retain the same scope, while unavailable/deleted destinations and non-restorable attachment queues fail visibly instead of following the current composer. Drained messages add `queued: true` to `prompt.submit`; ordinary sends omit the field. Authoritative submit rejections (`4004`, `4018`, `4028`, `4029`, `4030`, `4090`, `5008`, `5070`, and `5071`) preserve the server message and never fall through to API-server SSE.
 - **Durable composer drafts** — each connection/profile/session owns one app-private draft containing text, quote/edit context, and pending attachment bytes. Metadata and content-addressed blobs live under Android's no-backup directory, are capped at 64 drafts and 128 MB of retained blobs outside the active draft, flush when Chat backgrounds, and are removed after a successful send. Session/profile/connection navigation saves the previous owner before restoring the destination; an opened cross-profile session uses its actual owning profile rather than the global picker.
@@ -496,13 +527,13 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 
 ### Settings Tab
 - **Active agent card (v0.6.0)** — top-of-screen summary card showing the current Connection / Profile / Personality. Tap navigates to Chat and auto-opens the agent sheet via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context without leaving the flow.
-- **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, and voice activity buffer. See `docs/decisions.md` §19.
+- **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, voice, Pair-readiness, credential-store recovery, history-failure, and rejected-Send evidence without secrets. See `docs/decisions.md` §19.
 - **Connection (single-server settings)** — summary-first detail for one Hermes installation. Dashboard/Gateway health drives standard Chat, Manage, Sessions, and Voice readiness. API fallback and Relay extensions appear as independently optional capabilities. Advanced configuration exposes manual Dashboard, API, and Relay endpoints plus their native credentials; missing API or Relay settings never make a healthy Dashboard/Gateway connection look broken. Pairing-code and QR fallbacks remain available for Relay and compatibility setups. Transport security posture and paired-device grants remain visible without leading the normal setup flow with ports or bearer keys.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
 - **Voice** — route-aware voice engine selector (`Vanilla Hermes` via dashboard audio, `Relay Voice Output`, and experimental `Realtime Agent`), global interaction mode (tap / hold / continuous), silence threshold slider, a final-answer-only speech policy, Auto-TTS toggle, selected-engine cards for dashboard or relay-backed settings, language picker, and a Test Current Engine card. Final-answer-only keeps tool/service progress and intermediate commentary visual while both voice engines wait to speak the settled answer; approvals, confirmation questions, and blocking failures remain actionable. Vanilla Hermes voice depends on Manage/dashboard auth; Relay-backed engines run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Permissions** — central permission/capability review screen linked from Settings and onboarding. It makes the Vanilla Hermes path explicit ("Chat and Manage" need no Android runtime grant), lists optional camera/microphone/notification access with current status and Android Settings links, and shows sideload-only Device Control requirements only in the sideload flavor.
-- **Appearance customization** — each preset has an expandable editor directly below mode. Accent and Soft/Balanced/Sharp shape drafts update only the live preview until Apply; Reset restores the preset draft, applied values remain local in DataStore, and derived Material on-colors preserve readable contrast. Typography and density remain in their focused Font and Font size controls.
+- **Appearance customization** — each authored preset has an expandable quick editor directly below mode. Accent and Soft/Balanced/Sharp shape changes apply immediately, persist locally in DataStore, and update both the live preview and real app surfaces. **Custom** is the first preset-gallery entry and opens a saved-preset workshop with an always-visible name field, real chat preview, editable Background/Surface/Accent/Text roles, selectable Light or Dark ownership, saved shape, and bounded rename/duplicate/delete actions. Up to 20 normalized presets are stored locally. Auto remains visibly disabled because one custom preset stores one palette rather than paired light/dark palettes. **Reset theme** restores the Relay preset, Auto mode, authored accent, and Soft shape without deleting saved custom presets or resetting independent font, visualization, or pet choices. Derived Material on-colors preserve readable contrast. Typography and density remain in their focused Font and Font size controls.
 - **Appearance** — preset-first live preview, theme mode and typography controls, plus independent **Background visualization** (Off/Sphere with built-in or imported declarative JSON skins, or an imported validated pet-format animation) and **Floating pet** (None/installed pet) controls. A background pet-format asset reuses the safe renderer but never gains roaming, placement, or temperament behavior; its persisted selection is separate from the floating companion. Selected-pet controls include playback speed, 60–120% size, stabilization, temperament, opt-in **Walk around the interface**, and **Reset position**. Pets can be installed from a responsive, searchable Petdex thumbnail gallery, imported as a custom Relay `.zip`/single image, or prepared through a guided local-first creator that copies or prefills complete instructions into a fresh chat for user review before submission. Generated files are never auto-installed or shared. The gallery lazily requests upstream-cropped idle frames and animates only the selected installed pet; the global companion is hidden on that dense route so install/source controls remain clear. Petdex browsing prefers its v2 manifest with v1 fallback; full-atlas downloads to Android are user-initiated, exact-host and size constrained, attribution-preserving, validated, and installed atomically for offline use. Runtime decoding holds the previous complete clip during state swaps, caches a bounded set of clips/sheets, and rejects frame sequences or sheets beyond documented decoded-pixel ceilings. Settings cards and thinking controls remain registered obstacles beneath their walkable top rails, and the pet target yields pointer input during active scrolling. Existing combined selections migrate once: the previous main avatar becomes the background selection while any pet also remains available as the floating companion. Profile identity is unaffected.
 - **Pet terrain diagnostics** — debug builds expose a default-off Developer Options toggle with a **Pet path inspector** anchored initially below the app header and its Android status-bar inset, leaving all header navigation and menu actions accessible. It starts as a narrow collapsed live-status bar, can be moved only from its grip, snaps to the nearest horizontal edge, retains normalized placement through navigation and rotation, and re-clamps when its size or viewport changes. **Reset position** returns it below the header. A recoverable **PASS** mode collapses the inspector and makes every region except its unlock button click-through, while the diagnostic Canvas remains visible. Expanding opens the default **Terrain** view; **Plan** reduces the canvas to the selected/active journey, while **Full** restores protected viewport, raw perch/rail labels, footprint, gate, and locomotion details. **Exit inspector** disables the persisted Developer Options overlay request. The inspector distinguishes measured perches, derived walk rails, narrow-bubble touchdown points, expanded collision regions, dashed collision-checked candidates, the selected out-and-back planner route with arrows and numbered stops, and the solid route active only while it is traversed. The planner maintains an event-driven lookahead while behavior pacing is idle, revalidates it when terrain or a supported waypoint changes, and keeps an in-flight transfer atomic instead of redirecting mid-jump. **Freeze** snapshots only the displayed diagnostics so a route can be inspected while the live planner continues unchanged. The selected route updates on each planner pass and is cleared when live terrain changes; its numbered loop describes the exact selected outbound legs and their reverse return. Active autonomous, recovery, and direct drag/drop paths are colored separately; recovery or direct manipulation never makes a path eligible for ambient travel. Candidate connectivity is diagnostic and never implies planner selection. The full-screen Canvas and non-control inspector regions remain pointer-transparent. Locking Developer Options clears it.
 - **Data** — Android-local backup, restore, and reset with confirmation dialogs. Manage → Operations also uses the authenticated upstream dashboard to create and download server backups and to upload an explicitly confirmed zip to the guarded import staging route. Manage → Learning edits full node content and confirms deletion (Hermes archives skill nodes; memory-node deletion is permanent). Manage → Memory uses upstream discovery/config/setup and provider activation, scoped to the selected profile. Manage → Channels includes upstream WhatsApp QR onboarding, status polling, apply/cancel, and the resulting gateway restart.
@@ -985,6 +1016,31 @@ utilities.
   mutually exclusive with the experimental notification-based foreground
   listener. Third-party assistants do not receive Google's dedicated low-power
   hotword hardware, so continuous local detection has a material battery cost.
+- Compatible firmware may dispatch an assistant control as
+  `android.speech.action.WEB_SEARCH`. Hermes accepts only that action through a
+  transparent system-assistant trampoline, requires the protected platform caller
+  permission and active Assistant role, ignores caller query data, and fails closed
+  if the real `VoiceInteractionSession` cannot be shown. An accepted invocation
+  starts listening from the same button press without replacing the foreground app.
+- Only unlocked WEB_SEARCH sessions request `SHOW_WITH_ASSIST` and
+  `SHOW_WITH_SCREENSHOT`. Android-provided context is bounded, excludes hidden,
+  assist-blocked, and password fields, treats secure or missing screenshots as
+  normal, and never logs captured content. Wake-word, power-button, ordinary
+  assistant, and keyguard paths request no screen context.
+- Screen context is activation-scoped, staged in app-private cache, and framed as
+  untrusted user content. It belongs only to the first Standard voice turn, never
+  borrows composer drafts, and is consumed only after the selected Gateway or API
+  transport accepts the turn. Preflight failure retains the exact context for Try
+  again; cancellation, expiry, and later turns cannot reuse it. Routes that cannot
+  transport screen context reject that isolated submission instead of dropping the
+  attachment silently.
+- The assistant session surface remains a transparent system overlay and uses a
+  bounded bottom-end Hermes card on large screens. It shows a thumbnail only when
+  a screenshot exists, otherwise a semantic-context indicator only when context
+  exists and the selected Standard voice path can transport it; experimental
+  Realtime Agent sessions do not claim inclusion. The mic control follows the
+  active voice state, close remains separate, and **Open full voice** explicitly
+  transfers ownership so assistant-process cleanup cannot cancel the main-app flow.
 - Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an

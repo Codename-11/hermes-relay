@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -21,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.gradientBorder
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 /**
  * Reusable expandable card used across the Settings sub-screens. Header row
@@ -42,7 +42,7 @@ fun SettingsExpandableCard(
         modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme
             ),
         colors = CardDefaults.cardColors(

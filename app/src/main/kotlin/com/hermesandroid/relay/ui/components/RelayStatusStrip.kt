@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import com.hermesandroid.relay.ui.theme.relayPanel
 import kotlin.math.abs
@@ -56,10 +56,10 @@ fun RelayStatusStrip(
                 ),
             )
             .padding(start = 14.dp, end = 14.dp, top = 3.dp, bottom = 4.dp)
-            .clip(RoundedCornerShape(999.dp))
+            .clip(appearanceRoundedCornerShape(16.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .relayPanel(
-                shape = RoundedCornerShape(999.dp),
+                shape = appearanceRoundedCornerShape(16.dp),
                 background = RelayRefresh.Navy2.copy(alpha = 0.88f),
                 borderColor = RelayRefresh.Line,
             ),
@@ -67,8 +67,8 @@ fun RelayStatusStrip(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(22.dp)
-                .padding(horizontal = 14.dp),
+                .heightIn(min = 22.dp)
+                .padding(horizontal = 14.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {

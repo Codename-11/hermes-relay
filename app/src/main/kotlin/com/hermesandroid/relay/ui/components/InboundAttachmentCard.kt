@@ -8,6 +8,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -130,7 +131,7 @@ private fun LoadingCard(
 ) {
     val isManualCta = attachment.errorMessage == ChatViewModel.MEDIA_TAP_TO_DOWNLOAD
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier
             .widthIn(max = maxWidth)
@@ -206,7 +207,7 @@ private fun FailedCard(
     maxWidth: Dp
 ) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.errorContainer,
         modifier = modifier
             .widthIn(max = maxWidth)
@@ -316,7 +317,7 @@ private fun ImageRender(
     if (bmp == null) {
         // Brief placeholder while the bitmap decodes off-thread.
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = appearanceRoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = modifier
                 .widthIn(max = maxWidth)
@@ -400,7 +401,7 @@ private fun FileCardRender(
     }
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = appearanceRoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier
             .widthIn(max = maxWidth)

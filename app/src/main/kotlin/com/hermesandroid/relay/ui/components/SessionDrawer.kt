@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -78,6 +79,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,6 +106,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
 import com.hermesandroid.relay.ui.theme.accentColor
 import com.hermesandroid.relay.ui.theme.normalizeAccentHex
@@ -201,6 +204,8 @@ fun SessionDrawerContent(
     autoTitlesSupported: Boolean = true,
     archiveSupported: Boolean = true,
     onRefresh: (() -> Unit)? = null,
+    /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
+    onOpenBotMode: (() -> Unit)? = null,
     onNewChat: () -> Unit,
     onNewDefaultChat: (() -> Unit)? = null,
     onSelectSession: (String) -> Unit,
@@ -247,7 +252,10 @@ fun SessionDrawerContent(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(SessionDrawerFilter.All) }
-    var showAllProfiles by remember { mutableStateOf(false) }
+    // App-language changes recreate the Activity. Keep the drawer's namespace
+    // mode so an open All Profiles browser does not silently become the normal
+    // selected-profile list during that recreation.
+    var showAllProfiles by rememberSaveable { mutableStateOf(false) }
     var customizeOpen by remember { mutableStateOf(false) }
     var viewOptions by remember { mutableStateOf(SessionDrawerViewOptions()) }
     val listState = rememberLazyListState()
@@ -519,6 +527,28 @@ fun SessionDrawerContent(
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.drawer_new_chat))
+            }
+
+            onOpenBotMode?.let { openBotMode ->
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = openBotMode,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Groups, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start,
+                    ) {
+                        Text(stringResource(R.string.bot_mode_title))
+                        Text(
+                            stringResource(R.string.bot_mode_drawer_summary),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             if (searchExpanded || query.isNotBlank()) {
@@ -1233,7 +1263,7 @@ private fun ProjectGroupHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.size(40.dp),
         ) {
@@ -1390,7 +1420,7 @@ private fun SessionItem(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(appearanceRoundedCornerShape(6.dp))
                             .background(RelayRefresh.Relay.copy(alpha = 0.16f))
                             .padding(horizontal = 6.dp, vertical = 1.dp),
                     ) {
@@ -1567,7 +1597,7 @@ private fun SessionWorkBadgeChip(badge: SessionWorkBadge) {
     }
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(appearanceRoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 6.dp, vertical = 1.dp)
             .semantics { contentDescription = "$kindLabel: ${badge.label}" },
@@ -1600,7 +1630,7 @@ private fun ProfileBadge(
     val isDefault = accent == null
     val foreground = accent ?: MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
-        shape = RoundedCornerShape(7.dp),
+        shape = appearanceRoundedCornerShape(7.dp),
         color = if (accent == null) {
             MaterialTheme.colorScheme.surfaceVariant
         } else {

@@ -262,6 +262,7 @@ import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.HumanErrorAction
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import kotlin.math.abs
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -725,6 +726,7 @@ fun ChatScreen(
     // existing test/preview call sites keep compiling.
     onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
+    onNavigateToBotMode: () -> Unit = {},
 ) {
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
@@ -905,8 +907,16 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
-    val openedSessionProfileName by chatViewModel.openedSessionProfileName.collectAsState()
-    val conversationProfile = openedSessionProfileName?.let { owner ->
+    val conversationBinding by chatViewModel.conversationBinding.collectAsState()
+    val explicitBindingProfileName = conversationBinding.profileName
+        .takeIf { conversationBinding.hasExplicitOwner }
+    val explicitBindingProfileIconPath by remember(
+        connectionViewModel,
+        explicitBindingProfileName,
+    ) {
+        connectionViewModel.profileIconFlow(explicitBindingProfileName)
+    }.collectAsState(initial = null)
+    val conversationProfile = explicitBindingProfileName?.let { owner ->
         agentProfiles.firstOrNull { it.name.equals(owner, ignoreCase = true) }
             ?: allProfileSessions.firstOrNull {
                 it.profile.equals(owner, ignoreCase = true) &&
@@ -948,7 +958,7 @@ fun ChatScreen(
         gatewayProvider = gatewayCurrentProvider,
         persistedSessionModel = currentSession?.model,
         profileDefaultModel = conversationProfile?.model,
-        serverDefaultModel = serverModelName.takeIf { openedSessionProfileName == null },
+        serverDefaultModel = serverModelName.takeIf { explicitBindingProfileName == null },
     )
     val sessionPickerProvider = sessionModelState.pickerProvider
         ?: sessionModelState.pickerModel?.let { model ->
@@ -1112,12 +1122,12 @@ fun ChatScreen(
     val composerDraftKey = remember(
         activeConnection?.id,
         selectedProfile?.name,
-        openedSessionProfileName,
+        explicitBindingProfileName,
         currentSessionId,
     ) {
         ChatComposerDraftKey(
             connectionId = activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline",
-            profileId = (openedSessionProfileName ?: selectedProfile?.name)
+            profileId = (explicitBindingProfileName ?: selectedProfile?.name)
                 ?.takeIf(String::isNotBlank)
                 ?: ChatComposerDraftKey.DEFAULT_PROFILE_ID,
             sessionId = currentSessionId?.takeIf(String::isNotBlank) ?: "new-session",
@@ -1155,6 +1165,52 @@ fun ChatScreen(
         chatViewModel.replacePendingAttachments(restored.attachments)
         activeComposerDraftKey = composerDraftKey
         restoringComposerDraft = false
+    }
+    val sharedContentRequest by com.hermesandroid.relay.util.SharedContentRequest.pending.collectAsState()
+    LaunchedEffect(
+        sharedContentRequest,
+        composerDraftKey,
+        activeComposerDraftKey,
+        maxAttachmentMb,
+        charLimit,
+    ) {
+        val request = sharedContentRequest ?: return@LaunchedEffect
+        if (!com.hermesandroid.relay.util.canApplySharedContent(
+                request = request,
+                composerConnectionId = composerDraftKey.connectionId,
+                composerProfileId = composerDraftKey.profileId,
+                composerSessionId = composerDraftKey.sessionId,
+                draftRestored = activeComposerDraftKey == composerDraftKey,
+            )
+        ) return@LaunchedEffect
+
+        editingMessage = null
+        quotedMessage = null
+        inputText = request.payload.text.orEmpty().take(charLimit)
+        chatViewModel.replacePendingAttachments(emptyList())
+        request.payload.uriStrings.forEach { uriString ->
+            if (!com.hermesandroid.relay.util.isAllowedSharedContentUri(uriString)) {
+                return@forEach
+            }
+            runCatching { Uri.parse(uriString) }
+                .getOrNull()
+                ?.let { uri ->
+                    ingestAttachmentFromUri(context, uri, maxAttachmentMb) {
+                        chatViewModel.addAttachment(it)
+                    }
+                }
+        }
+        if (request.payload.omittedUriCount > 0) {
+            Toast.makeText(
+                context,
+                context.getString(
+                    R.string.chat_shared_files_limited,
+                    com.hermesandroid.relay.util.MAX_SHARED_CONTENT_ATTACHMENTS,
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        com.hermesandroid.relay.util.SharedContentRequest.consume(request.id)
     }
     LaunchedEffect(
         inputText,
@@ -2191,7 +2247,7 @@ fun ChatScreen(
         selectedPersonality,
         defaultPersonality,
         profileDisplayAlias,
-        openedSessionProfileName,
+        explicitBindingProfileName,
         activeConnection?.label,
     ) {
         derivedStateOf {
@@ -2201,7 +2257,7 @@ fun ChatScreen(
                 selectedPersonality = selectedPersonality,
                 defaultPersonality = defaultPersonality,
                 connectionLabel = activeConnection?.label,
-                localDisplayAlias = profileDisplayAlias.takeIf { openedSessionProfileName == null },
+                localDisplayAlias = profileDisplayAlias.takeIf { explicitBindingProfileName == null },
             )
         }
     }
@@ -2235,8 +2291,9 @@ fun ChatScreen(
         // voice overlay already owns input while voice mode is visible.
         gesturesEnabled = true,
         drawerContent = {
-            val drawerTitle = if (effectiveProfile != null) {
-                stringResource(R.string.chat_profile_sessions, globalSelectedAgentDisplayName)
+            val drawerProfileName = explicitBindingProfileName ?: effectiveProfile?.name
+            val drawerTitle = if (drawerProfileName != null) {
+                stringResource(R.string.chat_profile_sessions, agentDisplayName)
             } else {
                 stringResource(R.string.chat_server_default_sessions)
             }
@@ -2280,7 +2337,7 @@ fun ChatScreen(
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
-                activeProfileName = effectiveProfile?.name ?: "default",
+                activeProfileName = drawerProfileName ?: "default",
                 isLoading = isLoadingSessions,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
@@ -2288,11 +2345,16 @@ fun ChatScreen(
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
                 onRefresh = { chatViewModel.refreshSessions() },
+                onOpenBotMode = {
+                    scope.launch { drawerState.close() }
+                    onNavigateToBotMode()
+                },
                 onNewChat = {
                     chatViewModel.createNewChat()
                     scope.launch { drawerState.close() }
                 },
                 onNewDefaultChat = {
+                    if (isProfileLocked) return@SessionDrawerContent
                     val defaultProfile = agentProfiles.firstOrNull {
                         it.name.equals("default", ignoreCase = true)
                     } ?: com.hermesandroid.relay.data.Profile(
@@ -2300,7 +2362,7 @@ fun ChatScreen(
                         model = "",
                         description = "Default",
                     )
-                    chatViewModel.createProfileChat(
+                    val opened = chatViewModel.createProfileChat(
                         profileName = "default",
                         profile = defaultProfile,
                         contextKey = AgentDisplay.profileContextKey(
@@ -2308,7 +2370,7 @@ fun ChatScreen(
                             profileName = "default",
                         ),
                     )
-                    scope.launch { drawerState.close() }
+                    if (opened) scope.launch { drawerState.close() }
                 },
                 onSelectSession = { sessionId ->
                     chatViewModel.switchSession(sessionId)
@@ -2316,7 +2378,7 @@ fun ChatScreen(
                 },
                 onDeleteSession = { sessionId ->
                     val connectionId = activeConnection?.id
-                    val profileId = openedSessionProfileName ?: selectedProfile?.name
+                    val profileId = explicitBindingProfileName ?: selectedProfile?.name
                     chatViewModel.deleteSession(sessionId) {
                         if (!connectionId.isNullOrBlank() && !profileId.isNullOrBlank()) {
                             chatViewModel.removeComposerDraftSession(
@@ -2361,13 +2423,14 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
-                allProfilesSupported = !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
+                allProfilesSupported = !isProfileLocked &&
+                    !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
                 profileColors = profilePresentation.colors,
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
-                    if (!allProfileSessionsLoading) scope.launch {
+                    if (!isProfileLocked && !allProfileSessionsLoading) scope.launch {
                         allProfileSessionsLoading = true
                         val result = connectionViewModel.listAllProfileSessions()
                         result?.fold(
@@ -2413,6 +2476,9 @@ fun ChatScreen(
                     }
                 },
                 onSelectProfileSession = { profileName, sessionId ->
+                    if (!connectionViewModel.isProfileSelectionAllowed(profileName)) {
+                        return@SessionDrawerContent
+                    }
                     val target = agentProfiles.firstOrNull {
                         it.name.equals(profileName, ignoreCase = true)
                     }
@@ -2431,7 +2497,7 @@ fun ChatScreen(
                             model = "",
                             description = profileName,
                         )
-                        chatViewModel.openProfileSession(
+                        val opened = chatViewModel.openProfileSession(
                             profileName = profileName,
                             profile = ownerProfile,
                             contextKey = AgentDisplay.profileContextKey(
@@ -2440,7 +2506,7 @@ fun ChatScreen(
                             ),
                             sessionId = sessionId,
                         )
-                        scope.launch { drawerState.close() }
+                        if (opened) scope.launch { drawerState.close() }
                     } else {
                         scope.launch {
                             snackbarHostState.showSnackbar("Profile $profileName is not available.")
@@ -2654,7 +2720,14 @@ fun ChatScreen(
                                 if (isChatConnecting) {
                                     ChatConnectingAvatarGlyph()
                                 } else {
-                                    val agentIconPath = LocalAgentIconPath.current
+                                    // While row selection and persistence
+                                    // converge, the header already belongs to
+                                    // the explicit binding owner, including its icon.
+                                    val agentIconPath = if (explicitBindingProfileName != null) {
+                                        explicitBindingProfileIconPath
+                                    } else {
+                                        LocalAgentIconPath.current
+                                    }
                                     if (!agentIconPath.isNullOrBlank()) {
                                         AsyncImage(
                                             model = File(agentIconPath),
@@ -4420,7 +4493,7 @@ fun ChatScreen(
                 .padding(top = 80.dp, start = 16.dp, end = 16.dp),
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 tonalElevation = 2.dp,
             ) {
@@ -4905,7 +4978,7 @@ private fun ChatLoadingCommandPanel(
                 .fillMaxWidth()
                 .widthIn(max = 420.dp)
                 .animateContentSize(animationSpec = tween(durationMillis = 240)),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
             tonalElevation = 1.dp,
         ) {
@@ -4988,7 +5061,7 @@ private fun ChatLoadingCommandRow(command: ChatLoadingCommand) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(appearanceRoundedCornerShape(10.dp))
             .background(RelayRefresh.Amber.copy(alpha = activeHighlightAlpha))
             .animateContentSize(animationSpec = tween(durationMillis = 220))
             .alpha(rowAlpha)
@@ -5057,7 +5130,7 @@ private fun ChatSkeletonBubble(
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(widthFraction),
-            shape = RoundedCornerShape(18.dp),
+            shape = appearanceRoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
         ) {
             Column(
@@ -5119,6 +5192,8 @@ private suspend fun ingestAttachmentFromUri(
                 fileSize = source.sizeBytes,
             )
         )
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (_: AttachmentTooLargeException) {
         Toast.makeText(
             context,
@@ -5290,7 +5365,7 @@ private fun DateSeparator(timestamp: Long) {
         horizontalArrangement = Arrangement.Center
     ) {
         Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = appearanceRoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ) {
             Text(

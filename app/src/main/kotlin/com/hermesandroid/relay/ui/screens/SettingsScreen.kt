@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -114,6 +113,7 @@ import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
@@ -783,7 +783,7 @@ private fun ActiveAgentCard(
         modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme,
             ),
         colors = CardDefaults.cardColors(
@@ -884,7 +884,7 @@ private fun ProfileLockCard(
         modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme,
             ),
         colors = CardDefaults.cardColors(
@@ -965,7 +965,7 @@ private fun QuickControlsCard(
         modifier = modifier
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme,
             ),
         colors = CardDefaults.cardColors(
@@ -1079,7 +1079,7 @@ private fun BatteryOptimizationNudge() {
     if (exempt) return
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = RoundedCornerShape(8.dp),
+        shape = appearanceRoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -1157,7 +1157,7 @@ private fun ProfileLockDialog(
                     Surface(
                         color = RelayRefresh.Amber.copy(alpha = 0.15f),
                         contentColor = RelayRefresh.Amber,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = appearanceRoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, RelayRefresh.Amber.copy(alpha = 0.5f)),
                     ) {
                         Column(
@@ -1246,7 +1246,7 @@ private fun ProfileLockOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(appearanceRoundedCornerShape(8.dp))
             .selectable(
                 selected = selected,
                 role = Role.RadioButton,
@@ -1312,7 +1312,7 @@ private fun SettingsStatusPill(pill: SettingsStatusPillModel) {
     Surface(
         color = hue.copy(alpha = 0.18f),
         contentColor = contentColor,
-        shape = RoundedCornerShape(7.dp),
+        shape = appearanceRoundedCornerShape(7.dp),
         border = BorderStroke(1.dp, hue.copy(alpha = 0.55f)),
     ) {
         Text(
@@ -1497,7 +1497,7 @@ private fun SettingsCategoryRow(
             .settingsPetSurface("settings-category:$petPerchKey")
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme
             ),
         colors = CardDefaults.cardColors(

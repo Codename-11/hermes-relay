@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.datastore.preferences.core.edit
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,14 +57,17 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.AppearancePreferences
 import com.hermesandroid.relay.data.DashboardConnectionStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.ContextMeterBar
 import com.hermesandroid.relay.ui.components.ConversationVoiceDock
+import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
@@ -77,6 +81,8 @@ import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.ui.screens.ConnectionsSettingsScreen
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.VoicePresentationMode
@@ -88,6 +94,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.LocalFloatingPet
 import com.hermesandroid.relay.ui.components.avatar.PetAvatar
+import kotlinx.coroutines.runBlocking
 import com.hermesandroid.relay.ui.components.LocalSphereSkin
 import com.hermesandroid.relay.ui.components.SphereRegistry
 import com.hermesandroid.relay.viewmodel.InteractionMode
@@ -177,6 +184,10 @@ class StoreScreenshotTest {
     }
     @Test fun s11_voice_conversation() {
         compose.mainClock.autoAdvance = false
+        // RelayRefresh is a process-wide compatibility façade. Seed it before
+        // the first composition so this animation-pinned scene cannot inherit
+        // the palette left by a light-theme gallery test that ran earlier.
+        RelayRefresh.activePalette = AppThemes.byId("hermes-relay").paletteFor(dark = true)
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
@@ -207,21 +218,35 @@ class StoreScreenshotTest {
     }
 
     @Test fun s05_theme_customizer() {
-        val vm = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        runBlocking {
+            application.relayDataStore.edit { preferences ->
+                preferences[AppearancePreferences.appThemeKey] = AppThemes.DEFAULT_ID
+                preferences[AppearancePreferences.shapeKey] = AppearanceShape.DEFAULT.id
+                preferences.remove(AppearancePreferences.accentKey)
+            }
+        }
+        val vm = ConnectionViewModel(application)
+        val shapeLabel = application.getString(R.string.appearance_shape)
+        val sharpLabel = application.getString(R.string.appearance_shape_sharp)
+        val resetThemeLabel = application.getString(R.string.appearance_reset)
+        val applyChangesLabel = application.getString(R.string.appearance_apply_changes)
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
                     AppearanceSettingsScreen(
                         connectionViewModel = vm,
                         onBack = {},
+                        initialCustomizerExpanded = true,
                     )
                 }
             }
         }
-        compose.onNodeWithText("Customize Relay").performScrollTo()
-        compose.onNodeWithText("Customize Relay").performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithText("Shape").performScrollTo()
+        compose.onNodeWithText(shapeLabel).performScrollTo()
+        compose.onNodeWithText(sharpLabel).performClick()
+        compose.onNodeWithText(applyChangesLabel).assertDoesNotExist()
+        compose.onNodeWithText(resetThemeLabel).assertExists()
         compose.onRoot().captureRoboImage("build/store-shots/05_theme_customizer.png")
     }
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
@@ -260,7 +285,9 @@ class StoreScreenshotTest {
         // The earlier frame scrolled past the pet controls and showed only the
         // sphere-skin grid. Frame the independently selected floating companion,
         // its real PetAvatar preview, Petdex/import actions, and tuning controls.
-        compose.onNodeWithText("Browse Petdex").performScrollTo()
+        compose.onNodeWithText(
+            "Scales the pet art, touch target, and safe routing footprint together. Larger pets may skip narrow perches.",
+        ).performScrollTo()
         compose.onRoot().captureRoboImage("build/store-shots/08_appearance.png")
     }
 
@@ -341,8 +368,7 @@ private fun BlendChatScene() = StoreCockpit(contextUsage = 0.06f) {
 }
 
 @Composable
-private fun BlendThread() {
-    val thread = MockChat.blendThread
+private fun BlendThread(thread: List<ChatMessage> = MockChat.blendThread) {
     Column(
         Modifier.fillMaxSize().padding(start = 18.dp, top = 14.dp, end = 18.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)
@@ -385,18 +411,40 @@ private fun StoreCockpit(
                 }
             },
             title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(Modifier.size(34.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
-                        Image(painterResource(R.drawable.splash_icon), contentDescription = null, modifier = Modifier.padding(3.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Keep the Hermes logo as the public default agent identity,
+                    // while matching ChatScreen's current live-status treatment.
+                    Box(Modifier.size(40.dp)) {
+                        Surface(
+                            modifier = Modifier.size(40.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.splash_icon),
+                                contentDescription = null,
+                                modifier = Modifier.padding(3.dp),
+                            )
+                        }
+                        ConnectionStatusBadge(
+                            isConnected = true,
+                            isConnecting = false,
+                            modifier = Modifier.size(10.dp).align(Alignment.BottomEnd),
+                            size = 10.dp,
+                        )
                     }
-                    Column(Modifier.padding(start = 10.dp)) {
+                    Column {
                         Text("Hermes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("gpt-5.6-sol", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                 }
             },
             actions = {
-                RelayChromeIconButton(Icons.Filled.Bolt, "Approvals off", onClick = {}, tint = RelayRefresh.Amber, borderColor = RelayRefresh.Amber.copy(alpha = 0.5f), modifier = Modifier.padding(end = 4.dp))
+                // The production bolt appears only when approval bypass is
+                // active. The public marketing fixture uses the safe default.
                 RelayChromeIconButton(Icons.Filled.Code, "Terminal", onClick = {}, modifier = Modifier.padding(end = 4.dp))
                 RelayChromeIconButton(Icons.Filled.Tune, "Settings", onClick = {}, modifier = Modifier.padding(end = 4.dp))
                 RelayChromeIconButton(Icons.Filled.MoreVert, "More", onClick = {}, modifier = Modifier.padding(end = 4.dp))
@@ -514,7 +562,10 @@ private fun VoiceConversationScene() = StoreCockpit(
     contextUsage = 0.05f,
     conversationVoiceState = marketingVoiceUiState,
 ) {
-    BlendThread()
+    // The voice dock occupies more vertical space than the standard composer.
+    // Use its shorter one-line lead-in so the frame starts near the context
+    // meter while the final user reply remains fully visible.
+    BlendThread(MockChat.voiceBlendThread)
 }
 
 /** The real sphere renderer pinned to one frame for pixel-identical marketing output. */
@@ -667,9 +718,18 @@ private object MockChat {
         ),
     )
 
-    // A grouped thread for the "Blend" capture: user → two-message assistant
-    // group (avatar once, code block in the first) → user follow-up.
+    // A grouped thread for the "Blend" capture. The short opening exchange
+    // intentionally fills the production conversation viewport so the first
+    // turn begins directly below the context meter instead of leaving a large,
+    // misleading empty band in the canonical marketing frame.
     val blendThread = listOf(
+        ChatMessage(
+            id = "ba0",
+            role = MessageRole.ASSISTANT,
+            content = "I’ll keep cancellation and offline behavior intact. Show me the retry path.",
+            timestamp = 0L,
+            agentName = "Hermes",
+        ),
         ChatMessage(
             id = "bu1",
             role = MessageRole.USER,
@@ -708,6 +768,15 @@ private object MockChat {
             timestamp = 0L,
         ),
     )
+
+    val voiceBlendThread = listOf(
+        ChatMessage(
+            id = "voice-lead",
+            role = MessageRole.USER,
+            content = "Can you review this?",
+            timestamp = 0L,
+        ),
+    ) + blendThread.drop(1)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
