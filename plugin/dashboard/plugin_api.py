@@ -2,9 +2,10 @@
 
 Loopback-only; mounted by hermes-agent at ``/api/plugins/hermes-relay/*``.
 
-Each route is a thin pass-through to the already-running relay HTTP server
-on ``127.0.0.1:{HERMES_RELAY_PORT}``. No business logic lives here — the
-relay stays the source of truth.
+Most routes are thin pass-throughs to the already-running relay HTTP server
+on ``127.0.0.1:{HERMES_RELAY_PORT}``. Provider usage is the deliberate
+exception: the Dashboard process owns the live Gateway session and can resolve
+its active credential without waiting for another turn.
 
 Route map
 ---------
@@ -13,6 +14,7 @@ Route map
 - ``GET /bridge-activity``  → relay ``GET /bridge/activity`` (forwards ``limit``)
 - ``GET /media``            → relay ``GET /media/inspect`` (forwards ``include_expired``)
 - ``GET /agent-context``    → relay ``GET /context/injected`` + local env settings
+- ``GET /provider-usage``   → live-session-aware provider usage from this plugin
 - ``GET /push``             → static stub (no network call) until FCM is wired
 
 Error translation
@@ -234,6 +236,44 @@ async def get_agent_context() -> dict[str, Any]:
         },
         "injected": await _proxy_get("/context/injected"),
     }
+
+
+@router.get("/provider-usage")
+async def get_provider_usage(
+    profile: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None),
+) -> dict[str, Any]:
+    """Return provider usage with the live session's active pool entry.
+
+    This route runs inside the Dashboard process that owns ``tui_gateway``.
+    Unlike the standalone Relay server, it can read the already-instantiated
+    agent directly and therefore does not need a new turn to learn which
+    credential is active.
+    """
+    provider_usage = _plugin_module("relay.provider_usage")
+    hooks = _plugin_module("hooks")
+    try:
+        profile_home = provider_usage.resolve_profile_home(
+            str(_hermes_home() / "config.yaml"),
+            profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    active_credential_id = None
+    live = hooks.resolve_live_active_credential(session_id or "")
+    if (
+        isinstance(live, dict)
+        and live.get("provider_id") == "openai-codex"
+        and FsPath(live.get("profile_home")).resolve() == profile_home
+    ):
+        active_credential_id = str(live.get("credential_id") or "") or None
+
+    return await provider_usage.collect_provider_usage(
+        profile_home=profile_home,
+        session_id=session_id,
+        active_credential_id=active_credential_id,
+    )
 
 
 @router.get("/phone/config")

@@ -127,6 +127,44 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun getProviderUsage_carriesSessionAndParsesCredentialPool() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """
+                {
+                  "schema_version": 2,
+                  "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
+                  "providers": [{
+                    "id": "openai-codex",
+                    "display_name": "Codex",
+                    "status": "available",
+                    "active_credential_state": "known",
+                    "credentials": [{
+                      "id": "abc123",
+                      "label": "bailey",
+                      "active": true,
+                      "status": "available"
+                    }]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val usage = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProviderUsage(profile = "victor", sessionId = "session/42")
+            .getOrThrow()!!
+        val request = server.takeRequest().requestUrl!!
+
+        assertEquals("/api/plugins/hermes-relay/provider-usage", request.encodedPath)
+        assertEquals("victor", request.queryParameter("profile"))
+        assertEquals("session/42", request.queryParameter("session_id"))
+        assertEquals("bailey", usage.providers.single().credentials.single().label)
+        assertTrue(usage.providers.single().credentials.single().active)
+        assertTrue(usage.relayEnhanced)
+    }
+
+    @Test
     fun getModelOptions_alwaysRequestsUnconfiguredProviders() = runTest {
         // HRUI-022: newer upstream hides unconfigured provider skeleton rows
         // unless the client opts in — without include_unconfigured=1 the

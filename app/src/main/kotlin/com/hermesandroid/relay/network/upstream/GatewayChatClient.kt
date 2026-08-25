@@ -1432,6 +1432,21 @@ class GatewayChatClient(
     }
 
     /**
+     * Provider-neutral account limits owned by upstream Hermes. Current hosts
+     * may not expose this additive method yet; callers should treat JSON-RPC
+     * method-not-found as capability absence and use the optional Relay
+     * compatibility surface when paired.
+     */
+    suspend fun providerUsage(): Result<JsonObject> {
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc("account.usage", JsonObject(emptyMap()))
+    }
+
+    /**
      * Create a schedule through upstream's authenticated `cron.manage` RPC.
      * No Relay scheduler or compatibility endpoint is involved.
      */

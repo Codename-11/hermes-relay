@@ -8,7 +8,7 @@ titleTemplate: Hermes-Relay 中文文档
 hero:
   name: 文档
   text: 从您要连接的设备开始。
-  tagline: 将 Android 应用或 CLI 连接到现有 Hermes Agent。只有在需要高级工具时才添加 Relay。
+  tagline: 将 Android 和 CLI 连接到 Hermes Agent，并添加推荐的 Relay 扩展以获得当前完整功能。
   actions:
     - theme: brand
       text: Android 快速开始
@@ -25,8 +25,8 @@ features:
     details: 聊天、管理和标准语音直接连接未修改的上游 Hermes Agent，不要求安装 Relay 插件。
   - title: 两种清晰的应用版本
     details: Google Play 适合大多数用户；Sideload 增加屏幕读取、点击和导航等 Device Control 功能。
-  - title: Relay 始终可选
-    details: 仅在需要终端、手机控制、媒体、通知或远程工具时安装 Relay 插件。
+  - title: 完整体验建议使用 Relay
+    details: Chat、Manage 和 Voice 继续优先 upstream；Relay 补充 Terminal/TUI、通知、媒体、桌面工具和 Device Control。
 ---
 
 ## 文档范围

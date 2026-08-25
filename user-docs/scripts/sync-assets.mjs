@@ -1,4 +1,4 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, stat } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,6 +15,16 @@ const assets = [
     destination: resolve(docsRoot, 'public/connections-demo.png'),
   },
 ]
+
+const desktopManifest = JSON.parse(
+  await readFile(resolve(repoRoot, 'docs/media/desktop-ui-screenshots.json'), 'utf8'),
+)
+for (const scene of desktopManifest.scenes) {
+  assets.push({
+    source: resolve(repoRoot, scene.source),
+    destination: resolve(docsRoot, 'public/product/desktop-ui', `${scene.id}.png`),
+  })
+}
 
 for (const asset of assets) {
   await stat(asset.source)

@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network.upstream
 import android.content.Context
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.shutdownOffMainThread
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -447,6 +448,25 @@ class DashboardApiClient(
      * safe to mutate and round-trip back through [updateConfig].
      */
     suspend fun getConfig(): Result<JsonObject> = getJsonObject("/api/config")
+
+    suspend fun getProviderUsage(
+        profile: String? = null,
+        sessionId: String? = null,
+    ): Result<ProviderUsageResponse?> {
+        val query = buildList {
+            profile?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                add("profile=${queryValue(it)}")
+            }
+            sessionId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                add("session_id=${queryValue(it)}")
+            }
+        }
+        val suffix = query.joinToString(prefix = if (query.isEmpty()) "" else "?", separator = "&")
+        return getJsonObject("/api/plugins/hermes-relay/provider-usage$suffix")
+            .mapCatching { root ->
+                json.decodeFromJsonElement(ProviderUsageResponse.serializer(), root)
+            }
+    }
 
     /**
      * The config SCHEMA: `{fields: {<dot.path>: {type, description, category,

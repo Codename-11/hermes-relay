@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Documentation
   text: Start with the surface you have.
-  tagline: Connect the Android companion, pair the CLI, or add the optional Relay power path. Each route starts with the shortest working setup.
+  tagline: Connect Android, pair the CLI, and add the encouraged Relay extension for the complete current feature set. Each route starts with the recommended QR or invite path.
   actions:
     - theme: brand
       text: Android quick start

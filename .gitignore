@@ -95,3 +95,4 @@ keystore.properties
 desktop/tray/ui/vendor/
 # Generated from assets/screenshots/02_chat.png before docs dev/build.
 /user-docs/public/chat-demo.png
+/user-docs/public/product/desktop-ui/

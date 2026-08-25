@@ -170,6 +170,7 @@ import com.hermesandroid.relay.ui.screens.PermissionsStatusScreen
 import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
+import com.hermesandroid.relay.ui.screens.UsageLimitsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
@@ -530,6 +531,7 @@ sealed class Screen(
     // the plural `ConnectionsSettings` subpage. See `ConnectionsSettings`
     // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
+    data object ProviderUsage : Screen("settings/usage", "Usage & limits", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
@@ -2387,6 +2389,9 @@ fun RelayApp() {
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route)
                         },
+                        onNavigateToProviderUsage = {
+                            navController.navigate(Screen.ProviderUsage.route)
+                        },
                         onNavigateToPlugins = {
                             navController.navigate(Screen.Plugins.route)
                         },
@@ -2443,6 +2448,13 @@ fun RelayApp() {
                                 Screen.ProfileInspector.route(profileName),
                             )
                         },
+                    )
+                }
+                composable(Screen.ProviderUsage.route) {
+                    UsageLimitsScreen(
+                        connectionViewModel = connectionViewModel,
+                        chatViewModel = chatViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Screen.Plugins.route) {

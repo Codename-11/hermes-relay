@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. The UI identifies Relay-plugin-enhanced data and explains which capabilities require the matching plugin. Provider credentials remain host-side.
+- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
+- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
 - **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
@@ -20,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Android chats no longer retain a stale busy composer.** A completed Gateway bubble settles automatically when its exact session has no live or detached turn, new-chat navigation clears stale visible ownership, and Stop remains an immediate escape hatch. (#416, #418)
+- **README and Google Play onboarding now match the Dashboard-first product path.** Public setup copy names the two separate Dashboard QR actions, treats the API server as an advanced fallback, explains the encouraged Hermes-Relay extension without implying Play includes Device Control, and ships one current deterministic Android screenshot set.
+- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
 - **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
 - **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
 - **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
@@ -78,7 +83,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android screen-on idle no longer continuously redraws the ASCII sphere.** Idle holds a stable frame while thinking, streaming, and voice states retain full-rate motion; inactive voice waveforms and closed session drawers also stop their frame loops.
 - **Android capture and audio effects release power-sensitive resources at their actual lifecycle boundaries.** Screen capture attaches its MediaProjection surface only for a requested frame, unattended Bridge wake locks release when the command finishes, and barge-in AEC/noise suppression attach to the microphone capture session instead of playback.
 - **Experimental wake-word listening reuses its PCM normalization buffer.** Continuous opt-in listening no longer allocates a new float frame for every inference call.
-
 ## [1.10.0] - 2026-08-18
 
 ### Added

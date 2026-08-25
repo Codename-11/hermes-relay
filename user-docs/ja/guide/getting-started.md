@@ -5,9 +5,11 @@ canonical_source: /guide/getting-started
 
 # インストールと設定
 
-手順は 3 つです。アプリをインストールし、Hermes に接続し、最初の
-メッセージを送信します。Hermes がすでに動作している場合、サーバーへの追加
-インストールは不要です。
+このページは、ビルド選択、手動接続、リモートアクセス、セキュリティ確認の
+詳細リファレンスです。Hermes Dashboard に到達できる場合は、
+[クイックスタート](./quick-start)を使ってください。
+
+<AndroidSetupPath mode="reference" />
 
 ::: tip 翻訳ステータス
 この要約ガイドは一般的な導入手順を扱います。高度なサーバー、TLS、運用設定は
@@ -63,12 +65,17 @@ API キーは別の認証情報で、ダッシュボードへのログインに�
 同じログインで Chat、セッション、Manage、Voice が有効になります。Relay が
 未ペアリングでも、API fallback が利用不可でも正常です。
 
-## オプション: Relay ツールを追加する
+## 推奨: Relay でセットアップを完成する {#relay-server-optional}
 
-ターミナル、Device Control、メディア、通知、高度なリモートツールが必要な
-場合だけプラグインを追加します。正規コマンドは
+upstream 標準経路は plugin なしでも動作します。Terminal/TUI、通知、
+メディア、デスクトップツール、拡張 Voice、Relay セッション、任意の
+Device Control には Relay を推奨します。正規コマンドは
 `hermes plugins install Codename-11/hermes-relay/plugin --enable`、
 `hermes relay doctor`、`hermes relay start --no-ssl`、`hermes pair` です。
+
+Web Dashboard の **Relay** で、まず **Connect mobile app**、次に
+**Pair new device** を開き、両方の QR を Android で読み取る方法が推奨です。
+QR を使えない場合は URL/コード入力と `hermes pair --register-code` を使えます。
 
 Device Control には **Sideload アプリとペアリング済み Relay の両方**が必要です。
 
