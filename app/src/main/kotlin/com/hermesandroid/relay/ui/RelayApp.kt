@@ -54,6 +54,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -1165,12 +1166,12 @@ fun RelayApp() {
             parentAccessForCurrentRoute,
             currentRoute,
         ) {
-            if (shouldRedirectSupervisedRoute(
-                    supervisedEnabled = supervisedPolicy.enabled,
-                    parentAccessUnlocked = parentAccessForCurrentRoute,
-                    currentRoute = currentRoute,
-                )
-            ) {
+            val redirect = shouldRedirectSupervisedRoute(
+                supervisedEnabled = supervisedPolicy.enabled,
+                parentAccessUnlocked = parentAccessForCurrentRoute,
+                currentRoute = currentRoute,
+            )
+            if (redirect) {
                 navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                     popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
                     launchSingleTop = true
@@ -1179,6 +1180,12 @@ fun RelayApp() {
         }
         LaunchedEffect(supervisedPolicy.enabled, parentAccessUnlocked, currentRoute) {
             if (shouldRelockParentAccess(supervisedPolicy.enabled, parentAccessUnlocked, currentRoute)) {
+                // Route-scoped authority is already false on Chat. Let Navigation
+                // finish committing the new destination before clearing the raw
+                // parent grant, otherwise the same-frame root recomposition can
+                // leave a themed but contentless surface.
+                withFrameNanos { }
+                withFrameNanos { }
                 parentAccessUnlocked = false
             }
         }
@@ -2573,7 +2580,7 @@ fun RelayApp() {
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
                         supervisedPolicy = supervisedPolicy,
-                        parentAccessUnlocked = parentAccessUnlocked,
+                        parentAccessUnlocked = parentAccessForCurrentRoute,
                         onRequestParentAccess = { parentAccessUnlocked = true },
                         onUpdateSupervisedPolicy = { policy ->
                             activeConnectionId?.let { connectionId ->
@@ -2587,6 +2594,9 @@ fun RelayApp() {
                         },
                         onNavigateToSupervisedAppearance = {
                             navController.navigate(Screen.SupervisedAppearanceSettings.route)
+                        },
+                        onNavigateToSupervisedControls = {
+                            navController.navigate(Screen.SupervisedControls.route)
                         },
                         onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
@@ -2663,7 +2673,7 @@ fun RelayApp() {
                     )
                 }
                 composable(Screen.AdvancedSettings.route) {
-                    if (!parentAccessUnlocked && supervisedPolicy.enabled) {
+                    if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
                     } else {
                         AdvancedSettingsScreen(
@@ -2676,7 +2686,7 @@ fun RelayApp() {
                     }
                 }
                 composable(Screen.SupervisedAppearanceSettings.route) {
-                    if (!supervisedPolicy.enabled && !parentAccessUnlocked) {
+                    if (!supervisedPolicy.enabled && !parentAccessForCurrentRoute) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
                     } else {
                         SupervisedAppearanceSettingsScreen(
@@ -2694,7 +2704,7 @@ fun RelayApp() {
                     }
                 }
                 composable(Screen.SupervisedControls.route) {
-                    if (!parentAccessUnlocked && supervisedPolicy.enabled) {
+                    if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
                     } else {
                         SupervisedControlsScreen(
@@ -3196,7 +3206,7 @@ fun RelayApp() {
                     AboutScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
-                        allowDeveloperUnlock = !supervisedPolicy.enabled || parentAccessUnlocked,
+                        allowDeveloperUnlock = !supervisedPolicy.enabled || parentAccessForCurrentRoute,
                     )
                 }
                 composable(

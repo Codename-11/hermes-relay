@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Returning from parent settings keeps Supervised Chat rendered.** Parent access now relocks without rebuilding the active navigation graph, and full Settings keeps a prominent shortcut back to Supervised Mode controls.
+
 ## [Android 1.13.1] - 2026-08-25
 
 ### Fixed
