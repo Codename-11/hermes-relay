@@ -139,6 +139,26 @@ class MobilePluginStore:
 
     def manifest(self) -> dict[str, Any]:
         contributions = []
+        # Static read-only Git page contributed by the relay plugin itself.
+        # It carries no filesystem paths (per the android-plugins.md document
+        # contract); repo data flows through the /git/* API responses and is
+        # rendered as plain text by the host. No plugin.api.write grant is
+        # required for the read-only Git surface.
+        contributions.append(
+            {
+                "id": "git",
+                "surface": "page",
+                "title": "Git",
+                "description": "Browse repositories on this Hermes host",
+                "status": "published",
+                "lifecycle": "persistent",
+                "revision": 1,
+                "document": {
+                    "method": "GET",
+                    "path": "mobile/pages/git",
+                },
+            }
+        )
         for summary in self.list():
             is_draft = summary["status"] == "draft"
             contributions.append(

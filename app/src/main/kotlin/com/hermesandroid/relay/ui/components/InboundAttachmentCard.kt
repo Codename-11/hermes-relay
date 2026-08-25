@@ -270,6 +270,7 @@ private fun ImageRender(
     maxWidth: Dp
 ) {
     val context = LocalContext.current
+    val exportAllowed = LocalImageExportAllowed.current
     val scope = rememberCoroutineScope()
     // Decode OFF the main thread — a large inbound image would otherwise block
     // composition. Null while decoding (placeholder); decodeFailed → file card.
@@ -356,14 +357,14 @@ private fun ImageRender(
         }
         // One-tap save overlay — hidden while the blur cover is up so it
         // doesn't sit over the "tap to reveal" prompt.
-        if (!blurred) {
+        if (!blurred && exportAllowed) {
             SaveOverlayButton(
                 onClick = { scope.launch { saveAttachment(context, attachment) } },
                 modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
             )
         }
         AttachmentActionsMenu(
-            expanded = menuExpanded,
+            expanded = menuExpanded && exportAllowed,
             onDismiss = { menuExpanded = false },
             context = context,
             scope = scope,
@@ -380,6 +381,8 @@ private fun FileCardRender(
     maxWidth: Dp
 ) {
     val context = LocalContext.current
+    val exportAllowed = LocalImageExportAllowed.current ||
+        attachment.renderMode != AttachmentRenderMode.IMAGE
     val scope = rememberCoroutineScope()
     val (emoji, typeLabel) = emojiAndLabelFor(attachment.renderMode, attachment.contentType)
     var menuExpanded by remember { mutableStateOf(false) }
@@ -463,21 +466,23 @@ private fun FileCardRender(
                 }
             }
             // Visible one-tap save affordance (B2).
-            IconButton(
-                onClick = { scope.launch { saveAttachment(context, attachment) } },
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Download,
-                    contentDescription = stringResource(R.string.inbound_attach_cd_save),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
+            if (exportAllowed) {
+                IconButton(
+                    onClick = { scope.launch { saveAttachment(context, attachment) } },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Download,
+                        contentDescription = stringResource(R.string.inbound_attach_cd_save),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
 
         AttachmentActionsMenu(
-            expanded = menuExpanded,
+            expanded = menuExpanded && exportAllowed,
             onDismiss = { menuExpanded = false },
             context = context,
             scope = scope,

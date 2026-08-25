@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -44,11 +44,11 @@
       }
     },
     "es": {
-      "native_name": "Español",
+      "native_name": "Espa\u00f1ol",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -68,11 +68,11 @@
       "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
     },
     "ja": {
-      "native_name": "日本語",
+      "native_name": "\u65e5\u672c\u8a9e",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -92,11 +92,11 @@
       "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
     },
     "pt-BR": {
-      "native_name": "Português (Brasil)",
+      "native_name": "Portugu\u00eas (Brasil)",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -116,11 +116,11 @@
       "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
     },
     "ru": {
-      "native_name": "Русский",
+      "native_name": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -131,11 +131,11 @@
       }
     },
     "zh-Hans": {
-      "native_name": "简体中文",
+      "native_name": "\u7b80\u4f53\u4e2d\u6587",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "15a2c5ffe5bed203117291fcff6a2f0d39f2181bd0b7f709746e5a659f48e7fd",
+        "main": "c8a915aa7faf68a6c2b6f5e09bfe4fe69a6a60bdc9fbc2c252a3bda911c9cb36",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {

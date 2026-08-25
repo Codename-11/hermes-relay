@@ -32,6 +32,7 @@ fun ChatFailurePanel(
     onDetails: () -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
+    showDetails: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -72,8 +73,10 @@ fun ChatFailurePanel(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onDetails) {
-                    Text(stringResource(R.string.chat_failure_details))
+                if (showDetails) {
+                    TextButton(onClick = onDetails) {
+                        Text(stringResource(R.string.chat_failure_details))
+                    }
                 }
                 if (failure.recoverable) {
                     TextButton(onClick = onRetry) {
