@@ -1,62 +1,59 @@
-Hermes-Relay is the native Android client for the Hermes agent platform. Point it at your own Hermes instance and chat with your agent, talk to it hands-free, and manage models, keys, skills, and profiles from anywhere.
+Hermes-Relay is the native Android companion for the Hermes agent you run. Chat, talk hands-free, continue sessions, and manage models, keys, skills, profiles, and automations from your phone.
 
-It is not a hosted AI service. It is a companion app for the Hermes agent you run, and it talks only to the instances you configure.
+It is not a hosted AI service. Your Hermes agent stays on infrastructure you control, and the app talks only to instances you configure.
 
 QUICK START
 
-1. Run hermes-agent with its API server and dashboard enabled on your computer or home server.
-2. Install Hermes-Relay and enter your server address, for example http://192.168.1.100:8642.
-3. The setup wizard checks what your server supports and shows a readiness card, then you are ready to chat.
+1. Start the Hermes Dashboard/Gateway on your computer or home server with hermes dashboard.
+2. Install Hermes-Relay from Google Play.
+3. For the recommended full setup, install the Hermes-Relay plugin on the host and refresh the Web Dashboard. A Relay page will appear.
+4. Scan Connect mobile app from Android Connect. Then scan Pair new device from Android Settings > Connections.
 
-A plain Hermes install is enough. Chat, management, and voice work with no plugin or extra service.
+The QR codes are separate on purpose. Connect mobile app adds the standard Dashboard/Gateway connection. Pair new device grants a time-limited Hermes-Relay session for the additional capabilities you approve.
+
+Standard Hermes without the plugin is supported. Choose Find Hermes on LAN or enter the Dashboard address you open in a browser, normally http://<host>:9119. Pair the Hermes-Relay plugin later when you want the full experience.
 
 HOW IT WORKS
 
-Chat streams directly from your Hermes API Server or dashboard gateway in real time. Manage and voice use your Hermes dashboard with one sign-in. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and additional voice engines.
+Chat, sessions, Manage, sign-in, and standard voice use the unmodified Hermes Dashboard/Gateway. The separate Hermes API server is an optional fallback for advanced or headless setups; it is not required for the normal Android connection.
 
-GOOGLE PLAY BUILD
+The encouraged Hermes-Relay plugin adds Terminal/TUI, notifications, media handoff, enhanced voice, Relay sessions, desktop-tool handoff, and time-limited per-feature grants. When upstream Hermes provides a compatible capability, Hermes-Relay prefers it instead of duplicating it.
 
-The Google Play build ships Hermes Bridge Core only. It has no AccessibilityService Device Control: it cannot read your screen, tap, type, swipe, screenshot, send SMS, place calls, or access contacts or location. Device Control is reserved for sideload builds distributed outside Google Play.
+GOOGLE PLAY AND SIDELOAD
+
+The Google Play build includes Chat, voice, sessions, Manage, profiles, notifications, media, and Terminal/TUI when the Hermes-Relay plugin is paired.
+
+Google Play does not include Android Device Control. It cannot read the phone screen, tap, type, swipe, take device screenshots, send SMS, place calls, or access contacts or location.
+
+Device Control is available only in the signed Sideload build on this project's GitHub Releases. It requires the Sideload app, a paired Hermes-Relay plugin, explicit Android accessibility permission, and the app's safety controls.
 
 FEATURES
 
-- Streaming Chat: real-time responses with reasoning, markdown, tool-call visibility, attachments, mid-turn steering, edit-and-resend, and a searchable command palette.
-
-- Manage Your Agent: use your Hermes dashboard from your phone to switch models, manage provider keys, edit profiles, and browse, install, and update skills.
-
-- Voice Mode: talk hands-free using your server's speech providers. Relay-paired setups add per-profile voices and an experimental realtime engine.
-
-- Works Away From Home: add LAN, Tailscale, or public routes and the app chooses the best available path on connect.
-
-- Sessions: create, switch, rename, and delete chats. Message history loads on demand.
-
-- Multiple Servers and Profiles: connect to more than one server and switch in a tap; overlay an agent profile or personality per conversation.
-
-- Relay Power Tools: optional QR pairing for remote terminal, relay-session management, media handoff, and per-feature grants.
-
-- Notification Companion: optionally forward notification metadata to your paired relay so your assistant can summarize it. Toggle it anytime in system settings.
-
-- Stats for Nerds: local-only counters for response timing, token usage, cost, and stream health.
-
-- Material You: Material 3 dynamic color, light/dark/system themes, and haptics.
+- Streaming Chat with reasoning, markdown, tool progress, attachments, mid-turn steering, edit-and-resend, and searchable commands.
+- Manage models and provider keys, edit profiles, and browse, install, or update skills through the Hermes Dashboard.
+- Hands-free voice through your server's speech providers. Hermes-Relay pairing adds per-profile voices and an experimental realtime engine.
+- Create, switch, search, rename, pin, archive, and continue sessions.
+- Connect multiple Hermes servers and switch in one tap; add LAN, Tailscale, or public routes.
+- Pair the Hermes-Relay plugin for Terminal/TUI, notifications, media, enhanced voice, Relay sessions, and per-feature grants.
+- Inspect connection readiness, routes, response timing, token usage, and stream health without exposing credentials.
 
 SECURITY AND PRIVACY
 
-- API keys and relay tokens are stored in encrypted Android storage.
-- HTTPS is enforced for remote connections; cleartext is limited to localhost or LAN setups.
+- Dashboard sessions and Hermes-Relay tokens use encrypted Android storage.
+- Cleartext is limited to trusted local-network setups. Use a VPN or HTTPS remotely.
 - No telemetry, ads, tracking, or third-party analytics SDKs.
-- Notification access and the microphone are optional and user-controlled.
-- All app traffic goes only to servers you configure.
+- Notification and microphone access are optional and user-controlled.
+- App traffic goes only to servers you configure.
 
 REQUIREMENTS
 
 - Android 8.0 or later.
-- A running Hermes agent for chat, management, and voice.
-- Optional Hermes relay service for power tools such as terminal, notifications, and media.
-- Network access to your server by local network, VPN, or internet.
+- A reachable Hermes Dashboard/Gateway.
+- The Hermes-Relay plugin is encouraged for the complete experience but never blocks standard Hermes.
+- Network access through a local network, VPN, or operator-managed internet route.
 
 OPEN SOURCE
 
-Hermes-Relay is MIT licensed. Source, docs, and issue tracking are on GitHub.
+Hermes-Relay is MIT licensed. Source, setup guides, downloads, and issue tracking are on GitHub.
 
-This app is a community project and is not affiliated with or endorsed by NousResearch.
+This community project is not affiliated with or endorsed by NousResearch.

@@ -2,13 +2,17 @@
 
 <ExpandableImage
   src="/architecture-homepage.svg"
-  alt="How Hermes-Relay connects: Vanilla Hermes runs chat, Manage and voice with no plugin; the optional Relay plugin adds terminal, bridge, relay voice and desktop tools to the app and CLI; Device Control needs the sideload build."
+  alt="How Hermes-Relay connects: upstream Hermes owns standard chat, Manage and voice; the encouraged Relay extension fills current gaps for terminal, notifications, media, desktop tools, enhanced voice and Relay sessions; Device Control also needs the sideload build."
   caption="Select the diagram to inspect it at full size."
 />
 
 ## Connection Model
 
-The app maintains independent connection paths — chat over the vanilla Hermes surfaces (preferring the dashboard gateway, falling back to API-server SSE), and persistent WSS for the optional relay channels.
+The app maintains independent connection paths — chat over the upstream Hermes
+surfaces (preferring the Dashboard Gateway, falling back to API-server SSE), and
+persistent WSS for Relay extensions. Relay is optional for the upstream standard
+path but encouraged for the full current feature set; compatible upstream
+surfaces take precedence as they ship.
 
 For a compact shareable reference covering connection paths, transport boundaries, pairing/session lifecycle, and operator controls, see the [Relay Architecture Spec](/architecture/relay-architecture-spec).
 

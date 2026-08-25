@@ -4040,7 +4040,7 @@
     <string name="appearance_preview_voice">音声</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206トークン  ·  137.2K</string>
     <string name="appearance_preview_message_placeholder">メッセージ…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / プロファイル: デフォルト</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / プロファイル: デフォルト</string>
     <string name="appearance_preview_live_note">このプレビューには、プリセット、モード、フォント、Sphereスキンの変更がすぐに反映されます。</string>
     <string name="appearance_customize_theme">%1$sをカスタマイズ</string>
     <string name="appearance_accent_preset">プリセットのアクセント</string>

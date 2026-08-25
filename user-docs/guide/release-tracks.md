@@ -15,9 +15,13 @@ you decide.
 It's easy to read this page as "Google Play vs Sideload" and miss that two
 *independent* things decide what your agent can do:
 
-- **The Relay plugin** (server-side) — an optional plugin on the machine running
-  Hermes. Pairing it unlocks terminal/TUI, relay & enhanced voice, notification
-  forwarding, media handoff, desktop tools, **and** the device-control channel.
+- **The Relay plugin** (server-side) — optional for the upstream standard path,
+  but encouraged for the complete Hermes-Relay experience. Pairing it fills
+  capabilities Hermes does not yet expose upstream: terminal/TUI, Relay and
+  enhanced voice, notification forwarding, media handoff, desktop tools, Relay
+  sessions, **and** the device-control channel. Hermes-Relay prefers a compatible
+  upstream surface whenever one exists and should retire duplicate Relay paths
+  as upstream ownership expands.
 - **The build flavor** (app-side) — Google Play or Sideload. This only decides
   whether AccessibilityService **Device Control** is compiled into the APK.
 

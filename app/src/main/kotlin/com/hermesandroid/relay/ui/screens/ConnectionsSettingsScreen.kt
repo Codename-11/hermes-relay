@@ -116,7 +116,10 @@ fun ConnectionsSettingsScreen(
         val configured by connectionViewModel.relayConfigured.collectAsState()
         configured
     } else {
-        false
+        // Preview/screenshot hosts do not construct a ConnectionViewModel.
+        // Fall back to the persisted pairing metadata so their active card is
+        // honest instead of showing a connected Relay as "Optional".
+        connections.firstOrNull { it.id == activeConnectionId }?.hasConfiguredRelay() == true
     }
     val startupConnectionId: String? = if (connectionViewModel != null) {
         val startupId by connectionViewModel.startupConnectionId.collectAsState()
@@ -566,7 +569,7 @@ private fun ConnectionSurfaceSummary(
     val dashboardSignInRequired =
         dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
 
-    val chatRuntimeStatus: ChatRuntimeStatus? = if (isActive) {
+    val chatRuntimeStatus: ChatRuntimeStatus? = if (isActive && activeConnectionViewModel != null) {
         resolveChatRuntimeStatus(
             gateway = when (gatewayAvailability) {
                 GatewayAvailability.Ready -> ChatTransportReadiness.Ready

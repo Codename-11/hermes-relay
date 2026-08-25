@@ -5,8 +5,10 @@ canonical_source: /guide/quick-start
 
 # Início rápido
 
-Instale → conecte → converse, em cerca de dois minutos. Este caminho funciona
-com um Hermes Agent comum; o plugin Relay não é necessário.
+Instale → conecte → converse. O caminho padrão continua upstream; o plugin
+Relay é recomendado para a experiência completa do Hermes-Relay.
+
+<AndroidSetupPath mode="quick" />
 
 ::: tip Status da tradução
 Esta página foi traduzida com assistência de IA e passou pelas verificações
@@ -29,17 +31,34 @@ O Dashboard/Gateway do Hermes precisa estar ativo e acessível pelo celular. Se
 necessário, inicie-o com `hermes dashboard`. Consulte
 [Instalação e configuração](/pt-BR/guide/getting-started) para preparar o servidor.
 
-## 3. Conecte
+Para o caminho completo recomendado, instale também:
+
+```bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
+hermes relay start --no-ssl
+```
+
+Use `--no-ssl` somente em uma LAN ou VPN confiável. Para acesso fora de casa,
+[o Tailscale é recomendado](/guide/remote-access).
+
+## 3. Conecte {#other-supported-paths}
 
 Abra o aplicativo e vá até **Connect**. Você pode:
 
-1. Usar **Scan for Hermes on LAN** para localizar o servidor na rede local.
-2. Informar o endereço do Dashboard/Gateway, como `http://<host>:9119`.
-3. Usar **Scan setup QR**; QRs API-first antigos continuam aceitos para compatibilidade avançada.
-4. Entrar com o provedor configurado do dashboard quando solicitado.
+1. No Web Dashboard, abra **Relay → Connect mobile app** e leia o QR sem
+   credenciais em Android **Connect → Scan Hermes setup QR**.
+2. Depois abra **Relay → Pair new device** e leia o QR de uso único em
+   **Settings → Connections → Pair Hermes Relay**.
+3. Sem o plugin do Dashboard, use **Find Hermes on LAN** ou informe manualmente
+   o endereço como `http://<host>:9119`.
+4. Sem câmera, `hermes pair` gera o mesmo QR e um convite copiável; URL e código
+   continuam disponíveis como fallback manual.
+5. Entre com o provedor do dashboard quando solicitado.
 
-O servidor de API é um fallback automático opcional ou uma opção avançada de
-compatibilidade headless; o Relay continua opcional para extensões.
+O servidor de API continua sendo um fallback opcional. Relay não é obrigatório
+para upstream, mas é recomendado para Terminal/TUI, notificações, mídia,
+ferramentas de desktop, voz avançada e Device Control.
 
 ## 4. Confira o status
 
@@ -47,7 +66,8 @@ compatibilidade headless; o Relay continua opcional para extensões.
 - **Manage** pode pedir login no dashboard.
 - **Voice** é liberado pela mesma sessão do dashboard.
 - **API fallback** pode ficar indisponível sem bloquear o Chat.
-- **Relay** pode continuar sem pareamento e não bloqueia o caminho padrão.
+- **Relay · Paired** confirma as extensões recomendadas; uma falha do Relay não
+  deve bloquear o caminho upstream padrão.
 
 ## 5. Envie a primeira mensagem
 

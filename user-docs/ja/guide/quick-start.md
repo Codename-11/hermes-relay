@@ -5,8 +5,10 @@ canonical_source: /guide/quick-start
 
 # クイックスタート
 
-インストール → 接続 → 会話を約 2 分で行えます。この標準手順では通常の
-Hermes Agent だけを使用し、Relay プラグインは必要ありません。
+インストール → 接続 → 会話。標準経路は upstream を維持し、完全な
+Hermes-Relay 体験には Relay plugin を推奨します。
+
+<AndroidSetupPath mode="quick" />
 
 ::: tip 翻訳ステータス
 このページは AI 支援で翻訳され、技術検証を通過しています。製品と
@@ -29,17 +31,34 @@ Hermes Dashboard/Gateway が起動し、スマートフォンから到達でき�
 必要に応じて `hermes dashboard` で起動します。サーバーの準備は
 [インストールと設定](/ja/guide/getting-started)を参照してください。
 
-## 3. 接続する
+推奨される完全な経路では、追加で次を実行します。
+
+```bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
+hermes relay start --no-ssl
+```
+
+`--no-ssl` は信頼できる LAN または VPN でのみ使用してください。外出先からの
+アクセスには [Tailscale を推奨します](/guide/remote-access)。
+
+## 3. 接続する {#other-supported-paths}
 
 アプリを開いて **Connect** へ進み、次のいずれかを使用します。
 
-1. **Scan for Hermes on LAN** でローカルネットワークを検索する。
-2. `http://<host>:9119` のような Dashboard/Gateway アドレスを入力する。
-3. **Scan setup QR** を使う。従来の API-first QR も高度な互換用途で引き続き使用できます。
-4. 求められた場合は設定済みのダッシュボードプロバイダーでログインする。
+1. Web Dashboard の **Relay → Connect mobile app** を開き、Android の
+   **Connect → Scan Hermes setup QR** から資格情報を含まない QR を読み取る。
+2. 次に **Relay → Pair new device** を開き、**Settings → Connections →
+   Pair Hermes Relay** から 1 回限りの QR を読み取る。
+3. Dashboard plugin がない場合は **Find Hermes on LAN**、または
+   `http://<host>:9119` のような Dashboard アドレスの手入力を使う。
+4. カメラが使えない場合は `hermes pair` で同じ QR とコピー可能な招待を
+   生成し、URL とコードを手動フォールバックとして使う。
+5. 求められた場合は Dashboard のプロバイダーでログインする。
 
-API サーバーはオプションの自動フォールバックまたは高度な headless 互換用です。
-Relay も拡張機能を使う場合だけ必要です。
+API サーバーは任意のフォールバックです。Relay は upstream 標準経路には
+必須ではありませんが、Terminal/TUI、通知、メディア、デスクトップツール、
+拡張 Voice、Device Control のために推奨されます。
 
 ## 4. 状態を確認する
 
@@ -47,7 +66,8 @@ Relay も拡張機能を使う場合だけ必要です。
 - **Manage** ではダッシュボードへのログインを求められる場合があります。
 - **Voice** も同じダッシュボードセッションで有効になります。
 - **API fallback** が利用不可でも Chat はブロックされません。
-- **Relay** は未ペアリングのままでも標準機能を妨げません。
+- **Relay · Paired** は推奨拡張が有効であることを示します。Relay の障害が
+  upstream 標準経路を妨げてはいけません。
 
 ## 5. 最初のメッセージを送る
 

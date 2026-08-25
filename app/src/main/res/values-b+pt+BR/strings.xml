@@ -3881,7 +3881,7 @@
     <string name="appearance_preview_voice">Voz</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 tokens  ·  137,2 mil</string>
     <string name="appearance_preview_message_placeholder">Mensagem…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / perfil: padrão</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / perfil: padrão</string>
     <string name="appearance_preview_live_note">Esta prévia é atualizada imediatamente com a predefinição, o modo, a fonte e a aparência da Sphere.</string>
     <string name="appearance_customize_theme">Personalizar %1$s</string>
     <string name="appearance_accent_preset">Cor de destaque predefinida</string>
