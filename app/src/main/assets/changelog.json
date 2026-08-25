@@ -1,6 +1,20 @@
 {
  "versions": [
   {
+   "version": "1.13.1",
+   "title": "Accurate session activity",
+   "date": "2026-08-25",
+   "sections": [
+    {
+     "header": "Follow live Hermes state",
+     "bullets": [
+      "Show Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work from live runtime state instead of a recent-activity estimate.",
+      "Keep stale activity visible until a complete, unambiguous snapshot safely clears it."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.13.0",
    "title": "Bots, usage, and reliable chat",
    "date": "2026-08-25",

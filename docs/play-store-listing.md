@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.13.0 - Bots, usage, and reliable chat
+v1.13.1 - Accurate session activity
 
-Bot Mode now brings bots from saved Hermes gateways into one messenger-style workspace. Settings adds provider-neutral Codex, Nous, and OpenCode Go usage. Compatible Assistant launches can include bounded visible text and an available screenshot. Gateway chats now settle stale busy state automatically, onboarding is clearer, and idle Sphere motion uses less power.
+Session activity now follows live Hermes runtime state instead of a recent-activity estimate. Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work stay accurate, and stale state clears only after a complete, unambiguous update.
 ```
 ## Category
 
