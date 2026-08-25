@@ -1061,6 +1061,9 @@ fun ChatScreen(
     val contextWindow by chatViewModel.contextWindow.collectAsState()
     // Injected-context audit sheet (opened by tapping the context meter).
     var showContextSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(supervised) {
+        if (supervised) showContextSheet = false
+    }
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -3142,10 +3145,10 @@ fun ChatScreen(
                     usedFraction = contextUsage,
                     usedTokens = contextWindow?.usedTokens,
                     maxTokens = contextWindow?.maxTokens,
-                    onClick = { showContextSheet = true },
+                    onClick = if (supervised) null else ({ showContextSheet = true }),
                 )
             }
-            if (showContextSheet) {
+            if (!supervised && showContextSheet) {
                 // Live audit of the exact extra context the agent will be
                 // injected with on the next turn (transparency / auditability).
                 InjectedContextSheet(

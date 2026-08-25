@@ -10,6 +10,7 @@ class SupervisedNavigationPolicyTest {
     @Test fun `locked surface permits only approved destinations`() {
         assertTrue(isSupervisedRouteAllowed("chat?sessionId=owned", false))
         assertTrue(isSupervisedRouteAllowed("settings", false))
+        assertTrue(isSupervisedRouteAllowed(Screen.SupervisedAppearanceSettings.route, false))
         // The full Appearance destination includes profile/avatar/pet controls.
         // The supervised Settings root owns its own allowlisted theme controls.
         assertFalse(isSupervisedRouteAllowed("settings/appearance", false))

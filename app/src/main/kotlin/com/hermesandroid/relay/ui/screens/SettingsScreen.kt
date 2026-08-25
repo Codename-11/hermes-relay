@@ -155,6 +155,7 @@ fun SettingsScreen(
     onRequestParentAccess: () -> Unit = {},
     onUpdateSupervisedPolicy: (SupervisedModePolicy) -> Unit = {},
     onNavigateToAdvancedSettings: () -> Unit = {},
+    onNavigateToSupervisedAppearance: () -> Unit = {},
     // Needed by the Active Agent summary card at the top of the screen — it
     // reads the current personality pick so the subtitle can render
     // `connection · model · personality` without re-reading ChatViewModel
@@ -212,6 +213,7 @@ fun SettingsScreen(
             policy = supervisedPolicy,
             onPolicyChange = onUpdateSupervisedPolicy,
             onBack = onBack,
+            onNavigateToAppearance = onNavigateToSupervisedAppearance,
             onParentAccessGranted = onRequestParentAccess,
         )
         return

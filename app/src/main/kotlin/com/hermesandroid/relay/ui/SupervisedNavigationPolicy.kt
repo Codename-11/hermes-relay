@@ -8,7 +8,8 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
     if (parentAccessUnlocked) return true
     val normalized = route?.substringBefore('?') ?: return false
     return normalized == "chat" ||
-        normalized == Screen.Settings.route
+        normalized == Screen.Settings.route ||
+        normalized == Screen.SupervisedAppearanceSettings.route
 }
 
 /** Do not inspect or mutate a NavController until its first destination exists. */

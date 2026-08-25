@@ -170,6 +170,7 @@ import com.hermesandroid.relay.ui.screens.ProfileInspectorScreen
 import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.SupervisedControlsScreen
+import com.hermesandroid.relay.ui.screens.SupervisedAppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
@@ -509,6 +510,11 @@ sealed class Screen(
     // above for the surviving route.)
     data object ChatSettings : Screen("settings/chat", "Chat", Icons.Filled.Settings)
     data object AdvancedSettings : Screen("settings/advanced", "Advanced", Icons.Filled.Settings)
+    data object SupervisedAppearanceSettings : Screen(
+        "settings/supervised/appearance",
+        "Appearance",
+        Icons.Filled.Settings,
+    )
     data object SupervisedControls : Screen(
         "settings/supervised",
         "Supervised mode",
@@ -2457,6 +2463,9 @@ fun RelayApp() {
                         onNavigateToAdvancedSettings = {
                             navController.navigate(Screen.AdvancedSettings.route)
                         },
+                        onNavigateToSupervisedAppearance = {
+                            navController.navigate(Screen.SupervisedAppearanceSettings.route)
+                        },
                         onBack = { navController.popBackStack() },
                         // (The `onNavigateToChatWithAgentSheet` callback that
                         // used to live here was removed 2026-04-21. Tapping
@@ -2536,6 +2545,24 @@ fun RelayApp() {
                             supervisedPolicy = supervisedPolicy,
                             onNavigateToSupervisedControls = {
                                 navController.navigate(Screen.SupervisedControls.route)
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                }
+                composable(Screen.SupervisedAppearanceSettings.route) {
+                    if (!supervisedPolicy.enabled && !parentAccessUnlocked) {
+                        LaunchedEffect(Unit) { navController.popBackStack() }
+                    } else {
+                        SupervisedAppearanceSettingsScreen(
+                            connectionViewModel = connectionViewModel,
+                            policy = supervisedPolicy,
+                            onPolicyChange = { policy ->
+                                activeConnectionId?.let { connectionId ->
+                                    connectionSwitchScope.launch {
+                                        supervisedModeStore.setPolicy(connectionId, policy)
+                                    }
+                                }
                             },
                             onBack = { navController.popBackStack() },
                         )

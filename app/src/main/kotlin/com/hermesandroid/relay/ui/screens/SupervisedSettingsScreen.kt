@@ -6,6 +6,8 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,6 +71,7 @@ import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.ThemeMode
+import com.hermesandroid.relay.ui.theme.appearanceShapeScale
 import com.hermesandroid.relay.ui.mayEnableSupervisedMode
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -88,13 +92,13 @@ fun SupervisedSettingsScreen(
     policy: SupervisedModePolicy,
     onPolicyChange: (SupervisedModePolicy) -> Unit,
     onBack: (() -> Unit)?,
+    onNavigateToAppearance: () -> Unit,
     onParentAccessGranted: () -> Unit,
 ) {
     val context = LocalContext.current
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileAlias by connectionViewModel.profileDisplayAlias.collectAsState()
-    val fontScale by connectionViewModel.fontScale.collectAsState()
     val isDarkTheme = LocalBrand.current.isDark
     var authError by remember { mutableStateOf<String?>(null) }
     var showAbout by remember { mutableStateOf(false) }
@@ -161,40 +165,13 @@ fun SupervisedSettingsScreen(
             )
 
             SupervisedSectionLabel("Appearance")
-            SupervisedCard(isDarkTheme) {
-                SupervisedThemeControls(policy, onPolicyChange)
-
-                HorizontalDivider()
-                Text("Text size", style = MaterialTheme.typography.titleSmall)
-                val scaleOptions = listOf(0.85f to "Small", 1f to "Default", 1.15f to "Large", 1.3f to "Larger")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    val selectedScale = scaleOptions.indices.minByOrNull {
-                        kotlin.math.abs(scaleOptions[it].first - fontScale)
-                    } ?: 1
-                    scaleOptions.forEachIndexed { index, option ->
-                        SegmentedButton(
-                            selected = index == selectedScale,
-                            onClick = { connectionViewModel.setFontScale(option.first) },
-                            shape = SegmentedButtonDefaults.itemShape(index, scaleOptions.size),
-                        ) { Text(option.second) }
-                    }
-                }
-
-            }
-
-            if (
-                policy.appearance.allowProfileIconChanges ||
-                policy.appearance.allowBackgroundChanges
-            ) {
-                SupervisedSectionLabel("Agent look")
-                SupervisedCard(isDarkTheme) {
-                    SupervisedAgentLookControls(
-                        connectionViewModel = connectionViewModel,
-                        allowProfileIconChanges = policy.appearance.allowProfileIconChanges,
-                        allowBackgroundChanges = policy.appearance.allowBackgroundChanges,
-                    )
-                }
-            }
+            SupervisedNavigationRow(
+                icon = Icons.Filled.Palette,
+                title = "Appearance",
+                subtitle = "Supervised theme and approved agent look",
+                onClick = onNavigateToAppearance,
+                isDarkTheme = isDarkTheme,
+            )
 
             SupervisedSectionLabel("Help")
             SupervisedNavigationRow(
@@ -242,6 +219,68 @@ fun SupervisedSettingsScreen(
     }
 }
 
+/** Restricted appearance editor backed by the supervised policy, not global theme settings. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SupervisedAppearanceSettingsScreen(
+    connectionViewModel: ConnectionViewModel,
+    policy: SupervisedModePolicy,
+    onPolicyChange: (SupervisedModePolicy) -> Unit,
+    onBack: () -> Unit,
+) {
+    val isDarkTheme = LocalBrand.current.isDark
+    val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                title = { Text("Appearance") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "This theme applies only while the supervised view is locked.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SupervisedCard(isDarkTheme) {
+                SupervisedThemeControls(policy, onPolicyChange, appearanceShape)
+            }
+
+            if (
+                policy.appearance.allowProfileIconChanges ||
+                policy.appearance.allowBackgroundChanges
+            ) {
+                SupervisedSectionLabel("Agent look")
+                SupervisedCard(isDarkTheme) {
+                    SupervisedAgentLookControls(
+                        connectionViewModel = connectionViewModel,
+                        allowProfileIconChanges = policy.appearance.allowProfileIconChanges,
+                        allowBackgroundChanges = policy.appearance.allowBackgroundChanges,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
 /** Parent-only editor for the client-side supervised policy. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -259,6 +298,7 @@ fun SupervisedControlsScreen(
     }
     val deviceSecure = keyguardManager?.isDeviceSecure == true
     val isDarkTheme = LocalBrand.current.isDark
+    val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
     var showProfilePicker by remember { mutableStateOf(false) }
     var sessionActionsExpanded by remember { mutableStateOf(false) }
     var enableAuthError by remember { mutableStateOf<String?>(null) }
@@ -361,7 +401,7 @@ fun SupervisedControlsScreen(
 
             SupervisedSectionLabel("Supervised appearance")
             SupervisedCard(isDarkTheme) {
-                SupervisedThemeControls(policy, onPolicyChange)
+                SupervisedThemeControls(policy, onPolicyChange, appearanceShape)
                 HorizontalDivider()
                 SupervisedSwitchRow(
                     title = "Show pet",
@@ -955,15 +995,40 @@ private fun SessionActionSwitch(
 private fun SupervisedThemeControls(
     policy: SupervisedModePolicy,
     onPolicyChange: (SupervisedModePolicy) -> Unit,
+    appearanceShapeId: String,
 ) {
-    var showThemePicker by remember { mutableStateOf(false) }
     val selectedTheme = AppThemes.byId(policy.appearance.appThemeId)
-
-    SupervisedValueRow(
-        title = "Theme",
-        value = selectedTheme.label,
-        onClick = { showThemePicker = true },
+    val previewDark = selectedTheme.resolveDark(
+        policy.appearance.themePreference,
+        isSystemInDarkTheme(),
     )
+
+    AppearanceLivePreview(
+        palette = selectedTheme.paletteFor(previewDark),
+        shapeScale = appearanceShapeScale(appearanceShapeId),
+        restricted = true,
+    )
+
+    Text("Theme", style = MaterialTheme.typography.titleSmall)
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AppThemes.ALL.forEach { theme ->
+            ThemeSwatchChip(
+                appTheme = theme,
+                selected = selectedTheme.id == theme.id,
+                onClick = {
+                    onPolicyChange(
+                        policy.copy(
+                            appearance = policy.appearance.copy(appThemeId = theme.id),
+                        ),
+                    )
+                },
+            )
+        }
+    }
+
     if (selectedTheme.mode == ThemeMode.BOTH) {
         val modeOptions = listOf("auto" to "System", "light" to "Light", "dark" to "Dark")
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -989,45 +1054,6 @@ private fun SupervisedThemeControls(
         )
     }
 
-    if (showThemePicker) {
-        AlertDialog(
-            onDismissRequest = { showThemePicker = false },
-            title = { Text("Choose supervised theme") },
-            text = {
-                Column {
-                    AppThemes.ALL.forEach { theme ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onPolicyChange(
-                                        policy.copy(
-                                            appearance = policy.appearance.copy(appThemeId = theme.id),
-                                        ),
-                                    )
-                                    showThemePicker = false
-                                }
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = selectedTheme.id == theme.id, onClick = null)
-                            Column(Modifier.padding(start = 8.dp)) {
-                                Text(theme.label, style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    theme.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showThemePicker = false }) { Text("Close") }
-            },
-        )
-    }
 }
 
 @Composable
