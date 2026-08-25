@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.viewmodel.connection
 
 import android.content.Context
+import com.hermesandroid.relay.data.BotGatewayRouteKey
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
@@ -18,6 +19,7 @@ import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreferen
 import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
 import com.hermesandroid.relay.network.shutdownOffMainThread
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,6 +80,8 @@ class UpstreamTransportController(
      * `hermes_dashboard_<id>` file (original behavior).
      */
     private val tokenStoreKeyProvider: (String) -> String? = { null },
+    /** Exact trusted Dashboard base for any saved connection, active or not. */
+    private val trustedDashboardUrlProvider: (String) -> String? = { null },
     /** Applies pairing-bound TLS to a standard authenticated client when needed. */
     private val pinnedClientProvider: (String, okhttp3.OkHttpClient) -> okhttp3.OkHttpClient? =
         { _, _ -> null },
@@ -96,6 +100,25 @@ class UpstreamTransportController(
         ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
     private var dashboardHttpClientCache:
         Triple<String, String, okhttp3.OkHttpClient>? = null
+    private data class RouteGatewayEntry(
+        var dashboardUrl: String,
+        var dashboardClient: DashboardApiClient,
+        val client: GatewayChatClient,
+        var activeRequests: Int = 0,
+        var retained: Int = 0,
+        var retired: Boolean = false,
+    )
+    private val routeGatewayClients = mutableMapOf<BotGatewayRouteKey, RouteGatewayEntry>()
+
+    class RouteGatewayLease internal constructor(
+        val client: GatewayChatClient,
+        private val releaseAction: () -> Unit,
+    ) : AutoCloseable {
+        private val closed = AtomicBoolean(false)
+        override fun close() {
+            if (closed.compareAndSet(false, true)) releaseAction()
+        }
+    }
 
     /**
      * Cookie store for [connectionId] — ONE instance per connection,
@@ -137,9 +160,10 @@ class UpstreamTransportController(
         connectionId: String,
         dashboardUrl: String,
     ): DashboardBearerAuth? {
-        if (activeConnectionIdProvider() != connectionId) return null
         if (!isNativeDashboardTransportEligible(dashboardUrl)) return null
-        val trustedDashboardUrl = dashboardUrlProvider() ?: return null
+        val trustedDashboardUrl = trustedDashboardUrlProvider(connectionId)
+            ?: (if (activeConnectionIdProvider() == connectionId) dashboardUrlProvider() else null)
+            ?: return null
         return trustedDashboardBearerAuthOrNull(
             candidate = dashboardUrl,
             trusted = trustedDashboardUrl,
@@ -252,6 +276,7 @@ class UpstreamTransportController(
         if (gatewayClientCache?.first == connectionId) {
             gatewayClientCache = null
         }
+        disposeConnectionRouteClients(connectionId)
     }
 
     private fun disposeDashboardHttpClient(client: okhttp3.OkHttpClient) {
@@ -334,6 +359,99 @@ class UpstreamTransportController(
     }
 
     /**
+     * Bot/agent Gateway client owned by one immutable connection + profile.
+     * It never consults or changes the foreground connection and never shares
+     * live-session state with the standard Chat client's dynamic profile.
+     */
+    @Synchronized
+    fun acquireGatewayRoute(
+        connectionId: String,
+        dashboardUrl: String,
+        profileName: String,
+        retain: Boolean = false,
+    ): RouteGatewayLease {
+        val profile = profileName.trim().ifBlank { "default" }
+        val key = BotGatewayRouteKey(connectionId.trim(), profile)
+        var entry = routeGatewayClients[key]
+        entry?.let { cached ->
+            if (cached.dashboardUrl == dashboardUrl) {
+                if (retain) cached.retained += 1 else cached.activeRequests += 1
+                return routeLease(key, cached, retain)
+            }
+            if (cached.client.hasActiveTurn()) {
+                val replacementDashboard = dashboardClientFor(connectionId, dashboardUrl)
+                val previousDashboard = cached.dashboardClient
+                cached.client.retarget(replacementDashboard)
+                cached.dashboardClient = replacementDashboard
+                cached.dashboardUrl = dashboardUrl
+                previousDashboard.shutdown()
+                if (retain) cached.retained += 1 else cached.activeRequests += 1
+                return routeLease(key, cached, retain)
+            }
+            cached.retired = true
+            routeGatewayClients.remove(key)
+            if (cached.activeRequests == 0 && cached.retained == 0) shutdownRouteEntry(cached)
+        }
+        val dashboardClient = dashboardClientFor(connectionId, dashboardUrl)
+        entry = RouteGatewayEntry(
+            dashboardUrl = dashboardUrl,
+            dashboardClient = dashboardClient,
+            client = GatewayChatClient(
+                initialDashboardClient = dashboardClient,
+                fixedSessionProfile = profile,
+            ).also { it.setKeepAliveInBackground(gatewayKeepAliveProvider()) },
+        )
+        if (retain) entry.retained = 1 else entry.activeRequests = 1
+        routeGatewayClients[key] = entry
+        return routeLease(key, entry, retain)
+    }
+
+    private fun routeLease(
+        key: BotGatewayRouteKey,
+        entry: RouteGatewayEntry,
+        retained: Boolean,
+    ): RouteGatewayLease = RouteGatewayLease(entry.client) {
+        releaseGatewayRoute(key, entry, retained)
+    }
+
+    @Synchronized
+    private fun releaseGatewayRoute(
+        key: BotGatewayRouteKey,
+        entry: RouteGatewayEntry,
+        retained: Boolean,
+    ) {
+        if (retained) entry.retained = (entry.retained - 1).coerceAtLeast(0)
+        else entry.activeRequests = (entry.activeRequests - 1).coerceAtLeast(0)
+        if ((entry.retired || routeGatewayClients[key] !== entry) &&
+            entry.activeRequests == 0 && entry.retained == 0
+        ) {
+            shutdownRouteEntry(entry)
+        }
+    }
+
+    private fun shutdownRouteEntry(entry: RouteGatewayEntry) {
+        entry.client.shutdown()
+        entry.dashboardClient.shutdown()
+    }
+
+    @Synchronized
+    fun disposeConnectionRouteClients(connectionId: String) {
+        routeGatewayClients.entries
+            .filter { it.key.connectionId == connectionId }
+            .forEach { (key, entry) ->
+                entry.retired = true
+                shutdownRouteEntry(entry)
+                routeGatewayClients.remove(key)
+            }
+    }
+
+    @Synchronized
+    fun disposeAllRouteClients() {
+        routeGatewayClients.values.forEach(::shutdownRouteEntry)
+        routeGatewayClients.clear()
+    }
+
+    /**
      * Apply the keep-alive-in-background flag to the cached gateway client, if
      * one exists. Driven by the ViewModel's `gatewayKeepAlive` collector.
      * Unsynchronized to match the original (the cache read here never raced
@@ -341,6 +459,9 @@ class UpstreamTransportController(
      */
     fun applyGatewayKeepAlive(enabled: Boolean) {
         gatewayClientCache?.third?.setKeepAliveInBackground(enabled)
+        synchronized(this) {
+            routeGatewayClients.values.forEach { it.client.setKeepAliveInBackground(enabled) }
+        }
     }
 
     /**

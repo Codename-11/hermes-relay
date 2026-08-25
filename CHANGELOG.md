@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
 ### Changed
