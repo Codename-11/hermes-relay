@@ -200,6 +200,11 @@ never create a staging branch. Stable production tags are cut only from the new
 10. Build and publish that surface's artifacts, roll out or deploy from the
     immutable tag, and verify the release and live environment.
 
+Do not back-merge a normal release. The `main` release merge already has the
+released `dev` tip as its integration parent, so merging it back only adds
+history noise. The release-backmerge workflow detects this topology and exits
+successfully without changing `dev`.
+
 ### Branch names
 
 | Prefix | When | Example |
@@ -258,7 +263,9 @@ The intended settings are:
 - **`main`** — PRs required; `Required checks` required and current; force push
   and deletion blocked. Normal work does not target this branch.
 - **`dev`** — PRs and `Required checks` required; force push and deletion
-  blocked. This is the normal contribution target.
+  blocked. This is the normal contribution target. The release-backmerge
+  workflow is the sole exception: its automation identity may compare-and-swap
+  `dev` to an exact checked merge commit after a stable hotfix release.
 - **Merge policy** — merge commits allowed; squash and rebase merges disabled so
   the no-ff contract cannot be bypassed in the GitHub UI.
 - **Default branch** — `main`, which remains the release-history branch and the
@@ -922,8 +929,23 @@ When production has a bug, use the same invariant for every surface:
 4. Open the focused hotfix PR into `main` and merge with a merge commit/no-ff.
 5. Tag the new `main` tip with the affected surface's patch tag.
 6. Verify the artifacts and production rollout or deployment.
-7. Merge `main` back into `dev` immediately so integration inherits the fix and
-   version history.
+7. Let the stable release workflow dispatch `Release Backmerge`. A
+   conflict-free candidate runs the same path-aware `Required checks` against
+   its exact SHA, then compare-and-swaps `dev` only if the base ref is unchanged.
+   Conflicts, failed checks, stale refs, or a denied update require a normal
+   reconciliation PR.
+
+`Release Backmerge` accepts only published stable `android-v*`, `server-v*`, or
+`desktop-v*` SemVer tags contained in `main`. It exits without mutation for a
+normal release whose integration parent is already in `dev`. For a selective
+hotfix, it pushes a temporary merge ref, dispatches `Required checks` with full
+base/head SHAs, and updates `dev` with an explicit force-with-lease only after
+that exact candidate passes. The lease is a compare-and-swap guard, not
+permission to rewrite history: the candidate's first parent must be the
+unchanged `dev` tip and its second parent the released commit. The repository
+ruleset must allow this workflow's automation identity to perform that one
+checked branch update; if it does not, the workflow fails closed and the
+reconciliation uses a PR.
 
 For an Android app hotfix:
 
@@ -938,21 +960,21 @@ For an Android app hotfix:
 6. `git tag android-v0.6.2` from the new `main` tip and `git push origin android-v0.6.2`
    so Android release CI builds and publishes.
 7. Verify the automated Play submission, GitHub artifacts, and rollout.
-8. Merge `main` back into `dev` (`git checkout dev && git merge --no-ff main`)
-   so `dev` picks up the hotfix and the versionCode bump. Without this,
-   `dev`'s `appVersionCode` lags behind `main` and the next app release
-   bump collides.
+8. Verify the automated release backmerge completed. If it stopped, open a
+   reconciliation PR so `dev` picks up the hotfix and versionCode bump. Without
+   reconciliation, `dev`'s `appVersionCode` lags behind `main` and the next app
+   release bump collides.
 
 For a Plugin hotfix, branch from the affected `server-v*` tag, apply
 the fix, run `bash scripts/bump-plugin-version.sh <next-version>`, merge to
-`main`, tag `server-v<next-version>`, verify the package/deployment, and merge
-`main` back to `dev`. Do not touch
+`main`, tag `server-v<next-version>`, verify the package/deployment, and verify
+the automated release backmerge. Do not touch
 `gradle/libs.versions.toml` unless an Android app release is also shipping.
 
 For a CLI+UI hotfix, branch from the affected `desktop-v*` tag, update only
 `desktop/package.json` and its generated lock/runtime/tray metadata, merge to
 `main`, tag `desktop-v<next-version>`, verify all binaries and the installer,
-then merge `main` back to `dev`.
+then verify the automated release backmerge or use the PR fallback.
 
 ## Troubleshooting
 

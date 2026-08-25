@@ -365,3 +365,22 @@ jobs:
           find app/build/outputs/apk -name '*.apk' -exec ls -la {} + >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           find app/build/outputs/bundle -name '*.aab' -exec ls -la {} + >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  request-backmerge:
+    name: Request stable release backmerge
+    needs: [validate, release]
+    if: needs.validate.outputs.prerelease != 'true'
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch fail-closed release reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: android-v${{ needs.validate.outputs.version }}
+        run: |
+          gh workflow run release-backmerge.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f release_tag="$RELEASE_TAG"

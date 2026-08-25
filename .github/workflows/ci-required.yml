@@ -10,6 +10,16 @@ on:
   pull_request:
     branches: [main, dev]
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: "Exact base commit for a trusted release-backmerge candidate"
+        required: true
+        type: string
+      head_sha:
+        description: "Exact candidate commit to check"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -31,10 +41,18 @@ jobs:
       contract: ${{ steps.filter.outputs.contract }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
-      - name: Checkout repository
+      - name: Checkout pull request merge
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v7
         with:
           fetch-depth: 2
+
+      - name: Checkout exact dispatched candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.head_sha }}
 
       - name: Test path classifier
         run: node .github/scripts/classify-ci-paths.test.cjs
@@ -42,11 +60,44 @@ jobs:
       - name: Classify changed files
         id: filter
         uses: actions/github-script@v8
+        env:
+          DISPATCH_BASE_SHA: ${{ inputs.base_sha }}
+          DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
         with:
           script: |
+            let diffArgs;
+            if (context.eventName === 'workflow_dispatch') {
+              const base = process.env.DISPATCH_BASE_SHA || '';
+              const head = process.env.DISPATCH_HEAD_SHA || '';
+              const shaPattern = /^[0-9a-f]{40}$/;
+              if (!shaPattern.test(base) || !shaPattern.test(head)) {
+                core.setFailed('Exact-tree dispatch requires full 40-character base/head SHAs.');
+                return;
+              }
+              const { stdout: checkedOut } = await exec.getExecOutput(
+                'git',
+                ['rev-parse', 'HEAD'],
+              );
+              if (checkedOut.trim() !== head) {
+                core.setFailed(`Checked out ${checkedOut.trim()}, expected ${head}.`);
+                return;
+              }
+              const ancestry = await exec.exec(
+                'git',
+                ['merge-base', '--is-ancestor', base, head],
+                { ignoreReturnCode: true },
+              );
+              if (ancestry !== 0) {
+                core.setFailed(`Candidate ${head} does not descend from base ${base}.`);
+                return;
+              }
+              diffArgs = ['diff', '--name-only', base, head];
+            } else {
+              diffArgs = ['diff', '--name-only', 'HEAD^1', 'HEAD^2'];
+            }
             const { stdout } = await exec.getExecOutput(
               'git',
-              ['diff', '--name-only', 'HEAD^1', 'HEAD^2'],
+              diffArgs,
             );
             const paths = stdout.split(/\r?\n/).filter(Boolean);
             const { classifyCiPaths } = require(

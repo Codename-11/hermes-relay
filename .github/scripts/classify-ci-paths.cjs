@@ -3,8 +3,11 @@
 function classifyCiPaths(paths) {
   const forceAll = paths.some((path) => [
     '.github/workflows/ci-required.yml',
+    '.github/workflows/release-backmerge.yml',
     '.github/scripts/classify-ci-paths.cjs',
     '.github/scripts/classify-ci-paths.test.cjs',
+    'scripts/plan_release_backmerge.py',
+    'scripts/tests/plan_release_backmerge_test.py',
   ].includes(path));
   const exact = (values) => paths.some((path) => values.includes(path));
   const under = (prefixes) => paths.some((path) => prefixes.some((prefix) => path.startsWith(prefix)));
