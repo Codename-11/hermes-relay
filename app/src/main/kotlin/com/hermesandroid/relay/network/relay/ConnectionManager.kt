@@ -443,6 +443,35 @@ class ConnectionManager(
     }
 
     /**
+     * Reopen the current authenticated Relay socket without discarding pair
+     * state. Used only as a compatibility fallback when an older Relay does
+     * not acknowledge a post-auth metadata update; the replacement socket's
+     * normal `system/auth` frame carries the latest metadata.
+     */
+    fun reconnectForAuthenticatedMetadataUpdate(): Boolean {
+        val targetUrl = serverUrl?.takeIf { it.isNotBlank() } ?: return false
+        if (isRelayRateLimitBackoffActive(
+                rateLimitBackoffUntilMs,
+                SystemClock.elapsedRealtime(),
+            )
+        ) {
+            Log.i(TAG, "metadata reconnect: preserving active rate-limit backoff")
+            return false
+        }
+        val previousSocket = webSocket
+        if (previousSocket == null) {
+            connect(targetUrl)
+        } else {
+            doConnect(
+                targetUrl,
+                previousSocketToClose = previousSocket,
+                replaceReason = "Relay metadata compatibility refresh",
+            )
+        }
+        return true
+    }
+
+    /**
      * Same as [connect] but bypasses the resolver — used by the network-
      * change callback when we've already picked a winner and just want to
      * reopen the socket against that URL. Keeping this separate prevents

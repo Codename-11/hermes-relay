@@ -11,6 +11,7 @@ import com.hermesandroid.relay.data.replaceHermesReachCredential
 import com.hermesandroid.relay.data.sameBrokerAuthority
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.isSafeProfileUiMeta
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
 import com.hermesandroid.relay.network.relay.models.Envelope
@@ -18,6 +19,8 @@ import com.hermesandroid.relay.network.shared.InvalidCredentialException
 import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -52,6 +55,39 @@ sealed class AuthState {
     data class Paired(val token: String) : AuthState()
     data class Failed(val reason: String) : AuthState()
 }
+
+internal fun relaySupervisedModePayload(policy: SupervisedModePolicy): JsonObject {
+    if (!policy.isActive) return buildJsonObject { put("active", false) }
+    val capabilities = buildList {
+        add("text_chat")
+        if (policy.capabilities.newChat) add("new_chat")
+        if (policy.capabilities.cancelResponse) add("cancel")
+        if (policy.capabilities.steerResponse) add("steer")
+        if (policy.capabilities.attachments) add("attachments")
+        if (policy.capabilities.voice) add("voice")
+        if (policy.capabilities.generatedImages) add("generated_images")
+        if (policy.capabilities.shareGeneratedImages) add("share_images")
+        if (policy.capabilities.copyResponses) add("copy")
+        if (policy.capabilities.retryResponse) add("retry")
+        if (policy.capabilities.quoteReplies) add("quote_reply")
+        if (policy.visibility.resolved().showTimestamps) add("timestamps")
+    }.take(12)
+    return buildJsonObject {
+        put("active", true)
+        put("profile_label", policy.pinnedProfileName.orEmpty().take(80))
+        put("capabilities", JsonArray(capabilities.map(::JsonPrimitive)))
+    }
+}
+
+internal fun relaySupervisedModeUpdateEnvelope(
+    policy: SupervisedModePolicy,
+): Envelope = Envelope(
+    channel = "system",
+    type = "supervised.update",
+    payload = buildJsonObject {
+        put("supervised_mode", relaySupervisedModePayload(policy))
+    },
+)
 
 @Serializable
 data class ConnectionAuthSecrets(
@@ -120,6 +156,60 @@ class AuthManager(
     private val eagerHydrate: Boolean = true,
 ) : ChannelMultiplexer.ChannelHandler {
 
+    @Volatile
+    private var supervisedMode: SupervisedModePolicy = SupervisedModePolicy()
+
+    @Volatile
+    private var supervisedMetadataReconnectFallback: (() -> Unit)? = null
+    private var pendingSupervisedUpdateId: String? = null
+    private var supervisedUpdateFallbackJob: Job? = null
+
+    /**
+     * Update the public client-mode tag sent on Relay auth. This does not grant
+     * authority: Relay labels enforcement_owner=android_client and the Android
+     * policy remains the enforcing surface.
+     */
+    fun updateSupervisedMode(policy: SupervisedModePolicy) {
+        if (supervisedMode == policy) return
+        supervisedMode = policy
+        if (_authState.value is AuthState.Paired) sendSupervisedModeUpdate()
+    }
+
+    /**
+     * Install the narrow compatibility path used when an older Relay ignores
+     * `system/supervised.update`. Reopening the authenticated socket causes
+     * the current policy to travel through the legacy `system/auth` payload.
+     */
+    fun setSupervisedMetadataReconnectFallback(callback: () -> Unit) {
+        supervisedMetadataReconnectFallback = callback
+    }
+
+    private fun sendSupervisedModeUpdate() {
+        val envelope = relaySupervisedModeUpdateEnvelope(supervisedMode)
+        pendingSupervisedUpdateId = envelope.id
+        supervisedUpdateFallbackJob?.cancel()
+        multiplexer.send(envelope)
+        supervisedUpdateFallbackJob = scope.launch {
+            delay(SUPERVISED_UPDATE_ACK_TIMEOUT_MS)
+            if (pendingSupervisedUpdateId == envelope.id) {
+                pendingSupervisedUpdateId = null
+                Log.i(TAG, "supervised.update unsupported or unacknowledged; refreshing Relay socket")
+                supervisedMetadataReconnectFallback?.invoke()
+            }
+        }
+    }
+
+    private fun settleSupervisedModeUpdate(envelope: Envelope, unsupported: Boolean) {
+        if (envelope.id != pendingSupervisedUpdateId) return
+        pendingSupervisedUpdateId = null
+        supervisedUpdateFallbackJob?.cancel()
+        supervisedUpdateFallbackJob = null
+        if (unsupported) {
+            Log.i(TAG, "supervised.update rejected; refreshing Relay socket for compatibility")
+            supervisedMetadataReconnectFallback?.invoke()
+        }
+    }
+
     companion object {
         private const val TAG = "AuthManager"
         private const val KEY_SESSION_TOKEN = "session_token"
@@ -134,6 +224,7 @@ class AuthManager(
         // migration has run, so we never rebuild the legacy keyset to re-check.
         private const val KEY_LEGACY_MIGRATED = "legacy_migrated"
         private const val PAIRING_CODE_LENGTH = 6
+        private const val SUPERVISED_UPDATE_ACK_TIMEOUT_MS = 2_000L
         private val PAIRING_CODE_CHARS = ('A'..'Z') + ('0'..'9')
 
         /**
@@ -835,6 +926,10 @@ class AuthManager(
         put("device_form_factor", "phone")
     }
 
+    private fun JsonObjectBuilder.putSupervisedMode() {
+        put("supervised_mode", relaySupervisedModePayload(supervisedMode))
+    }
+
     private fun relayDeviceName(): String {
         val configured = runCatching {
             Settings.Global.getString(context.contentResolver, "device_name")
@@ -890,6 +985,7 @@ class AuthManager(
                         put("device_id", deviceId)
                         putRelayDeviceIdentity()
                         putRelayClientSupports()
+                        putSupervisedMode()
                     }
                 }
                 else -> {
@@ -906,6 +1002,7 @@ class AuthManager(
                         put("device_id", deviceId)
                         putRelayDeviceIdentity()
                         putRelayClientSupports()
+                        putSupervisedMode()
                         pendingTtlSeconds?.let { put("ttl_seconds", it) }
                         pendingGrants?.let { grants ->
                             val obj = buildJsonObject {
@@ -985,6 +1082,8 @@ class AuthManager(
         when (envelope.type) {
             "auth.ok" -> handleAuthOk(envelope)
             "auth.fail" -> handleAuthFail(envelope)
+            "supervised.updated" -> settleSupervisedModeUpdate(envelope, unsupported = false)
+            "error" -> settleSupervisedModeUpdate(envelope, unsupported = true)
             // `profiles.updated` push — sent by the v0.7.1+ relay on
             // the "pairing" channel whenever its in-memory profile
             // snapshot changes (file-watcher, SIGHUP, or a manual
@@ -1129,6 +1228,11 @@ class AuthManager(
         get() = _authState.value is AuthState.Paired
 
     private fun handleAuthOk(envelope: Envelope) {
+        // A successful auth always carries the latest client report, including
+        // after the compatibility reconnect used for older Relay versions.
+        pendingSupervisedUpdateId = null
+        supervisedUpdateFallbackJob?.cancel()
+        supervisedUpdateFallbackJob = null
         scope.launch {
             try {
                 val payload = envelope.payload

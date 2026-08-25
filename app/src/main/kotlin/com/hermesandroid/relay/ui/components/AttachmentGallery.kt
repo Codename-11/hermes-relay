@@ -125,6 +125,7 @@ fun AttachmentGallery(
     if (attachments.size < 2) return
 
     val context = LocalContext.current
+    val exportAllowed = LocalImageExportAllowed.current
     val scope = rememberCoroutineScope()
     val blurMode = LocalMediaBlurMode.current
     val revealed = remember { mutableStateMapOf<String, Boolean>() }
@@ -189,7 +190,7 @@ fun AttachmentGallery(
                             )
                         }
 
-                        if (!blurred) {
+                        if (!blurred && exportAllowed) {
                             SaveOverlayButton(
                                 onClick = {
                                     scope.launch { saveAttachment(context, attachment) }
@@ -201,7 +202,7 @@ fun AttachmentGallery(
                         }
 
                         AttachmentActionsMenu(
-                            expanded = menuExpanded,
+                            expanded = menuExpanded && exportAllowed,
                             onDismiss = { menuExpanded = false },
                             context = context,
                             scope = scope,

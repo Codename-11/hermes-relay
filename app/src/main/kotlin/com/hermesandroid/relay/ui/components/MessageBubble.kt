@@ -94,6 +94,14 @@ import java.util.Date
 internal const val CHAT_PET_IDENTITY_OBSTACLE_PREFIX = "chat-message-identity:"
 private val MESSAGE_REACTIONS = listOf("❤️", "👍", "👎", "😂", "‼️", "❓")
 
+internal fun assistantImageContent(
+    content: String,
+    showImages: Boolean,
+): Pair<String, List<ChatInlineImage>> {
+    val (body, images) = extractChatInlineImages(content)
+    return body to if (showImages) images else emptyList()
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
@@ -101,6 +109,13 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     maxBubbleWidth: Dp = 300.dp,
     showThinking: Boolean = true,
+    showAgentIdentity: Boolean = true,
+    showTimestamps: Boolean = true,
+    showWorkingStatus: Boolean = true,
+    showUsage: Boolean = true,
+    showTechnicalBadges: Boolean = true,
+    showAssistantImages: Boolean = true,
+    allowAssistantImageExport: Boolean = true,
     isFirstInGroup: Boolean = true,
     isLastInGroup: Boolean = true,
     onCopyMessage: (String) -> Unit = {},
@@ -238,18 +253,24 @@ fun MessageBubble(
     // content so they render as real images (remote URLs via Coil) or a
     // graceful inline notice — not the blank element the markdown renderer
     // emits for an image link. User/system bubbles keep their raw content.
-    val (markdownBody, inlineImages) = remember(visibleMessageContent, isUser, isSystem) {
+    val (markdownBody, inlineImages) = remember(
+        visibleMessageContent,
+        isUser,
+        isSystem,
+        showAssistantImages,
+    ) {
         if (isUser || isSystem) {
             visibleMessageContent to emptyList()
         } else {
-            extractChatInlineImages(visibleMessageContent)
+            assistantImageContent(visibleMessageContent, showAssistantImages)
         }
     }
-    val showImageGeneration = shouldShowImageGenerationPlaceholder(
+    val showImageGeneration = showAssistantImages && showWorkingStatus && shouldShowImageGenerationPlaceholder(
         toolCalls = message.toolCalls,
         isStreaming = message.isStreaming,
         hasMediaResult = message.attachments.isNotEmpty() || inlineImages.isNotEmpty(),
     )
+    val actionContent = if (!isUser && !isSystem) markdownBody else visibleMessageContent
     val streamingStatusLabel = if (
         !isUser &&
         !isSystem &&
@@ -297,7 +318,10 @@ fun MessageBubble(
     val blurRepo = remember(context) { MediaSettingsRepository(context.applicationContext) }
     val blurMode by blurRepo.blurMode.collectAsState(initial = BlurMode.FLAGGED)
 
-    CompositionLocalProvider(LocalMediaBlurMode provides blurMode) {
+    CompositionLocalProvider(
+        LocalMediaBlurMode provides blurMode,
+        LocalImageExportAllowed provides allowAssistantImageExport,
+    ) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = alignment,
@@ -305,7 +329,7 @@ fun MessageBubble(
         // Keep sender identity in the first-message label rather than a
         // persistent leading column. Long responses and every follow-up in the
         // group therefore retain the full bubble-width allowance.
-        if (!isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
+        if (showAgentIdentity && !isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -336,7 +360,7 @@ fun MessageBubble(
             }
         }
 
-        if (!isUser && !isSystem && message.badges.isNotEmpty()) {
+        if (showTechnicalBadges && !isUser && !isSystem && message.badges.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
@@ -415,7 +439,7 @@ fun MessageBubble(
         // is rendered directly in the conversation
         // lane below, without an opaque bubble. Cards and attachments still own
         // a normal bubble even when response prose has not arrived yet.
-        streamingStatusLabel?.let { streamingStatus ->
+        streamingStatusLabel?.takeIf { showWorkingStatus }?.let { streamingStatus ->
             StandaloneStreamingStatus(
                 status = streamingStatus,
                 accessibilityDescription = a11yDescription,
@@ -508,7 +532,7 @@ fun MessageBubble(
                     text = { Text(stringResource(R.string.msg_bubble_copy)) },
                     onClick = {
                         showMessageActions = false
-                        onCopyMessage(visibleMessageContent)
+                        onCopyMessage(actionContent)
                     },
                 )
                 if (onQuoteMessage != null) {
@@ -516,7 +540,7 @@ fun MessageBubble(
                         text = { Text(stringResource(R.string.msg_bubble_quote)) },
                         onClick = {
                             showMessageActions = false
-                            onQuoteMessage(message.copy(content = visibleMessageContent))
+                            onQuoteMessage(message.copy(content = actionContent))
                         },
                     )
                 }
@@ -531,7 +555,7 @@ fun MessageBubble(
                         },
                         onClick = {
                             showMessageActions = false
-                            onSpeakMessage?.invoke(visibleMessageContent)
+                            onSpeakMessage?.invoke(actionContent)
                         },
                     )
                 }
@@ -601,7 +625,7 @@ fun MessageBubble(
                         ) {
                             showMessageActions = true
                         } else {
-                            onCopyMessage(visibleMessageContent)
+                            onCopyMessage(actionContent)
                         }
                     }
                 )
@@ -798,7 +822,7 @@ fun MessageBubble(
                         }
                 }
 
-                val hasTokenUsage = !isUser &&
+                val hasTokenUsage = showUsage && !isUser &&
                     (message.inputTokens != null || message.outputTokens != null)
 
                 // Timestamp — only on the LAST bubble of a same-author run so a
@@ -808,13 +832,13 @@ fun MessageBubble(
                 // This row is reserved from the first streaming frame. Completion
                 // can reveal both timestamp and token usage without adding a new
                 // footer line or changing the bubble's measured height.
-                if (isLastInGroup) {
+                if (isLastInGroup && (showTimestamps || hasTokenUsage)) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
+                        if (showTimestamps) Text(
                             text = timeFormat.format(Date(message.timestamp)),
                             style = MaterialTheme.typography.labelSmall,
                             color = textColor.copy(alpha = if (message.isStreaming) 0f else 0.6f),
@@ -883,15 +907,15 @@ fun MessageBubble(
                 showEdit = showEditAction,
                 onCopy = {
                     showInlineActions = false
-                    onCopyMessage(visibleMessageContent)
+                    onCopyMessage(actionContent)
                 },
                 onQuote = {
                     showInlineActions = false
-                    onQuoteMessage?.invoke(message.copy(content = visibleMessageContent))
+                    onQuoteMessage?.invoke(message.copy(content = actionContent))
                 },
                 onSpeak = {
                     showInlineActions = false
-                    onSpeakMessage?.invoke(visibleMessageContent)
+                    onSpeakMessage?.invoke(actionContent)
                 },
                 onStopSpeaking = {
                     showInlineActions = false
