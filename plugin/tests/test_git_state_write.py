@@ -200,6 +200,18 @@ class FetchPullPushTests(_MutationBase):
         _git(self.repo, "push", "-q", "origin", "main")
         _git(self.repo, "branch", "-q", "--set-upstream-to=origin/main", "main")
 
+    def test_fetch_rejects_unknown_and_option_like_remote(self) -> None:
+        for remote in ("https://example.invalid/repo.git", "--all", "missing"):
+            with self.subTest(remote=remote):
+                with self.assertRaisesRegex(git_state.GitError, "remote"):
+                    git_state.fetch(self.repo, remote)
+
+    def test_pull_and_push_reject_option_like_branch(self) -> None:
+        with self.assertRaisesRegex(git_state.GitError, "branch"):
+            git_state.pull(self.repo, "origin", "--all")
+        with self.assertRaisesRegex(git_state.GitError, "branch"):
+            git_state.push(self.repo, "origin", "--mirror", git_state.CONFIRM_PUSH)
+
     def test_fetch_updates_remote_refs(self) -> None:
         # Advance the remote from a descendant clone (not an independent repo:
         # an independent root has its own "initial commit" SHA, and when it
@@ -290,6 +302,10 @@ class FetchPullPushTests(_MutationBase):
 
 
 class CheckoutTests(_MutationBase):
+    def test_checkout_rejects_option_like_ref(self) -> None:
+        with self.assertRaisesRegex(git_state.GitError, "git option"):
+            git_state.checkout(self.repo, "--detach")
+
     def test_checkout_switches_branch(self) -> None:
         _git(self.repo, "checkout", "-q", "-b", "feature")
         _git(self.repo, "checkout", "-q", "main")
@@ -304,6 +320,17 @@ class CheckoutTests(_MutationBase):
             confirmation="",
         )
         self.assertEqual("exp", _git(self.repo, "symbolic-ref", "--short", "HEAD"))
+
+    def test_checkout_new_branch_uses_requested_start_point(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        (self.repo / "feature-only.txt").write_text("feature", encoding="utf-8")
+        _git(self.repo, "add", "feature-only.txt")
+        _git(self.repo, "commit", "-q", "-m", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+
+        git_state.checkout(self.repo, "feature", new_branch="from-feature")
+
+        self.assertTrue((self.repo / "feature-only.txt").exists())
 
     def test_checkout_clean_tree_needs_no_confirmation(self) -> None:
         _git(self.repo, "checkout", "-q", "-b", "feature")

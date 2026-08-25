@@ -88,6 +88,17 @@ class GitWriteApiTests(unittest.TestCase):
         )
         self.assertEqual(400, response.status_code, response.text)
 
+    def test_remote_operations_reject_urls_options_and_wrong_types(self) -> None:
+        for path, payload in (
+            ("/git/fetch", {"remote": "https://example.invalid/repo.git"}),
+            ("/git/fetch", {"remote": "--all"}),
+            ("/git/pull", {"remote": ["origin"], "branch": "main"}),
+            ("/git/push", {"remote": "origin", "branch": "--mirror", "confirmation": "push"}),
+        ):
+            with self.subTest(path=path, payload=payload):
+                response = self.client.post(path, json={"repo": "alpha", **payload})
+                self.assertEqual(400, response.status_code, response.text)
+
     def test_commit_creates_commit(self) -> None:
         self._stage("feature.txt")
         before = _git(self.repo, "rev-parse", "HEAD")

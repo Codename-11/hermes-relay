@@ -855,6 +855,11 @@ fun RelayApp() {
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val gitOwnerKey = activeConnectionId?.takeIf { it.isNotBlank() }?.let { connectionId ->
+        effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { dashboardUrl ->
+            "$connectionId\u0000${effectiveSessionProfileName.orEmpty()}\u0000$dashboardUrl"
+        }
+    }
     LaunchedEffect(
         activeConnectionId,
         effectiveDashboardUrl,
@@ -868,24 +873,28 @@ fun RelayApp() {
             dashboardFactory = connectionViewModel::dashboardClientForActive,
             sessionId = currentChatSessionId,
         )
+    }
+    LaunchedEffect(gitOwnerKey) {
         val dashboard = effectiveDashboardUrl
             .takeIf { it.isNotBlank() }
             ?.let { connectionViewModel.dashboardClientForActive(it) }
-        gitStateViewModel.configure(dashboard)
+        gitStateViewModel.configure(dashboard, gitOwnerKey)
     }
 
     // Mirror the plugin.api.write grant into the Git view model so write
     // mutations are refused client-side until the user grants write access
     // (matches the plug-in's grant gating in PluginsViewModel).
     val pluginsHubState by pluginsViewModel.hubState.collectAsState()
-    LaunchedEffect(pluginsHubState) {
-        val granted = (pluginsHubState as? PluginsHubState.Ready)
+    LaunchedEffect(pluginsHubState, gitOwnerKey) {
+        val ready = pluginsHubState as? PluginsHubState.Ready
+        val granted = ready
+            ?.takeIf { it.ownerKey == gitOwnerKey }
             ?.plugins
             ?.firstOrNull { it.catalog.id == "hermes-relay" }
             ?.preferences
             ?.grants
             ?.contains(PLUGIN_API_WRITE_CAPABILITY) == true
-        gitStateViewModel.setWriteGrant(granted)
+        gitStateViewModel.setWriteGrant(gitOwnerKey, granted)
     }
 
     // What's New auto-show

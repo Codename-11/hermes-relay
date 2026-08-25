@@ -106,4 +106,8 @@ jobs:
             plugin/tests/test_session_grants.py \
             plugin/tests/test_native_layout_imports.py \
             plugin/tests/test_profile_discovery.py \
-            plugin/tests/test_profiles_updated_broadcast.py
+            plugin/tests/test_profiles_updated_broadcast.py \
+            plugin/tests/test_git_state.py \
+            plugin/tests/test_git_state_write.py \
+            plugin/tests/test_git_state_extras.py \
+            plugin/tests/test_mobile_plugin_store.py

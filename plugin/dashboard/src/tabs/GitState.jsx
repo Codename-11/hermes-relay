@@ -1,6 +1,6 @@
 const SDK = window.__HERMES_PLUGIN_SDK__;
 const { React } = SDK;
-const { useState, useEffect, useCallback } = SDK.hooks;
+const { useState, useEffect, useCallback, useRef } = SDK.hooks;
 
 import {
   getGitRepos,
@@ -27,6 +27,8 @@ import {
   hasCommitSuggestion,
   requiresConfirmation,
   confirmationFor,
+  isCurrentRepoRequest,
+  shouldOfferPushAfterCommit,
 } from "../lib/git-state.mjs";
 import {
   Alert,
@@ -122,10 +124,9 @@ function BranchesRow({ branches }) {
 }
 
 /**
- * Write controls for the GitState tab. Every mutation is gated by the
- * plugin.api.write grant (the tab is only reachable after the user grants it)
- * and destructive ops (discard/push/dirty-checkout) are confirmed via the
- * per-use confirmation-string mechanics before the POST is sent.
+ * Write controls for the authenticated Dashboard Git tab. Destructive ops
+ * (discard/push/dirty-checkout) are confirmed via the per-use confirmation
+ * mechanics before the POST is sent.
  */
 function WriteControls({
   status,
@@ -143,6 +144,8 @@ function WriteControls({
   pushAfterCommit,
   onPushAfterCommitChange,
   onStageAll,
+  onUnstageAll,
+  onDiscardAll,
   onStage,
   onUnstage,
   onDiscard,
@@ -162,13 +165,13 @@ function WriteControls({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" disabled={mutating || modified.length === 0} onClick={() => modified.forEach(onStage)}>
+        <Button size="sm" variant="outline" disabled={mutating || modified.length === 0} onClick={onStageAll}>
           Stage modified
         </Button>
-        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={() => staged.forEach(onUnstage)}>
+        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={onUnstageAll}>
           Unstage staged
         </Button>
-        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={() => staged.forEach(onDiscard)}>
+        <Button size="sm" variant="outline" disabled={mutating || staged.length === 0} onClick={onDiscardAll}>
           Discard staged
         </Button>
       </div>
@@ -264,6 +267,9 @@ export default function GitState({ autoRefresh }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const selectedRef = useRef(null);
+  const requestGenerationRef = useRef(0);
+  const mutationActiveRef = useRef(false);
 
   const loadRepos = useCallback(async () => {
     setError(null);
@@ -272,19 +278,24 @@ export default function GitState({ autoRefresh }) {
       const list = (data && data.repos) || [];
       setRepos(list);
       setNotice((data && data.notice) || null);
-      if (selected && !list.some((r) => r.id === selected)) {
+      const currentSelected = selectedRef.current;
+      if (currentSelected && !list.some((r) => r.id === currentSelected)) {
+        selectedRef.current = null;
+        requestGenerationRef.current += 1;
         setSelected(null);
         setStatus(null);
         setBranches(null);
         setDiff(null);
         setFile(null);
+        setGeneratingMessage(false);
+        setCommitNotice(null);
       }
     } catch (err) {
       setError(err && err.message ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [selected]);
+  }, []);
 
   useEffect(() => {
     loadRepos();
@@ -297,47 +308,64 @@ export default function GitState({ autoRefresh }) {
   }, [autoRefresh, loadRepos]);
 
   const selectRepo = useCallback(async (repoId) => {
+    const generation = requestGenerationRef.current + 1;
+    requestGenerationRef.current = generation;
+    selectedRef.current = repoId;
     setSelected(repoId);
     setStatus(null);
     setBranches(null);
     setDiff(null);
     setFile(null);
+    setGeneratingMessage(false);
+    setCommitNotice(null);
     setError(null);
     try {
       const [st, br] = await Promise.all([
         getGitStatus(repoId),
         getGitBranches(repoId),
       ]);
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       setStatus(st);
       setBranches(br && br.branches);
     } catch (err) {
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       setError(err && err.message ? err.message : String(err));
     }
   }, []);
 
   const showDiff = useCallback(async (path, kind) => {
-    if (!selected) return;
+    const repoId = selectedRef.current;
+    if (!repoId) return;
+    const generation = requestGenerationRef.current;
     setFile(null);
     setError(null);
     try {
-      setDiff(await getGitDiff(selected, path, kind));
+      const nextDiff = await getGitDiff(repoId, path, kind);
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
+      setDiff(nextDiff);
     } catch (err) {
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       setError(err && err.message ? err.message : String(err));
     }
-  }, [selected]);
+  }, []);
 
   const showFile = useCallback(async (path) => {
-    if (!selected) return;
+    const repoId = selectedRef.current;
+    if (!repoId) return;
+    const generation = requestGenerationRef.current;
     setDiff(null);
     setError(null);
     try {
-      setFile(await getGitFile(selected, path));
+      const nextFile = await getGitFile(repoId, path);
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
+      setFile(nextFile);
     } catch (err) {
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       setError(err && err.message ? err.message : String(err));
     }
-  }, [selected]);
+  }, []);
 
-  // ── Write controls (gated by plugin.api.write + confirmations) ───────────
+  // ── Authenticated Dashboard write controls + confirmations ──────────────
   const [commitMessage, setCommitMessage] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [branchRef, setBranchRef] = useState("");
@@ -347,44 +375,55 @@ export default function GitState({ autoRefresh }) {
   const [commitNotice, setCommitNotice] = useState(null);
   const [pushAfterCommit, setPushAfterCommit] = useState(false);
 
-  const refreshDetail = useCallback(async (repoId) => {
+  const refreshDetail = useCallback(async (repoId, generation) => {
     const [st, br] = await Promise.all([
       getGitStatus(repoId),
       getGitBranches(repoId),
     ]);
+    if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
     setStatus(st);
     setBranches(br && br.branches);
   }, []);
 
   const applyMutation = useCallback(
     async (op, paths, opts) => {
-      if (!selected) return;
+      const repoId = selectedRef.current;
+      const generation = requestGenerationRef.current;
+      if (!repoId || mutationActiveRef.current) return false;
+      mutationActiveRef.current = true;
       setMutationError(null);
       setMutating(true);
       try {
-        if (op === "stage") await gitStage(selected, paths);
-        else if (op === "unstage") await gitUnstage(selected, paths);
-        else if (op === "fetch") await gitFetch(selected, opts?.remote || "origin");
-        else if (op === "pull") await gitPull(selected, opts?.remote || "origin", opts?.branch || "");
-        else if (op === "commit") await gitCommit(selected, opts?.message);
-        else if (op === "commitSelected") await gitCommitSelected(selected, opts?.message, paths);
-        else if (op === "discard") await gitDiscard(selected, paths, opts?.confirmation, opts?.deleteUntracked);
-        else if (op === "push") await gitPush(selected, opts?.confirmation, opts?.remote || "origin", opts?.branch || "");
-        else if (op === "dirty-checkout") {
-          await gitCheckout(selected, opts.ref, {
+        if (op === "stage") await gitStage(repoId, paths);
+        else if (op === "unstage") await gitUnstage(repoId, paths);
+        else if (op === "fetch") await gitFetch(repoId, opts?.remote || "origin");
+        else if (op === "pull") await gitPull(repoId, opts?.remote || "origin", opts?.branch || "");
+        else if (op === "commit") await gitCommit(repoId, opts?.message);
+        else if (op === "discard") await gitDiscard(repoId, paths, opts?.confirmation, opts?.deleteUntracked);
+        else if (op === "push") await gitPush(repoId, opts?.confirmation, opts?.remote || "origin", opts?.branch || "");
+        else if (op === "checkout" || op === "dirty-checkout") {
+          await gitCheckout(repoId, opts.ref, {
             confirmation: opts.confirmation,
             newBranch: opts.newBranch,
             track: opts.track,
           });
+        } else throw new Error(`Unknown Git operation: ${op}`);
+        if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) {
+          return false;
         }
-        await refreshDetail(selected);
+        await refreshDetail(repoId, generation);
+        return true;
       } catch (err) {
-        setMutationError(err && err.message ? err.message : String(err));
+        if (isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) {
+          setMutationError(err && err.message ? err.message : String(err));
+        }
+        return false;
       } finally {
+        mutationActiveRef.current = false;
         setMutating(false);
       }
     },
-    [selected, refreshDetail],
+    [refreshDetail],
   );
 
   /**
@@ -392,14 +431,17 @@ export default function GitState({ autoRefresh }) {
    * staged diff / model-unavailable degrade to a notice, never an error.
    */
   const generateMessage = useCallback(async () => {
-    if (!selected) return;
+    const repoId = selectedRef.current;
+    if (!repoId) return;
+    const generation = requestGenerationRef.current;
     setGeneratingMessage(true);
     setCommitNotice(null);
     try {
       const stagedPaths = (status && status.staged || []).map((e) => e.path);
-      const data = stagedPaths.length > 0
-        ? await gitCommitMessageSelected(selected, stagedPaths)
-        : await gitCommitMessage(selected);
+      const data = stagedPaths.length > 0 && !status?.truncated
+        ? await gitCommitMessageSelected(repoId, stagedPaths)
+        : await gitCommitMessage(repoId);
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       const result = normalizeCommitMessage(data);
       if (hasCommitSuggestion(result)) {
         setCommitMessage(result.message);
@@ -408,11 +450,14 @@ export default function GitState({ autoRefresh }) {
         setCommitNotice(result.notice || "Nothing staged to generate a message from.");
       }
     } catch (err) {
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       setCommitNotice(err && err.message ? err.message : String(err));
     } finally {
-      setGeneratingMessage(false);
+      if (isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) {
+        setGeneratingMessage(false);
+      }
     }
-  }, [selected, status]);
+  }, [status]);
 
   /**
    * Stash-checkout: switch branches, auto-stashing a dirty tree first. No
@@ -421,30 +466,37 @@ export default function GitState({ autoRefresh }) {
    */
   const doStashCheckout = useCallback(async () => {
     const ref = branchRef.trim();
-    if (!ref || !selected) return;
+    const repoId = selectedRef.current;
+    const generation = requestGenerationRef.current;
+    if (!ref || !repoId || mutationActiveRef.current) return;
+    mutationActiveRef.current = true;
     setMutationError(null);
     setCommitNotice(null);
     setMutating(true);
     try {
-      const data = await gitStashCheckout(selected, ref, {
+      const data = await gitStashCheckout(repoId, ref, {
         newBranch: newBranch.trim(),
         track: false,
       });
+      if (!isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) return;
       const result = normalizeStashCheckout(data);
       if (result.stashed) {
         setCommitNotice(
           `Stashed changes on ${ref} as “${result.stashMessage}”. Use “git stash pop” to restore them.`,
         );
       }
-      await refreshDetail(selected);
+      await refreshDetail(repoId, generation);
     } catch (err) {
-      setMutationError(err && err.message ? err.message : String(err));
+      if (isCurrentRepoRequest(selectedRef.current, requestGenerationRef.current, repoId, generation)) {
+        setMutationError(err && err.message ? err.message : String(err));
+      }
     } finally {
+      mutationActiveRef.current = false;
       setMutating(false);
       setBranchRef("");
       setNewBranch("");
     }
-  }, [selected, branchRef, newBranch, refreshDetail]);
+  }, [branchRef, newBranch, refreshDetail]);
 
   /**
    * Destructive ops (discard, push, dirty-checkout) gate on a per-use
@@ -476,17 +528,13 @@ export default function GitState({ autoRefresh }) {
       setMutationError("Commit message must not be empty.");
       return;
     }
-    const stagedPaths = (status && status.staged || []).map((e) => e.path);
-    if (stagedPaths.length > 0) {
-      await applyMutation("commitSelected", stagedPaths, { message });
-    } else {
-      await applyMutation("commit", [], { message });
-    }
+    const succeeded = await applyMutation("commit", [], { message });
+    if (!succeeded) return;
     setCommitMessage("");
     // Push-after-commit: when the toggle is ON, immediately start the existing
     // push confirmation flow. Confirmation is still required (never bypassed);
     // the toggle only auto-starts it after a successful commit.
-    if (pushAfterCommit) {
+    if (shouldOfferPushAfterCommit(succeeded, pushAfterCommit)) {
       requestMutation("push", {});
     }
   }, [commitMessage, status, applyMutation, pushAfterCommit, requestMutation]);
@@ -601,6 +649,8 @@ export default function GitState({ autoRefresh }) {
               pushAfterCommit={pushAfterCommit}
               onPushAfterCommitChange={setPushAfterCommit}
               onStageAll={() => requestMutation("stage", { paths: (status && status.modified || []).map((e) => e.path) })}
+              onUnstageAll={() => requestMutation("unstage", { paths: (status && status.staged || []).map((e) => e.path) })}
+              onDiscardAll={() => requestMutation("discard", { paths: (status && status.staged || []).map((e) => e.path), deleteUntracked: false })}
               onStage={(path) => requestMutation("stage", { paths: [path] })}
               onUnstage={(path) => requestMutation("unstage", { paths: [path] })}
               onDiscard={(path) => requestMutation("discard", { paths: [path], deleteUntracked: false })}

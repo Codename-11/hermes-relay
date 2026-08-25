@@ -217,8 +217,52 @@ class StashCheckoutTests(_ExtrasBase):
         self.assertIn("head", result)
 
     def test_bad_ref_raises(self) -> None:
+        (self.repo / "README.md").write_text("still here\n", encoding="utf-8")
         with self.assertRaises(git_state.GitStateError):
             git_state.stash_checkout(self.repo, "no-such-branch")
+        self.assertEqual("still here\n", (self.repo / "README.md").read_text(encoding="utf-8"))
+        self.assertEqual("", _git(self.repo, "stash", "list"))
+
+    def test_existing_new_branch_is_rejected_before_stashing(self) -> None:
+        (self.repo / "README.md").write_text("still here\n", encoding="utf-8")
+        with self.assertRaisesRegex(git_state.GitError, "already exists"):
+            git_state.stash_checkout(self.repo, "main", new_branch="main")
+        self.assertEqual("still here\n", (self.repo / "README.md").read_text(encoding="utf-8"))
+        self.assertEqual("", _git(self.repo, "stash", "list"))
+
+    def test_checkout_failure_restores_tracked_staged_and_untracked_changes(self) -> None:
+        self._branch("feature")
+        (self.repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        (self.repo / "staged.txt").write_text("staged\n", encoding="utf-8")
+        _git(self.repo, "add", "staged.txt")
+        (self.repo / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+        original_mutate = git_state._mutate
+
+        def fail_checkout(repo: Path, args: list[str]) -> str:
+            if args[0] == "checkout":
+                raise git_state.GitError("forced checkout failure", code="conflict")
+            return original_mutate(repo, args)
+
+        with patch.object(git_state, "_mutate", side_effect=fail_checkout):
+            with self.assertRaisesRegex(git_state.GitError, "working changes were restored"):
+                git_state.stash_checkout(self.repo, "feature")
+
+        self.assertEqual("dirty\n", (self.repo / "README.md").read_text(encoding="utf-8"))
+        self.assertTrue((self.repo / "staged.txt").exists())
+        self.assertTrue((self.repo / "untracked.txt").exists())
+        self.assertIn("staged.txt", _git(self.repo, "diff", "--cached", "--name-only"))
+        self.assertIn("git-state: feature", _git(self.repo, "stash", "list"))
+
+    def test_new_branch_uses_requested_start_point(self) -> None:
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        (self.repo / "feature-only.txt").write_text("feature", encoding="utf-8")
+        _git(self.repo, "add", "feature-only.txt")
+        _git(self.repo, "commit", "-q", "-m", "feature")
+        _git(self.repo, "checkout", "-q", "main")
+
+        git_state.stash_checkout(self.repo, "feature", new_branch="from-feature")
+
+        self.assertTrue((self.repo / "feature-only.txt").exists())
 
 
 if __name__ == "__main__":

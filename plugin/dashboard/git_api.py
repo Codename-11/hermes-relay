@@ -228,11 +228,12 @@ async def post_push(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 @router.post("/checkout")
 async def post_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
+        new_branch = _str_opt(body, "new_branch")
         return git_state.checkout(
             _require_repo(body),
-            _ref(body),
+            _ref(body, allow_empty=bool(new_branch)),
             confirmation=body.get("confirmation"),
-            new_branch=_str_opt(body, "new_branch"),
+            new_branch=new_branch,
             track=bool(body.get("track", False)),
         )
     except git_state.GitError as exc:
@@ -251,10 +252,11 @@ async def post_stash_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any
     stash after a successful switch.
     """
     try:
+        new_branch = _str_opt(body, "new_branch")
         return git_state.stash_checkout(
             _require_repo(body),
-            _ref(body),
-            new_branch=_str_opt(body, "new_branch"),
+            _ref(body, allow_empty=bool(new_branch)),
+            new_branch=new_branch,
             track=bool(body.get("track", False)),
         )
     except git_state.GitError as exc:
@@ -307,16 +309,22 @@ def _message(body: dict[str, Any]) -> str:
 
 
 def _remote(body: dict[str, Any]) -> str:
-    return body.get("remote") or "origin"
+    remote = body.get("remote", "origin")
+    if not isinstance(remote, str):
+        raise git_state.GitStateError("remote must be a string")
+    return remote or "origin"
 
 
 def _branch(body: dict[str, Any]) -> str:
-    return body.get("branch") or ""
+    branch = body.get("branch", "")
+    if not isinstance(branch, str):
+        raise git_state.GitStateError("branch must be a string")
+    return branch
 
 
-def _ref(body: dict[str, Any]) -> str:
-    ref = body.get("ref")
-    if not isinstance(ref, str) or not ref:
+def _ref(body: dict[str, Any], *, allow_empty: bool = False) -> str:
+    ref = body.get("ref", "" if allow_empty else None)
+    if not isinstance(ref, str) or (not ref and not allow_empty):
         raise git_state.GitStateError("ref is required")
     return ref
 

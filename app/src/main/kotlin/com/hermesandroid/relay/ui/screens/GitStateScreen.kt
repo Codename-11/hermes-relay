@@ -55,6 +55,7 @@ import com.hermesandroid.relay.viewmodel.GitMutationState
 import com.hermesandroid.relay.viewmodel.GitRepoDetailState
 import com.hermesandroid.relay.viewmodel.GitStateUiState
 import com.hermesandroid.relay.viewmodel.GitStateViewModel
+import com.hermesandroid.relay.viewmodel.GitTarget
 
 /**
  * Git State screen (read + write): repo picker → working-tree status/branches →
@@ -72,7 +73,7 @@ fun GitStateScreen(
     val detailState by viewModel.detail.collectAsState()
     val contentState by viewModel.content.collectAsState()
     val mutationState by viewModel.mutation.collectAsState()
-    val hasGrant = viewModel.hasWriteGrant()
+    val hasGrant by viewModel.writeGrant.collectAsState()
 
     // Hoisted at screen level so confirmation/commit dialogs are modal.
     var pendingConfirm by remember { mutableStateOf<ConfirmationRequest?>(null) }
@@ -150,18 +151,26 @@ fun GitStateScreen(
                                 onStage = { path -> viewModel.stage(listOf(path)) },
                                 onUnstage = { path -> viewModel.unstage(listOf(path)) },
                                 onDiscard = { paths, deleteUntracked ->
-                                    pendingConfirm = ConfirmationRequest.Discard(paths, deleteUntracked)
+                                    viewModel.currentTarget()?.let { target ->
+                                        pendingConfirm = ConfirmationRequest.Discard(paths, deleteUntracked, target)
+                                    }
                                 },
                                 onCommitRequest = { showCommitDialog = true },
                                 onFetch = { viewModel.fetch() },
                                 onPull = { viewModel.pull() },
-                                onPush = { pendingConfirm = ConfirmationRequest.Push },
+                                onPush = {
+                                    viewModel.currentTarget()?.let { target ->
+                                        pendingConfirm = ConfirmationRequest.Push(target)
+                                    }
+                                },
                                 onSwitchBranch = { ref ->
                                     val dirty = current.status.counts.staged > 0 ||
                                         current.status.counts.modified > 0 ||
                                         current.status.counts.untracked > 0
                                     if (dirty) {
-                                        pendingConfirm = ConfirmationRequest.DirtyCheckout(ref)
+                                        viewModel.currentTarget()?.let { target ->
+                                            pendingConfirm = ConfirmationRequest.DirtyCheckout(ref, target)
+                                        }
                                     } else {
                                         viewModel.checkout(ref)
                                     }
@@ -197,9 +206,10 @@ fun GitStateScreen(
             onPushAfterCommitChange = { pushAfterCommit = it },
             onCommit = { message ->
                 showCommitDialog = false
-                viewModel.commit(message)
-                if (pushAfterCommit) {
-                    pendingConfirm = ConfirmationRequest.Push
+                viewModel.commit(message) { committedTarget ->
+                    if (pushAfterCommit) {
+                        pendingConfirm = ConfirmationRequest.Push(committedTarget)
+                    }
                 }
             },
         )
@@ -219,6 +229,7 @@ fun GitStateScreen(
                             request.paths,
                             GitConfirmationStrings.DISCARD,
                             request.deleteUntracked,
+                            request.target,
                         )
                     }) {
                         Text(stringResource(R.string.git_state_confirm_discard_confirm))
@@ -230,14 +241,17 @@ fun GitStateScreen(
                     }
                 },
             )
-            ConfirmationRequest.Push -> AlertDialog(
+            is ConfirmationRequest.Push -> AlertDialog(
                 onDismissRequest = onDismiss,
                 title = { Text(stringResource(R.string.git_state_confirm_push_title)) },
                 text = { Text(stringResource(R.string.git_state_confirm_push_text)) },
                 confirmButton = {
                     TextButton(onClick = {
                         pendingConfirm = null
-                        viewModel.push(GitConfirmationStrings.PUSH)
+                        viewModel.push(
+                            GitConfirmationStrings.PUSH,
+                            expectedTarget = request.target,
+                        )
                     }) {
                         Text(stringResource(R.string.git_state_confirm_push_confirm))
                     }
@@ -255,7 +269,11 @@ fun GitStateScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         pendingConfirm = null
-                        viewModel.checkout(request.ref, GitConfirmationStrings.DIRTY_CHECKOUT)
+                        viewModel.checkout(
+                            request.ref,
+                            GitConfirmationStrings.DIRTY_CHECKOUT,
+                            expectedTarget = request.target,
+                        )
                     }) {
                         Text(stringResource(R.string.git_state_confirm_checkout_confirm))
                     }
@@ -272,9 +290,14 @@ fun GitStateScreen(
 
 /** A destructive action awaiting explicit user confirmation. */
 private sealed interface ConfirmationRequest {
-    data class Discard(val paths: List<String>, val deleteUntracked: Boolean) : ConfirmationRequest
-    data object Push : ConfirmationRequest
-    data class DirtyCheckout(val ref: String) : ConfirmationRequest
+    data class Discard(
+        val paths: List<String>,
+        val deleteUntracked: Boolean,
+        val target: GitTarget,
+    ) : ConfirmationRequest
+
+    data class Push(val target: GitTarget) : ConfirmationRequest
+    data class DirtyCheckout(val ref: String, val target: GitTarget) : ConfirmationRequest
 }
 
 @Composable

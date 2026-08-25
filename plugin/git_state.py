@@ -11,8 +11,7 @@ Security contract
 - ``repo`` params are opaque ids resolved against the scanned repo set; an
   unknown id is rejected before any filesystem access.
 - File paths are validated to reject traversal (``..``), absolute escapes, and
-  null bytes. Git itself treats paths as repo-relative, so this is defense in
-  depth.
+  null bytes. Working-tree reads additionally require canonical containment.
 - Remote URLs are scrubbed of embedded userinfo before they reach any client.
 """
 
@@ -22,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 MAX_STATUS_ENTRIES = int(os.environ.get("GIT_STATE_MAX_STATUS_ENTRIES", "200"))
 MAX_DIFF_BYTES = int(os.environ.get("GIT_STATE_MAX_DIFF_BYTES", "64_000"))
 MAX_FILE_BYTES = int(os.environ.get("GIT_STATE_MAX_FILE_BYTES", "256_000"))
+MAX_GIT_OUTPUT_BYTES = int(os.environ.get("GIT_STATE_MAX_OUTPUT_BYTES", "1_000_000"))
+MAX_GIT_ERROR_BYTES = int(os.environ.get("GIT_STATE_MAX_ERROR_BYTES", "16_000"))
+MAX_GIT_SCALAR_LENGTH = 512
 GIT_TIMEOUT_SECONDS = float(os.environ.get("GIT_STATE_TIMEOUT_SECONDS", "10"))
 
 # Default base path for repo discovery.
@@ -42,6 +45,8 @@ _BASE_PATH_ENV = "GIT_STATE_BASE_PATH"
 # Matches a remote URL's userinfo (user[:password]@) so it can be scrubbed.
 _USERINFO_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@]+)@")
 _SSH_USERINFO_RE = re.compile(r"^([^/@:]+)@([^:]+):")
+_ERROR_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/@]+)@")
+_ERROR_SSH_USERINFO_RE = re.compile(r"(?<![\w@])([^\s/@:]+)@([^\s:]+):")
 
 
 class GitStateError(ValueError):
@@ -81,26 +86,68 @@ def base_path() -> Path:
     return Path(raw).expanduser()
 
 
+def _run_git_bounded(
+    repo: Path,
+    args: list[str],
+    *,
+    mutation: bool,
+) -> tuple[int, str, str]:
+    """Run Git without materializing unbounded stdout or stderr in memory."""
+    error_type = GitError if mutation else GitStateError
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo), *args],
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=GIT_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if mutation:
+                raise GitError(f"git timed out for {repo.name}", code="network") from exc
+            raise GitStateError(f"git timed out for {repo.name}") from exc
+        except OSError as exc:
+            if mutation:
+                raise GitError(
+                    f"could not run git for {repo.name}: {exc}",
+                    code="non-repo",
+                ) from exc
+            raise GitStateError(f"could not run git for {repo.name}: {exc}") from exc
+
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout_bytes = stdout_file.read(MAX_GIT_OUTPUT_BYTES + 1)
+        stderr_bytes = stderr_file.read(MAX_GIT_ERROR_BYTES + 1)
+        if len(stdout_bytes) > MAX_GIT_OUTPUT_BYTES:
+            message = f"git {args[0] if args else 'command'} output exceeded the limit"
+            if mutation:
+                raise GitError(message, code="invalid-input")
+            raise error_type(message)
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes[:MAX_GIT_ERROR_BYTES].decode("utf-8", errors="replace")
+    if len(stderr_bytes) > MAX_GIT_ERROR_BYTES:
+        stderr += "\n[error output truncated]"
+    return result.returncode, stdout, stderr
+
+
+def _safe_git_error(text: str) -> str:
+    """Bound and scrub URL userinfo before returning Git diagnostics."""
+    scrubbed = _ERROR_USERINFO_RE.sub(r"\1", text)
+    scrubbed = _ERROR_SSH_USERINFO_RE.sub(r"\2:", scrubbed)
+    return scrubbed[:MAX_GIT_ERROR_BYTES].strip()
+
+
 def _git(repo: Path, *args: str) -> str:
-    """Run ``git -C <repo> <args>`` and return stdout. Raises on failure."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            text=True,
-            timeout=GIT_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise GitStateError(f"git timed out for {repo.name}") from exc
-    except OSError as exc:
-        raise GitStateError(f"could not run git for {repo.name}: {exc}") from exc
-    if result.returncode != 0:
+    """Run ``git -C <repo> <args>`` and return bounded stdout."""
+    returncode, stdout, stderr = _run_git_bounded(repo, list(args), mutation=False)
+    if returncode != 0:
         raise GitStateError(
             f"git {args[0] if args else 'command'} failed for {repo.name}: "
-            f"{result.stderr.strip() or result.stdout.strip()}"
+            f"{_safe_git_error(stderr or stdout)}"
         )
-    return result.stdout
+    return stdout
 
 
 def _is_git_repo(path: Path) -> bool:
@@ -108,9 +155,33 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
-def repo_id(repo: Path) -> str:
-    """Opaque, stable id for a repo — its directory basename."""
-    return repo.name
+def _is_link_or_junction(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
+def _is_within(root: Path, candidate: Path) -> bool:
+    return candidate == root or root in candidate.parents
+
+
+def _has_link_component(base: Path, path: Path) -> bool:
+    current = base
+    try:
+        relative = path.relative_to(base)
+    except ValueError:
+        return True
+    for part in relative.parts:
+        current /= part
+        if _is_link_or_junction(current):
+            return True
+    return False
+
+
+def repo_id(repo: Path, base: Path | None = None) -> str:
+    """Stable collision-free id relative to the configured canonical base."""
+    if base is None:
+        return repo.name
+    return repo.relative_to(base).as_posix()
 
 
 def scan_repos(base: Path) -> list[dict[str, Any]]:
@@ -123,19 +194,25 @@ def scan_repos(base: Path) -> list[dict[str, Any]]:
     if not base.is_dir():
         return []
 
+    canonical_base = base.resolve()
     repos: list[dict[str, Any]] = []
     for root in sorted(base.rglob("*")):
         if not root.is_dir():
             continue
         if root.name == ".git":
             continue
-        if not _is_git_repo(root):
+        if _has_link_component(base, root):
             continue
-        repos.append(_describe_repo(root))
+        canonical_root = root.resolve()
+        if not _is_within(canonical_base, canonical_root):
+            continue
+        if not _is_git_repo(canonical_root):
+            continue
+        repos.append(_describe_repo(canonical_root, canonical_base))
     return repos
 
 
-def _describe_repo(repo: Path) -> dict[str, Any]:
+def _describe_repo(repo: Path, base: Path) -> dict[str, Any]:
     """Build the scan entry for one repository."""
     current_branch = ""
     try:
@@ -151,7 +228,7 @@ def _describe_repo(repo: Path) -> dict[str, Any]:
         pass
 
     return {
-        "id": repo_id(repo),
+        "id": repo_id(repo, base),
         "name": repo.name,
         "root": str(repo),
         "current_branch": current_branch,
@@ -329,9 +406,13 @@ def read_file(repo: Path, path: str) -> dict[str, Any]:
     # modified-but-uncommitted file returns what is on disk. Read bytes first:
     # binary content dies on the NUL check (before any decode), and non-UTF-8
     # text raises a clear GitStateError instead of an unhandled 500.
-    disk_path = repo / safe_path
+    root = repo.resolve()
     try:
-        raw = disk_path.read_bytes()
+        disk_path = (repo / safe_path).resolve(strict=True)
+        if not _is_within(root, disk_path):
+            raise GitStateError(f"path escapes repository: {safe_path}")
+        with disk_path.open("rb") as handle:
+            raw = handle.read(MAX_FILE_BYTES + 1)
     except OSError as exc:
         raise GitStateError(f"could not read file: {safe_path}") from exc
 
@@ -450,25 +531,14 @@ def _run_mutation(repo: Path, args: list[str]) -> str:
 
     Arg lists only (never shell interpolation); bounded by a timeout.
     """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            text=True,
-            timeout=GIT_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise GitError(f"git timed out for {repo.name}", code="network") from exc
-    except OSError as exc:
-        raise GitError(f"could not run git for {repo.name}: {exc}", code="non-repo") from exc
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or result.stdout.strip()
+    returncode, stdout, stderr_output = _run_git_bounded(repo, args, mutation=True)
+    if returncode != 0:
+        stderr = _safe_git_error(stderr_output or stdout)
         raise GitError(
             f"git {args[0] if args else 'command'} failed for {repo.name}: {stderr}",
             code=_classify_git_failure(stderr),
         )
-    return result.stdout
+    return stdout
 
 
 def _mutate(repo: Path, args: list[str]) -> str:
@@ -489,6 +559,93 @@ def _validate_commit_message(message: str) -> str:
     if not isinstance(message, str) or not message.strip():
         raise GitError("commit message must not be empty", code="invalid-input")
     return message.strip()[:MAX_COMMIT_MESSAGE]
+
+
+def _validate_git_scalar(value: str, label: str, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise GitError(f"{label} must be a string", code="invalid-input")
+    value = value.strip()
+    if not value:
+        if allow_empty:
+            return ""
+        raise GitError(f"{label} is required", code="invalid-input")
+    if len(value) > MAX_GIT_SCALAR_LENGTH:
+        raise GitError(f"{label} is too long", code="invalid-input")
+    if value.startswith("-"):
+        raise GitError(f"{label} must not be a git option", code="invalid-input")
+    if "\x00" in value or any(ord(char) < 32 for char in value):
+        raise GitError(f"{label} contains invalid characters", code="invalid-input")
+    return value
+
+
+def _validate_remote(repo: Path, remote: str) -> str:
+    remote = _validate_git_scalar(remote, "remote")
+    configured = {line.strip() for line in _git(repo, "remote").splitlines() if line.strip()}
+    if remote not in configured:
+        raise GitError(f"unknown remote: {remote}", code="invalid-input")
+    return remote
+
+
+def _validate_branch(repo: Path, branch: str, *, allow_empty: bool = False) -> str:
+    branch = _validate_git_scalar(branch, "branch", allow_empty=allow_empty)
+    if not branch:
+        return ""
+    try:
+        _git(repo, "check-ref-format", "--branch", branch)
+    except GitStateError as exc:
+        raise GitError(f"invalid branch: {branch}", code="invalid-input") from exc
+    return branch
+
+
+def _validate_revision(repo: Path, ref: str, *, allow_empty: bool = False) -> str:
+    ref = _validate_git_scalar(ref, "ref", allow_empty=allow_empty)
+    if not ref:
+        return ""
+    try:
+        _git(repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+    except GitStateError as exc:
+        raise GitError(f"unknown ref: {ref}", code="invalid-input") from exc
+    return ref
+
+
+def _checkout_args(
+    repo: Path,
+    ref: str,
+    *,
+    new_branch: str,
+    track: bool,
+) -> list[str]:
+    new_branch = _validate_branch(repo, new_branch, allow_empty=True)
+    ref = _validate_revision(repo, ref, allow_empty=bool(new_branch))
+    if track and not ref:
+        raise GitError("track requires a source ref", code="invalid-input")
+    if new_branch:
+        if not ref:
+            _validate_revision(repo, "HEAD")
+        returncode, _, error = _run_git_bounded(
+            repo,
+            ["show-ref", "--verify", "--quiet", f"refs/heads/{new_branch}"],
+            mutation=False,
+        )
+        if returncode == 0:
+            raise GitError(f"branch already exists: {new_branch}", code="invalid-input")
+        if returncode != 1:
+            raise GitError(
+                f"could not validate branch {new_branch}: {_safe_git_error(error)}",
+                code="invalid-input",
+            )
+        args = ["checkout"]
+        if track:
+            args.append("--track")
+        args.extend(["-b", new_branch])
+        if ref:
+            args.append(ref)
+        return args
+    args = ["checkout"]
+    if track:
+        args.append("--track")
+    args.append(ref)
+    return args
 
 
 def _fresh_mutation_result(
@@ -573,6 +730,7 @@ def commit_selected(repo: Path, message: str, paths: list[str]) -> dict[str, Any
 
 def fetch(repo: Path, remote: str = "origin") -> dict[str, Any]:
     """Fetch from ``remote`` (default origin) and return fresh status/branches."""
+    remote = _validate_remote(repo, remote)
     _mutate(repo, ["fetch", "--prune", remote])
     return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
@@ -583,6 +741,8 @@ def pull(repo: Path, remote: str = "origin", branch: str = "") -> dict[str, Any]
     Pull never clobbers local work: a tree git refuses to fast-forward without
     discarding local changes surfaces as a structured ``dirty`` GitError.
     """
+    remote = _validate_remote(repo, remote)
+    branch = _validate_branch(repo, branch, allow_empty=True)
     args = ["pull", "--ff-only", remote]
     if branch:
         args.append(branch)
@@ -610,6 +770,8 @@ def push(
     are returned so the UI can reflect ahead/behind after a successful push.
     """
     _require_confirmation(confirmation, CONFIRM_PUSH)
+    remote = _validate_remote(repo, remote)
+    branch = _validate_branch(repo, branch, allow_empty=True)
     args = ["push", remote]
     if branch:
         args.append(branch)
@@ -629,23 +791,10 @@ def checkout(
     A dirty tree switch requires confirmation. Git still refuses to overwrite
     conflicting local changes, so there is no data-loss path.
     """
-    if not ref:
-        raise GitStateError("ref is required")
-    if new_branch:
-        args = ["checkout", "-b", new_branch]
-        if track:
-            args.append("--track")
-        _mutate(repo, args)
-        return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
+    args = _checkout_args(repo, ref, new_branch=new_branch, track=track)
 
-    if _is_dirty(repo):
+    if _is_dirty(repo) and not new_branch:
         _require_confirmation(confirmation, CONFIRM_DIRTY_CHECKOUT)
-    args = ["checkout"]
-    if track:
-        # ``git checkout --track <remote>/<branch>`` creates a local tracking
-        # branch; only meaningful when the target is a remote-tracking ref.
-        args.append("--track")
-    args.append(ref)
     _mutate(repo, args)
     return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
@@ -765,31 +914,35 @@ def stash_checkout(
     so there is no data-loss path. ``new_branch``/``track`` mirror the plain
     checkout surface.
     """
-    if not ref:
-        raise GitStateError("ref is required")
+    args = _checkout_args(repo, ref, new_branch=new_branch, track=track)
 
     stashed = False
     stash_message = ""
+    stash_oid = ""
     if _is_dirty(repo):
-        stash_message = f"git-state: {ref}"
-        _mutate(repo, ["stash", "push", "-m", stash_message])
+        stash_message = f"git-state: {ref or new_branch}"
+        _mutate(repo, ["stash", "push", "--include-untracked", "-m", stash_message])
+        stash_oid = _git(repo, "rev-parse", "--verify", "refs/stash").strip()
         stashed = True
 
-    if new_branch:
-        args = ["checkout", "-b", new_branch]
-        if track:
-            args.append("--track")
+    try:
         _mutate(repo, args)
-        return {
-            **{"stashed": stashed, "stash_message": stash_message},
-            **_fresh_mutation_result(repo, {"branches": repo_branches(repo)}),
-        }
-
-    args = ["checkout"]
-    if track:
-        args.append("--track")
-    args.append(ref)
-    _mutate(repo, args)
+    except GitError as checkout_error:
+        if not stashed:
+            raise
+        try:
+            _mutate(repo, ["stash", "apply", "--index", stash_oid])
+        except GitError as restore_error:
+            raise GitError(
+                f"{checkout_error}; changes remain in stash {stash_oid}; "
+                f"automatic restore failed: {restore_error}",
+                code=checkout_error.code,
+            ) from checkout_error
+        raise GitError(
+            f"{checkout_error}; working changes were restored and remain backed up "
+            f"in stash {stash_oid}",
+            code=checkout_error.code,
+        ) from checkout_error
     return {
         **{"stashed": stashed, "stash_message": stash_message},
         **_fresh_mutation_result(repo, {"branches": repo_branches(repo)}),

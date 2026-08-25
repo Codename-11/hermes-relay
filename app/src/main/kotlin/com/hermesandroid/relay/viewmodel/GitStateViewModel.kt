@@ -62,14 +62,21 @@ object GitConfirmationStrings {
     const val DIRTY_CHECKOUT = "checkout-dirty"
 }
 
+data class GitTarget(
+    val scopeKey: String,
+    val repoId: String,
+    val generation: Long,
+)
+
 /**
  * View model for the Git State Android surface (read + write).
  *
  * Loads the scanned repo list from the Hermes-Relay plugin and, on selection,
  * fetches working-tree status + branches. Mutations (stage/unstage/discard/
  * commit/fetch/pull/push/checkout) all require the ``plugin.api.write`` grant:
- * ``configure`` receives the grant set and every mutation refuses (surfacing a
- * readable message, never a POST) when the grant is absent. Destructive ops
+ * ``configure`` binds one connection/profile/Dashboard owner and every mutation
+ * refuses (surfacing a readable message, never a POST) when that owner's grant
+ * is absent. Destructive ops
  * (discard/push/dirty-checkout) additionally require a per-use confirmation
  * string the caller echoes from GitConfirmationStrings.
  */
@@ -96,37 +103,73 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     private val _stashNotice = MutableStateFlow<String?>(null)
     val stashNotice: StateFlow<String?> = _stashNotice.asStateFlow()
 
+    private val _writeGrant = MutableStateFlow(false)
+    val writeGrant: StateFlow<Boolean> = _writeGrant.asStateFlow()
+
     private var api: GitStateApiClient? = null
-    private var loadJob: Job? = null
+    private var reposJob: Job? = null
+    private var detailJob: Job? = null
+    private var contentJob: Job? = null
+    private var mutationJob: Job? = null
+    private var messageJob: Job? = null
+    private var scopeKey: String? = null
+    private var targetGeneration: Long = 0
     private var selectedRepoId: String? = null
-    private var writeGrant: Boolean = false
 
     fun selectedRepoIdForDisplay(): String? = selectedRepoId
 
-    fun configure(dashboard: DashboardApiClient?) {
+    fun currentTarget(): GitTarget? {
+        val owner = scopeKey ?: return null
+        val repo = selectedRepoId ?: return null
+        return GitTarget(owner, repo, targetGeneration)
+    }
+
+    fun configure(dashboard: DashboardApiClient?, ownerKey: String?) {
+        reposJob?.cancel()
+        detailJob?.cancel()
+        contentJob?.cancel()
+        mutationJob?.cancel()
+        messageJob?.cancel()
+        targetGeneration += 1
+        scopeKey = ownerKey
+        selectedRepoId = null
+        _writeGrant.value = false
+        _detail.value = GitRepoDetailState.Idle
+        _content.value = GitContentViewState.Idle
+        _mutation.value = GitMutationState.Idle
+        _messageGeneration.value = GitMessageGenerationState.Idle
+        _stashNotice.value = null
         api = dashboard?.let(::GitStateApiClient)
         loadRepos()
     }
 
     /** Grants the plugin.api.write capability for this connection/profile. */
-    fun setWriteGrant(granted: Boolean) {
-        writeGrant = granted
+    fun setWriteGrant(ownerKey: String?, granted: Boolean) {
+        if (ownerKey != scopeKey) return
+        _writeGrant.value = granted
     }
 
-    fun hasWriteGrant(): Boolean = writeGrant
+    fun hasWriteGrant(): Boolean = _writeGrant.value
 
     fun loadRepos() {
         val client = api ?: run {
             _repos.value = GitStateUiState.Error("Dashboard connection unavailable")
             return
         }
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        val expectedScope = scopeKey
+        reposJob?.cancel()
+        reposJob = viewModelScope.launch {
             _repos.value = GitStateUiState.Loading
             client.repos().fold(
-                onSuccess = { list -> _repos.value = GitStateUiState.Ready(list, null) },
+                onSuccess = { list ->
+                    if (scopeKey == expectedScope) {
+                        _repos.value = GitStateUiState.Ready(list, null)
+                    }
+                },
                 onFailure = { error ->
-                    _repos.value = GitStateUiState.Error(error.message ?: "Failed to load repositories")
+                    if (scopeKey == expectedScope) {
+                        _repos.value = GitStateUiState.Error(error.message ?: "Failed to load repositories")
+                    }
                 },
             )
         }
@@ -134,14 +177,18 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
 
     fun selectRepo(repoId: String) {
         val client = api ?: return
+        targetGeneration += 1
         selectedRepoId = repoId
+        val target = currentTarget() ?: return
         _content.value = GitContentViewState.Idle
         _mutation.value = GitMutationState.Idle
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        detailJob?.cancel()
+        contentJob?.cancel()
+        detailJob = viewModelScope.launch {
             _detail.value = GitRepoDetailState.Loading
             val statusResult = client.status(repoId)
             val branchesResult = client.branches(repoId)
+            if (currentTarget() != target) return@launch
             if (statusResult.isFailure) {
                 _detail.value = GitRepoDetailState.Error(
                     statusResult.exceptionOrNull()?.message ?: "Failed to load status",
@@ -154,87 +201,114 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Runs a mutation through the shared gate (grant + confirmation). */
-    private fun runMutation(label: String, block: suspend (GitStateApiClient, String) -> Result<GitMutationState>) {
+    /** Runs one owner/repository-bound mutation without cancelling another mutation. */
+    private fun runMutation(
+        label: String,
+        expectedTarget: GitTarget? = null,
+        onSuccess: (GitTarget) -> Unit = {},
+        block: suspend (GitStateApiClient, String) -> Result<GitMutationState>,
+    ) {
         val client = api ?: run {
             _mutation.value = GitMutationState.Error(label, "Dashboard connection unavailable")
             return
         }
-        val repoId = selectedRepoId ?: run {
+        val target = currentTarget() ?: run {
             _mutation.value = GitMutationState.Error(label, "No repository selected")
             return
         }
-        if (!writeGrant) {
+        if (expectedTarget != null && expectedTarget != target) {
+            _mutation.value = GitMutationState.Error(label, "Repository context changed; review the action again.")
+            return
+        }
+        if (!_writeGrant.value) {
             _mutation.value = GitMutationState.Error(
                 label,
                 "Allow plugin changes (plugin.api.write) before using this action.",
             )
             return
         }
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        if (mutationJob?.isActive == true) {
+            _mutation.value = GitMutationState.Error(label, "Another Git action is still in progress.")
+            return
+        }
+        detailJob?.cancel()
+        contentJob?.cancel()
+        mutationJob = viewModelScope.launch {
             _mutation.value = GitMutationState.InProgress(label)
-            block(client, repoId).fold(
+            block(client, target.repoId).fold(
                 onSuccess = {
+                    if (currentTarget() != target) return@fold
                     _mutation.value = it
                     _content.value = GitContentViewState.Idle
-                    refreshDetail(repoId)
+                    refreshDetail(client, target)
+                    onSuccess(target)
                 },
                 onFailure = { error ->
-                    _mutation.value = GitMutationState.Error(
-                        label,
-                        error.message ?: "Git action failed",
-                    )
+                    if (currentTarget() == target) {
+                        _mutation.value = GitMutationState.Error(
+                            label,
+                            error.message ?: "Git action failed",
+                        )
+                    }
                 },
             )
         }
     }
 
-    private fun refreshDetail(repoId: String) {
-        val client = api ?: return
-        viewModelScope.launch {
-            val statusResult = client.status(repoId)
-            val branchesResult = client.branches(repoId)
-            if (statusResult.isSuccess) {
-                _detail.value = GitRepoDetailState.Ready(
-                    statusResult.getOrDefault(GitStatus()),
-                    branchesResult.getOrDefault(emptyList()),
-                )
-            }
+    private suspend fun refreshDetail(client: GitStateApiClient, target: GitTarget) {
+        val statusResult = client.status(target.repoId)
+        val branchesResult = client.branches(target.repoId)
+        if (currentTarget() == target && statusResult.isSuccess) {
+            _detail.value = GitRepoDetailState.Ready(
+                statusResult.getOrDefault(GitStatus()),
+                branchesResult.getOrDefault(emptyList()),
+            )
         }
     }
 
     // ── Read operations ────────────────────────────────────────────────────
 
     fun loadDiff(path: String, kind: String) {
-        val repoId = selectedRepoId ?: return
+        val target = currentTarget() ?: return
         val client = api ?: return
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        contentJob?.cancel()
+        contentJob = viewModelScope.launch {
             _content.value = GitContentViewState.Loading
-            client.diff(repoId, path, kind).fold(
-                onSuccess = { diff -> _content.value = GitContentViewState.Diff(diff) },
+            client.diff(target.repoId, path, kind).fold(
+                onSuccess = { diff ->
+                    if (currentTarget() == target) {
+                        _content.value = GitContentViewState.Diff(diff)
+                    }
+                },
                 onFailure = { error ->
-                    _content.value = GitContentViewState.Error(
-                        error.message ?: "Failed to load diff",
-                    )
+                    if (currentTarget() == target) {
+                        _content.value = GitContentViewState.Error(
+                            error.message ?: "Failed to load diff",
+                        )
+                    }
                 },
             )
         }
     }
 
     fun loadFile(path: String) {
-        val repoId = selectedRepoId ?: return
+        val target = currentTarget() ?: return
         val client = api ?: return
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        contentJob?.cancel()
+        contentJob = viewModelScope.launch {
             _content.value = GitContentViewState.Loading
-            client.file(repoId, path).fold(
-                onSuccess = { file -> _content.value = GitContentViewState.File(file) },
+            client.file(target.repoId, path).fold(
+                onSuccess = { file ->
+                    if (currentTarget() == target) {
+                        _content.value = GitContentViewState.File(file)
+                    }
+                },
                 onFailure = { error ->
-                    _content.value = GitContentViewState.Error(
-                        error.message ?: "Failed to load file",
-                    )
+                    if (currentTarget() == target) {
+                        _content.value = GitContentViewState.Error(
+                            error.message ?: "Failed to load file",
+                        )
+                    }
                 },
             )
         }
@@ -250,17 +324,23 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         c.unstage(r, paths).map { GitMutationState.Success("unstage", it.head) }
     }
 
-    fun discard(paths: List<String>, confirmation: String, deleteUntracked: Boolean = false) =
-        runMutation("Discard") { c, r ->
+    fun discard(
+        paths: List<String>,
+        confirmation: String,
+        deleteUntracked: Boolean = false,
+        expectedTarget: GitTarget? = null,
+    ) =
+        runMutation("Discard", expectedTarget = expectedTarget) { c, r ->
             c.discard(r, paths, confirmation, deleteUntracked)
                 .map { GitMutationState.Success("discard", it.head) }
         }
 
-    fun commit(message: String) = runMutation("Commit") { c, r ->
-        c.commit(r, message).map {
-            GitMutationState.Success("commit", it.head)
+    fun commit(message: String, onSuccess: (GitTarget) -> Unit = {}) =
+        runMutation("Commit", onSuccess = onSuccess) { c, r ->
+            c.commit(r, message).map {
+                GitMutationState.Success("commit", it.head)
+            }
         }
-    }
 
     fun commitSelected(message: String, paths: List<String>) = runMutation("Commit") { c, r ->
         c.commitSelected(r, message, paths).map {
@@ -276,8 +356,13 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         c.pull(r, remote, branch).map { GitMutationState.Success("pull", it.head) }
     }
 
-    fun push(confirmation: String, remote: String = "origin", branch: String = "") =
-        runMutation("Push") { c, r ->
+    fun push(
+        confirmation: String,
+        remote: String = "origin",
+        branch: String = "",
+        expectedTarget: GitTarget? = null,
+    ) =
+        runMutation("Push", expectedTarget = expectedTarget) { c, r ->
             c.push(r, confirmation, remote, branch).map { GitMutationState.Success("push", it.head) }
         }
 
@@ -286,7 +371,8 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         confirmation: String? = null,
         newBranch: String = "",
         track: Boolean = false,
-    ) = runMutation("Checkout") { c, r ->
+        expectedTarget: GitTarget? = null,
+    ) = runMutation("Checkout", expectedTarget = expectedTarget) { c, r ->
         c.checkout(r, ref, confirmation, newBranch, track)
             .map { GitMutationState.Success("checkout", it.head) }
     }
@@ -309,25 +395,26 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
                 GitMessageGenerationState.Ready("", "Dashboard connection unavailable")
             return
         }
-        val repoId = selectedRepoId ?: run {
+        val target = currentTarget() ?: run {
             _messageGeneration.value = GitMessageGenerationState.Ready("", "No repository selected")
             return
         }
-        if (!writeGrant) {
+        if (!_writeGrant.value) {
             _messageGeneration.value = GitMessageGenerationState.Ready(
                 "",
                 "Allow plugin changes (plugin.api.write) before using this action.",
             )
             return
         }
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        messageJob?.cancel()
+        messageJob = viewModelScope.launch {
             _messageGeneration.value = GitMessageGenerationState.Loading
             val result = if (paths != null) {
-                client.commitMessageSelected(repoId, paths)
+                client.commitMessageSelected(target.repoId, paths)
             } else {
-                client.commitMessage(repoId)
+                client.commitMessage(target.repoId)
             }
+            if (currentTarget() != target) return@launch
             result.fold(
                 onSuccess = { msg ->
                     _messageGeneration.value = GitMessageGenerationState.Ready(msg.message, msg.notice)
@@ -351,11 +438,11 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
             _mutation.value = GitMutationState.Error("Stash Checkout", "Dashboard connection unavailable")
             return
         }
-        val repoId = selectedRepoId ?: run {
+        val target = currentTarget() ?: run {
             _mutation.value = GitMutationState.Error("Stash Checkout", "No repository selected")
             return
         }
-        if (!writeGrant) {
+        if (!_writeGrant.value) {
             _mutation.value = GitMutationState.Error(
                 "Stash Checkout",
                 "Allow plugin changes (plugin.api.write) before using this action.",
@@ -363,24 +450,35 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
             return
         }
         _stashNotice.value = null
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        if (mutationJob?.isActive == true) {
+            _mutation.value = GitMutationState.Error(
+                "Stash Checkout",
+                "Another Git action is still in progress.",
+            )
+            return
+        }
+        detailJob?.cancel()
+        contentJob?.cancel()
+        mutationJob = viewModelScope.launch {
             _mutation.value = GitMutationState.InProgress("Stash Checkout")
-            client.stashCheckout(repoId, ref, newBranch, track).fold(
+            client.stashCheckout(target.repoId, ref, newBranch, track).fold(
                 onSuccess = { result ->
+                    if (currentTarget() != target) return@fold
                     if (result.stashed) {
                         _stashNotice.value =
                             "Stashed changes on $ref as \"${result.stashMessage}\". Use \"git stash pop\" to restore them."
                     }
                     _mutation.value = GitMutationState.Success("stash-checkout", result.head)
                     _content.value = GitContentViewState.Idle
-                    refreshDetail(repoId)
+                    refreshDetail(client, target)
                 },
                 onFailure = { error ->
-                    _mutation.value = GitMutationState.Error(
-                        "Stash Checkout",
-                        error.message ?: "Git action failed",
-                    )
+                    if (currentTarget() == target) {
+                        _mutation.value = GitMutationState.Error(
+                            "Stash Checkout",
+                            error.message ?: "Git action failed",
+                        )
+                    }
                 },
             )
         }

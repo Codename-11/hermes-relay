@@ -126,6 +126,14 @@ export function hasCommitSuggestion(result) {
   return !!(result && result.message && result.message.trim());
 }
 
+export function isCurrentRepoRequest(currentRepo, currentGeneration, repo, generation) {
+  return currentRepo === repo && currentGeneration === generation;
+}
+
+export function shouldOfferPushAfterCommit(commitSucceeded, pushAfterCommit) {
+  return commitSucceeded === true && pushAfterCommit === true;
+}
+
 /**
  * Normalize a /git/stash_checkout response: the standard mutation shape plus
  * {stashed, stash_message}.

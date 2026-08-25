@@ -91,6 +91,8 @@ the `relay_plugin_draft` tool to create or replace a generated declarative page.
 tool accepts the same bounded schema as Android, stores JSON atomically below
 `HERMES_HOME/mobile-plugins`, and rejects every `action.request`. Generated previews
 therefore cannot reach Relay management APIs or acquire executable backend behavior.
+The contribution ID `git` is reserved for the Relay plugin's native Git workspace;
+generated drafts cannot shadow or duplicate that route.
 
 The Relay mobile manifest exposes drafts as preview pages under the authenticated
 `hermes-relay` plugin namespace. Android polls the catalog every five seconds while

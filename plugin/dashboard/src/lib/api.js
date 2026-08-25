@@ -167,9 +167,9 @@ export function getGitFile(repo, path) {
 }
 
 // ── Git State write operations ────────────────────────────────────────────
-// Every write POST goes through the authenticated plugin namespace and is
-// gated by the plugin.api.write grant (enforced client-side before any POST
-// is sent). Destructive ops pass a per-use confirmation token in the body.
+// Every write POST goes through the authenticated Dashboard plugin namespace.
+// Android separately enforces its local plugin.api.write preference before it
+// calls this namespace. Destructive ops pass a per-use confirmation token.
 
 function postGit(path, body) {
   return fetchJSON(path, {
@@ -198,10 +198,6 @@ export function gitDiscard(repo, paths, confirmation, deleteUntracked = false) {
 
 export function gitCommit(repo, message) {
   return postGit("/git/commit", { repo, message });
-}
-
-export function gitCommitSelected(repo, message, paths) {
-  return postGit("/git/commit_selected", { repo, message, paths });
 }
 
 export function gitFetch(repo, remote = "origin") {
