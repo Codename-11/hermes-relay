@@ -175,6 +175,7 @@ import com.hermesandroid.relay.ui.screens.RealtimeVoiceTestScreen
 import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.SupervisedControlsScreen
 import com.hermesandroid.relay.ui.screens.SupervisedAppearanceSettingsScreen
+import com.hermesandroid.relay.ui.screens.UsageLimitsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.TerminalScreen
@@ -546,6 +547,7 @@ sealed class Screen(
         "Supervised mode",
         Icons.Filled.Settings,
     )
+    data object ProviderUsage : Screen("settings/usage", "Usage & limits", Icons.Filled.Settings)
     data object MediaSettings : Screen("settings/media", "Media", Icons.Filled.Settings)
     data object AppearanceSettings : Screen("settings/appearance", "Appearance", Icons.Filled.Settings)
     data object CustomTheme : Screen("settings/appearance/custom-theme", "Custom", Icons.Filled.Settings)
@@ -2599,6 +2601,9 @@ fun RelayApp() {
                         onNavigateToManage = {
                             navController.navigate(Screen.Manage.route)
                         },
+                        onNavigateToProviderUsage = {
+                            navController.navigate(Screen.ProviderUsage.route)
+                        },
                         onNavigateToPlugins = {
                             navController.navigate(Screen.Plugins.route)
                         },
@@ -2712,6 +2717,13 @@ fun RelayApp() {
                             },
                         )
                     }
+                }
+                composable(Screen.ProviderUsage.route) {
+                    UsageLimitsScreen(
+                        connectionViewModel = connectionViewModel,
+                        chatViewModel = chatViewModel,
+                        onBack = { navController.popBackStack() },
+                    )
                 }
                 composable(Screen.Plugins.route) {
                     PluginsScreen(
