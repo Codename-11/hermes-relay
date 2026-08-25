@@ -56,6 +56,8 @@ import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.BuildFlavor
+import com.hermesandroid.relay.data.BotChatTarget
+import com.hermesandroid.relay.data.BotModeState
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProfilePresentation
 import com.hermesandroid.relay.data.SessionTransport
@@ -119,6 +121,7 @@ import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.MediaCacheWriter
 import com.hermesandroid.relay.viewmodel.connection.PairingController
+import com.hermesandroid.relay.viewmodel.connection.BotModeController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
@@ -800,6 +803,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         tokenStoreKeyProvider = { cid ->
             connectionStore.connections.value.firstOrNull { it.id == cid }?.tokenStoreKey
         },
+        trustedDashboardUrlProvider = { cid ->
+            if (connectionStore.activeConnectionId.value == cid) {
+                activeDashboardUrl()
+            } else {
+                connectionStore.connections.value.firstOrNull { it.id == cid }
+                    ?.resolvedDashboardUrl
+                    ?.takeIf(String::isNotBlank)
+            }
+        },
         pinnedClientProvider = { url, base ->
             pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
         },
@@ -825,6 +837,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         rebuildChatApiClient = { rebuildChatApiClient() },
         relayHttpClient = relayHttpClient,
         gatewayClientProvider = { upstreamTransport.activeGatewayChatClient() },
+    )
+
+    private val botModeController = BotModeController(
+        scope = viewModelScope,
+        connections = connectionStore.connections,
+        activeConnectionId = connectionStore.activeConnectionId,
+        dashboardUrlProvider = { connection ->
+            if (connectionStore.activeConnectionId.value == connection.id) {
+                activeDashboardUrl().orEmpty()
+            } else {
+                connection.resolvedDashboardUrl
+            }
+        },
+        dashboardClientFactory = upstreamTransport::dashboardClientFor,
+        gatewayLeaseFactory = upstreamTransport::acquireGatewayRoute,
     )
 
     // --- Relay connection state ---
@@ -1624,6 +1651,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // down, calling profileController.* in their original order.
 
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
+    val botModeState: StateFlow<BotModeState> get() = botModeController.state
+
+    fun refreshBotMode() = botModeController.refresh()
+
+    suspend fun ensureCanonicalBotChat(route: com.hermesandroid.relay.data.BotGatewayRoute): Result<BotChatTarget> =
+        botModeController.ensureCanonicalBotChat(route)
+
+    suspend fun createBot(
+        connectionId: String,
+        name: String,
+        title: String,
+        description: String,
+    ): Result<String> = botModeController.createBot(connectionId, name, title, description)
+
+    fun acquireBotGateway(
+        route: com.hermesandroid.relay.data.BotGatewayRoute,
+    ): Result<com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController.RouteGatewayLease> =
+        botModeController.acquireGateway(route)
+
+    fun botDashboardClient(
+        route: com.hermesandroid.relay.data.BotGatewayRoute,
+    ): Result<DashboardApiClient> = botModeController.dashboardClient(route)
 
     /**
      * Session namespace after resolving the Server-default UI sentinel through
@@ -1765,6 +1814,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** A local icon path for a specific profile identity on the active connection. */
     fun profileIconFlow(profileName: String?) = profileController.profileIconFlow(profileName)
+    fun profileIconFlow(connectionId: String, profileName: String) =
+        profileController.profileIconFlow(connectionId, profileName)
 
     val hostProfileIconImportState: StateFlow<ProfileController.HostIconImportState>
         get() = profileController.hostIconImportState
@@ -3529,7 +3580,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         scrubConnectionArtifacts(removed, removedDeviceId)
+        upstreamTransport.disposeConnectionRouteClients(connectionId)
         connectionStore.removeConnection(connectionId)
+        botModeController.connectionRemoved(connectionId)
         // Clear the persisted profile selection for the removed connection
         // AFTER the switch-away above has finished. Ordering matters: if
         // we cleared first, any in-flight hydration from the just-swapped
@@ -7296,6 +7349,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionManager.shutdown()
         _apiClient.value?.shutdown()
         profileChatApiClient?.shutdown()
+        upstreamTransport.disposeAllRouteClients()
         tailscaleDetector.shutdown()
         // Release the cached VirtualDisplay + ImageReader + HandlerThread
         // built by ScreenCapture on the first /screenshot call. Without

@@ -56,6 +56,7 @@ import okio.BufferedSink
 @Serializable
 data class DashboardStatus(
     val authRequired: Boolean,
+    @SerialName("install_id") val installId: String? = null,
     val authProviders: List<String> = emptyList(),
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
     @SerialName("auth_flows") val authFlows: List<String> = emptyList(),
@@ -1464,8 +1465,16 @@ class DashboardApiClient(
     fun authLoginUrl(provider: String, next: String = "/"): String =
         authLoginUrl(baseUrl = baseUrl, provider = provider, next = next)
 
-    fun gatewayWebSocketUrl(ticket: String, path: String = "/api/ws"): String? =
-        gatewayWebSocketUrl(baseUrl = baseUrl, ticket = ticket, path = path)
+    fun gatewayWebSocketUrl(
+        ticket: String,
+        path: String = "/api/ws",
+        profile: String? = null,
+    ): String? = gatewayWebSocketUrl(
+        baseUrl = baseUrl,
+        ticket = ticket,
+        path = path,
+        profile = profile,
+    )
 
     fun shutdown() = shutdownOffMainThread("DashboardApiClient-shutdown") {
         okHttpClient.dispatcher.executorService.shutdown()
@@ -1722,6 +1731,7 @@ class DashboardApiClient(
                 authRequired = root.booleanField("auth_required")
                     ?: authObject.booleanField("required")
                     ?: false,
+                installId = root.stringField("install_id")?.trim()?.takeIf(String::isNotEmpty)?.take(256),
                 authProviders = providers.map { it.name },
                 authProviderDetails = providers,
                 authFlows = (root["auth_flows"] as? JsonArray).orEmpty().mapNotNull {

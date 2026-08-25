@@ -55,6 +55,54 @@ No open P0, P1, or P2 findings.
 
 final result: passed
 
+# Android Bot Mode messenger workspace
+
+**Comparison target**
+
+- Source visual truth: `docs/mockups/bot-mode/bot-mode-home-approved.png`
+- Rendered implementation: `app/build/ui-evidence/bot-mode-home.png`
+- Combined evidence: `app/build/ui-evidence/bot-mode-comparison.png`
+- Viewport: Android Compose at `390dp x 844dp`, Robolectric qualifier `w390dp-h844dp-432dpi`
+- Pixels and normalization: source `853 x 1844`; implementation `1053 x 2278` at Android density `2.7`. The combined evidence downsamples the implementation to `853 x 1844` and places it beside the source at equal visible bounds.
+- State: dark Hermes Relay theme, active Hermes gateway, All filter, three active Bots, three Bot conversations, and two read-only group rooms.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: the implementation uses the app's established Material typography and optical weights. The title, selector labels, active roster, conversation titles, metadata, and one-line previews preserve the source hierarchy without clipped primary labels.
+- Spacing and layout rhythm: the implementation preserves the full-screen messenger composition, compact gateway selector, equal-width filters, horizontal active roster, divided chronological list, and one bottom-end primary action. Native touch targets make the selector and filters slightly taller than the generated source; all five rows remain visible at the target viewport.
+- Colors and visual tokens: the first capture overused the strong electric `primaryContainer`. The final capture uses the softer theme-scoped relay/periwinkle tokens for selected and identity surfaces, graphite containers, semantic green presence, and restrained hairlines.
+- Image quality and asset fidelity: production rows render the real cached upstream profile avatar when present. The deterministic fixture exercises the app's real initial fallback instead of shipping the mock's illustrative anime/crystal/robot images as product assets. Group rows use the app's Material group/lock icons; no placeholder bitmap or custom-drawn icon was introduced.
+- Copy and content: Bot Mode, All gateways, All/Bots/Groups, Active now, source-qualified rows, previews, and Read only match the selected workflow. Relative timestamps follow the app's existing locale-aware convention rather than the mock's fixed clock values.
+- Interaction: gateway selection, All/Bots/Groups filtering, Bot owner dispatch, group owner dispatch, search, New Bot, canonical Bot Chat open, read-only room detail, drawer entry, and Back to Bot Mode are wired. The fixture does not invent unread dots because current upstream supplies activity but no canonical mobile read-state contract.
+
+**Comparison history**
+
+1. Initial capture found P2 accent-weight drift: the selected tab, FAB, and fallback avatars used saturated electric fills; control borders were stronger than the source; an extra refresh action crowded the app bar.
+2. Replaced large fills with the softer theme-scoped relay/electric-muted tokens, reduced control-border opacity and vertical padding, and removed the extra refresh action while retaining automatic load and error-state retry.
+3. Re-rendered at the same `390dp x 844dp` state and normalized both artifacts into `bot-mode-comparison.png`. The corrected surface has no remaining P0/P1/P2 mismatch.
+4. After multi-gateway aggregation landed, re-rendered the final All gateways state with per-row source-qualified handles. The gateway scope now matches the approved mock literally while preserving readable row density; no new P0/P1/P2 mismatch appeared.
+
+**Open Questions**
+
+- None blocking. A physical-device pass may refine P3 density at the user's font/display scale, but the deterministic supported viewport is complete.
+
+**Implementation Checklist**
+
+- [x] Keep Bot Mode outside the ordinary session taxonomy.
+- [x] Match the approved list hierarchy and native return path.
+- [x] Render a truthful all-gateway union without changing the foreground connection.
+- [x] Render upstream group projection as visibly read-only.
+- [x] Verify the primary filters and owner-routing interactions.
+- [x] Capture and compare the actual Compose surface.
+
+**Follow-up Polish**
+
+- P3: physical-device review can tune handle truncation for unusually long gateway labels.
+- P3: add canonical read-state dots only if upstream publishes a durable read-state contract.
+
+final result: passed
+
 ## Assistant overlay
 
 - Reference: `C:\Users\Bailey\.codex\generated_images\019fb003-68ea-7052-85c7-3745fa7e838e\call_jPwpDr9QfaCDA6k2c01StBYe.png`

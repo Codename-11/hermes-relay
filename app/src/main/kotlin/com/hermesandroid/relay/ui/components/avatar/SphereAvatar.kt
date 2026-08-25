@@ -1,9 +1,12 @@
 package com.hermesandroid.relay.ui.components.avatar
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.hermesandroid.relay.ui.components.MorphingSphere
 import com.hermesandroid.relay.ui.components.SphereReactivity
+import com.hermesandroid.relay.util.AppForegroundTracker
 
 /**
  * Default ambient visualization — the ASCII [MorphingSphere].
@@ -34,6 +37,7 @@ object SphereAvatar : AgentAvatar {
 
     @Composable
     override fun Render(state: AvatarRenderState, modifier: Modifier) {
+        val appForeground by AppForegroundTracker.isForeground.collectAsState()
         MorphingSphere(
             modifier = modifier,
             state = state.state,
@@ -46,6 +50,7 @@ object SphereAvatar : AgentAvatar {
             // call did with fixedTime/fixedColorPhase = 0f.
             fixedTime = if (state.paused) 0f else null,
             fixedColorPhase = if (state.paused) 0f else null,
+            motionVisible = appForeground,
         )
     }
 }
