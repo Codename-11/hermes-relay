@@ -1959,18 +1959,11 @@ fun RelayApp() {
                     parentAccessUnlocked = parentAccessForCurrentRoute,
                     currentRoute = currentRoute,
                 )
-                if (!routeContentAllowed) {
-                    // The redirect effect runs after composition. Render no
-                    // destination content in the meantime so a restored or
-                    // external forbidden route cannot flash privileged UI.
-                    Box(modifier = Modifier.fillMaxSize())
-                } else {
+                Box(modifier = Modifier.fillMaxSize()) {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                 composable(Screen.Onboarding.route) {
                     // The wizard inside OnboardingScreen now owns credential
@@ -3294,6 +3287,11 @@ fun RelayApp() {
                     )
                 }
             }
+                if (!routeContentAllowed) {
+                    // Keep the graph mounted so the redirect can complete, but
+                    // cover restored parent-only content with an opaque fail-closed surface.
+                    SupervisedStartupLoadingScreen()
+                }
                 }
             } // end bridge-return wrapper column
             } // end CompositionLocalProvider
