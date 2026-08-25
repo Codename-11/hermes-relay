@@ -933,6 +933,10 @@
     <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
     <string name="drawer_activity_working">Wird bearbeitet</string>
     <string name="drawer_activity_needs_input">Eingabe erforderlich</string>
+    <string name="drawer_activity_starting">Wird gestartet</string>
+    <string name="drawer_activity_background_work">Hintergrundarbeit</string>
+    <string name="drawer_activity_checking">Wird geprüft</string>
+    <string name="drawer_activity_unavailable">Nicht verfügbar</string>
     <string name="drawer_new_thread">Neuer Thread</string>
     <string name="drawer_chats_not_named">Chats werden bei dieser Verbindung nicht automatisch benannt — verwende ⋮ → Umbenennen.</string>
     <string name="drawer_loading_sessions">Sitzungen werden geladen…</string>
@@ -962,7 +966,7 @@
     <string name="drawer_filter_pinned">Angeheftet</string>
     <string name="drawer_filter_archive">Archiv</string>
     <string name="drawer_filter_sessions">Sitzungen</string>
-    <string name="drawer_timestamp_active">Aktiv</string>
+    <string name="drawer_timestamp_updated">Aktualisiert</string>
     <string name="drawer_timestamp_started">Gestartet</string>
     <string name="drawer_just_now">Gerade eben</string>
 

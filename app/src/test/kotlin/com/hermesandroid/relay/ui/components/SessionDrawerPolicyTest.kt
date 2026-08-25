@@ -1,8 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class SessionDrawerPolicyTest {
@@ -19,6 +21,127 @@ class SessionDrawerPolicyTest {
 
         assertEquals("alpha:same", sessionRowKey(alpha))
         assertEquals("beta:same", sessionRowKey(beta))
+        assertEquals("default:same", sessionRowKey(row("default", "same")))
+    }
+
+    @Test
+    fun `rest recent activity alone does not mark a session working`() {
+        val recentlyActive = row("default", "recent", recentlyActive = true)
+
+        assertEquals(
+            SessionDrawerStatus.Idle,
+            sessionDrawerStatus(recentlyActive, activityStates = emptyMap()),
+        )
+    }
+
+    @Test
+    fun `duplicate session ids cannot leak activity across profiles`() {
+        val alpha = row("alpha", "same")
+        val beta = row("beta", "same")
+        val scoped = scopedSessionActivityStates(
+            rows = listOf(alpha, beta),
+            activityStates = mapOf(sessionRowKey(alpha) to SessionActivityState.Working),
+            allowBareSessionIds = false,
+        )
+
+        assertEquals(SessionDrawerStatus.Working, sessionDrawerStatus(alpha, scoped))
+        assertEquals(SessionDrawerStatus.Idle, sessionDrawerStatus(beta, scoped))
+        assertFalse(sessionRowKey(beta) in scoped)
+    }
+
+    @Test
+    fun `all profiles ignores ambiguous bare session activity`() {
+        val alpha = row("alpha", "same")
+        val beta = row("beta", "same")
+
+        val scoped = scopedSessionActivityStates(
+            rows = listOf(alpha, beta),
+            activityStates = mapOf("same" to SessionActivityState.Working),
+            allowBareSessionIds = false,
+        )
+
+        assertEquals(emptyMap<String, SessionActivityState>(), scoped)
+    }
+
+    @Test
+    fun `selected profile may scope legacy bare session activity`() {
+        val row = row("work", "session")
+
+        val scoped = scopedSessionActivityStates(
+            rows = listOf(row),
+            activityStates = mapOf("session" to SessionActivityState.NeedsInput),
+            allowBareSessionIds = true,
+        )
+
+        assertEquals(
+            mapOf(sessionRowKey(row) to SessionActivityState.NeedsInput),
+            scoped,
+        )
+    }
+
+    @Test
+    fun `status filter and grouping use the same authoritative state`() {
+        val restOnly = row("default", "rest-only", recentlyActive = true)
+        val working = row("default", "working")
+        val states = mapOf(sessionRowKey(working) to SessionActivityState.Working)
+
+        val filtered = filterAndSortSessionRows(
+            rows = listOf(restOnly, working),
+            options = SessionDrawerViewOptions(statuses = setOf(SessionDrawerStatus.Working)),
+            activityStates = states,
+        )
+        val grouped = groupSessionRows(
+            rows = listOf(restOnly, working),
+            grouping = SessionDrawerGrouping.Status,
+            activityStates = states,
+        )
+
+        assertEquals(listOf("working"), filtered.map { it.session.sessionId })
+        assertEquals(listOf("Idle", "Working"), grouped.mapNotNull { it.label })
+    }
+
+    @Test
+    fun `expanded live phases retain distinct drawer statuses and labels`() {
+        val phases = listOf(
+            SessionActivityState.NeedsInput to (SessionDrawerStatus.NeedsInput to "Needs input"),
+            SessionActivityState.Starting to (SessionDrawerStatus.Starting to "Starting"),
+            SessionActivityState.Working to (SessionDrawerStatus.Working to "Working"),
+            SessionActivityState.BackgroundWork to (SessionDrawerStatus.BackgroundWork to "Background work"),
+            SessionActivityState.Checking to (SessionDrawerStatus.Checking to "Checking"),
+            SessionActivityState.Unavailable to (SessionDrawerStatus.Unavailable to "Unavailable"),
+        )
+        val rows = phases.mapIndexed { index, _ -> row("default", "session-$index") }
+        val states = rows.zip(phases).associate { (row, phase) -> sessionRowKey(row) to phase.first }
+
+        assertEquals(
+            phases.map { it.second.first },
+            rows.map { sessionDrawerStatus(it, states) },
+        )
+        assertEquals(
+            phases.map { it.second.second },
+            groupSessionRows(rows, SessionDrawerGrouping.Status, states).mapNotNull { it.label },
+        )
+        assertEquals(
+            listOf(
+                R.string.drawer_activity_needs_input,
+                R.string.drawer_activity_starting,
+                R.string.drawer_activity_working,
+                R.string.drawer_activity_background_work,
+                R.string.drawer_activity_checking,
+                R.string.drawer_activity_unavailable,
+            ),
+            phases.map { sessionActivityLabelResource(it.first) },
+        )
+        phases.forEachIndexed { index, phase ->
+            assertEquals(
+                listOf("session-$index"),
+                filterAndSortSessionRows(
+                    rows = rows,
+                    options = SessionDrawerViewOptions(statuses = setOf(phase.second.first)),
+                    activityStates = states,
+                ).map { it.session.sessionId },
+            )
+        }
     }
 
     @Test
@@ -113,6 +236,7 @@ class SessionDrawerPolicyTest {
         outputTokens: Int = 0,
         cost: Double? = null,
         updatedAt: Long = 0L,
+        recentlyActive: Boolean = false,
     ) = ProfileSessionRow(
         profile = profile,
         session = ChatSession(
@@ -126,6 +250,7 @@ class SessionDrawerPolicyTest {
             outputTokens = outputTokens,
             actualCostUsd = cost,
             lastActivityAt = updatedAt,
+            recentlyActive = recentlyActive,
         ),
     )
 

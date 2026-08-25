@@ -1048,6 +1048,10 @@
     <string name="drawer_search_sessions">Search sessions</string>
     <string name="drawer_activity_working">Working</string>
     <string name="drawer_activity_needs_input">Needs input</string>
+    <string name="drawer_activity_starting">Starting</string>
+    <string name="drawer_activity_background_work">Background work</string>
+    <string name="drawer_activity_checking">Checking</string>
+    <string name="drawer_activity_unavailable">Unavailable</string>
     <string name="drawer_new_thread">New Thread</string>
     <string name="drawer_chats_not_named">Chats aren\'t auto-named on this connection — use ⋮ → Rename.</string>
     <string name="drawer_loading_sessions">Loading sessions…</string>
@@ -1077,7 +1081,7 @@
     <string name="drawer_filter_pinned">Pinned</string>
     <string name="drawer_filter_archive">Archive</string>
     <string name="drawer_filter_sessions">Sessions</string>
-    <string name="drawer_timestamp_active">Active</string>
+    <string name="drawer_timestamp_updated">Updated</string>
     <string name="drawer_timestamp_started">Started</string>
     <string name="drawer_just_now">Just now</string>
 

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
 import org.junit.Rule
 import org.junit.Test
@@ -357,6 +358,66 @@ class SessionDrawerTest {
         compose.onNodeWithText("Order by").assertIsDisplayed()
         compose.onNodeWithText("Show details").assertIsDisplayed()
         compose.onNodeWithText("Filters").assertIsDisplayed()
+    }
+
+    @Test
+    fun `drawer renders every authoritative activity phase distinctly`() {
+        val states = SessionActivityState.entries
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = states.mapIndexed { index, _ ->
+                        ChatSession("session-$index", "Session $index", null)
+                    },
+                    currentSessionId = null,
+                    activeProfileName = "default",
+                    activityStates = states.mapIndexed { index, state ->
+                        "default:session-$index" to state
+                    }.toMap(),
+                    animationEnabled = false,
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        listOf(
+            "Starting",
+            "Working",
+            "Needs input",
+            "Background work",
+            "Checking",
+            "Unavailable",
+        ).forEach { label ->
+            compose.onNodeWithText(label).performScrollTo().assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun `rest recency alone renders no working badge`() {
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(
+                        ChatSession(
+                            "recent",
+                            "Recently updated",
+                            null,
+                            recentlyActive = true,
+                        ),
+                    ),
+                    currentSessionId = null,
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Working").assertDoesNotExist()
     }
 
     @Test

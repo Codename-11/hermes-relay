@@ -61,6 +61,7 @@ import com.hermesandroid.relay.data.AppearancePreferences
 import com.hermesandroid.relay.data.DashboardConnectionStatus
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.PetBehaviorPreferences
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
@@ -138,9 +139,14 @@ class StoreScreenshotTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private fun capture(name: String, themeId: String = "hermes-relay", body: @Composable () -> Unit) {
+    private fun capture(
+        name: String,
+        themeId: String = "hermes-relay",
+        themePreference: String = "dark",
+        body: @Composable () -> Unit,
+    ) {
         compose.setContent {
-            HermesRelayTheme(appThemeId = themeId, themePreference = "dark") {
+            HermesRelayTheme(appThemeId = themeId, themePreference = themePreference) {
                 // Adaptive is the app's real default skin (resolve("auto") -> Adaptive);
                 // it recolors to the active theme. The preview/test fallback is Classic,
                 // which mismatches the app and reads poorly on light themes.
@@ -251,6 +257,14 @@ class StoreScreenshotTest {
     }
     @Test fun s06_manage() = capture("06_manage", "hermes-relay") { ManageScene() }
     @Test fun s04_sessions() = capture("04_sessions", "hermes-relay") { SessionsScene() }
+    @Test fun s12_session_activity_states() = capture("12_session_activity_states", "hermes-relay") {
+        SessionActivityStatesScene()
+    }
+    @Test fun s12_session_activity_states_light() = capture(
+        "12_session_activity_states_light",
+        "nous-blue",
+        themePreference = "light",
+    ) { SessionActivityStatesScene() }
     @Test fun s07_connections() = capture("07_connections", "hermes-relay") { ConnectionsScene() }
     // Real Appearance screen scrolled to the new Font picker — proves the
     // bundled Inter/Nunito faces load as visibly distinct previews (vs System).
@@ -797,6 +811,41 @@ private fun SessionsScene() {
             animationEnabled = false,
             threadsCapabilityActive = true,
             onNewThread = {},
+            onNewChat = {},
+            onSelectSession = {},
+            onDeleteSession = {},
+            onRenameSession = { _, _ -> },
+        )
+    }
+}
+
+@Composable
+private fun SessionActivityStatesScene() {
+    val states = SessionActivityState.entries
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim)) {
+        SessionDrawerContent(
+            sessions = states.mapIndexed { index, state ->
+                ChatSession(
+                    sessionId = "activity-$index",
+                    title = when (state) {
+                        SessionActivityState.Starting -> "Launching the agent"
+                        SessionActivityState.Working -> "Reviewing the release"
+                        SessionActivityState.NeedsInput -> "Approval required"
+                        SessionActivityState.BackgroundWork -> "Build still running"
+                        SessionActivityState.Checking -> "Reconnecting to Hermes"
+                        SessionActivityState.Unavailable -> "Offline session"
+                    },
+                    model = "gpt-5.6-sol",
+                )
+            },
+            currentSessionId = null,
+            activeProfileName = "default",
+            scopeTitle = "Hermes",
+            scopeSubtitle = "Live session status",
+            activityStates = states.mapIndexed { index, state ->
+                "default:activity-$index" to state
+            }.toMap(),
+            animationEnabled = false,
             onNewChat = {},
             onSelectSession = {},
             onDeleteSession = {},

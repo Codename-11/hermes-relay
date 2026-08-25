@@ -14,6 +14,7 @@ import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ChatHandler
@@ -23,6 +24,7 @@ import com.hermesandroid.relay.network.upstream.GatewayClientHarness
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.SessionItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -288,6 +290,78 @@ class ChatViewModelGatewayInboundTurnTest {
         assertTrue(
             DiagnosticsLog.recent(setOf(DiagnosticCategory.Session))
                 .none { it.detail.orEmpty().contains("stale history failure") },
+        )
+    }
+
+    @Test
+    fun activeListWorkingThenDisappearanceSettlesDespiteRestRecency() {
+        bindActivityTestDirectory()
+        handler.updateSessions(
+            listOf(SessionItem(id = STORED_SESSION_ID, title = "Recent", isActive = true)),
+        )
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("working")
+
+        viewModel.setChatVisible(true)
+        gatewayHarness.awaitRpc("session.active_list")
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["default:$STORED_SESSION_ID"] ==
+                SessionActivityState.Working
+        }
+
+        gatewayHarness.activeSessionListPayload = buildJsonObject {
+            put("sessions", buildJsonArray { })
+        }
+        viewModel.requestSessionActivityRefresh()
+        gatewayHarness.awaitRpcCount("session.active_list", 2)
+        awaitCondition {
+            "default:$STORED_SESSION_ID" !in viewModel.backgroundSessionActivityStates.value
+        }
+    }
+
+    @Test
+    fun activeListWaitingProjectsNeedsInput() {
+        bindActivityTestDirectory()
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("waiting")
+
+        viewModel.setChatVisible(true)
+        gatewayHarness.awaitRpc("session.active_list")
+
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["default:$STORED_SESSION_ID"] ==
+                SessionActivityState.NeedsInput
+        }
+    }
+
+    @Test
+    fun unsupportedActiveListProjectsUnavailableInsteadOfRestWorking() {
+        bindActivityTestDirectory()
+        handler.updateSessions(
+            listOf(SessionItem(id = STORED_SESSION_ID, title = "Recent", isActive = true)),
+        )
+        gatewayHarness.methodNotFound += "session.active_list"
+
+        viewModel.setChatVisible(true)
+        gatewayHarness.awaitRpc("session.active_list")
+
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["default:$STORED_SESSION_ID"] ==
+                SessionActivityState.Unavailable
+        }
+    }
+
+    @Test
+    fun rejectedAdmissionCannotLeaveStartingStatusStale() {
+        bindActivityTestDirectory()
+        gatewayClient.clearSession()
+        gatewayHarness.rpcErrors["session.resume"] = 4090 to "stored session is unavailable"
+
+        viewModel.sendMessage("This admission should fail")
+        gatewayHarness.awaitRpc("session.resume")
+
+        awaitCondition { !handler.isStreaming.value }
+        assertTrue(
+            viewModel.backgroundSessionActivityStates.value["default:$STORED_SESSION_ID"] !=
+                SessionActivityState.Starting,
         )
     }
 
@@ -2374,6 +2448,27 @@ class ChatViewModelGatewayInboundTurnTest {
             handler.messages.value.any { it.content == "Newer answer" } && loadCount.get() >= 2
         }
         assertTrue(handler.messages.value.any { it.content == BACKGROUND_ANSWER })
+    }
+
+    private fun bindActivityTestDirectory() {
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "default"),
+            STORED_SESSION_ID,
+        )
+        viewModel.updateSessionActivityDirectory(
+            rows = listOf("default" to STORED_SESSION_ID),
+        )
+    }
+
+    private fun activeSessionPayload(status: String) = buildJsonObject {
+        put("sessions", buildJsonArray {
+            add(buildJsonObject {
+                put("id", "live-resumed")
+                put("session_key", STORED_SESSION_ID)
+                put("status", status)
+                put("last_active", 1.0)
+            })
+        })
     }
 
     private fun persistedAnswerHistory(

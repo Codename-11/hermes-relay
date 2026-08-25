@@ -41,6 +41,14 @@ import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SessionActivityFreshness
+import com.hermesandroid.relay.data.SessionActivityOwner
+import com.hermesandroid.relay.data.SessionActivityPhase
+import com.hermesandroid.relay.data.SessionActivityRegistry
+import com.hermesandroid.relay.data.SessionActivityScope
+import com.hermesandroid.relay.data.SessionActivityUpdate
+import com.hermesandroid.relay.data.SessionLiveRuntime
+import com.hermesandroid.relay.data.SessionLiveStatus
 import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.SupervisedSessionAction
@@ -61,6 +69,9 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayActiveSession
+import com.hermesandroid.relay.network.upstream.GatewayActiveSessionStatus
+import com.hermesandroid.relay.network.upstream.GatewayActiveSessionsResult
 import com.hermesandroid.relay.network.upstream.GatewayApprovalMode
 import com.hermesandroid.relay.network.upstream.GatewayApprovalModeCapability
 import com.hermesandroid.relay.network.upstream.GatewayBackgroundInteractionEvent
@@ -261,6 +272,57 @@ internal fun shouldSuppressPassiveSessionError(context: String?, error: Throwabl
         "unauthorized" in message || "forbidden" in message
 }
 
+internal data class ResolvedGatewayActiveSessions(
+    val runtimes: List<SessionLiveRuntime>,
+    val ambiguous: Boolean,
+    val ambiguousForCurrent: Boolean,
+)
+
+/** Resolve process-wide runtime rows without ever inventing a profile owner. */
+internal fun resolveGatewayActiveSessions(
+    sessions: List<GatewayActiveSession>,
+    directory: Set<SessionActivityOwner>,
+    currentOwner: SessionActivityOwner?,
+    currentRuntimeId: String? = null,
+    knownOwnersByRuntime: Map<String, SessionActivityOwner> = emptyMap(),
+): ResolvedGatewayActiveSessions {
+    var ambiguous = false
+    var ambiguousForCurrent = false
+    val runtimes = sessions.map { row ->
+        val explicitProfile = row.profile?.trim()?.takeIf(String::isNotEmpty)
+            ?.let(AgentDisplay::profileSessionKey)
+        val candidates = directory.filter { owner ->
+            owner.storedSessionId == row.storedSessionId &&
+                (explicitProfile == null || owner.profile.equals(explicitProfile, ignoreCase = true))
+        }
+        val owner = when {
+            knownOwnersByRuntime[row.runtimeSessionId]
+                ?.takeIf { it.storedSessionId == row.storedSessionId } != null ->
+                knownOwnersByRuntime.getValue(row.runtimeSessionId)
+            explicitProfile == null && currentOwner != null && currentRuntimeId != null &&
+                currentRuntimeId == row.runtimeSessionId &&
+                currentOwner.storedSessionId == row.storedSessionId -> currentOwner
+            explicitProfile != null && candidates.size == 1 -> candidates.single()
+            else -> null
+        }
+        if (owner == null) {
+            ambiguous = true
+            if (currentOwner?.storedSessionId == row.storedSessionId) ambiguousForCurrent = true
+        }
+        SessionLiveRuntime(
+            owner = owner,
+            runtimeId = row.runtimeSessionId,
+            status = when (row.status) {
+                GatewayActiveSessionStatus.Idle -> SessionLiveStatus.Idle
+                GatewayActiveSessionStatus.Starting -> SessionLiveStatus.Starting
+                GatewayActiveSessionStatus.Working -> SessionLiveStatus.Working
+                GatewayActiveSessionStatus.Waiting -> SessionLiveStatus.Waiting
+            },
+        )
+    }
+    return ResolvedGatewayActiveSessions(runtimes, ambiguous, ambiguousForCurrent)
+}
+
 sealed interface VoiceMessageSubmissionResult {
     data class Submitted(val userUiKey: String) : VoiceMessageSubmissionResult
     data class Rejected(val reason: String) : VoiceMessageSubmissionResult
@@ -342,25 +404,124 @@ class ChatViewModel : ViewModel() {
     val backgroundSessionActivityStates: StateFlow<Map<String, SessionActivityState>> =
         _backgroundSessionActivityStates.asStateFlow()
 
-    private fun publishBackgroundSessionActivity() {
-        val contextKey = activeProfileContextKey
-        _backgroundSessionActivityStates.value = if (contextKey == null) {
+    private val sessionActivityRegistry = MutableStateFlow(SessionActivityRegistry())
+    private val sessionActivityGeneration = AtomicLong(0L)
+    private val sessionActivityPollMutex = Mutex()
+    private var sessionActivityPollJob: Job? = null
+    private var sessionActivityDirectory: Set<SessionActivityOwner> = emptySet()
+    private var lastProjectedProcessIds: Set<String> = emptySet()
+    private var lastProjectedProcessOwner: SessionActivityOwner? = null
+    private var lastLocalActivityOwner: SessionActivityOwner? = null
+    private var lastLocalStreaming = false
+    private var lastSessionActivityScope: SessionActivityScope? = null
+    private val _sessionDirectoryRefreshRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionDirectoryRefreshRequests: SharedFlow<Unit> =
+        _sessionDirectoryRefreshRequests.asSharedFlow()
+
+    private fun activityScope(contextKey: String? = activeProfileContextKey): SessionActivityScope? {
+        val raw = contextKey?.trim().orEmpty()
+        val separator = raw.lastIndexOf("::")
+        if (separator <= 0 || separator >= raw.lastIndex) return null
+        return SessionActivityScope.of(raw.substring(0, separator), raw.substring(separator + 2))
+    }
+
+    private fun activityOwner(
+        sessionId: String?,
+        contextKey: String? = activeProfileContextKey,
+    ): SessionActivityOwner? {
+        val scope = activityScope(contextKey) ?: return null
+        val storedId = sessionId?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        return SessionActivityOwner.of(scope.connectionId, scope.profile, storedId)
+    }
+
+    private fun reduceSessionActivity(update: SessionActivityUpdate) {
+        sessionActivityRegistry.update { it.reduce(update) }
+        publishSessionActivityProjection()
+    }
+
+    private fun reduceSessionActivities(updates: Iterable<SessionActivityUpdate>) {
+        sessionActivityRegistry.update { current ->
+            updates.fold(current) { state, update -> state.reduce(update) }
+        }
+        publishSessionActivityProjection()
+    }
+
+    private fun activateSessionActivityScope() {
+        val scope = activityScope() ?: return
+        if (scope == lastSessionActivityScope) return
+        clearProjectedBackgroundProcesses()
+        lastSessionActivityScope = scope
+        val generation = sessionActivityGeneration.incrementAndGet()
+        sessionActivityPollJob?.cancel()
+        sessionActivityPollJob = null
+        lastLocalActivityOwner = null
+        lastLocalStreaming = false
+        reduceSessionActivity(
+            SessionActivityUpdate.BeginGeneration(
+                scope = scope,
+                generation = generation,
+                observedAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        requestSessionActivityRefresh()
+    }
+
+    private fun publishSessionActivityProjection() {
+        val activeConnectionId = activityScope()?.connectionId
+        _backgroundSessionActivityStates.value = if (activeConnectionId == null) {
             emptyMap()
         } else {
-            backgroundTurnCheckpoints.keys
-                .asSequence()
-                .filter { it.contextKey == contextKey }
-                .associate { key ->
-                    key.sessionId to if (
-                        key in backgroundNeedsInputKeys ||
-                        backgroundPendingInteractions.containsKey(key)
-                    ) {
-                        SessionActivityState.NeedsInput
-                    } else {
-                        SessionActivityState.Working
-                    }
+            sessionActivityRegistry.value.presentationStates(System.currentTimeMillis())
+                .filterKeys { it.connectionId == activeConnectionId }
+                .mapKeys { (owner, _) ->
+                    val displayProfile = owner.profile.takeUnless {
+                        it == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+                    } ?: "default"
+                    "$displayProfile:${owner.storedSessionId}"
                 }
         }
+    }
+
+    private fun publishBackgroundSessionActivity() {
+        val generation = sessionActivityGeneration.get()
+        val now = System.currentTimeMillis()
+        backgroundTurnCheckpoints.forEach { (key, checkpoint) ->
+            val owner = activityOwner(key.sessionId, key.contextKey) ?: return@forEach
+            reduceSessionActivity(
+                SessionActivityUpdate.RestoreCheckpoint(
+                    owner = owner,
+                    runtimeId = checkpoint.liveSessionId,
+                    phase = SessionActivityPhase.Working,
+                    generation = generation,
+                    observedAtMillis = now,
+                ),
+            )
+            if (key in backgroundNeedsInputKeys || backgroundPendingInteractions.containsKey(key)) {
+                reduceSessionActivity(
+                    SessionActivityUpdate.PendingInputOpened(
+                        owner = owner,
+                        requestId = "checkpoint:${key.contextKey}:${key.sessionId}",
+                        confirmed = backgroundPendingInteractions.containsKey(key),
+                        generation = generation,
+                        observedAtMillis = now,
+                    ),
+                )
+            } else if (sessionActivityRegistry.value.record(owner)
+                    ?.pendingInputs
+                    ?.containsKey("checkpoint:${key.contextKey}:${key.sessionId}") == true
+            ) {
+                reduceSessionActivity(
+                    SessionActivityUpdate.PendingInputClosed(
+                        owner = owner,
+                        requestId = "checkpoint:${key.contextKey}:${key.sessionId}",
+                        confirmed = false,
+                        generation = generation,
+                        observedAtMillis = now,
+                    ),
+                )
+            }
+        }
+        publishSessionActivityProjection()
     }
 
     private fun TurnCheckpointKey.keepAliveKey(): String = "$contextKey::$sessionId"
@@ -1945,10 +2106,329 @@ class ChatViewModel : ViewModel() {
         gatewayProcessController.dismiss(processId)
     }
 
+    /**
+     * Replaces the known profile/session directory used to attribute process-wide
+     * `session.active_list` rows. A row is projected only when ownership is exact.
+     */
+    fun updateSessionActivityDirectory(
+        rows: Collection<Pair<String, String>>,
+    ) {
+        val scope = activityScope() ?: return
+        sessionActivityDirectory = rows.mapNotNullTo(mutableSetOf()) { (profile, sessionId) ->
+            runCatching {
+                SessionActivityOwner.of(
+                    scope.connectionId,
+                    AgentDisplay.profileSessionKey(profile),
+                    sessionId,
+                )
+            }.getOrNull()
+        }
+        val generation = sessionActivityGeneration.get()
+        val now = System.currentTimeMillis()
+        reduceSessionActivities(
+            sessionActivityDirectory.map { owner ->
+                SessionActivityUpdate.ObserveOwner(owner, generation, now)
+            },
+        )
+        requestSessionActivityRefresh()
+    }
+
+    private fun updateCurrentProfileActivityDirectory(sessions: Collection<ChatSession>) {
+        val scope = activityScope() ?: return
+        sessionActivityDirectory = sessionActivityDirectory
+            .filterNotTo(mutableSetOf()) {
+                it.connectionId == scope.connectionId && it.profile == scope.profile
+            }
+            .apply {
+                sessions.forEach { row ->
+                    add(SessionActivityOwner.of(scope.connectionId, scope.profile, row.sessionId))
+                }
+            }
+        val generation = sessionActivityGeneration.get()
+        val now = System.currentTimeMillis()
+        reduceSessionActivities(
+            sessionActivityDirectory
+                .filter { it.connectionId == scope.connectionId && it.profile == scope.profile }
+                .map { owner -> SessionActivityUpdate.ObserveOwner(owner, generation, now) },
+        )
+    }
+
+    fun setSessionActivityDrawerOpen(open: Boolean) {
+        if (open) requestSessionActivityRefresh()
+    }
+
+    /** Local UI edges are immediate evidence, then the active-list poll confirms them. */
+    fun updateCurrentSessionActivity(isStreaming: Boolean, needsInput: Boolean) {
+        val owner = activityOwner(chatHandler?.currentSessionId?.value) ?: return
+        val generation = sessionActivityGeneration.get()
+        val now = System.currentTimeMillis()
+        val previousAskId = "current-pending-input"
+        lastLocalActivityOwner?.takeIf { it != owner }?.let { previousOwner ->
+            if (sessionActivityRegistry.value.record(previousOwner)
+                    ?.pendingInputs
+                    ?.containsKey(previousAskId) == true
+            ) {
+                reduceSessionActivity(
+                    SessionActivityUpdate.PendingInputClosed(
+                        previousOwner,
+                        previousAskId,
+                        generation = generation,
+                        observedAtMillis = now,
+                    ),
+                )
+            }
+        }
+        val pendingWasOpen = sessionActivityRegistry.value.record(owner)
+            ?.pendingInputs
+            ?.containsKey(previousAskId) == true
+        if (needsInput || pendingWasOpen) {
+            reduceSessionActivity(
+                if (needsInput) {
+                    SessionActivityUpdate.PendingInputOpened(
+                        owner, previousAskId, generation = generation, observedAtMillis = now,
+                    )
+                } else {
+                    SessionActivityUpdate.PendingInputClosed(
+                        owner, previousAskId, generation = generation, observedAtMillis = now,
+                    )
+                },
+            )
+        }
+        val streamingEdge = lastLocalActivityOwner == owner && lastLocalStreaming != isStreaming
+        val alreadyStarting = sessionActivityRegistry.value.record(owner)
+            ?.phase(now) == SessionActivityPhase.Starting
+        if ((isStreaming && !alreadyStarting) ||
+            (lastLocalActivityOwner == owner && lastLocalStreaming)
+        ) {
+            reduceSessionActivity(
+                SessionActivityUpdate.LiveState(
+                    owner = owner,
+                    runtimeId = null,
+                    status = if (isStreaming) SessionLiveStatus.Working else SessionLiveStatus.Idle,
+                    generation = generation,
+                    observedAtMillis = now,
+                ),
+            )
+        }
+        lastLocalActivityOwner = owner
+        lastLocalStreaming = isStreaming
+        if (streamingEdge) _sessionDirectoryRefreshRequests.tryEmit(Unit)
+        requestSessionActivityRefresh()
+    }
+
+    private fun markSessionActivityStarting(sessionId: String?) {
+        val owner = activityOwner(sessionId) ?: return
+        reduceSessionActivity(
+            SessionActivityUpdate.LocalSend(
+                owner = owner,
+                generation = sessionActivityGeneration.get(),
+                observedAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        requestSessionActivityRefresh()
+    }
+
+    private fun settleSessionActivity(sessionId: String?, runtimeId: String? = null) {
+        val owner = activityOwner(sessionId) ?: return
+        reduceSessionActivity(
+            SessionActivityUpdate.Terminal(
+                owner = owner,
+                runtimeId = runtimeId,
+                generation = sessionActivityGeneration.get(),
+                observedAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        _sessionDirectoryRefreshRequests.tryEmit(Unit)
+        requestSessionActivityRefresh()
+    }
+
+    fun requestSessionActivityRefresh() {
+        val client = gatewayClient ?: return
+        if (streamingEndpoint != "gateway" || !chatVisible) return
+        sessionActivityPollJob?.cancel()
+        sessionActivityPollJob = viewModelScope.launch {
+            pollSessionActivity(client)
+        }
+    }
+
+    private suspend fun pollSessionActivity(client: GatewayChatClient) {
+        sessionActivityPollMutex.withLock {
+            if (gatewayClient !== client || !chatVisible || streamingEndpoint != "gateway") return
+            val generation = sessionActivityGeneration.get()
+            val currentScope = activityScope() ?: return
+            val currentOwner = activityOwner(chatHandler?.currentSessionId?.value)
+            val directory = buildSet {
+                addAll(sessionActivityDirectory.filter { it.connectionId == currentScope.connectionId })
+                currentOwner?.let { add(it) }
+                chatHandler?.sessions?.value.orEmpty().forEach { row ->
+                    add(SessionActivityOwner.of(
+                        currentScope.connectionId,
+                        currentScope.profile,
+                        row.sessionId,
+                    ))
+                }
+            }
+            val now = System.currentTimeMillis()
+            when (val result = client.listActiveSessions()) {
+                is GatewayActiveSessionsResult.Success -> {
+                    if (gatewayClient !== client || generation != sessionActivityGeneration.get()) return
+                    val resolved = resolveGatewayActiveSessions(
+                        sessions = result.sessions,
+                        directory = directory,
+                        currentOwner = currentOwner,
+                        currentRuntimeId = currentOwner?.let {
+                            client.currentLiveSessionId(it.storedSessionId)
+                        },
+                        knownOwnersByRuntime = result.sessions.mapNotNull { row ->
+                            client.knownSessionOwner(row.runtimeSessionId)?.let { known ->
+                                val knownProfile = when {
+                                    !known.profile.isNullOrBlank() ->
+                                        AgentDisplay.profileSessionKey(known.profile)
+                                    currentOwner != null &&
+                                        row.runtimeSessionId == client.currentLiveSessionId(
+                                            currentOwner.storedSessionId,
+                                        ) &&
+                                        known.storedSessionId == currentOwner.storedSessionId ->
+                                        currentOwner.profile
+                                    else -> directory.singleOrNull { owner ->
+                                        owner.storedSessionId == known.storedSessionId &&
+                                            owner.profile in setOf(
+                                                "default",
+                                                AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+                                            )
+                                    }?.profile ?: return@let null
+                                }
+                                row.runtimeSessionId to SessionActivityOwner.of(
+                                    currentScope.connectionId,
+                                    knownProfile,
+                                    known.storedSessionId,
+                                )
+                            }
+                        }.toMap(),
+                    )
+                    val scopes = directory.mapTo(mutableSetOf()) {
+                        SessionActivityScope.of(it.connectionId, it.profile)
+                    }
+                    sessionActivityRegistry.value.records.keys
+                        .filterTo(mutableSetOf()) { it.connectionId == currentScope.connectionId }
+                        .mapTo(scopes) { SessionActivityScope.of(it.connectionId, it.profile) }
+                    resolved.runtimes.mapNotNullTo(scopes) { runtime ->
+                        runtime.owner?.let { SessionActivityScope.of(it.connectionId, it.profile) }
+                    }
+                    if (scopes.isEmpty()) scopes += currentScope
+                    reduceSessionActivities(
+                        scopes.map { scope ->
+                            SessionActivityUpdate.ActiveList(
+                                scope = scope,
+                                runtimes = resolved.runtimes.filter { it.owner?.let { owner ->
+                                    owner.connectionId == scope.connectionId && owner.profile == scope.profile
+                                } == true },
+                                isCompleteForScope = !resolved.ambiguous,
+                                generation = generation,
+                                observedAtMillis = now,
+                            )
+                        },
+                    )
+                }
+                GatewayActiveSessionsResult.Unsupported,
+                is GatewayActiveSessionsResult.TransientFailure -> {
+                    if (gatewayClient !== client || generation != sessionActivityGeneration.get()) return
+                    val scopes = directory.mapTo(mutableSetOf()) {
+                        SessionActivityScope.of(it.connectionId, it.profile)
+                    }.apply { add(currentScope) }
+                    reduceSessionActivities(
+                        scopes.map { scope ->
+                            SessionActivityUpdate.StatusUnavailable(scope, generation, now)
+                        },
+                    )
+                }
+            }
+            projectCurrentBackgroundProcesses(generation, now)
+        }
+
+        if (gatewayClient !== client || !chatVisible) return
+        val hasConfirmedLiveWork = sessionActivityRegistry.value.records.values.any { record ->
+            record.freshness == SessionActivityFreshness.Confirmed &&
+                record.phase(System.currentTimeMillis()) != SessionActivityPhase.Idle
+        }
+        val delayMs = if (hasConfirmedLiveWork) 1_500L else 30_000L
+        sessionActivityPollJob = viewModelScope.launch {
+            delay(delayMs)
+            if (gatewayClient === client && chatVisible) pollSessionActivity(client)
+        }
+    }
+
+    private fun projectCurrentBackgroundProcesses(generation: Long, now: Long) {
+        val sessionId = chatHandler?.currentSessionId?.value ?: return
+        val owner = activityOwner(sessionId) ?: return
+        val previousOwner = lastProjectedProcessOwner
+        if (previousOwner != null && previousOwner != owner) {
+            reduceSessionActivities(
+                lastProjectedProcessIds.map { processId ->
+                    SessionActivityUpdate.ProcessState(
+                        owner = previousOwner,
+                        processId = processId,
+                        running = false,
+                        generation = generation,
+                        observedAtMillis = now,
+                    )
+                },
+            )
+            lastProjectedProcessIds = emptySet()
+        }
+        lastProjectedProcessOwner = owner
+        if (!gatewayProcessController.ownsSnapshot(sessionId, activeProfileContextKey)) {
+            lastProjectedProcessIds = emptySet()
+            return
+        }
+        val activeIds = backgroundProcesses.value.filter { it.isRunning }.mapTo(mutableSetOf()) { it.id }
+        reduceSessionActivities(
+            (lastProjectedProcessIds + activeIds).map { processId ->
+                SessionActivityUpdate.ProcessState(
+                    owner = owner,
+                    processId = processId,
+                    running = processId in activeIds,
+                    generation = generation,
+                    observedAtMillis = now,
+                )
+            },
+        )
+        lastProjectedProcessIds = activeIds
+    }
+
+    private fun clearProjectedBackgroundProcesses() {
+        val owner = lastProjectedProcessOwner
+        if (owner != null && lastProjectedProcessIds.isNotEmpty()) {
+            val generation = sessionActivityGeneration.get()
+            val now = System.currentTimeMillis()
+            reduceSessionActivities(
+                lastProjectedProcessIds.map { processId ->
+                    SessionActivityUpdate.ProcessState(
+                        owner = owner,
+                        processId = processId,
+                        running = false,
+                        generation = generation,
+                        observedAtMillis = now,
+                    )
+                },
+            )
+        }
+        lastProjectedProcessIds = emptySet()
+        lastProjectedProcessOwner = null
+    }
+
     fun updateGatewayClient(client: GatewayChatClient?) {
         val previousClient = gatewayClient
         val changed = previousClient !== client
         if (changed) {
+            clearProjectedBackgroundProcesses()
+            sessionActivityPollJob?.cancel()
+            sessionActivityPollJob = null
+            sessionActivityGeneration.incrementAndGet()
+            sessionActivityDirectory = emptySet()
+            lastLocalActivityOwner = null
+            lastLocalStreaming = false
+            lastSessionActivityScope = null
             gatewayVisibleReattachJob?.cancel()
             gatewayVisibleReattachJob = null
             previousClient?.setUnsolicitedTurnProvider(null)
@@ -1967,6 +2447,7 @@ class ChatViewModel : ViewModel() {
                 sessionId = chatHandler?.currentSessionId?.value,
                 scopeKey = activeProfileContextKey,
             )
+            activateSessionActivityScope()
         }
         // Bind each gateway session.create/resume to the currently-selected
         // profile (pulled live) — the upstream gateway builds the agent from it.
@@ -2114,6 +2595,7 @@ class ChatViewModel : ViewModel() {
         ) {
             prewarmGateway()
         }
+        if (changed && client != null) requestSessionActivityRefresh()
     }
 
     /** Remove the detached sibling's recovery snapshot after server completion. */
@@ -2134,7 +2616,20 @@ class ChatViewModel : ViewModel() {
             backgroundPendingInteractions.remove(key)
             ActiveTurnKeepAliveRegistry.release(key.keepAliveKey())
         }
+        reduceSessionActivities(
+            matching.mapNotNull { key ->
+                activityOwner(key.sessionId, key.contextKey)?.let { owner ->
+                    SessionActivityUpdate.Terminal(
+                        owner = owner,
+                        runtimeId = completion.liveSessionId,
+                        generation = sessionActivityGeneration.get(),
+                        observedAtMillis = System.currentTimeMillis(),
+                    )
+                }
+            },
+        )
         publishBackgroundSessionActivity()
+        requestSessionActivityRefresh()
         chatTurnCheckpointStore?.let { store ->
             viewModelScope.launch {
                 checkpointMutex.withLock {
@@ -2580,7 +3075,13 @@ class ChatViewModel : ViewModel() {
     fun setChatVisible(visible: Boolean) {
         val changed = chatVisible != visible
         chatVisible = visible
-        if (visible && changed) prewarmGateway()
+        if (visible && changed) {
+            prewarmGateway()
+            requestSessionActivityRefresh()
+        } else if (!visible) {
+            sessionActivityPollJob?.cancel()
+            sessionActivityPollJob = null
+        }
     }
 
     // === Gateway desktop-parity state ===
@@ -3128,6 +3629,16 @@ class ChatViewModel : ViewModel() {
         gatewayStateSyncJob?.cancel()
         lastSurfacedCredentialWarning = null
         gatewayStateSyncJob = viewModelScope.launch {
+            launch {
+                backgroundProcesses.collect {
+                    if (gatewayClient !== client) return@collect
+                    projectCurrentBackgroundProcesses(
+                        generation = sessionActivityGeneration.get(),
+                        now = System.currentTimeMillis(),
+                    )
+                    requestSessionActivityRefresh()
+                }
+            }
             launch {
                 client.serverPersonality.collect { value ->
                     if (gatewayClient !== client || value == null) return@collect
@@ -3835,6 +4346,7 @@ class ChatViewModel : ViewModel() {
                 sessionId = sessionId,
             )
         }
+        activateSessionActivityScope()
         handler.activeAgentName = currentAgentDisplayName()
         if (
             previousBinding.contextKey == contextKey &&
@@ -4102,6 +4614,8 @@ class ChatViewModel : ViewModel() {
                             currentSessionProfileName() == profileName
                         ) {
                             handler.updateSessions(sessions)
+                            updateCurrentProfileActivityDirectory(handler.sessions.value)
+                            requestSessionActivityRefresh()
                         }
                     },
                     onFailure = { error ->
@@ -6533,6 +7047,7 @@ class ChatViewModel : ViewModel() {
     private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
         val completedOwner = activeQueueOwnerRunId
         handler.onStreamComplete(messageId)
+        settleSessionActivity(handler.currentSessionId.value)
         if (completedOwner != null && queuedMessageItems.any { it.ownerRunId == completedOwner }) {
             completedQueueOwnerRuns += completedOwner
         }
@@ -6561,6 +7076,7 @@ class ChatViewModel : ViewModel() {
     private fun finalizeFailedTurnSideEffects(handler: ChatHandler, messageId: String) {
         handler.onStreamComplete(messageId)
         handler.markError(messageId)
+        settleSessionActivity(handler.currentSessionId.value)
         clearTurnCheckpoint()
         activeStream = null
         _steerableTurn.value = false
@@ -6603,6 +7119,7 @@ class ChatViewModel : ViewModel() {
             } else {
                 handler.clearStreamingStatus()
             }
+            settleSessionActivity(handler.currentSessionId.value)
         }
     }
 
@@ -7106,6 +7623,9 @@ class ChatViewModel : ViewModel() {
                 badges = listOf("Realtime Agent"),
             )
         )
+        if (streamingEndpoint == "gateway") {
+            markSessionActivityStarting(handler.currentSessionId.value)
+        }
         return assistantMessageId
     }
 
@@ -7996,6 +8516,9 @@ class ChatViewModel : ViewModel() {
                 badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
             )
         )
+        if (streamingEndpoint == "gateway") {
+            markSessionActivityStarting(handler.currentSessionId.value)
+        }
 
         val streamDeltas = StreamDeltaCoalescer(
             scope = viewModelScope,
@@ -8313,6 +8836,7 @@ class ChatViewModel : ViewModel() {
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearTurnCheckpoint()
+                settleSessionActivity(errorSessionId)
             } else if (
                 dispatchedSseEndpoint == "sessions" &&
                 errorSessionId != null &&
@@ -8362,6 +8886,7 @@ class ChatViewModel : ViewModel() {
                         ),
                     )
                     clearTurnCheckpoint()
+                    settleSessionActivity(errorSessionId)
                 }
             } else {
                 AppAnalytics.onStreamError()
@@ -8402,6 +8927,7 @@ class ChatViewModel : ViewModel() {
                 _steerableTurn.value = false
                 _steerNotice.value = null
                 clearTurnCheckpoint()
+                settleSessionActivity(errorSessionId)
             }
         }
         val onPreflightErrorCb = { error: Throwable ->
@@ -8433,6 +8959,7 @@ class ChatViewModel : ViewModel() {
             _steerableTurn.value = false
             _steerNotice.value = null
             clearTurnCheckpoint()
+            settleSessionActivity(handler.currentSessionId.value)
         }
 
         // === v0.4.1 voice-intent + v0.7.x card-dispatch session sync ===
@@ -8711,6 +9238,7 @@ class ChatViewModel : ViewModel() {
                                 ),
                             )
                             handler.setSessionId(sid)
+                            markSessionActivityStarting(sid)
                             updateTurnCheckpointSession(sid)
                             selectBackgroundProcessSession(sid)
                             gatewayProcessController.sessionReady(sid)
@@ -8829,6 +9357,7 @@ class ChatViewModel : ViewModel() {
                             // don't resurrect the turn on SSE.
                             intentionallyCancelled = false
                             activeStream = null
+                            settleSessionActivity(handler.currentSessionId.value)
                         } else {
                             // Nothing started server-side — rerun this turn on
                             // the SSE fallback. Callbacks land on the main

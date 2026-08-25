@@ -6,6 +6,32 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Certify Android session activity across lifecycle and profile boundaries
+
+The contract fixture now covers every upstream live status, complete-snapshot
+disappearance, client-side ownership of duplicate durable ids across profiles,
+and older Gateways without `session.active_list`. Before calling the status
+model device-certified:
+
+- Exercise working, quiet tool-heavy work, each pending-input surface, normal
+  completion, Stop, reconnect, app restart, and process recreation against
+  current vanilla upstream.
+- Verify All Profiles with duplicate session ids across two profiles and two
+  saved connections; no late snapshot or old socket generation may mark the
+  wrong row live.
+- Confirm failed/unsupported refresh becomes Unavailable, restart revalidation
+  remains Checking, ambiguous or partially
+  resolved process-wide snapshots infer no absence, a complete empty snapshot
+  settles every unambiguously owned scope, and REST `is_active=true` never
+  renders as Working.
+- Run a background process that outlives its parent turn and verify Background
+  work remains separate from the conversation's Idle state.
+- Pursue an upstream `session.active_list` profile field/filter or an aggregate
+  activity route with explicit profile ownership so multi-profile clients do
+  not need to resolve process-wide rows from durable keys.
+
+---
+
 ## Bot Mode follow-ups after multi-gateway aggregation
 
 Android Bot Mode now has an all-gateway roster, typed `(connectionId, profile)`

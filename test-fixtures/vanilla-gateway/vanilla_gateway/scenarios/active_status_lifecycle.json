@@ -1,0 +1,23 @@
+{
+  "name": "active_status_lifecycle",
+  "live_session_id": "fixture-live-working",
+  "stored_session_id": "fixture-shared-stored-session",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.session_active_list"
+  ],
+  "initial_history": [],
+  "turns": [],
+  "active_list": {
+    "supported": true,
+    "snapshots": [
+      [
+        {"id": "fixture-live-starting", "session_key": "fixture-starting", "status": "starting", "current": false},
+        {"id": "fixture-live-working", "session_key": "fixture-shared-stored-session", "status": "working", "current": true},
+        {"id": "fixture-live-waiting", "session_key": "fixture-waiting", "status": "waiting", "current": false},
+        {"id": "fixture-live-idle", "session_key": "fixture-idle", "status": "idle", "current": false}
+      ],
+      []
+    ]
+  }
+}

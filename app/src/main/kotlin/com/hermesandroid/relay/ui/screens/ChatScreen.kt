@@ -303,21 +303,6 @@ private const val CHAT_AUTOCOMPLETE_PET_OBSTACLE = "chat-autocomplete-obstacle"
 private const val CHAT_RECENT_PROMPTS_PET_OBSTACLE = "chat-recent-prompts-obstacle"
 private val CHAT_PET_ROUTES = setOf("chat")
 
-internal fun resolveSessionActivityStates(
-    background: Map<String, SessionActivityState>,
-    currentSessionId: String?,
-    isStreaming: Boolean,
-    needsInput: Boolean,
-): Map<String, SessionActivityState> = background.toMutableMap().apply {
-    currentSessionId?.let { sessionId ->
-        when {
-            needsInput -> put(sessionId, SessionActivityState.NeedsInput)
-            isStreaming -> put(sessionId, SessionActivityState.Working)
-            else -> remove(sessionId)
-        }
-    }
-}
-
 internal fun resolveChatHeaderSubtitle(
     isStreaming: Boolean,
     statusText: String,
@@ -930,15 +915,9 @@ fun ChatScreen(
         mutableStateOf(false)
     }
     val pendingAsk by chatViewModel.pendingAsk.collectAsState()
-    val sessionActivityStates = remember(
-        backgroundSessionActivityStates,
-        currentSessionId,
-        isStreaming,
-        pendingAsk,
-    ) {
-        resolveSessionActivityStates(
-            background = backgroundSessionActivityStates,
-            currentSessionId = currentSessionId,
+    val sessionActivityStates = backgroundSessionActivityStates
+    LaunchedEffect(currentSessionId, isStreaming, pendingAsk) {
+        chatViewModel.updateCurrentSessionActivity(
             isStreaming = isStreaming,
             needsInput = pendingAsk != null,
         )
@@ -966,6 +945,54 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    suspend fun refreshAllProfileSessions(showError: Boolean) {
+        if (isProfileLocked || allProfileSessionsLoading) return
+        allProfileSessionsLoading = true
+        val result = connectionViewModel.listAllProfileSessions()
+        result?.fold(
+            onSuccess = { items ->
+                allProfileSessions = items.mapNotNull { item ->
+                    val owner = item.profile?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    ProfileSessionRow(
+                        profile = owner,
+                        session = com.hermesandroid.relay.data.ChatSession(
+                            sessionId = item.id,
+                            title = item.title ?: item.preview,
+                            model = item.model,
+                            messageCount = item.messageCount ?: 0,
+                            inputTokens = item.inputTokens ?: 0,
+                            outputTokens = item.outputTokens ?: 0,
+                            actualCostUsd = item.actualCostUsd,
+                            estimatedCostUsd = item.estimatedCostUsd,
+                            recentlyActive = item.isActive,
+                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
+                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
+                            source = item.source,
+                            pinned = item.pinned,
+                            archived = item.archived,
+                            workingDirectory = item.cwd,
+                            gitBranch = item.gitBranch,
+                            gitRepoRoot = item.gitRepoRoot,
+                            pullRequestNumber = item.pullRequest?.number,
+                            pullRequestUrl = item.pullRequest?.url,
+                            pullRequestState = item.pullRequest?.state,
+                            pullRequestDraft = item.pullRequest?.draft == true,
+                        ),
+                    )
+                }
+                chatViewModel.updateSessionActivityDirectory(
+                    rows = allProfileSessions.map { it.profile to it.session.sessionId },
+                )
+            },
+            onFailure = { error ->
+                if (showError) snackbarHostState.showSnackbar(
+                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
+                )
+            },
+        )
+        allProfileSessionsLoading = false
+    }
     val conversationBinding by chatViewModel.conversationBinding.collectAsState()
     val explicitBindingProfileName = conversationBinding.profileName
         .takeIf { conversationBinding.hasExplicitOwner }
@@ -1378,6 +1405,13 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    LaunchedEffect(chatViewModel, drawerState) {
+        chatViewModel.sessionDirectoryRefreshRequests.collect {
+            if (drawerState.isOpen || allProfileSessions.isNotEmpty()) {
+                refreshAllProfileSessions(showError = false)
+            }
+        }
+    }
     PetInteractionLayer(
         owner = "chat-interaction-layer",
         active = shouldHideChatPet(
@@ -1465,7 +1499,6 @@ fun ChatScreen(
     }
     val clipboard = LocalClipboard.current
     val haptic = LocalHapticFeedback.current
-    val snackbarHostState = remember { SnackbarHostState() }
     val handleCardAction: (String, String, HermesCardAction) -> Unit =
         remember(chatViewModel, context) {
             { messageId, cardKey, action ->
@@ -2094,6 +2127,7 @@ fun ChatScreen(
     // shows up without a manual reload. Cheap dashboard read; the optimistic
     // row for the active session is preserved by ChatHandler.updateSessions.
     LaunchedEffect(drawerState.isOpen) {
+        chatViewModel.setSessionActivityDrawerOpen(drawerState.isOpen)
         if (drawerState.isOpen && chatReady) {
             chatViewModel.refreshSessions()
         }
@@ -2524,48 +2558,7 @@ fun ChatScreen(
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
                     if (!isProfileLocked && !allProfileSessionsLoading) scope.launch {
-                        allProfileSessionsLoading = true
-                        val result = connectionViewModel.listAllProfileSessions()
-                        result?.fold(
-                            onSuccess = { items ->
-                                allProfileSessions = items.mapNotNull { item ->
-                                    val owner = item.profile?.takeIf { it.isNotBlank() }
-                                        ?: return@mapNotNull null
-                                    ProfileSessionRow(
-                                        profile = owner,
-                                        session = com.hermesandroid.relay.data.ChatSession(
-                                            sessionId = item.id,
-                                            title = item.title ?: item.preview,
-                                            model = item.model,
-                                            messageCount = item.messageCount ?: 0,
-                                            inputTokens = item.inputTokens ?: 0,
-                                            outputTokens = item.outputTokens ?: 0,
-                                            actualCostUsd = item.actualCostUsd,
-                                            estimatedCostUsd = item.estimatedCostUsd,
-                                            isActive = item.isActive,
-                                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
-                                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
-                                            source = item.source,
-                                            pinned = item.pinned,
-                                            archived = item.archived,
-                                            workingDirectory = item.cwd,
-                                            gitBranch = item.gitBranch,
-                                            gitRepoRoot = item.gitRepoRoot,
-                                            pullRequestNumber = item.pullRequest?.number,
-                                            pullRequestUrl = item.pullRequest?.url,
-                                            pullRequestState = item.pullRequest?.state,
-                                            pullRequestDraft = item.pullRequest?.draft == true,
-                                        ),
-                                    )
-                                }
-                            },
-                            onFailure = { error ->
-                                snackbarHostState.showSnackbar(
-                                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
-                                )
-                            },
-                        )
-                        allProfileSessionsLoading = false
+                        refreshAllProfileSessions(showError = true)
                     }
                 },
                 onSelectProfileSession = { profileName, sessionId ->
