@@ -1,10 +1,10 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-08-22
+**Release Date:** 2026-08-25
 
-This release makes the Desktop connector resilient through Relay interruptions,
-aligns Windows computer control with current CUA Driver releases, and adds a
-native Linux ARM64 build.
+This beta makes the Desktop connector resilient through Relay interruptions,
+aligns Windows computer control with current CUA Driver releases, adds a native
+Linux ARM64 build, and hardens installation and update discovery.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
@@ -14,6 +14,13 @@ native Linux ARM64 build.
 
 - **Linux ARM64 is a first-class release target.** The one-line installer,
   updater, checksums, and release artifacts now cover both Linux x64 and arm64.
+- **The public site shows the real Windows CLI UI.** Deterministic screenshots
+  cover connections, host access, activity, computer control, and updates.
+
+### Changed
+
+- **Public naming is aligned.** Releases use `Hermes-Relay CLI+UI` while the
+  beta keeps its existing `desktop-v*` tag and updater contract.
 
 ### Fixed
 

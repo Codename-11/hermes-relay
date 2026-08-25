@@ -6,28 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.13.0] - 2026-08-25
+
 ### Added
 
-- **Android and Relay add top-level provider usage and limit settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden Settings presentation modes plus per-provider landing-page visibility. The authenticated Relay Dashboard plugin resolves the active Codex credential directly from the live session; paired standalone clients retain an explicitly enabled Relay fallback. The UI identifies Relay-plugin-enhanced data and explains which capabilities require the matching plugin. Provider credentials remain host-side.
-- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
-- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
+- **Provider usage and limits are available from top-level Settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden presentation modes. Provider credentials remain on the Hermes host.
 - **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 
 ### Changed
 
-- **Release and candidate names use one public product hierarchy.** Future releases use `Hermes-Relay Android`, `Hermes-Relay Plugin`, or `Hermes-Relay CLI+UI` display names, while isolated Android review and release-candidate installs use `HR Candidate`, without changing immutable tags, package identities, updater contracts, or artifact filenames.
-- **Review candidates are an explicit PR opt-in with one trusted handoff comment.** Maintainers can apply `review-candidate` for exact-head Android and Relay bundles; a separate reporter updates the PR with the artifact, expiry, source SHA, and bounded review instructions without executing fork code with write permission.
-- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
+- **Android releases and review candidates use clear public product names.** Stable builds use `Hermes-Relay Android`, while isolated review installs use `HR Candidate` without changing package identities or update contracts.
+- **Review candidates are explicit and source-pinned.** Maintainers can opt a PR into a matched Android and Relay bundle with checksums, expiry, source SHA, and bounded review instructions.
 
 ### Fixed
 
+- **Unlabeled PR updates no longer receive false candidate-failure comments.** The trusted reporter ignores skipped review-bundle workflow shells before reading artifacts or writing to a PR.
 - **Android chats no longer retain a stale busy composer.** A completed Gateway bubble settles automatically when its exact session has no live or detached turn, new-chat navigation clears stale visible ownership, and Stop remains an immediate escape hatch. (#416, #418)
 - **README and Google Play onboarding now match the Dashboard-first product path.** Public setup copy names the two separate Dashboard QR actions, treats the API server as an advanced fallback, explains the encouraged Hermes-Relay extension without implying Play includes Device Control, and ships one current deterministic Android screenshot set.
-- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
 - **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
 - **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
+
+## [Plugin 1.10.0] - 2026-08-25
+
+### Added
+
+- **Relay provides normalized provider usage without exposing credentials.** The authenticated Dashboard route resolves the active Codex pool entry, structured Nous balances, and OpenCode Go windows on the Hermes host; explicitly enabled paired clients receive the same provider-neutral schema.
+
+### Changed
+
+- **Plugin releases use the `Hermes-Relay Plugin` public name.** The display name is aligned with Android and CLI+UI while the `server-v*` compatibility tag remains unchanged.
+
+### Fixed
+
 - **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
+
+## [0.4.0-beta.5] - 2026-08-25
+
+### Added
+
+- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
+- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates.
+
+### Changed
+
+- **Desktop releases use the `Hermes-Relay CLI+UI` public name.** The beta keeps its existing `desktop-v*` tag and updater contract.
+
+### Fixed
+
+- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
 - **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.
 - **Desktop computer control follows Hermes' current CUA Driver contract.** CUA Driver 0.20 and newer are accepted when their manifest, daemon/MCP arguments, required tools, and canonical path remain compatible, and Windows sessions use the manifest-declared direct standard-mode runtime instead of a potentially stale machine-wide daemon. Current 0.21 installations no longer fall back solely because of an obsolete upper version pin or daemon contract.
 
