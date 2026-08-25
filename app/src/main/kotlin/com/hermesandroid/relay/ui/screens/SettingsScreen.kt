@@ -1343,7 +1343,7 @@ private fun ProviderUsageLandingCard(
             .settingsPetSurface("settings-card:provider-usage")
             .fillMaxWidth()
             .gradientBorder(
-                shape = RoundedCornerShape(12.dp),
+                shape = appearanceRoundedCornerShape(12.dp),
                 isDarkTheme = isDarkTheme,
             ),
         colors = CardDefaults.cardColors(
