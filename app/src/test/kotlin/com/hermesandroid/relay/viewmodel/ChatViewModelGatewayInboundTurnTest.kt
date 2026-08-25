@@ -1005,10 +1005,13 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun stopClearsStaleBusyStateAfterTerminalBubbleAlreadySettled() {
+        // Exercise Stop's route-independent fallback without the Gateway
+        // orphan-state observer settling this synthetic state first.
+        viewModel.streamingEndpoint = "sessions"
         handler.onTextDelta("stale-answer", "Finished answer")
         handler.onTurnComplete("stale-answer")
-        assertTrue(handler.isStreaming.value)
         assertFalse(handler.messages.value.single().isStreaming)
+        assertTrue(handler.isStreaming.value)
 
         viewModel.cancelStream()
 
@@ -1017,9 +1020,45 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun completedGatewayBubbleAutomaticallySettlesComposerWithoutInput() {
+        handler.onTextDelta("completed-answer", "Finished answer")
+        handler.onTurnComplete("completed-answer")
+
+        awaitCondition { !handler.isStreaming.value }
+
+        assertFalse(handler.messages.value.single().isStreaming)
+        assertFalse(gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID))
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun completedBubbleKeepsComposerBusyWhileGatewaySessionStillOwnsTheRun() {
+        viewModel.sendMessage("Continue through another assistant turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID) }
+        val assistantId = handler.messages.value.single { it.role == MessageRole.ASSISTANT }.id
+
+        handler.onTextDelta(assistantId, "First assistant message")
+        handler.onTurnComplete(assistantId)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(handler.isStreaming.value)
+        assertTrue(gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID))
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Final assistant message") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+    }
+
+    @Test
     fun newChatClearsStaleBusyStateWhenNoLiveGatewayTurnRemains() {
         handler.onTextDelta("stale-answer", "Finished answer")
-        handler.onTurnComplete("stale-answer")
         assertTrue(handler.isStreaming.value)
         assertFalse(gatewayClient.hasActiveTurn())
 
