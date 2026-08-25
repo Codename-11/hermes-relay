@@ -138,3 +138,22 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/SHA256SUMS.txt
+
+  request-backmerge:
+    name: Request stable release backmerge
+    needs: [validate, package]
+    if: ${{ !contains(needs.validate.outputs.version, '-') }}
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch fail-closed release reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: server-v${{ needs.validate.outputs.version }}
+        run: |
+          gh workflow run release-backmerge.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f release_tag="$RELEASE_TAG"

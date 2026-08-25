@@ -28,7 +28,7 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 | Staging source | An exact tested `dev` SHA or release-candidate tag; staging is an environment, never a branch |
 | Production source | Immutable `android-v*`, `server-v*`, or `desktop-v*` tags, selected by surface |
 | Hotfix base | The immutable production tag for the affected surface |
-| Back-merge target | `dev`; merge `main` back immediately after every hotfix |
+| Back-merge target | `dev`; stable hotfixes reconcile automatically when the exact tested merge is conflict-free, otherwise through a PR |
 
 Feature completion means merged and verified on `dev`; it does not mean
 released. A release train is separate work owned by a Forge release
@@ -36,6 +36,14 @@ issue/session: reconcile only the affected surface version and notes on `dev`,
 open the `dev` → `main` release PR, tag the resulting `main` tip, publish the
 surface artifacts, deploy or roll out, and verify the live result. Never create
 a staging branch.
+
+A normal `dev` → `main` release needs no back-merge: the released integration
+parent is already in `dev`. A production-tag hotfix is different. After its
+stable release succeeds, `Release Backmerge` prepares a `dev`-first merge
+commit, runs the same path-aware required checks on that exact SHA, verifies
+that `dev` has not moved, and fast-forwards `dev`. Conflicts, failed checks,
+stale refs, or denied branch updates fail closed and require a reconciliation
+PR; never resolve those cases by choosing a side automatically.
 
 ### Local integration discipline
 

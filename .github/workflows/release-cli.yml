@@ -539,3 +539,22 @@ jobs:
             release-assets/cli-binaries/hermes-relay-darwin-arm64
             release-assets/cli-windows-installer/hermes-relay-windows-x64-setup.exe
             release-assets/SHA256SUMS.txt
+
+  request-backmerge:
+    name: Request stable release backmerge
+    needs: [validate-release, publish-release]
+    if: ${{ !contains(needs.validate-release.outputs.version, '-') }}
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch fail-closed release reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: desktop-v${{ needs.validate-release.outputs.version }}
+        run: |
+          gh workflow run release-backmerge.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f release_tag="$RELEASE_TAG"

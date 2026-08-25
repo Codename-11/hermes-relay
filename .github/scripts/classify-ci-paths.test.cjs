@@ -30,5 +30,13 @@ assert.deepEqual(classifyCiPaths(['.github/workflows/ci-required.yml']), {
   contract: true,
   docs: true,
 });
+assert.deepEqual(classifyCiPaths(['.github/workflows/release-backmerge.yml']), {
+  android: true,
+  desktop: true,
+  plugin: true,
+  dashboard: true,
+  contract: true,
+  docs: true,
+});
 
 console.log('CI path classification tests passed.');
