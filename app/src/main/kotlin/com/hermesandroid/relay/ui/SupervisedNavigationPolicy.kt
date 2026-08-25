@@ -20,6 +20,15 @@ internal fun shouldRedirectSupervisedRoute(
     supervisedEnabled &&
     !isSupervisedRouteAllowed(currentRoute, parentAccessUnlocked)
 
+/** A null route is Navigation's pre-graph bootstrap state, not a forbidden destination. */
+internal fun isSupervisedRouteContentAllowed(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+    currentRoute: String?,
+): Boolean = currentRoute == null ||
+    !supervisedEnabled ||
+    isSupervisedRouteAllowed(currentRoute, parentAccessUnlocked)
+
 /**
  * Cold-start gate for the app navigation graph.
  *

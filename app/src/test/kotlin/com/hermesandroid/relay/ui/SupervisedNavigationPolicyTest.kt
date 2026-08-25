@@ -28,9 +28,13 @@ class SupervisedNavigationPolicyTest {
 
     @Test fun `supervised redirect waits until the navigation graph has a route`() {
         assertFalse(shouldRedirectSupervisedRoute(true, false, null))
+        assertTrue(isSupervisedRouteContentAllowed(true, false, null))
         assertFalse(shouldRedirectSupervisedRoute(true, false, Screen.Chat.route))
+        assertTrue(isSupervisedRouteContentAllowed(true, false, Screen.Chat.route))
         assertTrue(shouldRedirectSupervisedRoute(true, false, Screen.AdvancedSettings.route))
+        assertFalse(isSupervisedRouteContentAllowed(true, false, Screen.AdvancedSettings.route))
         assertFalse(shouldRedirectSupervisedRoute(true, true, Screen.AdvancedSettings.route))
+        assertTrue(isSupervisedRouteContentAllowed(true, true, Screen.AdvancedSettings.route))
     }
 
     @Test fun `navigation waits for connection store before trusting null active id`() {

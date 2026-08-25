@@ -572,6 +572,24 @@ sealed class Screen(
 }
 
 @Composable
+private fun SupervisedStartupLoadingScreen() {
+    HermesRelayTheme(themePreference = "dark") {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Loading protected settings…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 fun RelayApp() {
     val applicationContext = LocalContext.current.applicationContext
     val processRuntime = (applicationContext as HermesRelayApp).runtime
@@ -585,7 +603,10 @@ fun RelayApp() {
     LaunchedEffect(processRuntime) {
         processRuntime.ensureInitialized()
     }
-    if (runtimeInitializationState != HermesRuntimeInitializationState.Ready) return
+    if (runtimeInitializationState != HermesRuntimeInitializationState.Ready) {
+        SupervisedStartupLoadingScreen()
+        return
+    }
 
     val voiceClient: RelayVoiceClient = processRuntime.relayVoiceClient
     val voicePreferences = processRuntime.voicePreferences
@@ -711,7 +732,10 @@ fun RelayApp() {
             activeConnectionId = activeConnectionId,
             supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
         )
-    ) return
+    ) {
+        SupervisedStartupLoadingScreen()
+        return
+    }
     val supervisedPolicy = ownedSupervisedPolicyState?.second ?: SupervisedModePolicy()
     val supervisedPinnedProfile = supervisedPolicy.pinnedProfileName?.let { name ->
         agentProfiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
@@ -1897,8 +1921,11 @@ fun RelayApp() {
                     .fillMaxSize()
                     .padding(innerPadding),
             ) {
-                val routeContentAllowed = !supervisedPolicy.enabled ||
-                    isSupervisedRouteAllowed(currentRoute, parentAccessForCurrentRoute)
+                val routeContentAllowed = isSupervisedRouteContentAllowed(
+                    supervisedEnabled = supervisedPolicy.enabled,
+                    parentAccessUnlocked = parentAccessForCurrentRoute,
+                    currentRoute = currentRoute,
+                )
                 if (!routeContentAllowed) {
                     // The redirect effect runs after composition. Render no
                     // destination content in the meantime so a restored or
