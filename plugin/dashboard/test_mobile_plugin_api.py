@@ -50,7 +50,8 @@ class MobilePluginApiTests(unittest.TestCase):
 
         manifest = self.client.get("/mobile/manifest").json()
         self.assertEqual("hermes-relay", manifest["id"])
-        self.assertEqual("draft", manifest["contributions"][0]["status"])
+        draft = next(c for c in manifest["contributions"] if c["id"] == "system-status")
+        self.assertEqual("draft", draft["status"])
         loaded_document = self.client.get("/mobile/pages/system-status").json()
         self.assertEqual(1, loaded_document.pop("host_revision"))
         self.assertEqual(_document(), loaded_document)
@@ -70,7 +71,26 @@ class MobilePluginApiTests(unittest.TestCase):
             json={"expected_digest": published_digest},
         )
         self.assertEqual({"ok": True, "id": "system-status"}, removed.json())
-        self.assertEqual([], self.client.get("/mobile/manifest").json()["contributions"])
+        remaining = self.client.get("/mobile/manifest").json()["contributions"]
+        self.assertEqual(["git"], [c["id"] for c in remaining])
+
+    def test_manifest_exposes_static_git_page(self) -> None:
+        manifest = self.client.get("/mobile/manifest").json()
+        git = next(c for c in manifest["contributions"] if c["id"] == "git")
+        self.assertEqual("page", git["surface"])
+        self.assertEqual("mobile/pages/git", git["document"]["path"])
+        # The Git page document is a GET-only read surface; it must not carry
+        # any action.request (which would require the write grant).
+        page = self.client.get("/mobile/pages/git").json()
+        self.assertNotIn("action", str(page))
+
+    def test_git_page_document_is_served(self) -> None:
+        response = self.client.get("/mobile/pages/git")
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual(1, body["schemaVersion"])
+        self.assertEqual("git", body["pages"][0]["id"])
+        self.assertEqual(1, body["host_revision"])
 
     def test_traversal_and_bad_document_are_rejected(self) -> None:
         traversal = self.client.put(

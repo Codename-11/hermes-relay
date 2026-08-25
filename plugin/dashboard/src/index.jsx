@@ -6,6 +6,7 @@ import RelayManagement from "./tabs/RelayManagement.jsx";
 import BridgeActivity from "./tabs/BridgeActivity.jsx";
 import MediaInspector from "./tabs/MediaInspector.jsx";
 import RemoteAccess from "./tabs/RemoteAccess.jsx";
+import GitState from "./tabs/GitState.jsx";
 import RelayStatusSlot from "./components/RelayStatusSlot.jsx";
 import MobileConnectDialog from "./components/MobileConnectDialog.jsx";
 import { Button, Switch } from "./lib/ui-shims.jsx";
@@ -19,6 +20,7 @@ const TABS = [
   { key: "activity", label: "Activity" },
   { key: "media", label: "Media" },
   { key: "remote", label: "Remote Access" },
+  { key: "git", label: "Git" },
 ];
 
 function readAutoRefresh() {
@@ -113,6 +115,7 @@ function RelayPluginRoot() {
         {tab === "activity" && <BridgeActivity autoRefresh={autoRefresh} />}
         {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
         {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
+        {tab === "git" && <GitState autoRefresh={autoRefresh} />}
       </div>
       <MobileConnectDialog
         open={mobileConnectOpen}

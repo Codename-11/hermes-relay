@@ -173,6 +173,8 @@ import com.hermesandroid.relay.ui.screens.SettingsScreen
 import com.hermesandroid.relay.ui.screens.UsageLimitsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
+import com.hermesandroid.relay.ui.screens.GitStateScreen
+import com.hermesandroid.relay.viewmodel.GitStateViewModel
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
@@ -440,6 +442,7 @@ sealed class Screen(
     }
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
     data object Plugins : Screen("plugins", "Plugins", Icons.Filled.Extension)
+    data object GitState : Screen("git_state", "Git", Icons.Filled.Code)
     data object PluginPage : Screen(
         "plugins/{pluginId}/pages/{pageId}",
         "Plugin",
@@ -597,6 +600,7 @@ fun RelayApp() {
     val chatViewModel: ChatViewModel = processRuntime.chatViewModel
     val terminalViewModel: TerminalViewModel = viewModel()
     val pluginsViewModel: PluginsViewModel = viewModel()
+    val gitStateViewModel: GitStateViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = processRuntime.voiceViewModel
     val runtimeInitializationState by processRuntime.initializationState.collectAsState()
 
@@ -759,6 +763,10 @@ fun RelayApp() {
             dashboardFactory = connectionViewModel::dashboardClientForActive,
             sessionId = currentChatSessionId,
         )
+        val dashboard = effectiveDashboardUrl
+            .takeIf { it.isNotBlank() }
+            ?.let { connectionViewModel.dashboardClientForActive(it) }
+        gitStateViewModel.configure(dashboard)
     }
 
     // What's New auto-show
@@ -2462,8 +2470,18 @@ fun RelayApp() {
                         viewModel = pluginsViewModel,
                         onBack = { navController.popBackStack() },
                         onOpenPage = { pluginId, pageId ->
-                            navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                            if (pluginId == "hermes-relay" && pageId == "git") {
+                                navController.navigate(Screen.GitState.route)
+                            } else {
+                                navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                            }
                         },
+                    )
+                }
+                composable(Screen.GitState.route) {
+                    GitStateScreen(
+                        viewModel = gitStateViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(

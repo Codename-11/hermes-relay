@@ -3727,6 +3727,14 @@
     <string name="plugins_keep">Оставить</string>
     <string name="plugins_remove">Удалить</string>
     <string name="plugins_remove_confirm">Удалить «%1$s»? Эта страница плагина больше не будет отображаться на подключённых устройствах Android.</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">Назад</string>
+    <string name="git_state_staged">В индексе</string>
+    <string name="git_state_modified">Изменённые</string>
+    <string name="git_state_untracked">Неотслеживаемые</string>
+    <string name="git_state_branches">Ветки</string>
+    <string name="git_state_truncated">Результаты усечены — показаны только первые записи.</string>
+    <string name="git_state_no_changes">(без изменений)</string>
     <string name="support_bundle_review">Проверить сведения для поддержки</string>
     <string name="support_bundle_title">Сведения для поддержки</string>
     <string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с не более чем %1$d отчётами.</string>

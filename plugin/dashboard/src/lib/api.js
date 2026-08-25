@@ -139,3 +139,29 @@ export function mintPairingWithMode({ mode, publicUrl, prefer, ...rest } = {}) {
     body: JSON.stringify(body),
   });
 }
+
+// ── Git State tab ───────────────────────────────────────────────────────────
+
+export function getGitRepos() {
+  return fetchJSON("/git/repos");
+}
+
+export function getGitStatus(repo) {
+  return fetchJSON(`/git/status?repo=${encodeURIComponent(repo)}`);
+}
+
+export function getGitBranches(repo) {
+  return fetchJSON(`/git/branches?repo=${encodeURIComponent(repo)}`);
+}
+
+export function getGitDiff(repo, path, kind = "unstaged") {
+  return fetchJSON(
+    `/git/diff?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}&kind=${encodeURIComponent(kind)}`,
+  );
+}
+
+export function getGitFile(repo, path) {
+  return fetchJSON(
+    `/git/file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`,
+  );
+}

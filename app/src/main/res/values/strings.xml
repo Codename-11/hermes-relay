@@ -4202,6 +4202,15 @@
     <string name="plugins_keep">Keep</string>
     <string name="plugins_remove">Remove</string>
     <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">Back</string>
+    <string name="git_state_staged">Staged</string>
+    <string name="git_state_modified">Modified</string>
+    <string name="git_state_untracked">Untracked</string>
+    <string name="git_state_branches">Branches</string>
+    <string name="git_state_truncated">Results truncated — showing the first entries only.</string>
+    <string name="git_state_no_changes">(no changes)</string>
+
     <string name="support_bundle_review">Review support information</string>
     <string name="support_bundle_title">Support information</string>
     <string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains up to %1$d recent reports.</string>

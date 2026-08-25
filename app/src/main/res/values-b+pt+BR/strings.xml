@@ -3846,6 +3846,14 @@
     <string name="plugins_keep">Manter</string>
     <string name="plugins_remove">Remover</string>
     <string name="plugins_remove_confirm">Remover “%1$s”? Esta página do plugin não aparecerá mais nos dispositivos Android conectados.</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">Voltar</string>
+    <string name="git_state_staged">Preparados</string>
+    <string name="git_state_modified">Modificados</string>
+    <string name="git_state_untracked">Não rastreados</string>
+    <string name="git_state_branches">Ramos</string>
+    <string name="git_state_truncated">Resultados truncados — apenas as primeiras entradas são exibidas.</string>
+    <string name="git_state_no_changes">(sem alterações)</string>
     <string name="support_bundle_review">Revisar informações de suporte</string>
     <string name="support_bundle_title">Informações de suporte</string>
     <string name="support_bundle_privacy">Nada é enviado automaticamente. Revise a exportação local com até %1$d relatórios.</string>

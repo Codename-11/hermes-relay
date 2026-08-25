@@ -3934,6 +3934,14 @@
     <string name="plugins_keep">保留</string>
     <string name="plugins_remove">移除</string>
     <string name="plugins_remove_confirm">要移除“%1$s”吗？此插件页面将不再显示在已连接的 Android 设备上。</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">返回</string>
+    <string name="git_state_staged">已暂存</string>
+    <string name="git_state_modified">已修改</string>
+    <string name="git_state_untracked">未跟踪</string>
+    <string name="git_state_branches">分支</string>
+    <string name="git_state_truncated">结果已截断 — 仅显示前几条。</string>
+    <string name="git_state_no_changes">(无更改)</string>
     <string name="support_bundle_review">查看支持信息</string>
     <string name="support_bundle_title">支持信息</string>
     <string name="support_bundle_privacy">不会自动上传任何内容。请查看最多包含 %1$d 个报告的本地导出。</string>

@@ -4005,6 +4005,14 @@
     <string name="plugins_keep">保持</string>
     <string name="plugins_remove">削除</string>
     <string name="plugins_remove_confirm">「%1$s」を削除しますか？接続された Android 端末にこのプラグインページは表示されなくなります。</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">戻る</string>
+    <string name="git_state_staged">ステージ済み</string>
+    <string name="git_state_modified">変更</string>
+    <string name="git_state_untracked">未追跡</string>
+    <string name="git_state_branches">ブランチ</string>
+    <string name="git_state_truncated">結果は切り詰められています。最初の項目のみ表示されます。</string>
+    <string name="git_state_no_changes">(変更なし)</string>
     <string name="support_bundle_review">サポート情報を確認</string>
     <string name="support_bundle_title">サポート情報</string>
     <string name="support_bundle_privacy">自動アップロードはありません。最大 %1$d 件のレポートを含む端末内エクスポートを確認してください。</string>

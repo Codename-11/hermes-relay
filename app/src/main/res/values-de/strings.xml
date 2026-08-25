@@ -4006,6 +4006,14 @@
     <string name="plugins_keep">Behalten</string>
     <string name="plugins_remove">Entfernen</string>
     <string name="plugins_remove_confirm">„%1$s“ entfernen? Diese Plugin-Seite wird auf verbundenen Android-Geräten nicht mehr angezeigt.</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">Zurück</string>
+    <string name="git_state_staged">Gestaged</string>
+    <string name="git_state_modified">Geändert</string>
+    <string name="git_state_untracked">Unverfolgt</string>
+    <string name="git_state_branches">Branches</string>
+    <string name="git_state_truncated">Ergebnisse abgeschnitten – nur die ersten Einträge werden angezeigt.</string>
+    <string name="git_state_no_changes">(keine Änderungen)</string>
     <string name="support_bundle_review">Supportinformationen prüfen</string>
     <string name="support_bundle_title">Supportinformationen</string>
     <string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfen Sie den lokalen Export mit bis zu %1$d Berichten.</string>
