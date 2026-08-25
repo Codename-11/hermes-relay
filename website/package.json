@@ -7,8 +7,8 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "assets:sync": "node scripts/product-assets.mjs sync && node scripts/responsive-assets.mjs sync",
-    "assets:check": "node scripts/product-assets.mjs check && node scripts/responsive-assets.mjs check",
+    "assets:sync": "node scripts/product-assets.mjs sync && node scripts/responsive-assets.mjs sync && node scripts/desktop-ui-assets.mjs sync",
+    "assets:check": "node scripts/product-assets.mjs check && node scripts/responsive-assets.mjs check && node scripts/desktop-ui-assets.mjs check",
     "locales:validate": "python ../scripts/check-website-locales.py",
     "dev": "npm run assets:check && npm run locales:validate && astro dev",
     "build": "npm run assets:check && npm run locales:validate && astro check && astro build && node scripts/check-built-site.mjs",

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
@@ -156,6 +157,9 @@ import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
+import com.hermesandroid.relay.ui.screens.BotGroupDetailScreen
+import com.hermesandroid.relay.ui.screens.BotChatScreen
+import com.hermesandroid.relay.ui.screens.BotModeScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
@@ -401,6 +405,28 @@ sealed class Screen(
             }
             return if (params.isEmpty()) "chat" else "chat?${params.joinToString("&")}"
         }
+    }
+    data object BotMode : Screen("bot_mode", "Bot Mode", Icons.Filled.Groups)
+    data object BotGroup : Screen(
+        "bot_mode/groups/{roomKey}",
+        "Bot group",
+        Icons.Filled.Groups,
+    ) {
+        const val ARG_ROOM_KEY: String = "roomKey"
+        fun route(roomKey: String): String =
+            "bot_mode/groups/${android.net.Uri.encode(roomKey)}"
+    }
+    data object BotChat : Screen(
+        "bot_mode/chat/{connectionId}/{profileName}/{sessionId}",
+        "Bot Chat",
+        Icons.AutoMirrored.Filled.Chat,
+    ) {
+        const val ARG_CONNECTION_ID: String = "connectionId"
+        const val ARG_PROFILE_NAME: String = "profileName"
+        const val ARG_SESSION_ID: String = "sessionId"
+        fun route(connectionId: String, profileName: String, sessionId: String): String =
+            "bot_mode/chat/${android.net.Uri.encode(connectionId)}/" +
+                "${android.net.Uri.encode(profileName)}/${android.net.Uri.encode(sessionId)}"
     }
     data object Terminal : Screen("terminal", "Terminal", Icons.Filled.Code)
     data object Bridge : Screen("bridge", "Bridge", Icons.Filled.PhoneAndroid)
@@ -775,6 +801,7 @@ fun RelayApp() {
             chatViewModel.activateGatewayProfile(pinned)
         }
     }
+    val connections by connectionViewModel.connections.collectAsState()
 
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val relayVoiceReady by connectionViewModel.relayVoiceReady.collectAsState()
@@ -2230,7 +2257,107 @@ fun RelayApp() {
                             }
                         },
                         supervisedPolicy = chatSupervisedPolicy,
+                        onNavigateToBotMode = {
+                            navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
+                        },
                     )
+                }
+                composable(Screen.BotMode.route) {
+                    BotModeScreen(
+                        connectionViewModel = connectionViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenBotChat = { route, sessionId ->
+                            navController.navigate(
+                                Screen.BotChat.route(
+                                    connectionId = route.connectionId,
+                                    profileName = route.profileName,
+                                    sessionId = sessionId,
+                                ),
+                            )
+                        },
+                        onOpenGroup = { roomKey ->
+                            navController.navigate(Screen.BotGroup.route(roomKey))
+                        },
+                    )
+                }
+                composable(
+                    route = Screen.BotGroup.route,
+                    arguments = listOf(
+                        navArgument(Screen.BotGroup.ARG_ROOM_KEY) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    val roomKey = entry.arguments?.getString(Screen.BotGroup.ARG_ROOM_KEY)
+                    val botModeState by connectionViewModel.botModeState.collectAsState()
+                    BotGroupDetailScreen(
+                        room = botModeState.roster.groups.firstOrNull { it.key == roomKey },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = Screen.BotChat.route,
+                    arguments = listOf(
+                        navArgument(Screen.BotChat.ARG_CONNECTION_ID) { type = NavType.StringType },
+                        navArgument(Screen.BotChat.ARG_PROFILE_NAME) { type = NavType.StringType },
+                        navArgument(Screen.BotChat.ARG_SESSION_ID) { type = NavType.StringType },
+                    ),
+                ) { entry ->
+                    val connectionId = entry.arguments?.getString(Screen.BotChat.ARG_CONNECTION_ID).orEmpty()
+                    val profileName = entry.arguments?.getString(Screen.BotChat.ARG_PROFILE_NAME).orEmpty()
+                    val sessionId = entry.arguments?.getString(Screen.BotChat.ARG_SESSION_ID).orEmpty()
+                    val botModeState by connectionViewModel.botModeState.collectAsState()
+                    val connection = connections.firstOrNull { it.id == connectionId }
+                    val bot = botModeState.roster.bots.firstOrNull {
+                        it.route?.connectionId == connectionId && it.profile.name == profileName
+                    }
+                    val route = bot?.route ?: connection?.let {
+                        com.hermesandroid.relay.data.BotGatewayRoute(
+                            key = com.hermesandroid.relay.data.BotGatewayRouteKey(connectionId, profileName),
+                            connectionLabel = it.label,
+                        )
+                    }
+                    val currentRouteUrl = connection?.let {
+                        if (it.id == activeConnectionId) effectiveDashboardUrl else it.resolvedDashboardUrl
+                    }.orEmpty()
+                    val lease = remember(route?.key, currentRouteUrl) {
+                        route?.let(connectionViewModel::acquireBotGateway)?.getOrNull()
+                    }
+                    val botDashboardClient = remember(route?.key, currentRouteUrl) {
+                        route?.let(connectionViewModel::botDashboardClient)?.getOrNull()
+                    }
+                    DisposableEffect(lease, botDashboardClient) {
+                        onDispose {
+                            lease?.close()
+                            botDashboardClient?.shutdown()
+                        }
+                    }
+                    if (
+                        route == null || bot == null || lease == null ||
+                        botDashboardClient == null || sessionId.isBlank()
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                stringResource(R.string.bot_mode_chat_open_failed),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    } else {
+                        val botChatViewModel: ChatViewModel = viewModel(
+                            key = "bot-chat:${route.connectionId}:${route.profileName}:$sessionId",
+                        )
+                        BotChatScreen(
+                            route = route,
+                            bot = bot,
+                            sessionId = sessionId,
+                            gatewayClient = lease.client,
+                            dashboardClient = botDashboardClient,
+                            chatViewModel = botChatViewModel,
+                            connectionViewModel = connectionViewModel,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
                 }
                 composable(Screen.Manage.route) {
                     if (isDemoMode) {

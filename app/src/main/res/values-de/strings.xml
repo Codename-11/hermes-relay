@@ -895,6 +895,36 @@
     <string name="detail_tab_security">Sicherheit</string>
 
     <!-- P0: SessionDrawer -->
+    <string name="bot_mode_title">Bot-Modus</string>
+    <string name="bot_mode_drawer_summary">Bots und Gruppenräume</string>
+    <string name="bot_mode_search">Bot-Modus durchsuchen</string>
+    <string name="bot_mode_search_hint">Bots und Gruppen durchsuchen</string>
+    <string name="bot_mode_refresh">Bot-Modus aktualisieren</string>
+    <string name="bot_mode_new_bot">Neuer Bot</string>
+    <string name="bot_mode_gateway_unavailable">Gateway nicht verfügbar</string>
+    <string name="bot_mode_all_gateways">Alle Gateways</string>
+    <string name="bot_mode_offline">Offline</string>
+    <string name="bot_mode_filter_all">Alle</string>
+    <string name="bot_mode_filter_bots">Bots</string>
+    <string name="bot_mode_filter_groups">Gruppen</string>
+    <string name="bot_mode_active_now">Jetzt aktiv</string>
+    <string name="bot_mode_opening_chat">Bot-Chat wird geöffnet…</string>
+    <string name="bot_mode_no_messages">Bot-Chat starten</string>
+    <string name="bot_mode_read_only">Schreibgeschützt</string>
+    <string name="bot_mode_group_no_messages">Noch keine Raumnachrichten</string>
+    <string name="bot_mode_empty">Noch keine Bots oder Gruppenräume</string>
+    <string name="bot_mode_group_title">Gruppenraum</string>
+    <string name="bot_mode_group_missing">Dieser Gruppenraum ist nicht mehr verfügbar.</string>
+    <string name="bot_mode_group_read_only_help">Dies ist der begrenzte, schreibgeschützte Raumverlauf aus Hermes Desktop. Fahre vorerst mit einem einzelnen Bot fort.</string>
+    <string name="bot_mode_bot_name">Profilname</string>
+    <string name="bot_mode_bot_title">Bot-Name</string>
+    <string name="bot_mode_bot_description">Rolle und Beschreibung</string>
+    <string name="bot_mode_create_help">Der neue Bot basiert auf dem Standardprofil und teilt dessen Anmeldung. Fähigkeiten und Modell kannst du unter Verwalten anpassen.</string>
+    <string name="bot_mode_create">Bot erstellen</string>
+    <string name="bot_mode_back_to_bots">Zurück zum Bot-Modus</string>
+    <string name="bot_mode_chat_open_failed">Bot-Chat konnte nicht geöffnet werden</string>
+    <string name="bot_mode_created">%1$s erstellt</string>
+    <string name="bot_mode_create_failed">Bot konnte nicht erstellt werden</string>
     <string name="drawer_filter_by_source">Nach Quelle filtern</string>
     <string name="drawer_show_sources">Quellen anzeigen</string>
     <string name="drawer_refresh_sessions">Sitzungen aktualisieren</string>
@@ -4019,7 +4049,7 @@
     <string name="appearance_preview_voice">Sprache</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 Token  ·  137,2K</string>
     <string name="appearance_preview_message_placeholder">Nachricht…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / Profil: Standard</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / Profil: Standard</string>
     <string name="appearance_preview_live_note">Diese Vorschau wird sofort mit Vorlage, Modus, Schrift und Sphere-Skin aktualisiert.</string>
     <string name="appearance_customize_theme">%1$s anpassen</string>
     <string name="appearance_accent_preset">Voreingestellte Akzentfarbe</string>

@@ -13,6 +13,7 @@ import ExpandableImage from './components/ExpandableImage.vue';
 import FirstRunPreview from './components/FirstRunPreview.vue';
 import ReleaseTrackChooser from './components/ReleaseTrackChooser.vue';
 import TroubleshootingNavigator from './components/TroubleshootingNavigator.vue';
+import AndroidSetupPath from './components/AndroidSetupPath.vue';
 
 export default {
   extends: DefaultTheme,
@@ -29,6 +30,7 @@ export default {
     app.component('FirstRunPreview', FirstRunPreview);
     app.component('ReleaseTrackChooser', ReleaseTrackChooser);
     app.component('TroubleshootingNavigator', TroubleshootingNavigator);
+    app.component('AndroidSetupPath', AndroidSetupPath);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

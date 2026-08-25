@@ -388,6 +388,13 @@ class ProfileController(
             ) { server, fallback, override -> preferredProfileIcon(server, fallback, override) }
         }
 
+    /** Exact profile identity on any saved connection; never consults active state. */
+    fun profileIconFlow(connectionId: String, profileName: String): Flow<String?> = combine(
+        profileIconStore.serverAvatarFlow(connectionId, profileName),
+        profileIconStore.iconFlow(connectionId, profileName),
+        profileIconStore.localOverrideFlow(connectionId, profileName),
+    ) { server, local, localOverride -> preferredProfileIcon(server, local, localOverride) }
+
     data class HostIconImportState(
         val loading: Boolean = false,
         val error: String? = null,

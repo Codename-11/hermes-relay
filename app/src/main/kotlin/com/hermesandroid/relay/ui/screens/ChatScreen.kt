@@ -733,6 +733,7 @@ fun ChatScreen(
     onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
     supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
+    onNavigateToBotMode: () -> Unit = {},
 ) {
     val supervised = supervisedPolicy.enabled
     val supervisedVisibility = supervisedPolicy.visibility.resolved()
@@ -2421,6 +2422,10 @@ fun ChatScreen(
                     .takeIf { supervised },
                 newChatEnabled = !supervised || supervisedPolicy.capabilities.newChat,
                 onRefresh = { chatViewModel.refreshSessions() },
+                onOpenBotMode = {
+                    scope.launch { drawerState.close() }
+                    onNavigateToBotMode()
+                },
                 onNewChat = {
                     if (!supervised || supervisedPolicy.capabilities.newChat) {
                         chatViewModel.createNewChat()

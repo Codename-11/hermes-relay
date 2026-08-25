@@ -1,42 +1,16 @@
 # Hermes-Relay — Android
 
-This section covers the **Android client** for [Hermes Agent](https://hermes-agent.nousresearch.com): Dashboard/Gateway-first setup, chat, Manage, voice, optional API fallback, optional Relay pairing, terminal/TUI relay, notifications, and optional sideload Device Control.
+Hermes-Relay puts the [Hermes Agent](https://hermes-agent.nousresearch.com) you already run on Android. Start with the standard Dashboard/Gateway connection for Chat, sessions, Manage, sign-in, and voice. Pair the encouraged Relay extension for Terminal/TUI, notifications, media, desktop tools, enhanced voice, Relay sessions, and optional Device Control.
 
-::: tip Want the agent to have hands on your other machines too?
-The Hermes-Relay CLI gives your Hermes agent consent-gated filesystem, terminal, and screenshot access on any Windows, macOS, or Linux machine you pair — plus a terminal escape hatch for you. Windows can also install the optional compact management UI: **[CLI →](/desktop/)**. Both surfaces share the same relay pairing and `~/.hermes/remote-sessions.json`.
-:::
+<AndroidSetupPath mode="overview" />
 
-Hermes-Relay is a native Android app for [Hermes Agent](https://hermes-agent.nousresearch.com). Chat, sessions, Manage, and standard voice use the upstream Dashboard/Gateway. The API server is an optional fallback/headless compatibility surface, and Relay is optional for terminal/TUI and bridge power tools. The Google Play build ships Bridge Core only; sideload builds add AccessibilityService-backed Device Control.
+## What the two connections do
 
-## Quick Start
+- **Connect mobile app** adds the standard Hermes Dashboard/Gateway connection.
+- **Pair new device** adds a separate, consent-scoped Relay grant.
 
-1. Install Hermes and run the Dashboard/Gateway on your host.
-2. Install the Android app.
-3. Choose **Hermes**, enter or discover its Dashboard/Gateway address, and sign in when prompted.
-4. Add Relay pairing later only if you want Terminal, Bridge, Relay sessions, or device-control power tools.
-
-See [Installation & Setup](/guide/getting-started) for copy/paste host commands and upstream Hermes links.
-
-If you installed the optional Relay plugin and want to uninstall it later:
-
-```bash
-hermes relay compat remove --all   # optional legacy compatibility hook cleanup
-hermes plugins remove hermes-relay
-```
-
-If you used the legacy installer instead:
-
-```bash
-bash ~/.hermes/hermes-relay/uninstall.sh
-```
-
-Or via curl if the clone is already gone:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/uninstall.sh | bash
-```
-
-The uninstaller is idempotent and never touches state shared with other Hermes tools. Flags: `--dry-run`, `--keep-clone`, `--remove-secret`.
+The two QR codes are deliberately separate. You can use standard Hermes without
+Relay, and pairing Relay never replaces the upstream connection.
 
 ## Connection Model
 
@@ -76,9 +50,16 @@ voice routes. Sideload builds additionally expose Android Device Control routes.
 
 ## Quick Links
 
-- [Installation & Setup](/guide/getting-started) — Get the app running
+- [Quick Start](/guide/quick-start) — Recommended Android + Relay setup
+- [Installation & Setup](/guide/getting-started) — Builds, manual setup, and fallbacks
 - [Chat Guide](/guide/chat) — Using the chat interface
 - [Supervised Mode](/guide/supervised-mode) — Planned parent-controlled, profile-pinned Android interface
 - [Sessions](/guide/sessions) — Managing conversations
 - [Features](/features/) — All features at a glance
 - [Architecture](/architecture/) — How it works under the hood
+
+::: tip Want Hermes to work on another computer?
+The [Desktop CLI](/desktop/) pairs through the same Relay grant and gives Hermes
+consent-gated filesystem, terminal, process, clipboard, and screenshot tools on
+Windows, macOS, or Linux. The optional management UI is Windows-only.
+:::

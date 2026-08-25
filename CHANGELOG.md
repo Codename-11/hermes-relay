@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Desktop releases now include a Linux ARM64 CLI artifact.** The one-line installer, updater, checksums, release publication, architecture validation, and platform documentation all recognize the same `linux-arm64` binary.
+- **The public site now shows the real Windows CLI UI and guides each surface through first use.** Deterministic public-safe screenshots cover connection, host access, activity, computer control, and updates; Android and CLI paths now carry users from install through prerequisites, pairing, verification, and a concrete first-success action before the long-form reference material.
+- **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
 - **Android Supervised Mode presents a parent-controlled, profile-pinned chat surface.** Parents can limit attachments, Standard voice, generated media, conversation history, actions, and technical metadata while device authentication protects full settings. Hermes-Relay can identify and revoke a paired supervised client without becoming the policy enforcement boundary.
 
@@ -19,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **README and Google Play onboarding now match the Dashboard-first product path.** Public setup copy names the two separate Dashboard QR actions, treats the API server as an advanced fallback, explains the encouraged Hermes-Relay extension without implying Play includes Device Control, and ships one current deterministic Android screenshot set.
+- **Desktop install and update discovery remains reliable in a multi-surface release repository.** Every resolver paginates GitHub releases before choosing the SemVer maximum, Windows cooperative updates clean their released backup, unsigned preview installers retain the normal SmartScreen warning, and release smoke tests preserve real exit codes.
+- **Android fresh chats no longer inherit a stale busy composer.** New-chat navigation settles visible streaming ownership even when a Gateway turn has already lost its live handle, and Stop remains an immediate escape hatch after the terminal bubble has settled. (#416, #418)
+- **The Android Sphere remains gently animated while visibly idle.** New chats and the ambient Sphere behind messages now use a low-cost layer breath, while hidden/backgrounded and motion-disabled surfaces stay still and active agent/voice states retain their full procedural animation.
 - **Android retries Windows-hosted `MEDIA:` attachments through Relay's by-path route.** A document deferred on cellular no longer treats `C:\...` as an opaque media token and reports it as expired.
 - **Relay profile discovery follows `HERMES_HOME` by default.** Custom Hermes installations surface their real default profile and persist Relay sessions beside the active config while retaining the explicit `RELAY_HERMES_CONFIG` override.
 - **Desktop daemon connections recover instead of exiting after an interrupted Relay socket.** Healthy daemons retry through Relay restarts and repeated failed reconnect attempts, oversized desktop-tool results fail within a bounded response instead of closing the shared WebSocket, and terminal failures leave an accurate stopped status for the tray.

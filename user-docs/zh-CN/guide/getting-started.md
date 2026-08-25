@@ -5,8 +5,10 @@ canonical_source: /guide/getting-started
 
 # 安装与设置
 
-只需三步：安装应用、连接 Hermes、发送第一条消息。如果 Hermes 已在运行，
-服务器上无需额外安装任何组件。
+这是用于版本选择、手动连接、远程访问和安全检查的详细参考。如果
+Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
+
+<AndroidSetupPath mode="reference" />
 
 ::: tip 翻译状态
 此精简指南覆盖常用流程。高级服务器、TLS 和运维选项请查看
@@ -56,11 +58,17 @@ Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立�
 
 同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 API fallback 不可用都是正常状态。
 
-## 可选：添加 Relay 工具
+## 建议：使用 Relay 完成设置 {#relay-server-optional}
 
-仅在需要终端、Device Control、媒体、通知或高级远程工具时安装插件。规范命令为
+upstream 标准路径在没有 plugin 时仍可工作。建议使用 Relay 来获得
+Terminal/TUI、通知、媒体、桌面工具、增强 Voice、Relay 会话和可选
+Device Control。规范命令为
 `hermes plugins install Codename-11/hermes-relay/plugin --enable`、
 `hermes relay doctor`、`hermes relay start --no-ssl` 和 `hermes pair`。
+
+推荐在 Web Dashboard 的 **Relay** 页面先打开 **Connect mobile app**，再打开
+**Pair new device**，并用 Android 扫描两个二维码。无法使用二维码时，仍可使用
+URL/配对码输入和 `hermes pair --register-code`。
 
 Device Control 同时需要 **Sideload 应用和已配对的 Relay**。
 

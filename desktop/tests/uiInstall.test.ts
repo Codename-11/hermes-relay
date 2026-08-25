@@ -118,8 +118,32 @@ test('tray update helper preserves the current install directory and cleans its 
 
 test('POSIX installer only advertises artifacts produced by the release workflow', async () => {
   const script = await readFile(new URL('../scripts/install.sh', import.meta.url), 'utf8')
-  assert.doesNotMatch(script, /hermes-relay-linux-arm64/)
+  const packageJson = await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  const workflow = await readFile(new URL('../../.github/workflows/release-cli.yml', import.meta.url), 'utf8')
+  assert.match(script, /linux-aarch64\|linux-arm64\) asset="hermes-relay-linux-arm64"/)
   assert.match(script, /hermes-relay-linux-x64/)
+  assert.match(packageJson, /--target=bun-linux-arm64[^\n]+hermes-relay-linux-arm64/)
+  assert.match(workflow, /npm run build:bin:linux-arm/)
+  assert.match(workflow, /release-assets\/cli-binaries\/hermes-relay-linux-arm64/)
+  assert.doesNotMatch(workflow, /hermes-relay-linux-x64 "\$cmd" 2>&1 \|\| true/)
+  assert.match(workflow, /if \[ "\$exit_code" -ne 0 \]/)
+  assert.match(workflow, /Smoke exact macOS CLI release asset/)
+  assert.match(workflow, /release-assets\/\$native_asset" --version/)
+})
+
+test('bootstrap installers paginate release discovery beyond the first API page', async () => {
+  const posix = await readFile(new URL('../scripts/install.sh', import.meta.url), 'utf8')
+  const powershell = await readFile(new URL('../scripts/install.ps1', import.meta.url), 'utf8')
+  assert.match(posix, /releases\?per_page=100&page=\$page/)
+  assert.match(posix, /page=\$\(\(page \+ 1\)\)/)
+  assert.match(powershell, /releases\?per_page=100&page=\$page/)
+  assert.match(powershell, /while \(\$releasePage\.Count -eq 100\)/)
+})
+
+test('PowerShell tray bootstrap keeps unsigned publisher warnings visible', async () => {
+  const script = await readFile(new URL('../scripts/install.ps1', import.meta.url), 'utf8')
+  assert.doesNotMatch(script, /Unblock-File \$installer/)
+  assert.match(script, /Windows may show a SmartScreen publisher warning/)
 })
 
 test('PowerShell uninstaller delegates bundle cleanup to the NSIS uninstaller', async () => {

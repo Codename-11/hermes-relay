@@ -908,6 +908,36 @@
     <string name="detail_overview_summary">Chat、Manage、Voice では標準の Hermes を使用します。Relay は高度な端末機能を追加するオプションの拡張機能です。</string>
 
     <!-- P0: SessionDrawer -->
+    <string name="bot_mode_title">Botモード</string>
+    <string name="bot_mode_drawer_summary">Botとグループルーム</string>
+    <string name="bot_mode_search">Botモードを検索</string>
+    <string name="bot_mode_search_hint">Botとグループを検索</string>
+    <string name="bot_mode_refresh">Botモードを更新</string>
+    <string name="bot_mode_new_bot">新しいBot</string>
+    <string name="bot_mode_gateway_unavailable">ゲートウェイを利用できません</string>
+    <string name="bot_mode_all_gateways">すべてのゲートウェイ</string>
+    <string name="bot_mode_offline">オフライン</string>
+    <string name="bot_mode_filter_all">すべて</string>
+    <string name="bot_mode_filter_bots">Bot</string>
+    <string name="bot_mode_filter_groups">グループ</string>
+    <string name="bot_mode_active_now">現在アクティブ</string>
+    <string name="bot_mode_opening_chat">Bot Chatを開いています…</string>
+    <string name="bot_mode_no_messages">Bot Chatを開始</string>
+    <string name="bot_mode_read_only">読み取り専用</string>
+    <string name="bot_mode_group_no_messages">ルームのメッセージはまだありません</string>
+    <string name="bot_mode_empty">Botまたはグループルームはまだありません</string>
+    <string name="bot_mode_group_title">グループルーム</string>
+    <string name="bot_mode_group_missing">このグループルームは利用できなくなりました。</string>
+    <string name="bot_mode_group_read_only_help">これはHermes Desktopが共有する範囲限定の読み取り専用ルーム履歴です。当面は個別のBotで会話を続けてください。</string>
+    <string name="bot_mode_bot_name">プロファイル名</string>
+    <string name="bot_mode_bot_title">Bot名</string>
+    <string name="bot_mode_bot_description">役割と説明</string>
+    <string name="bot_mode_create_help">新しいBotは既定のプロファイルを基に作成され、サインインを共有します。スキルとモデルは管理画面で調整できます。</string>
+    <string name="bot_mode_create">Botを作成</string>
+    <string name="bot_mode_back_to_bots">Botモードに戻る</string>
+    <string name="bot_mode_chat_open_failed">Bot Chatを開けませんでした</string>
+    <string name="bot_mode_created">%1$sを作成しました</string>
+    <string name="bot_mode_create_failed">Botを作成できませんでした</string>
     <string name="drawer_filter_by_source">ソースによるフィルター</string>
     <string name="drawer_show_sources">ソースを表示</string>
     <string name="drawer_refresh_sessions">セッションを更新する</string>
@@ -4018,7 +4048,7 @@
     <string name="appearance_preview_voice">音声</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206トークン  ·  137.2K</string>
     <string name="appearance_preview_message_placeholder">メッセージ…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / プロファイル: デフォルト</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / プロファイル: デフォルト</string>
     <string name="appearance_preview_live_note">このプレビューには、プリセット、モード、フォント、Sphereスキンの変更がすぐに反映されます。</string>
     <string name="appearance_customize_theme">%1$sをカスタマイズ</string>
     <string name="appearance_accent_preset">プリセットのアクセント</string>

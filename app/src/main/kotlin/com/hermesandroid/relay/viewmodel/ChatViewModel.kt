@@ -2627,6 +2627,12 @@ class ChatViewModel : ViewModel() {
     /** Server slash-command catalog (`commands.catalog`) — 4th allCommands source. */
     private val _serverCommands = MutableStateFlow<List<SlashCommand>>(emptyList())
     val serverCommands: StateFlow<List<SlashCommand>> = _serverCommands.asStateFlow()
+    @Volatile
+    private var canonicalBotChatMode = false
+
+    fun setCanonicalBotChatMode(enabled: Boolean) {
+        canonicalBotChatMode = enabled
+    }
 
     /**
      * True while the in-flight turn is actually running on the gateway
@@ -3580,6 +3586,15 @@ class ChatViewModel : ViewModel() {
                 onPersistedUserImageRequested(messageId, originalPath)
             }
         }
+    }
+
+    /** Route-owned Gateway chat setup without borrowing the active connection's Relay/media clients. */
+    fun initializeGatewayOnly(context: Context) {
+        appContext = context.applicationContext
+        if (chatTurnCheckpointStore == null) {
+            chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
+        }
+        ensureCheckpointObservers()
     }
 
     /** JVM-test seam; production is wired to the app-wide relay DataStore. */
@@ -5411,6 +5426,14 @@ class ChatViewModel : ViewModel() {
             return true
         }
 
+        if (shouldCompactCanonicalBotChat(normalizedName, canonicalBotChatMode)) {
+            handler.addSystemNotice("Bot Chat stays in one conversation — compacting its context instead.")
+            viewModelScope.launch {
+                runServerCompressCommand(gateway, handler, focusTopic = null)
+            }
+            return true
+        }
+
         mobileBlockedSlashNotice(normalizedName)?.let { notice ->
             handler.addSystemNotice(notice)
             return true
@@ -6043,6 +6066,13 @@ class ChatViewModel : ViewModel() {
         activeStream?.cancel()
         activeStream = null
         activeStreamIsGateway = false
+        // Navigation owns the visible composer even when the live handle has
+        // already ended or could not be detached. Do not wait for a late
+        // cancel callback to clear a handler-wide busy bit after the new
+        // transcript has replaced its streaming bubble.
+        handler.clearStreamingStatus()
+        _steerableTurn.value = false
+        _steerNotice.value = null
     }
 
     /** Last-chance synchronous flush before the ViewModel scope is cancelled. */
@@ -8889,6 +8919,11 @@ class ChatViewModel : ViewModel() {
             if (streamingMsg != null) {
                 handler.markStopped(streamingMsg.id)
                 handler.onStreamComplete(streamingMsg.id)
+            } else {
+                // The terminal bubble can settle before the handler-wide busy
+                // flag (or navigation can already have cleared the transcript).
+                // Stop must still be an unconditional escape hatch.
+                handler.clearStreamingStatus()
             }
         }
     }
@@ -9758,6 +9793,9 @@ private fun isUnsupportedMobileCommand(name: String, pair: JsonArray): Boolean {
         ?: metadata?.stringValue("gatewayConfigGate")
     return cliOnly && gatewayGate.isNullOrBlank()
 }
+
+internal fun shouldCompactCanonicalBotChat(commandName: String, canonicalBotChatMode: Boolean): Boolean =
+    canonicalBotChatMode && commandName.lowercase() in setOf("new", "reset")
 
 private fun normalizeSlashCommandName(rawName: String): String? {
     val normalized = rawName

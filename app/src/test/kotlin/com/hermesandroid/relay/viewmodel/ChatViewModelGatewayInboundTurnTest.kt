@@ -1004,6 +1004,33 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun stopClearsStaleBusyStateAfterTerminalBubbleAlreadySettled() {
+        handler.onTextDelta("stale-answer", "Finished answer")
+        handler.onTurnComplete("stale-answer")
+        assertTrue(handler.isStreaming.value)
+        assertFalse(handler.messages.value.single().isStreaming)
+
+        viewModel.cancelStream()
+
+        assertFalse(handler.isStreaming.value)
+        assertNull(handler.turnStatus.value)
+    }
+
+    @Test
+    fun newChatClearsStaleBusyStateWhenNoLiveGatewayTurnRemains() {
+        handler.onTextDelta("stale-answer", "Finished answer")
+        handler.onTurnComplete("stale-answer")
+        assertTrue(handler.isStreaming.value)
+        assertFalse(gatewayClient.hasActiveTurn())
+
+        viewModel.createNewChat()
+
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.isEmpty())
+        assertNull(handler.currentSessionId.value)
+    }
+
+    @Test
     fun reopenedChatRestoresRichStateAndReattachesLiveGatewayTurn() {
         val now = System.currentTimeMillis()
         val checkpointStore = MemoryCheckpointStore(

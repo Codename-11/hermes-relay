@@ -892,6 +892,36 @@
     <string name="detail_tab_security">安全</string>
 
     <!-- P0: SessionDrawer -->
+    <string name="bot_mode_title">Bot 模式</string>
+    <string name="bot_mode_drawer_summary">Bot 和群组房间</string>
+    <string name="bot_mode_search">搜索 Bot 模式</string>
+    <string name="bot_mode_search_hint">搜索 Bot 和群组</string>
+    <string name="bot_mode_refresh">刷新 Bot 模式</string>
+    <string name="bot_mode_new_bot">新建 Bot</string>
+    <string name="bot_mode_gateway_unavailable">网关不可用</string>
+    <string name="bot_mode_all_gateways">所有网关</string>
+    <string name="bot_mode_offline">离线</string>
+    <string name="bot_mode_filter_all">全部</string>
+    <string name="bot_mode_filter_bots">Bot</string>
+    <string name="bot_mode_filter_groups">群组</string>
+    <string name="bot_mode_active_now">当前活跃</string>
+    <string name="bot_mode_opening_chat">正在打开 Bot Chat…</string>
+    <string name="bot_mode_no_messages">开始 Bot Chat</string>
+    <string name="bot_mode_read_only">只读</string>
+    <string name="bot_mode_group_no_messages">房间中还没有消息</string>
+    <string name="bot_mode_empty">还没有 Bot 或群组房间</string>
+    <string name="bot_mode_group_title">群组房间</string>
+    <string name="bot_mode_group_missing">此群组房间已不可用。</string>
+    <string name="bot_mode_group_read_only_help">这是 Hermes Desktop 共享的有限只读房间历史记录。目前请先与单个 Bot 继续对话。</string>
+    <string name="bot_mode_bot_name">配置文件名称</string>
+    <string name="bot_mode_bot_title">Bot 名称</string>
+    <string name="bot_mode_bot_description">角色和说明</string>
+    <string name="bot_mode_create_help">新 Bot 基于默认配置文件创建并共享其登录。你可以在“管理”中调整技能和模型。</string>
+    <string name="bot_mode_create">创建 Bot</string>
+    <string name="bot_mode_back_to_bots">返回 Bot 模式</string>
+    <string name="bot_mode_chat_open_failed">无法打开 Bot Chat</string>
+    <string name="bot_mode_created">已创建 %1$s</string>
+    <string name="bot_mode_create_failed">无法创建 Bot</string>
     <string name="drawer_filter_by_source">按来源筛选</string>
     <string name="drawer_show_sources">显示来源</string>
     <string name="drawer_refresh_sessions">刷新会话</string>
@@ -3947,7 +3977,7 @@
     <string name="appearance_preview_voice">语音</string>
     <string name="appearance_preview_tool_meta">tool_executor  ·  206 个 token  ·  137.2K</string>
     <string name="appearance_preview_message_placeholder">消息…</string>
-    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.5 / 配置文件：默认</string>
+    <string name="appearance_preview_gateway">Gateway   ·   LAN   ·   gpt-5.6-sol / 配置文件：默认</string>
     <string name="appearance_preview_live_note">更改预设、模式、字体或 Sphere 皮肤后，此预览会立即更新。</string>
     <string name="appearance_customize_theme">自定义 %1$s</string>
     <string name="appearance_accent_preset">预设强调色</string>

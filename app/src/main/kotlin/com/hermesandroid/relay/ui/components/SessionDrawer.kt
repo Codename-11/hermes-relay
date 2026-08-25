@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -206,6 +207,8 @@ fun SessionDrawerContent(
     supervisedSessionActions: SupervisedSessionActions? = null,
     newChatEnabled: Boolean = true,
     onRefresh: (() -> Unit)? = null,
+    /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
+    onOpenBotMode: (() -> Unit)? = null,
     onNewChat: () -> Unit,
     onNewDefaultChat: (() -> Unit)? = null,
     onSelectSession: (String) -> Unit,
@@ -530,6 +533,28 @@ fun SessionDrawerContent(
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.drawer_new_chat))
+            }
+
+            onOpenBotMode?.let { openBotMode ->
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = openBotMode,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Groups, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start,
+                    ) {
+                        Text(stringResource(R.string.bot_mode_title))
+                        Text(
+                            stringResource(R.string.bot_mode_drawer_summary),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             if (searchExpanded || query.isNotBlank()) {
