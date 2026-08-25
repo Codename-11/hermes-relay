@@ -36,6 +36,26 @@ def _run_prompt_submit(sid, session, agent):
     finally:
         session["running"] = False
         _emit_settled_session_info(sid, session, agent)
+
+def _session_pending_kind(sid):
+    return "approval" if sid in _pending else ""
+
+def _session_live_status(sid, session):
+    if _session_pending_kind(sid):
+        return "waiting"
+    ready = session.get("agent_ready")
+    if ready is not None and not ready.is_set() and session.get("agent_build_started"):
+        return "starting"
+    if session.get("running"):
+        return "working"
+    return "idle"
+
+def _session_live_item(sid, session, current_sid=""):
+    return {
+        "id": sid,
+        "session_key": session.get("session_key", sid),
+        "status": _session_live_status(sid, session),
+    }
 '''
 
 METHODS_SOURCE = '''
@@ -67,6 +87,14 @@ def _(rid, params):
 def _(rid, params):
     session, error = _sess_nowait(params, rid)
     return _live_session_payload(params["session_id"], session)
+
+@method("session.active_list")
+def _(rid, params):
+    current = str(params.get("current_session_id") or "")
+    with _sessions_lock:
+        snapshot = list(_sessions.items())
+    rows = [_session_live_item(sid, session, current) for sid, session in snapshot]
+    return _ok(rid, {"sessions": rows})
 '''
 
 API_SOURCE = '''
@@ -158,6 +186,25 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         requirements = module.load_requirements(manifest)
 
         self.assertEqual((module.GATEWAY_SETTLED_INFO, module.SESSION_ACTIVATE), requirements)
+
+    def test_active_list_requires_waiting_to_outrank_working(self):
+        path = self.root / module.SERVER
+        reordered = SERVER_SOURCE.replace(
+            '    if _session_pending_kind(sid):\n'
+            '        return "waiting"\n'
+            '    ready = session.get("agent_ready")',
+            '    if session.get("running"):\n'
+            '        return "working"\n'
+            '    if _session_pending_kind(sid):\n'
+            '        return "waiting"\n'
+            '    ready = session.get("agent_ready")',
+        )
+        path.write_text(reordered, encoding="utf-8")
+
+        result = module.audit_sources(self.root, (module.SESSION_ACTIVE_LIST,))[0]
+
+        self.assertFalse(result.passed)
+        self.assertIn("precedence", result.problem)
 
     def test_manifest_rejects_unknown_contract(self):
         manifest = self.root / "scenario.json"

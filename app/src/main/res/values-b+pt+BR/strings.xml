@@ -876,6 +876,10 @@
     <string name="drawer_search_sessions">Pesquisar sessões</string>
     <string name="drawer_activity_working">Em andamento</string>
     <string name="drawer_activity_needs_input">Precisa de resposta</string>
+    <string name="drawer_activity_starting">Iniciando</string>
+    <string name="drawer_activity_background_work">Trabalho em segundo plano</string>
+    <string name="drawer_activity_checking">Verificando</string>
+    <string name="drawer_activity_unavailable">Indisponível</string>
     <string name="drawer_new_thread">Nova Thread</string>
     <string name="drawer_chats_not_named">Os chats não recebem nomes automáticos nesta conexão — use ⋮ → Renomear.</string>
     <string name="drawer_loading_sessions">Carregando sessões…</string>
@@ -905,7 +909,7 @@
     <string name="drawer_filter_pinned">Fixadas</string>
     <string name="drawer_filter_archive">Arquivo</string>
     <string name="drawer_filter_sessions">Sessões</string>
-    <string name="drawer_timestamp_active">Ativa</string>
+    <string name="drawer_timestamp_updated">Atualizada</string>
     <string name="drawer_timestamp_started">Iniciada</string>
     <string name="drawer_just_now">Agora mesmo</string>
     <!-- P1: BridgeScreen -->

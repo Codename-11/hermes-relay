@@ -29,12 +29,14 @@ GATEWAY_TERMINAL = "gateway.message_complete"
 GATEWAY_SETTLED_INFO = "gateway.settled_session_info"
 SESSION_ACTIVATE = "gateway.session_activate_live"
 SESSION_RESUME = "gateway.session_resume_durable"
+SESSION_ACTIVE_LIST = "gateway.session_active_list"
 API_BOUNDARY = "api.fallback_boundary"
 ALL_CONTRACTS = (
     GATEWAY_TERMINAL,
     GATEWAY_SETTLED_INFO,
     SESSION_ACTIVATE,
     SESSION_RESUME,
+    SESSION_ACTIVE_LIST,
     API_BOUNDARY,
 )
 
@@ -286,6 +288,54 @@ def _check_resume(methods: SourceFile) -> CheckResult:
         return CheckResult(contract, False, (), str(exc))
 
 
+def _check_active_list(server: SourceFile, methods: SourceFile) -> CheckResult:
+    contract = SESSION_ACTIVE_LIST
+    try:
+        status = server.function("_session_live_status")
+        item = server.function("_session_live_item")
+        handler = methods.method_handler("session.active_list")
+        status_text = server.segment(status)
+        item_strings = _string_constants(item)
+        handler_text = methods.segment(handler)
+        missing_statuses = sorted(
+            {"starting", "working", "waiting", "idle"} - _string_constants(status)
+        )
+        if missing_statuses:
+            raise ValueError("live status missing state(s): " + ", ".join(missing_statuses))
+        pending_at = status_text.find("_session_pending_kind(")
+        running_at = status_text.find('.get("running")')
+        if pending_at < 0 or running_at < 0 or pending_at > running_at:
+            raise ValueError("waiting state no longer takes precedence over running")
+        missing_fields = sorted({"id", "session_key", "status"} - item_strings)
+        if missing_fields:
+            raise ValueError("active-list row missing field(s): " + ", ".join(missing_fields))
+        required_markers = ("_sessions_lock", "_sessions.items()", "_session_live_item(")
+        missing_markers = [marker for marker in required_markers if marker not in handler_text]
+        if missing_markers or "sessions" not in _string_constants(handler):
+            raise ValueError(
+                "session.active_list no longer snapshots the live registry: "
+                + ", ".join(missing_markers or ["sessions result"])
+            )
+        handler_strings = _string_constants(handler)
+        if "current_session_id" not in handler_strings:
+            raise ValueError("session.active_list no longer accepts current_session_id")
+        if "profile" in handler_strings:
+            raise ValueError("session.active_list unexpectedly claims a profile filter")
+        return CheckResult(
+            contract,
+            True,
+            (
+                server.evidence(status, "starting, working, waiting, and idle derivation"),
+                server.evidence(item, "live row carries runtime and durable identities"),
+                methods.evidence(
+                    handler, "active list snapshots the process-wide in-memory registry"
+                ),
+            ),
+        )
+    except ValueError as exc:
+        return CheckResult(contract, False, (), str(exc))
+
+
 def _check_api_boundary(api: SourceFile) -> CheckResult:
     contract = API_BOUNDARY
     try:
@@ -365,6 +415,7 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         GATEWAY_SETTLED_INFO: lambda: _check_settled_info(server),
         SESSION_ACTIVATE: lambda: _check_activate(server, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
+        SESSION_ACTIVE_LIST: lambda: _check_active_list(server, methods),
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }
     return [checks[requirement]() for requirement in requirements]

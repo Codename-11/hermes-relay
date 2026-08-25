@@ -5,6 +5,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.SweepGradient
+import androidx.annotation.StringRes
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -81,6 +82,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -116,6 +120,7 @@ import com.hermesandroid.relay.ui.theme.resolveProfileAccent
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 internal enum class SessionDrawerFilter {
     All,
@@ -277,6 +282,11 @@ fun SessionDrawerContent(
     }
     val scopedRows = (sessions + provisionalSessions).map { ProfileSessionRow(activeProfileName, it) }
     val sourceRows = if (showAllProfiles) allProfileSessions else scopedRows
+    val scopedActivityStates = scopedSessionActivityStates(
+        rows = sourceRows,
+        activityStates = activityStates,
+        allowBareSessionIds = !showAllProfiles,
+    )
     val sourceSessions = sourceRows.map { it.session }
     val showThreads = threadsCapabilityActive || sourceSessions.any { isThreadSource(it.source) }
     val activeFilter = resolveSessionDrawerFilter(filter, showThreads, archiveSupported)
@@ -319,8 +329,13 @@ fun SessionDrawerContent(
                 sessionWorkLabels(session).any { it.contains(needle, ignoreCase = true) }
         }
         .toList()
-    val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, activityStates)
-    val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, activityStates)
+    val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, scopedActivityStates)
+    val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, scopedActivityStates)
+    val drawerNowMillis = rememberDrawerClock(
+        isEnabled = isOpen && (
+            viewOptions.showUpdated || viewOptions.grouping == SessionDrawerGrouping.Project
+        ),
+    )
     val drawerTitle = if (showAllProfiles) {
         stringResource(R.string.drawer_all_profiles)
     } else {
@@ -728,6 +743,7 @@ fun SessionDrawerContent(
                                 ProjectGroupHeader(
                                     label = label,
                                     rows = group.rows,
+                                    nowMillis = drawerNowMillis,
                                     expanded = expanded,
                                     onToggle = {
                                         expandedProjectGroups = if (expanded) {
@@ -750,9 +766,7 @@ fun SessionDrawerContent(
                     if (expanded) items(group.rows, key = ::sessionRowKey) { row ->
                         val session = row.session
                         val provisional = session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)
-                        val activityState = activityStates[sessionRowKey(row)]
-                            ?: activityStates[session.sessionId]
-                            ?: if (session.isActive) SessionActivityState.Working else null
+                        val activityState = scopedActivityStates[sessionRowKey(row)]
                         SessionItem(
                             modifier = if (isProjectGroup) Modifier.padding(start = 42.dp) else Modifier,
                             session = session,
@@ -764,6 +778,7 @@ fun SessionDrawerContent(
                             showUpdated = viewOptions.showUpdated,
                             showTokens = viewOptions.showTokens,
                             showCost = viewOptions.showCost,
+                            nowMillis = drawerNowMillis,
                             actionsEnabled = !provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
@@ -1217,7 +1232,11 @@ private fun SessionDrawerOrdering.label(): String = when (this) {
 
 private fun SessionDrawerStatus.label(): String = when (this) {
     SessionDrawerStatus.NeedsInput -> "Needs input"
+    SessionDrawerStatus.Starting -> "Starting"
     SessionDrawerStatus.Working -> "Working"
+    SessionDrawerStatus.BackgroundWork -> "Background work"
+    SessionDrawerStatus.Checking -> "Checking"
+    SessionDrawerStatus.Unavailable -> "Unavailable"
     SessionDrawerStatus.Idle -> "Idle"
 }
 
@@ -1242,6 +1261,7 @@ private fun compactMetric(value: Double): String = when {
 private fun ProjectGroupHeader(
     label: String,
     rows: List<ProfileSessionRow>,
+    nowMillis: Long,
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
@@ -1290,7 +1310,7 @@ private fun ProjectGroupHeader(
                     append(context.resources.getQuantityString(R.plurals.drawer_project_session_count, rows.size, rows.size))
                     if (latestActivity > 0L) {
                         append(" · ")
-                        append(formatTimestamp(latestActivity, locale, context))
+                        append(formatTimestamp(latestActivity, locale, context, nowMillis))
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -1319,6 +1339,7 @@ private fun SessionItem(
     showUpdated: Boolean,
     showTokens: Boolean,
     showCost: Boolean,
+    nowMillis: Long,
     actionsEnabled: Boolean,
     isActive: Boolean,
     activityState: SessionActivityState?,
@@ -1337,11 +1358,7 @@ private fun SessionItem(
     val locale = LocalLocale.current.platformLocale
     val context = LocalContext.current
     val untitledLabel = stringResource(R.string.drawer_untitled)
-    val activityLabel = when (activityState) {
-        SessionActivityState.Working -> stringResource(R.string.drawer_activity_working)
-        SessionActivityState.NeedsInput -> stringResource(R.string.drawer_activity_needs_input)
-        null -> null
-    }
+    val activityLabel = activityState?.let { stringResource(sessionActivityLabelResource(it)) }
     val motion = rememberAccessibleMotionState()
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -1441,7 +1458,7 @@ private fun SessionItem(
                 sourceBadge(session.source)?.let { badge ->
                     SourceChip(badge)
                 }
-                if (showUpdated) sessionTimestampText(session, locale, context)?.let { timestamp ->
+                if (showUpdated) sessionTimestampText(session, locale, context, nowMillis)?.let { timestamp ->
                     Text(
                         text = timestamp,
                         style = MaterialTheme.typography.bodySmall,
@@ -1583,6 +1600,16 @@ private fun SessionItem(
     }
 }
 
+@StringRes
+internal fun sessionActivityLabelResource(state: SessionActivityState): Int = when (state) {
+    SessionActivityState.Starting -> R.string.drawer_activity_starting
+    SessionActivityState.Working -> R.string.drawer_activity_working
+    SessionActivityState.NeedsInput -> R.string.drawer_activity_needs_input
+    SessionActivityState.BackgroundWork -> R.string.drawer_activity_background_work
+    SessionActivityState.Checking -> R.string.drawer_activity_checking
+    SessionActivityState.Unavailable -> R.string.drawer_activity_unavailable
+}
+
 @Composable
 private fun SessionWorkBadgeChip(badge: SessionWorkBadge) {
     val icon: ImageVector = when (badge.kind) {
@@ -1687,18 +1714,29 @@ private fun ProfileBadge(
 @Composable
 private fun SessionActivityIndicator(state: SessionActivityState, label: String) {
     val color = when (state) {
+        SessionActivityState.Starting,
         SessionActivityState.Working -> RelayRefresh.Relay
         SessionActivityState.NeedsInput -> RelayRefresh.Amber
+        SessionActivityState.BackgroundWork,
+        SessionActivityState.Checking,
+        SessionActivityState.Unavailable,
+        -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(RoundedCornerShape(50))
-                .background(color),
+            modifier = if (state == SessionActivityState.BackgroundWork) {
+                Modifier
+                    .size(7.dp)
+                    .border(1.dp, color, CircleShape)
+            } else {
+                Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            },
         )
         Text(
             text = label,
@@ -1716,10 +1754,17 @@ private fun Modifier.sessionActivityBorder(
 ): Modifier {
     if (state == null) return this
     val color = when (state) {
+        SessionActivityState.Starting,
         SessionActivityState.Working -> RelayRefresh.Relay
         SessionActivityState.NeedsInput -> RelayRefresh.Amber
+        SessionActivityState.BackgroundWork,
+        SessionActivityState.Checking,
+        SessionActivityState.Unavailable,
+        -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val shouldRotate = animated && state == SessionActivityState.Working
+    val shouldRotate = animated && (
+        state == SessionActivityState.Starting || state == SessionActivityState.Working
+    )
     val phase = if (shouldRotate) {
         val transition = rememberInfiniteTransition(label = "session-activity")
         transition.animateFloat(
@@ -1825,20 +1870,45 @@ private fun Modifier.sessionActivityBorder(
     }
 }
 
-private fun sessionTimestampText(session: ChatSession, locale: Locale, context: Context): String? {
+@Composable
+private fun rememberDrawerClock(isEnabled: Boolean): Long {
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(isEnabled, lifecycleOwner) {
+        if (!isEnabled) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                nowMillis = System.currentTimeMillis()
+                delay(MINUTE_MILLIS - (nowMillis % MINUTE_MILLIS))
+            }
+        }
+    }
+    return nowMillis
+}
+
+internal fun sessionTimestampText(
+    session: ChatSession,
+    locale: Locale,
+    context: Context,
+    nowMillis: Long = System.currentTimeMillis(),
+): String? {
     val timestamp = session.activityTimestamp
     if (timestamp <= 0L) return null
     val hasDistinctActivity =
         session.lastActivityAt > 0L &&
             session.startTimestamp > 0L &&
             session.lastActivityAt != session.startTimestamp
-    val prefix = if (hasDistinctActivity) context.getString(R.string.drawer_timestamp_active) else context.getString(R.string.drawer_timestamp_started)
-    return "$prefix ${formatTimestamp(timestamp, locale, context)}"
+    val prefix = if (hasDistinctActivity) context.getString(R.string.drawer_timestamp_updated) else context.getString(R.string.drawer_timestamp_started)
+    return "$prefix ${formatTimestamp(timestamp, locale, context, nowMillis)}"
 }
 
-private fun formatTimestamp(millis: Long, locale: Locale, context: Context): String {
-    val now = System.currentTimeMillis()
-    val diff = now - millis
+private fun formatTimestamp(
+    millis: Long,
+    locale: Locale,
+    context: Context,
+    nowMillis: Long = System.currentTimeMillis(),
+): String {
+    val diff = nowMillis - millis
     return when {
         diff < 60_000 -> context.getString(R.string.drawer_just_now)
         diff < 3_600_000 -> "${diff / 60_000}m ago"
@@ -1846,3 +1916,5 @@ private fun formatTimestamp(millis: Long, locale: Locale, context: Context): Str
         else -> SimpleDateFormat("MMM d", locale).format(Date(millis))
     }
 }
+
+private const val MINUTE_MILLIS = 60_000L

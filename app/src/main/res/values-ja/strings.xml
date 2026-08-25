@@ -938,6 +938,10 @@
     <string name="drawer_search_sessions">セッションを検索</string>
     <string name="drawer_activity_working">処理中</string>
     <string name="drawer_activity_needs_input">入力が必要</string>
+    <string name="drawer_activity_starting">開始中</string>
+    <string name="drawer_activity_background_work">バックグラウンド処理</string>
+    <string name="drawer_activity_checking">確認中</string>
+    <string name="drawer_activity_unavailable">利用不可</string>
     <string name="drawer_new_thread">新しいスレッド</string>
     <string name="drawer_chats_not_named">この接続ではチャットの名前は自動的に付けられません。「⋮」→「名前の変更」を使用してください。</string>
     <string name="drawer_loading_sessions">セッションを読み込み中…</string>
@@ -967,7 +971,7 @@
     <string name="drawer_filter_pinned">固定された</string>
     <string name="drawer_filter_archive">アーカイブ</string>
     <string name="drawer_filter_sessions">セッション</string>
-    <string name="drawer_timestamp_active">アクティブ</string>
+    <string name="drawer_timestamp_updated">更新</string>
     <string name="drawer_timestamp_started">開始しました</string>
     <string name="drawer_just_now">ちょうど今</string>
 

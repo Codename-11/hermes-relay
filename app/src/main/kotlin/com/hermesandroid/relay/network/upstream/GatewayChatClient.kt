@@ -52,6 +52,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
@@ -277,6 +278,12 @@ class GatewayChatClient(
      */
     private val _processCapability = MutableStateFlow(GatewayProcessCapability.Unknown)
     val processCapability: StateFlow<GatewayProcessCapability> = _processCapability.asStateFlow()
+
+    /** Per-socket capability for upstream's process-wide live-session snapshot. */
+    private val _activeSessionCapability =
+        MutableStateFlow(GatewayActiveSessionCapability.Unknown)
+    val activeSessionCapability: StateFlow<GatewayActiveSessionCapability> =
+        _activeSessionCapability.asStateFlow()
 
     /**
      * Active personality the gateway is applying, as a config value ("none" when
@@ -805,6 +812,21 @@ class GatewayChatClient(
     /** Live id to persist beside a durable stored id while a turn is active. */
     fun currentLiveSessionId(storedId: String): String? =
         liveSessionId?.takeIf { storedSessionId == storedId }
+
+    /**
+     * Exact durable/profile owner already held by this client for [runtimeId].
+     * Unlike `session.active_list`, this mapping is safe for multiplexed profiles
+     * because Android recorded it when the runtime was created/resumed/detached.
+     */
+    fun knownSessionOwner(runtimeId: String): GatewayKnownSessionOwner? {
+        if (runtimeId == liveSessionId) {
+            val storedId = storedSessionId ?: return null
+            return GatewayKnownSessionOwner(storedId, liveSessionProfile)
+        }
+        return backgroundTurns[runtimeId]?.let { owner ->
+            GatewayKnownSessionOwner(owner.storedSessionId, owner.profile)
+        }
+    }
 
     /**
      * Point this client at a new dashboard route (e.g. LAN→Tailscale after a
@@ -2065,6 +2087,47 @@ class GatewayChatClient(
         )
     }
 
+    /**
+     * Fetch authoritative in-memory execution states from current upstream
+     * Hermes. `session.active_list` is process-wide: it accepts only an optional
+     * current runtime id and does not profile-filter its rows. Accordingly this
+     * transport returns rows unscoped and never derives activity from REST
+     * `is_active` or stamps the selected profile onto a row.
+     */
+    suspend fun listActiveSessions(): GatewayActiveSessionsResult {
+        if (_activeSessionCapability.value == GatewayActiveSessionCapability.Unsupported) {
+            return GatewayActiveSessionsResult.Unsupported
+        }
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (error: Exception) {
+            return GatewayActiveSessionsResult.TransientFailure(error)
+        }
+        val result = rpc(
+            "session.active_list",
+            buildJsonObject {
+                liveSessionId?.let { put("current_session_id", it) }
+            },
+        )
+        val error = result.exceptionOrNull()
+        if (error.isMethodNotFound()) {
+            _activeSessionCapability.value = GatewayActiveSessionCapability.Unsupported
+            return GatewayActiveSessionsResult.Unsupported
+        }
+        if (error != null) {
+            return GatewayActiveSessionsResult.TransientFailure(error)
+        }
+        _activeSessionCapability.value = GatewayActiveSessionCapability.Supported
+        return try {
+            val payload = result.getOrThrow()
+            val rows = payload["sessions"] as? JsonArray
+                ?: throw GatewayRpcException("session.active_list returned no sessions array")
+            GatewayActiveSessionsResult.Success(rows.map(::parseGatewayActiveSession))
+        } catch (parseError: Exception) {
+            GatewayActiveSessionsResult.TransientFailure(parseError)
+        }
+    }
+
     /** Stop one process owned by the current live gateway session. */
     suspend fun killProcess(processId: String): Result<Unit> {
         if (processId.isBlank()) {
@@ -2503,6 +2566,7 @@ class GatewayChatClient(
     private suspend fun connectOnce() {
         val connectStart = System.nanoTime()
         _processCapability.value = GatewayProcessCapability.Unknown
+        _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
@@ -2746,6 +2810,28 @@ class GatewayChatClient(
             watchPatterns = (process["watch_patterns"] as? JsonArray).orEmpty()
                 .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             watchHit = (process["watch_hit"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
+    }
+
+    private fun parseGatewayActiveSession(
+        element: kotlinx.serialization.json.JsonElement,
+    ): GatewayActiveSession {
+        val row = element as? JsonObject
+            ?: throw GatewayRpcException("session.active_list returned a non-object row")
+        val runtimeId = row.stringField("id")?.takeIf(String::isNotBlank)
+            ?: throw GatewayRpcException("session.active_list row returned no runtime id")
+        val storedId = row.stringField("session_key")?.takeIf(String::isNotBlank)
+            ?: throw GatewayRpcException("session.active_list row returned no session key")
+        val status = GatewayActiveSessionStatus.fromWire(row.stringField("status"))
+            ?: throw GatewayRpcException("session.active_list row returned an unknown status")
+        val lastActive = (row["last_active"] as? JsonPrimitive)?.doubleOrNull
+            ?: throw GatewayRpcException("session.active_list row returned no last_active")
+        return GatewayActiveSession(
+            runtimeSessionId = runtimeId,
+            storedSessionId = storedId,
+            status = status,
+            lastActiveEpochSeconds = lastActive,
+            profile = row.stringField("profile")?.trim()?.takeIf(String::isNotEmpty),
         )
     }
 
@@ -3222,6 +3308,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
@@ -3407,6 +3494,7 @@ class GatewayChatClient(
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
+        _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
     }

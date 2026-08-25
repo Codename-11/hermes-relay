@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.13.1] - 2026-08-25
+
+### Fixed
+
+- **Android session activity now follows live Hermes runtime truth.** Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work no longer come from the Dashboard's five-minute recency hint, and only complete, unambiguously resolved live snapshots clear stale state.
+
 ## [Android 1.13.0] - 2026-08-25
 
 ### Added

@@ -1,0 +1,19 @@
+{
+  "name": "active_status_profile_scope",
+  "live_session_id": "fixture-live-research",
+  "stored_session_id": "fixture-shared-stored-session",
+  "profile": "research",
+  "contract_requirements": [
+    "gateway.session_active_list"
+  ],
+  "initial_history": [],
+  "turns": [],
+  "active_list": {
+    "supported": true,
+    "snapshots": [
+      [
+        {"id": "fixture-live-research", "session_key": "fixture-shared-stored-session", "status": "waiting", "current": true}
+      ]
+    ]
+  }
+}

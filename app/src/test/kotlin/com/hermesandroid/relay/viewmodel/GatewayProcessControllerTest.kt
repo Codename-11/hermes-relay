@@ -318,10 +318,14 @@ class GatewayProcessControllerTest {
         controller.bind(source, "same-id", scopeKey = "profile-a")
         controller.sessionReady("same-id")
         runCurrent()
+        assertTrue(controller.ownsSnapshot("same-id", "profile-a"))
 
         controller.selectSession("same-id", scopeKey = "profile-b")
+        assertFalse(controller.ownsSnapshot("same-id", "profile-a"))
+        assertFalse(controller.ownsSnapshot("same-id", "profile-b"))
         controller.sessionReady("same-id")
         runCurrent()
+        assertTrue(controller.ownsSnapshot("same-id", "profile-b"))
         oldResult.complete(Result.success(listOf(process(id = "old-profile"))))
         runCurrent()
 
