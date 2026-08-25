@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network.upstream
 import android.content.Context
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.network.shutdownOffMainThread
+import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.MessageListResponse
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -56,6 +57,7 @@ import okio.BufferedSink
 @Serializable
 data class DashboardStatus(
     val authRequired: Boolean,
+    @SerialName("install_id") val installId: String? = null,
     val authProviders: List<String> = emptyList(),
     val authProviderDetails: List<DashboardAuthProvider> = emptyList(),
     @SerialName("auth_flows") val authFlows: List<String> = emptyList(),
@@ -446,6 +448,25 @@ class DashboardApiClient(
      * safe to mutate and round-trip back through [updateConfig].
      */
     suspend fun getConfig(): Result<JsonObject> = getJsonObject("/api/config")
+
+    suspend fun getProviderUsage(
+        profile: String? = null,
+        sessionId: String? = null,
+    ): Result<ProviderUsageResponse?> {
+        val query = buildList {
+            profile?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                add("profile=${queryValue(it)}")
+            }
+            sessionId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                add("session_id=${queryValue(it)}")
+            }
+        }
+        val suffix = query.joinToString(prefix = if (query.isEmpty()) "" else "?", separator = "&")
+        return getJsonObject("/api/plugins/hermes-relay/provider-usage$suffix")
+            .mapCatching { root ->
+                json.decodeFromJsonElement(ProviderUsageResponse.serializer(), root)
+            }
+    }
 
     /**
      * The config SCHEMA: `{fields: {<dot.path>: {type, description, category,
@@ -1464,8 +1485,16 @@ class DashboardApiClient(
     fun authLoginUrl(provider: String, next: String = "/"): String =
         authLoginUrl(baseUrl = baseUrl, provider = provider, next = next)
 
-    fun gatewayWebSocketUrl(ticket: String, path: String = "/api/ws"): String? =
-        gatewayWebSocketUrl(baseUrl = baseUrl, ticket = ticket, path = path)
+    fun gatewayWebSocketUrl(
+        ticket: String,
+        path: String = "/api/ws",
+        profile: String? = null,
+    ): String? = gatewayWebSocketUrl(
+        baseUrl = baseUrl,
+        ticket = ticket,
+        path = path,
+        profile = profile,
+    )
 
     fun shutdown() = shutdownOffMainThread("DashboardApiClient-shutdown") {
         okHttpClient.dispatcher.executorService.shutdown()
@@ -1722,6 +1751,7 @@ class DashboardApiClient(
                 authRequired = root.booleanField("auth_required")
                     ?: authObject.booleanField("required")
                     ?: false,
+                installId = root.stringField("install_id")?.trim()?.takeIf(String::isNotEmpty)?.take(256),
                 authProviders = providers.map { it.name },
                 authProviderDetails = providers,
                 authFlows = (root["auth_flows"] as? JsonArray).orEmpty().mapNotNull {

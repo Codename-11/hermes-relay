@@ -777,7 +777,13 @@ Four sub-decisions captured together:
    contains no tokens, secrets, config contents, or filesystem paths;
    `/bridge/activity` and `/media/inspect` remain loopback-only.
 
-4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. No business logic — the plugin never maintains its own state, never caches, never retries. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The one exception is `/push` — since FCM isn't wired, this route is a static stub returning `{configured: false, reason: "FCM not yet wired; …"}` with no network call. Keeps the four-tab nav layout correct for when FCM lands; swapping in real data only touches `PushConsole.jsx` + `plugin_api.py::get_push`.
+4. **Dashboard backend is a thin proxy; relay is source of truth.** `plugin_api.py` exposes five routes at `/api/plugins/hermes-relay/{overview,sessions,bridge-activity,media,push}` and forwards to the relay over `httpx.AsyncClient` with a 5-second timeout. It does not cache or retry. Relay connect-error / timeout / 5xx translate to `HTTPException(502, detail=…)` carrying the relay address, so the UI can render a "relay unreachable at 127.0.0.1:8767" banner; 4xx passes through verbatim. The `/push` route is a static stub until FCM is wired.
+
+   **2026-08-21 amendment:** the authenticated `/provider-usage` route is a
+   deliberate process-local exception. The Dashboard process owns the live
+   Gateway session, so this Relay-plugin route resolves its active credential
+   on demand and feeds the same provider-neutral Relay adapter without waiting
+   for another turn. It stores no provider secret or additional Dashboard state.
 
 **Consequences:**
 
@@ -1042,6 +1048,10 @@ two operational frictions as it grew:
   a release-merge from `dev`.
 - `dev` = **integration branch**. Feature branches target `dev`; the
   `[Unreleased]` CHANGELOG section lives there.
+- `origin/dev` is the single integration authority. Local `dev` is a
+  fast-forward-only mirror; concurrent work stays on task worktrees, and any
+  multi-branch batch uses a named integration branch plus PR rather than a
+  private local-`dev` queue.
 - Server pulls `dev` for staging. Users and `hermes-relay-update` track
   `main` and tags.
 - Releases are opened as PRs from `dev` into `main`, merged `--no-ff`,
@@ -2463,6 +2473,28 @@ boundary.
   surface first; Back from compact, hide, Stop, or cancel remains terminal,
   while the hidden session still observes the final `Closed` state and finishes
   without cancelling the completed turn.
+- Firmware WEB_SEARCH dispatch uses a separate transparent single-task Activity
+  that accepts only `android.speech.action.WEB_SEARCH`, requires the protected
+  `STATUS_BAR_SERVICE` caller permission and active Assistant role, ignores query
+  data, and asks the system-managed interaction service to show a real session.
+  Bounded readiness and show-failure cleanup close the trampoline when the platform
+  does not accept it. The service re-reads keyguard state immediately before show;
+  caller data never decides capture policy.
+- Each shown session owns a stable activation identifier. Only an unlocked
+  WEB_SEARCH session requests AssistStructure and screenshot callbacks and starts
+  listening from the same button press. Extraction is bounded and excludes hidden,
+  assist-blocked, and password subtrees; screenshots are optional and byte-bounded;
+  captured content never enters logs. Fail-soft app-private staging plus consumed,
+  cancellation, and stale markers prevents replay across processes.
+- Screen context belongs to one ordinary Standard voice turn, not to the chat
+  composer. It is labeled as untrusted, submitted through explicit per-turn
+  attachments, retired from later turns when the local turn is created, and deleted
+  only after authoritative Gateway or API acceptance. Preflight failure retains it
+  for Try again; unsupported routes reject the isolated submission rather than
+  dropping context. Realtime Agent neither consumes nor claims the context.
+- Activation heartbeats let the main runtime clean up after assistant-process loss.
+  Finish and show-failure paths clear pending/watchdog state, while Full Voice
+  explicitly transfers ownership before the session overlay stops heartbeats.
 - Connection, chat, and voice runtime ownership is application-lifetime in the
   main process rather than Activity-owned. The assistant service may initialize
   that graph and start a turn while no Activity exists; the app UI later binds
@@ -2482,6 +2514,12 @@ boundary.
 - Android does not grant third-party assistants Google's dedicated low-power
   hotword DSP integration. Local sherpa inference keeps pre-activation audio
   private but can consume materially more battery than the built-in assistant.
+- OEM WEB_SEARCH routing and platform assist delivery remain device behaviors;
+  source and host tests do not prove broad firmware compatibility. The exported
+  trampoline relies on the protected caller permission plus exact-action,
+  active-role, coalescing, and single-session gates. Physical certification still
+  covers repeated explicit invocation because Assistant-role ownership alone does
+  not authenticate the originating component.
 
 ---
 
@@ -3651,3 +3689,107 @@ upstream drift, Android state-machine defects, rendered lifecycle failures, and
 physical-device failures are reported as distinct evidence lanes. A physical
 pass is never inferred from JVM or source checks, and scheduled execution can
 be considered later without being silently introduced now.
+
+---
+
+## ADR 66 — Android Bot Mode is a separate upstream-owned messaging workspace
+
+**Status:** Accepted (2026-08-24).
+
+**Context.** Upstream Hermes Desktop presents profiles as Bots with one durable
+canonical `Bot Chat`, profile-scoped routines, group rooms, and source-qualified
+multi-gateway ownership. Folding those rows into Android's ordinary session
+drawer would mix a standing identity/room roster with scratch conversations and
+repeat the category error avoided for platform Threads. Desktop also owns live
+group orchestration locally while publishing a bounded recent-history projection
+through Gateway `ui_meta` for other clients.
+
+**Decision.** The existing drawer gains one `Bot Mode` entry and otherwise keeps
+its session behavior. Bot Mode is a full-screen messenger list with gateway,
+All/Bots/Groups, search, activity, individual Bot, and group-room affordances.
+It aggregates every saved gateway with bounded concurrency and keeps the
+foreground connection unchanged. Last-good rows remain visible as offline.
+Upstream `install_id` collapses two saved routes to the same installation before
+same-profile handle disambiguation.
+
+Android consumes `profiles.list {include_sessions:true}` only for this surface.
+The Gateway's `canonical_session` wins. When absent, Android performs the exact
+hidden-title lookup for `Bot Chat`, fails closed on lookup error, and creates and
+materializes a hidden canonical row only after authoritative absence. Opening it
+uses the existing profile/session chat owner and exposes a direct return to Bot
+Mode. `/new` and `/reset` in that canonical surface run the existing bounded
+compression path instead of forking the relationship. New Bot creates an upstream profile with shared authentication and writes
+only the small `hermes-bots` metadata marker; profile skills/model remain managed
+through the established Hermes surfaces.
+
+Every Bot owner is the immutable `(connectionId, profile)` pair. A typed route
+pool holds separate clients for separate owners, validates bearer authority
+against that connection's exact trusted Dashboard base, adds the profile to the
+WebSocket URL, mints a fresh one-use ticket on every dial, and uses request or
+retained leases so a stale release cannot evict a replacement. Opening a Bot
+uses a dedicated Gateway-only Chat destination and Dashboard history reader;
+it never switches the globally active connection or lets API fallback consult a
+different database.
+
+Group rooms parse the bounded v3 `hermes-bots-groups` projection without its
+optional embedded image. They render read-only and cannot dispatch or mutate
+room state. Android does not copy Desktop's round-robin coordinator or local
+plugin store.
+
+**Consequences.** Vanilla upstream owns Bot identity, history, auth, and prompt
+protocol; Relay remains optional. Ordinary sessions remain legible, same-named
+profiles on different gateways cannot alias, a remote Bot Chat cannot leak into
+the active connection, and a group cannot gain a competing mobile writer.
+Route-scoped Relay media, voice, background delivery notifications, autonomous
+peer delivery, and writable room control remain separate capabilities rather
+than implicit authority gained from appearing in the union roster.
+
+---
+
+## ADR 67 — Provider account usage is Relay-enhanced, normalized, and user-presented at top level
+
+**Context.** Android had no account-limit surface even though current Hermes
+already models Codex and Nous usage. A proposed OpenCode Go-only Settings card
+introduced a Relay proxy, fixed provider windows, and inferred dollar spend
+from rounded percentages. That shape could not represent multiple providers,
+made changing plans look authoritative, and placed a provider-specific card on
+the Settings landing page for hosts where it did not apply.
+
+**Decision.** Android owns one top-level **Usage & limits** Settings destination,
+parallel to Hermes Management rather than nested inside it. The device-level
+landing presentation is Summary by default, with opt-in Expanded and Hidden
+modes plus per-provider visibility. The full destination remains reachable in
+all three modes.
+
+When Dashboard auth is available, the client first calls the Relay-owned
+Dashboard-plugin usage route so the live session's active credential can be
+resolved directly. Paired standalone clients fall back to Relay
+`GET /usage/providers`, which requires the operator to set
+`RELAY_PROVIDER_USAGE_ENABLED=1`; additive upstream Gateway `account.usage`
+remains the bounded single-account fallback. Relay reuses Hermes's existing
+account model for Codex and Nous and supplies the missing OpenCode Go adapter. OpenCode Go
+renders only the percentage and reset values returned by the provider; Android
+does not infer dollars or embed plan caps. Provider keys stay host-side.
+The active profile is carried on the compatibility request and validated before
+Hermes's task-local home override scopes every account lookup, so concurrent
+profiles never collapse onto the root account.
+
+For Codex pools, Android also carries its current Gateway session id. The
+authenticated Relay Dashboard-plugin route runs in the process that owns the
+live agent, reads its authoritative stable pool-entry id on demand, and returns
+the provider-neutral usage response without waiting for another turn. Relay
+fetches each pool entry's usage host-side, returns safe labels and hashed opaque
+ids, and marks the exact active entry. Turn hooks retain a secret-free
+profile-local snapshot only for standalone Relay clients without Dashboard
+access. Missing live-agent/session evidence is rendered as active unknown; it
+is never inferred from the first credential or from the legacy singleton.
+
+xAI and other providers remain absent until their account-level source and
+credential scope can be represented honestly. Per-request or session spend is
+not labeled as an account quota.
+
+**Consequences.** Relay can evolve richer provider adapters without requiring
+an upstream Hermes change, while vanilla/current Hermes retains a bounded
+single-account fallback. Merely configuring a provider credential does not
+expose tokens to paired devices. The Android UI can add providers without
+adding provider-specific screens or silently treating missing data as zero usage.

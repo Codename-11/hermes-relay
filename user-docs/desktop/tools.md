@@ -275,10 +275,14 @@ CUA Driver is a separate optional dependency. Hermes-Relay does not bundle or
 silently install/update it. `computer-use cua status|check-update` are
 read-only; `install|update` require explicit `--yes` confirmation. Hermes uses
 the canonical upstream package, validates versioned GitHub release metadata and
-installer SHA-256, and refuses updates outside `>=0.19.3,<0.20.0`. These checks
+installer SHA-256, and follows Hermes' `>=0.20.0` minimum-plus-runtime-contract
+policy instead of pinning an upper version. The driver must continue to advertise
+the required manifest, daemon/MCP arguments, and tools. Windows sessions launch
+that MCP runtime directly in standard mode instead of depending on the separately
+updated machine-wide daemon. These checks
 do not claim a Windows publisher signature. Hermes executes the verified
 temporary installer under a sanitized environment, then validates the canonical
-`packages/current` binary, driver manifest, and permission mode. The UI and
+`packages/current` binary, driver manifest, and direct runtime contract. The UI and
 `computer-use cua health` can recheck accessibility health without changing
 the selected backend. Hermes forces CUA telemetry off for
 its child invocations; any future telemetry opt-in belongs to the local

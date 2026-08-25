@@ -8,7 +8,7 @@ titleTemplate: Hermes-Relay 日本語ドキュメント
 hero:
   name: ドキュメント
   text: 接続したいデバイスから始めましょう。
-  tagline: Android アプリまたは CLI を、すでに使用している Hermes Agent に接続します。高度なツールが必要なときだけ Relay を追加できます。
+  tagline: Android と CLI を Hermes Agent に接続し、現在の完全な機能には推奨 Relay 拡張を追加します。
   actions:
     - theme: brand
       text: Android クイックスタート
@@ -25,8 +25,8 @@ features:
     details: Chat、Manage、標準 Voice は、変更を加えていない Hermes Agent に直接接続します。
   - title: 2 種類の明確なアプリ
     details: 通常は Google Play 版を推奨します。Sideload 版では画面読み取り、タップ、ナビゲーションなどの Device Control を利用できます。
-  - title: Relay はオプション
-    details: ターミナル、スマートフォン操作、メディア、通知、リモートツールが必要な場合にのみ Relay プラグインを追加します。
+  - title: 完全な体験には Relay を推奨
+    details: Chat、Manage、Voice は upstream を標準とし、Relay が Terminal/TUI、通知、メディア、デスクトップツール、Device Control を補います。
 ---
 
 ## この翻訳の対象範囲

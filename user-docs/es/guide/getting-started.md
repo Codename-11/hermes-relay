@@ -5,8 +5,11 @@ canonical_source: /guide/getting-started
 
 # Instalación y configuración
 
-Tres pasos: instala la aplicación, conéctala a Hermes y envía el primer mensaje.
-Si Hermes ya está funcionando, no necesitas instalar nada adicional en el servidor.
+Esta es la referencia detallada para elegir versión, conectar manualmente,
+configurar acceso remoto y revisar la seguridad. Si Hermes Dashboard ya es
+accesible, usa el [Inicio rápido](./quick-start).
+
+<AndroidSetupPath mode="reference" />
 
 ::: tip Estado de la traducción
 Esta guía resumida cubre la ruta habitual. Las opciones avanzadas de servidor,
@@ -63,12 +66,17 @@ Puedes añadir y probar una dirección Dashboard de Tailscale como
 La misma sesión habilita Chat, sesiones, Manage y Voice. Es normal que Relay
 esté sin emparejar y que API fallback no esté disponible.
 
-## Opcional: añade las herramientas de Relay
+## Recomendado: completa la configuración con Relay {#relay-server-optional}
 
-Instala el complemento solo para terminal, Device Control, multimedia,
-notificaciones o herramientas remotas avanzadas. Los comandos canónicos son
+El recorrido upstream sigue funcionando sin plugin. Relay se recomienda para
+Terminal/TUI, notificaciones, multimedia, herramientas de escritorio, voz
+mejorada, sesiones Relay y Device Control opcional. Los comandos canónicos son
 `hermes plugins install Codename-11/hermes-relay/plugin --enable`,
 `hermes relay doctor`, `hermes relay start --no-ssl` y `hermes pair`.
+
+En el Web Dashboard, abre **Relay**, usa primero **Connect mobile app** y luego
+**Pair new device**, y escanea ambos QR con Android. Si no puedes usar QR,
+siguen disponibles la entrada de URL/código y `hermes pair --register-code`.
 
 Device Control necesita **las dos cosas**: la aplicación Sideload y un Relay emparejado.
 

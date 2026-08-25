@@ -2,7 +2,51 @@
 
 Pairing exchanges a one-time 6-character code for a long-lived session token, stored at `~/.hermes/remote-sessions.json` (mode 0600). This is the same file the [Android client](../guide/getting-started.md) uses — **pair once from either, both work**. The token survives reboots, picks up automatic reconnects with TOFU cert pinning on `wss://`, and is revocable from any other paired client (see [`hermes-relay devices`](./subcommands.md#hermes-relay-devices)).
 
-## Step 1 — mint a code on the server
+::: warning The Hermes host needs the Relay plugin
+The desktop CLI runs on Windows, macOS, and Linux, but the Hermes machine you
+pair with must have the Relay plugin installed, enabled, and running. On the
+Hermes host, complete this once before minting a pairing code:
+
+```bash
+hermes plugins install Codename-11/hermes-relay/plugin --enable
+hermes relay doctor
+hermes relay start --no-ssl
+```
+
+`--no-ssl` is for a trusted LAN or VPN path. For access outside that network,
+use the [recommended Tailscale or TLS setup](../guide/remote-access.md).
+:::
+
+## Recommended — paste the complete invite
+
+Create the invite from whichever Hermes surface is already open:
+
+1. **Web Dashboard:** open **Relay → Pair new device → Copy invite**.
+2. **Official Hermes Desktop:** open the **Relay** pane, click **Pair new
+   device**, then **Copy**.
+3. **Host terminal:** run `hermes pair` and copy the printed
+   `hermes-relay://pair?...` invite URL.
+
+On the computer you are pairing:
+
+```bash
+hermes-relay pair --pair-qr "hermes-relay://pair?payload=…" --grant-tools
+```
+
+Despite the flag name, `--pair-qr` accepts the pasted invite URL or the raw QR
+payload; the desktop client does not need a camera. The full invite is preferred
+because it carries the operator-reviewed certificate pin and ordered endpoint
+candidates. The client probes secure routes first, stores the selected route,
+and retains the remaining candidates for reconnect.
+
+The invite and six-character code are single-use. Generate a fresh invite when
+one expires or has already been consumed.
+
+## Manual fallback — Relay URL + code
+
+Use this only when the full invite cannot be copied.
+
+### 1. Mint a code on the server
 
 SSH into your Hermes host (or use any terminal already on it):
 
@@ -21,7 +65,7 @@ The code is valid for **10 minutes** (the default) and **single-use**. After fir
 
 If you don't have shell access to the host, run this from a Hermes chat session (any client, including Android): `/hermes-relay-pair`.
 
-## Step 2 — pair on the client
+### 2. Pair on the client
 
 On your laptop/workstation:
 
@@ -61,6 +105,32 @@ Subsequent `hermes-relay` commands reuse the stored token. When that token nears
 ::: tip Port default
 A bare `ws://<host>` with no port defaults to `:8767` (the relay's default), and the CLI tells you it did. A `wss://<host>` is left untouched — it's usually a reverse-proxy / Tailscale Serve front on `:443` — so include the port explicitly if your secure relay listens elsewhere.
 :::
+
+## First use
+
+Pairing is complete when the CLI reports that its token was stored. Pick the
+first result you want:
+
+```bash
+# Open the paired Hermes TUI now
+hermes-relay
+
+# Confirm the selected host and connection state
+hermes-relay status
+
+# Windows: open the management UI from the same installation
+hermes-relay ui
+```
+
+To keep approved desktop tools available in the background, include
+`--grant-tools` when pairing and then start the daemon:
+
+```bash
+hermes-relay daemon start
+```
+
+The grant is host-scoped and remains subject to the access policy you select
+locally. Start with the TUI if you only want to confirm that pairing works.
 
 ## Paste safety — what if the code comes out garbled?
 

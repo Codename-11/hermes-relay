@@ -76,6 +76,7 @@ class DashboardApiClientTest {
                     """
                     {
                       "version": "0.16.0",
+                      "install_id": "  install-a  ",
                       "auth_required": true,
                       "auth_providers": ["basic", "nous"]
                     }
@@ -92,6 +93,7 @@ class DashboardApiClientTest {
         assertEquals(listOf("basic", "nous"), status.authProviders)
         assertEquals("basic", status.authProviderDetails.first().name)
         assertEquals("0.16.0", status.version)
+        assertEquals("install-a", status.installId)
     }
 
     @Test
@@ -122,6 +124,44 @@ class DashboardApiClientTest {
         assertEquals("multiplex", status.gatewayMode)
         assertEquals(8642, status.gateways.single().ports["api_server"])
         assertEquals(listOf("default", "worker"), status.gateways.single().servedProfiles)
+    }
+
+    @Test
+    fun getProviderUsage_carriesSessionAndParsesCredentialPool() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """
+                {
+                  "schema_version": 2,
+                  "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
+                  "providers": [{
+                    "id": "openai-codex",
+                    "display_name": "Codex",
+                    "status": "available",
+                    "active_credential_state": "known",
+                    "credentials": [{
+                      "id": "abc123",
+                      "label": "bailey",
+                      "active": true,
+                      "status": "available"
+                    }]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val usage = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProviderUsage(profile = "victor", sessionId = "session/42")
+            .getOrThrow()!!
+        val request = server.takeRequest().requestUrl!!
+
+        assertEquals("/api/plugins/hermes-relay/provider-usage", request.encodedPath)
+        assertEquals("victor", request.queryParameter("profile"))
+        assertEquals("session/42", request.queryParameter("session_id"))
+        assertEquals("bailey", usage.providers.single().credentials.single().label)
+        assertTrue(usage.providers.single().credentials.single().active)
+        assertTrue(usage.relayEnhanced)
     }
 
     @Test
@@ -289,6 +329,7 @@ class DashboardApiClientTest {
         val wsUrl = DashboardApiClient.gatewayWebSocketUrl(
             baseUrl = "https://example.com/hermes/",
             ticket = "abc/123",
+            profile = "research bot",
         )
         val landingPath = DashboardApiClient.authLandingPath("https://example.com/hermes/")
 
@@ -297,7 +338,7 @@ class DashboardApiClientTest {
             authUrl,
         )
         assertEquals(
-            "wss://example.com/hermes/api/ws?ticket=abc%2F123",
+            "wss://example.com/hermes/api/ws?ticket=abc%2F123&profile=research%20bot",
             wsUrl,
         )
         assertEquals("/hermes/", landingPath)

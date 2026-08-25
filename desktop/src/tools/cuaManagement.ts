@@ -11,8 +11,7 @@ import {
   type CuaProcessRunner
 } from './cuaDriver.js'
 
-export const CUA_SUPPORTED_MIN_VERSION = '0.19.3'
-export const CUA_SUPPORTED_MAX_EXCLUSIVE = '0.20.0'
+export const CUA_SUPPORTED_MIN_VERSION = '0.20.0'
 const TRUSTED_REPOSITORY = 'trycua/cua'
 const TRUSTED_PRODUCT = 'cua-driver-rs'
 const RELEASE_BASE = 'https://github.com/trycua/cua/releases/download'
@@ -51,7 +50,7 @@ export interface CuaManagementStatus {
   bundled: false
   supported_range: {
     minimum: typeof CUA_SUPPORTED_MIN_VERSION
-    maximum_exclusive: typeof CUA_SUPPORTED_MAX_EXCLUSIVE
+    maximum_exclusive: null
   }
   update?: CuaUpdateStatus
   operation?: {
@@ -98,8 +97,7 @@ function compareVersion(left: string, right: string): number | null {
 
 export function isSupportedCuaVersion(value: string): boolean {
   const minimum = compareVersion(value, CUA_SUPPORTED_MIN_VERSION)
-  const maximum = compareVersion(value, CUA_SUPPORTED_MAX_EXCLUSIVE)
-  return minimum !== null && maximum !== null && minimum >= 0 && maximum < 0
+  return minimum !== null && minimum >= 0
 }
 
 function canonicalPaths(homeDir: string): { executable: string; releases: string } {
@@ -208,7 +206,7 @@ export async function getCuaManagementStatus(
     bundled: false,
     supported_range: {
       minimum: CUA_SUPPORTED_MIN_VERSION,
-      maximum_exclusive: CUA_SUPPORTED_MAX_EXCLUSIVE
+      maximum_exclusive: null
     }
   }
 }

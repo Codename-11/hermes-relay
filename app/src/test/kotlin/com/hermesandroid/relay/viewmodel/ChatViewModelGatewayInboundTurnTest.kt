@@ -3,6 +3,7 @@ package com.hermesandroid.relay.viewmodel
 import android.os.Handler
 import android.os.Looper
 import com.hermesandroid.relay.data.AgentDisplay
+import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.ChatTurnAskCheckpoint
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
@@ -43,6 +44,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -53,6 +55,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.Base64
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -998,6 +1001,72 @@ class ChatViewModelGatewayInboundTurnTest {
         shadowOf(Looper.getMainLooper()).idleFor(250, TimeUnit.MILLISECONDS)
         assertFalse(handler.messages.value.any { it.content == "Canceled answer" })
         assertTrue(handler.messages.value.any { "Stopped" in it.badges })
+    }
+
+    @Test
+    fun stopClearsStaleBusyStateAfterTerminalBubbleAlreadySettled() {
+        // Exercise Stop's route-independent fallback without the Gateway
+        // orphan-state observer settling this synthetic state first.
+        viewModel.streamingEndpoint = "sessions"
+        handler.onTextDelta("stale-answer", "Finished answer")
+        handler.onTurnComplete("stale-answer")
+        assertFalse(handler.messages.value.single().isStreaming)
+        assertTrue(handler.isStreaming.value)
+
+        viewModel.cancelStream()
+
+        assertFalse(handler.isStreaming.value)
+        assertNull(handler.turnStatus.value)
+    }
+
+    @Test
+    fun completedGatewayBubbleAutomaticallySettlesComposerWithoutInput() {
+        handler.onTextDelta("completed-answer", "Finished answer")
+        handler.onTurnComplete("completed-answer")
+
+        awaitCondition { !handler.isStreaming.value }
+
+        assertFalse(handler.messages.value.single().isStreaming)
+        assertFalse(gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID))
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun completedBubbleKeepsComposerBusyWhileGatewaySessionStillOwnsTheRun() {
+        viewModel.sendMessage("Continue through another assistant turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID) }
+        val assistantId = handler.messages.value.single { it.role == MessageRole.ASSISTANT }.id
+
+        handler.onTextDelta(assistantId, "First assistant message")
+        handler.onTurnComplete(assistantId)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(handler.isStreaming.value)
+        assertTrue(gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID))
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Final assistant message") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { !handler.isStreaming.value }
+    }
+
+    @Test
+    fun newChatClearsStaleBusyStateWhenNoLiveGatewayTurnRemains() {
+        handler.onTextDelta("stale-answer", "Finished answer")
+        assertTrue(handler.isStreaming.value)
+        assertFalse(gatewayClient.hasActiveTurn())
+
+        viewModel.createNewChat()
+
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.isEmpty())
+        assertNull(handler.currentSessionId.value)
     }
 
     @Test
@@ -1957,11 +2026,197 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun gatewayVoiceTurnDoesNotRequireApiFallback() {
-        viewModel.sendVoiceMessage("local voice turn", "Respond for spoken playback")
+        val result = viewModel.sendVoiceMessage(
+            "local voice turn",
+            "Respond for spoken playback",
+        )
         val params = gatewayHarness.awaitRpc("prompt.submit")
 
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
         assertEquals(JsonPrimitive("local voice turn"), params["text"])
         assertEquals(0, apiCompletionsRequestCount.get())
+    }
+
+    @Test
+    fun gatewayVoiceTurn_uploadsUntrustedTextAndScreenshotBeforePromptSubmit() {
+        val accepted = AtomicInteger(0)
+        gatewayHarness.fileAttachPayload = buildJsonObject {
+            put("attached", true)
+            put("ref_text", "@file:current-screen-context.txt")
+        }
+        val framed = """
+            [UNTRUSTED SCREEN CONTENT]
+            Visible screen text:
+            Vehicle settings
+            Attached current-screen image: untrusted user-provided screen content.
+            [/UNTRUSTED SCREEN CONTENT]
+        """.trimIndent()
+        val contextBytes = framed.toByteArray()
+        val contextAttachment = Attachment(
+            contentType = "text/plain",
+            content = Base64.getEncoder().encodeToString(contextBytes),
+            fileName = "current-screen-context.txt",
+            fileSize = contextBytes.size.toLong(),
+        )
+        val screenshot = Attachment(
+            contentType = "image/jpeg",
+            content = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)),
+            fileName = "current-screen.jpg",
+            fileSize = 3,
+        )
+
+        val result = viewModel.sendVoiceMessage(
+            text = "What is on screen?",
+            interfaceContextPrompt = framed,
+            attachments = listOf(screenshot),
+            gatewayAttachments = listOf(contextAttachment),
+            hasScreenContext = true,
+            onTransportAccepted = { accepted.incrementAndGet() },
+        )
+        val submit = gatewayHarness.awaitRpc("prompt.submit")
+        val fileAttach = gatewayHarness.awaitRpc("file.attach")
+        gatewayHarness.awaitRpc("image.attach_bytes")
+
+        val methods = gatewayHarness.rpcLog.map { it.first }
+        assertTrue(methods.indexOf("file.attach") < methods.indexOf("prompt.submit"))
+        assertTrue(methods.indexOf("image.attach_bytes") < methods.indexOf("prompt.submit"))
+        val dataUrl = (fileAttach["data_url"] as JsonPrimitive).content
+        val uploadedText = String(Base64.getDecoder().decode(dataUrl.substringAfter(',')))
+        assertEquals(framed, uploadedText)
+        assertEquals(
+            "@file:current-screen-context.txt\n\nWhat is on screen?",
+            (submit["text"] as JsonPrimitive).content,
+        )
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
+        awaitCondition { accepted.get() == 1 }
+        assertEquals(1, accepted.get())
+        assertEquals(
+            listOf(screenshot),
+            handler.messages.value.last { it.role == MessageRole.USER }.attachments,
+        )
+        assertEquals(listOf(screenshot), viewModel.messages.value.last { it.role == MessageRole.USER }.attachments)
+    }
+
+    @Test
+    fun voiceTurnExplicitAttachment_doesNotConsumeComposerDraftAttachment() {
+        val draft = Attachment("text/plain", "ZHJhZnQ=", "draft.txt")
+        val screen = Attachment("image/jpeg", "c2NyZWVu", "current-screen.jpg")
+        viewModel.addAttachment(draft)
+
+        val submitted = viewModel.sendVoiceMessage(
+            "What is on screen?",
+            "Untrusted screen context",
+            listOf(screen),
+        )
+
+        assertTrue(submitted is VoiceMessageSubmissionResult.Submitted)
+        assertEquals(listOf(draft), viewModel.pendingAttachments.value)
+        assertEquals(listOf(screen), handler.messages.value.last { it.role == MessageRole.USER }.attachments)
+    }
+
+    @Test
+    fun gatewayVoiceAttachmentPreflightFailure_doesNotAcceptContext() {
+        gatewayHarness.methodNotFound.add("image.attach_bytes")
+        gatewayHarness.methodNotFound.add("image.attach.bytes")
+        val accepted = AtomicInteger(0)
+        val failed = AtomicInteger(0)
+
+        val result = viewModel.sendVoiceMessage(
+            text = "Inspect this screen",
+            interfaceContextPrompt = "[UNTRUSTED SCREEN CONTENT]",
+            attachments = listOf(
+                Attachment(
+                    contentType = "image/jpeg",
+                    content = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)),
+                    fileName = "current-screen.jpg",
+                )
+            ),
+            hasScreenContext = true,
+            onTransportAccepted = { accepted.incrementAndGet() },
+            onTransportFailed = { failed.incrementAndGet() },
+        )
+
+        assertTrue(result is VoiceMessageSubmissionResult.Submitted)
+        awaitCondition { failed.get() == 1 }
+        assertEquals(0, accepted.get())
+        assertEquals(1, failed.get())
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun voiceTurnDuringActiveTurn_isRejectedAndRetainsComposerDraft() {
+        val draft = Attachment("text/plain", "ZHJhZnQ=", "draft.txt")
+        viewModel.sendMessage("First turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.addAttachment(draft)
+
+        val submitted = viewModel.sendVoiceMessage(
+            "Second voice turn",
+            "Untrusted screen context",
+            listOf(Attachment("image/jpeg", "c2NyZWVu")),
+        )
+
+        assertTrue(submitted is VoiceMessageSubmissionResult.Rejected)
+        assertEquals(listOf(draft), viewModel.pendingAttachments.value)
+        assertEquals(1, handler.messages.value.count { it.role == MessageRole.USER })
+    }
+
+    @Test
+    fun phoneThreadVoiceContext_isRejectedBeforeLocalTurnCreation() {
+        assertNotNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = true,
+                activeSessionSource = null,
+                hasIsolatedContext = true,
+            )
+        )
+        assertNotNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = false,
+                activeSessionSource = "phone",
+                hasIsolatedContext = true,
+            )
+        )
+        assertNull(
+            voiceTurnTransportRejection(
+                pendingPhoneThread = true,
+                activeSessionSource = null,
+                hasIsolatedContext = false,
+            )
+        )
+
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "phone-thread",
+                title = "Phone thread",
+                model = null,
+                source = "phone",
+            )
+        )
+        handler.setSessionId("phone-thread")
+        val beforeUsers = handler.messages.value.count { it.role == MessageRole.USER }
+
+        val result = viewModel.sendVoiceMessage(
+            text = "Use this screen",
+            interfaceContextPrompt = "[UNTRUSTED SCREEN CONTENT]",
+            gatewayAttachments = listOf(Attachment("text/plain", "Y29udGV4dA==")),
+            hasScreenContext = true,
+        )
+
+        assertTrue(result is VoiceMessageSubmissionResult.Rejected)
+        assertEquals(beforeUsers, handler.messages.value.count { it.role == MessageRole.USER })
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" })
+
+        val proactiveCalls = AtomicInteger(0)
+        viewModel.onProactiveReply = { _, _, _, _ -> proactiveCalls.incrementAndGet() }
+        val ordinaryVoice = viewModel.sendVoiceMessage(
+            text = "Ordinary context-free voice",
+            interfaceContextPrompt = "Respond for spoken playback",
+            hasScreenContext = false,
+        )
+
+        assertTrue(ordinaryVoice is VoiceMessageSubmissionResult.Submitted)
+        assertEquals(1, proactiveCalls.get())
     }
 
     @Test

@@ -102,6 +102,11 @@ class RelayConfig:
     trust_proxy_headers: bool = False
     allow_insecure_api_bearer: bool = False
 
+    # Provider-account usage can expose billing and quota metadata to paired
+    # devices. Provider credentials alone are not consent to that disclosure;
+    # operators must explicitly enable the read-only mobile surface.
+    provider_usage_enabled: bool = False
+
     # Provider-neutral voice output broker. This is the default assistant
     # speech renderer: final Hermes text goes in, streamed provider PCM comes
     # out. Realtime providers remain available separately as agent-mode tests.
@@ -160,6 +165,12 @@ class RelayConfig:
     @classmethod
     def from_env(cls) -> RelayConfig:
         """Build config from environment variables, falling back to defaults."""
+        hermes_home = (os.getenv("HERMES_HOME") or "").strip()
+        default_hermes_config = (
+            str(Path(hermes_home).expanduser() / "config.yaml")
+            if hermes_home
+            else cls.hermes_config_path
+        )
         config = cls(
             host=os.getenv("RELAY_HOST", cls.host),
             port=int(os.getenv("RELAY_PORT", str(cls.port))),
@@ -167,7 +178,7 @@ class RelayConfig:
             ssl_key=os.getenv("RELAY_SSL_KEY"),
             webapi_url=os.getenv("RELAY_WEBAPI_URL", cls.webapi_url),
             hermes_config_path=os.getenv(
-                "RELAY_HERMES_CONFIG", cls.hermes_config_path
+                "RELAY_HERMES_CONFIG", default_hermes_config
             ),
             log_level=os.getenv("RELAY_LOG_LEVEL", cls.log_level),
             terminal_shell=os.getenv("RELAY_TERMINAL_SHELL") or None,
@@ -282,6 +293,12 @@ class RelayConfig:
         ).strip().lower()
         if insecure_api_bearer in ("1", "true", "yes", "on"):
             config.allow_insecure_api_bearer = True
+
+        provider_usage = os.getenv(
+            "RELAY_PROVIDER_USAGE_ENABLED", ""
+        ).strip().lower()
+        if provider_usage in ("1", "true", "yes", "on"):
+            config.provider_usage_enabled = True
 
         apply_voice_output_config_file(config)
         apply_realtime_voice_config_file(config)

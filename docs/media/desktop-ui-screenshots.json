@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "description": "Deterministic, public-safe Windows CLI UI screenshots captured from the production React surface.",
+  "capture": {
+    "command": "node desktop/tray/scripts/capture-desktop-ui.mjs",
+    "viewport": {
+      "width": 493,
+      "height": 785
+    },
+    "fixture": "Browser fallback with fixed UTC time and public example host data",
+    "websiteSync": "node website/scripts/desktop-ui-assets.mjs sync",
+    "websiteCheck": "node website/scripts/desktop-ui-assets.mjs check"
+  },
+  "scenes": [
+    {
+      "id": "overview",
+      "title": "Connected desktop overview",
+      "source": "assets/screenshots/desktop-ui/overview.png",
+      "website": "website/public/product/desktop-ui/overview.png",
+      "captureNote": "Connected public example host, transport, access policy, and local activity."
+    },
+    {
+      "id": "host-access",
+      "title": "Host access presets",
+      "source": "assets/screenshots/desktop-ui/host-access.png",
+      "website": "website/public/product/desktop-ui/host-access.png",
+      "captureNote": "Production host access screen with the four consent presets."
+    },
+    {
+      "id": "activity-detail",
+      "title": "Local activity detail",
+      "source": "assets/screenshots/desktop-ui/activity-detail.png",
+      "website": "website/public/product/desktop-ui/activity-detail.png",
+      "captureNote": "Sanitized PowerShell request timeline and locally retained result detail."
+    },
+    {
+      "id": "settings",
+      "title": "Computer control and updates",
+      "source": "assets/screenshots/desktop-ui/settings.png",
+      "website": "website/public/product/desktop-ui/settings.png",
+      "captureNote": "CUA Driver readiness, safety controls, maintenance status, and diagnostics."
+    },
+    {
+      "id": "settings-update",
+      "title": "Desktop bundle updates",
+      "source": "assets/screenshots/desktop-ui/settings-update.png",
+      "website": "website/public/product/desktop-ui/settings-update.png",
+      "captureNote": "Current CLI UI bundle version, update state, and local activity controls."
+    }
+  ],
+  "sourceFingerprint": {
+    "algorithm": "sha256",
+    "normalization": "text-lf-v1",
+    "digest": "8cf00c04da9e80621b439563145be49ede9539ac95ab903b1903763004e370bc",
+    "files": [
+      "desktop/tray/ui/App.tsx",
+      "desktop/tray/ui/main.tsx",
+      "desktop/tray/ui/styles.css",
+      "desktop/tray/ui/types.ts",
+      "desktop/tray/index.html",
+      "desktop/tray/icons/icon-256.png",
+      "desktop/tray/package-lock.json",
+      "desktop/src/endpoint.ts",
+      "desktop/src/transportSecurity.ts",
+      "desktop/tray/scripts/vite.screenshots.config.mjs",
+      "desktop/tray/scripts/capture-desktop-ui.mjs",
+      "desktop/tray/scripts/desktop-ui-source-fingerprint.mjs"
+    ]
+  }
+}

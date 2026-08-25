@@ -77,7 +77,7 @@ def compare_versions(current: str, latest: str) -> int:
 
 
 def pick_latest_plugin_tag(releases: Any) -> Optional[str]:
-    """Pick the highest Server version from a GitHub releases payload.
+    """Pick the highest Plugin version from a GitHub releases payload.
 
     ``releases`` is the decoded JSON list from the GitHub releases API. Drafts
     are ignored; pre-releases are considered (the plugin ships ``-alpha``/``-rc``

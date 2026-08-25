@@ -7,8 +7,10 @@ Uses FastAPI's ``TestClient`` + ``httpx.MockTransport`` patched over
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import FastAPI
@@ -94,6 +96,41 @@ class SessionsTests(PluginApiTestCase):
         resp = self.client.get("/sessions")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), payload)
+
+
+class ProviderUsageTests(PluginApiTestCase):
+    def test_reads_active_credential_from_live_dashboard_session(self) -> None:
+        profile_home = Path("/profiles/victor").resolve()
+        provider_usage = SimpleNamespace(
+            resolve_profile_home=lambda _config, _profile: profile_home,
+            collect_provider_usage=AsyncMock(
+                return_value={"schema_version": 2, "providers": []}
+            ),
+        )
+        hooks = SimpleNamespace(
+            resolve_live_active_credential=lambda _session: {
+                "profile_home": profile_home,
+                "provider_id": "openai-codex",
+                "credential_id": "entry-2",
+            }
+        )
+
+        with patch.object(
+            plugin_api,
+            "_plugin_module",
+            side_effect=lambda name: hooks if name == "hooks" else provider_usage,
+        ):
+            response = self.client.get(
+                "/provider-usage",
+                params={"profile": "victor", "session_id": "session-2"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        provider_usage.collect_provider_usage.assert_awaited_once_with(
+            profile_home=profile_home,
+            session_id="session-2",
+            active_credential_id="entry-2",
+        )
 
 
 class BridgeActivityTests(PluginApiTestCase):

@@ -9,7 +9,7 @@ Phone (WS)       → Hermes dashboard (:9119)    [preferred — gateway chat, li
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [fallback — sessions / runs / completions]
 ```
 
-Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The optional Relay plugin is never involved in chat — it only adds terminal, device control, media, and the like.
+Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The Relay plugin is not the owner of standard chat. It is the encouraged extension for current upstream gaps such as Terminal/TUI, notifications, media handoff, desktop tools, Relay sessions, enhanced voice, and optional Device Control; compatible upstream surfaces take precedence as they become available.
 
 ## Share into a new chat
 

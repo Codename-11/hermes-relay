@@ -4,12 +4,12 @@ Hermes-Relay supports two candidate lanes with different intent:
 
 | Lane | Source | Publication | Version/tag |
 |---|---|---|---|
-| PR review bundle | Exact PR head or 40-character SHA | Private GitHub Actions artifact | No version bump or tag |
+| PR review bundle | Exact PR head commit | Private GitHub Actions artifact | No version bump or tag |
 | Release candidate | Release-prepared exact `dev` SHA | Public GitHub prerelease | Surface tag ending in `-rc.N` |
 
-Neither lane changes a stable Android installation. Candidate APKs use the
+Neither lane changes a stable Android installation. **HR Candidate** APKs use the
 dedicated package ID `com.axiomlabs.hermesrelay.sideload.candidate`, the launcher
-label **Hermes Candidate**, an amber launcher background, separate Android app
+label **HR Candidate**, an amber launcher background, separate Android app
 data, and a persistent in-app banner containing the candidate kind, source, and
 short commit SHA. Installing a newer candidate replaces only the previous
 candidate slot. It must be paired separately because it does not share the
@@ -19,7 +19,24 @@ stable app's encrypted connection state.
 
 For an open PR targeting `dev`, apply the `review-candidate` label. The label
 event runs in the PR's unprivileged workflow context and builds that exact head
-commit, including fork PRs.
+commit, including fork PRs. The label is an ongoing opt-in: reopening the PR or
+pushing a new head commit rebuilds the bundle from the new exact head. Removing
+the label stops those automatic rebuilds. GitHub may hold a first-time fork
+contributor's initial run for explicit maintainer approval before any untrusted
+code executes.
+
+After each non-skipped candidate completion, a separate trusted `workflow_run`
+reporter creates or updates one marked comment on the PR. Skipped workflow shells
+for unlabeled PR events are ignored before artifact or comment APIs are called.
+The reporter reads only workflow and artifact
+metadata from the completed run and checks out only the repository's default
+branch; it never checks out the PR head, downloads the candidate, or executes
+fork code with write permission. The comment links the exact artifact and run,
+records the source SHA and expiry, and keeps the install and Relay rollback
+instructions brief. Rebuilt heads update the same bot comment instead of adding
+new comments. Maintainers may also dispatch the reporter with an existing
+completed **Build Review Bundle** run ID; the reporter validates that workflow
+identity before using its metadata.
 
 For an integrated `dev` commit, use the release-candidate lane below. Review
 bundles intentionally have no privileged manual-dispatch path that can execute
@@ -42,7 +59,7 @@ updater notification.
 
 1. Verify the downloaded files with `SHA256SUMS.txt`.
 2. Install the APK normally or with `adb install -r <candidate.apk>`.
-3. Confirm the launcher says **Hermes Candidate** and the in-app banner shows
+3. Confirm the launcher says **HR Candidate** and the in-app banner shows
    the expected PR/SHA before pairing it.
 4. Remove only the candidate with:
    `adb uninstall com.axiomlabs.hermesrelay.sideload.candidate`.
@@ -77,10 +94,10 @@ metadata and notes have been prepared on `dev`.
 2. Create the affected surface tag, such as `android-v1.12.0-rc.1`,
    `server-v1.9.0-rc.1`, or `desktop-v0.5.0-rc.1`, at that commit.
 3. The release workflow verifies the prerelease tag is contained in `dev`.
-4. Android RCs publish the side-by-side Candidate APK and never upload to Play.
-5. Server RCs publish prerelease packages for explicit staging/opt-in install;
+4. Android RCs publish the side-by-side **HR Candidate** APK and never upload to Play.
+5. Plugin RCs publish prerelease packages for explicit staging/opt-in install;
    they do not replace a running production plugin automatically.
-6. Desktop RCs publish opt-in prerelease binaries/installers; stable updater
+6. CLI+UI RCs publish opt-in prerelease binaries/installers; stable updater
    channels continue to ignore them.
 7. Record the exact tag/SHA and test results in the release issue.
 

@@ -48,7 +48,7 @@ startup entry; the separate **Start daemon with UI** preference decides whether
 opening the tray also connects remote access. Automatic daemon startup is off
 for existing installs until explicitly enabled. Settings also exposes **Open
 terminal**, **Open Hermes CLI**, **View daemon log**, and **Run diagnostics**,
-and manages Desktop release updates. **Help &
+and manages CLI+UI release updates. **Help &
 About** reports the UI, CLI, and connected Relay versions and links to the docs,
 troubleshooting, release notes, logs, and diagnostics. Tray lifecycle and child-
 process failures are written to `~/.hermes/tray.log`; daemon connection and tool-
@@ -119,6 +119,9 @@ $env:HERMES_RELAY_INSTALL_SURFACE='cli'; irm https://raw.githubusercontent.com/C
 # macOS / Linux CLI
 curl -fsSL https://raw.githubusercontent.com/Codename-11/hermes-relay/main/desktop/scripts/install.sh | sh
 ```
+
+Prebuilt Linux CLI assets support both x64 and arm64; the installer selects the
+matching binary from the machine architecture.
 
 Windows downloads and verifies `hermes-relay-windows-x64-setup.exe`. The installer
 places the CLI and management UI together, adds `~/.hermes/bin` to the user PATH, and
@@ -679,6 +682,13 @@ hermes-relay daemon
 ```
 
 `status` reads the heartbeat file a running daemon maintains and cross-checks that the pid is alive — it exits non-zero (and says "not running") when the daemon is gone, so scripts can branch on it.
+
+Once authenticated, the daemon automatically reconnects through Relay service
+restarts and repeated transient socket failures using bounded exponential
+backoff. Desktop-tool results are kept below the shared WebSocket message limit;
+oversized results return a bounded-output error rather than terminating the
+daemon. Terminal authentication or policy failures persist a stopped reason in
+the status file before the process exits.
 
 On Windows, keep the tray and normal daemon unelevated for routine operation.
 Use **Restart as Administrator...** only when a desktop action requires

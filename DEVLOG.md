@@ -1,5 +1,109 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-24 — Single dev integration authority
+
+`origin/dev` is the sole integration authority. Primary local `dev` checkouts are
+fast-forward-only mirrors, while feature, fix, docs, release-prep, and multi-branch
+integration work stays in dedicated worktrees and reaches `dev` through PRs. This
+keeps concurrent sessions from creating a second unpublished integration history
+and makes exact-head CI the gate before release preparation.
+
+## 2026-08-24 — Release surface naming
+
+Future Android, Plugin, and CLI+UI GitHub Releases, Android Play submissions,
+candidate provenance, release-note templates, workflow summaries, operator
+guidance, and user documentation use the
+`Hermes-Relay <Surface> v<version>` display-name contract. Immutable tags,
+package identities, machine-readable version-track IDs, updater channels, and
+artifact filenames remain unchanged.
+The isolated Android review and release-candidate application is branded
+`HR Candidate` in its launcher label, workflow verification, handoff comment,
+and active contributor and release documentation. Its package identity, build
+type, tags, and artifact contracts remain unchanged.
+
+## 2026-08-24 — Review-candidate commissioning
+
+The repository label catalog now provisions `review-candidate` as the sole
+automation label for matched Android and Relay PR bundles. The unprivileged
+workflow rebuilds an opted-in PR when its exact head changes, while documentation
+now reflects the label-driven path instead of an unavailable manual dispatch.
+The first live bundle completed for PR #398 after GitHub's normal first-time fork
+approval gate; the downloaded manifest matched the PR head and all four packaged
+artifact checksums verified.
+A separate trusted completion reporter reads only run/artifact metadata, checks
+out only the default branch, and creates or updates one marked PR comment with
+the exact candidate link and bounded review instructions. It never checks out or
+executes fork code with write permission.
+Skipped Build Review Bundle shells from unlabeled PR synchronize, reopen, or
+unrelated-label events return before artifact lookup and PR comment access, so
+only an explicit `review-candidate` run can produce candidate status copy.
+
+## 2026-08-23 — Android assistant screen context
+
+Compatible unlocked firmware controls that dispatch
+`android.speech.action.WEB_SEARCH` now open a real Hermes
+`VoiceInteractionSession` without replacing the foreground app. The path requires
+Hermes to be the selected Android Assistant, ignores caller-provided query data,
+starts listening from the same button press, and fails closed when the platform
+cannot show the session.
+
+The session can receive bounded visible text and an optional screenshot from
+Android. Hidden, assist-blocked, and password fields are excluded; captured content
+is not logged. Context is staged in app-private cache, labeled as untrusted, and
+attached only to the first accepted Standard voice turn. Failed transport preflight
+keeps the same context available for an explicit retry, while cancellation and stale
+cleanup prevent later reuse.
+
+The assistant card reports whether screen context is ready, keeps microphone and
+close actions separate, and can hand off to Full Voice without losing ownership.
+Focused assistant, Gateway, chat, and voice tests passed along with Android locale
+validation, Kotlin compilation, and Google Play debug lint. One Android 15
+automotive device verified foreground preservation, AssistStructure and screenshot
+delivery, immediate listening, contextual response, and one-shot consumption;
+broader firmware certification remains tracked in `TODO.md`.
+
+## 2026-08-23 — Windows attachment retry and Hermes-home resolution
+
+Android now recognizes Windows absolute paths during manual inbound-media retry.
+Cellular-deferred `MEDIA:C:\...` documents use Relay's authenticated
+`/media/by-path` route instead of being sent to the opaque-token route and
+misreported as expired. A Robolectric/MockWebServer regression covers a spaced
+Markdown filename and asserts the exact route and decoded path query.
+
+Relay configuration now derives its default `config.yaml` and session-persistence
+paths from `HERMES_HOME` when present. `RELAY_HERMES_CONFIG` remains the explicit
+override. Focused Python tests cover both resolution paths.
+
+## 2026-08-23 — GitHub Discussions community surface
+
+GitHub Discussions is enabled as the repository's lightweight community surface.
+Setup questions, early ideas, broader conversation, and community projects route
+to Discussions; reproducible bugs and specific, actionable feature requests remain
+in Issues. The English and Simplified Chinese README entry points plus the
+contributor guide now expose that boundary directly.
+
+## 2026-08-22 — Android 1.12.1 sharing and recovery patch
+
+Hermes-Relay Android 1.12.1 is published from the immutable
+`android-v1.12.1` tag. Google Play versionCode 48 passed the signed Production
+draft preflight and was submitted to Production review before the public
+GitHub release was created. The release APK and AAB match the published
+`SHA256SUMS.txt` checksums.
+
+Shared links, text, images, files, and mixed or multi-item payloads now open as
+fresh reviewable drafts without sending automatically. Add and Renew connection
+setup retains its exact connection-scoped authentication owner and exposes
+bounded Retry or Cancel recovery instead of an indefinite preparation screen.
+Unavailable chat routes and profile-history failures surface explicit recovery
+guidance, while Diagnostics records secret-free Android Keystore fallback and
+encrypted-store recovery evidence.
+
+Verification included current-base PR checks, combined Play and sideload share
+and connection regression suites, Android lint, release bundle/APK smoke, final
+DEX compatibility scans, public-doc route validation, locale validation, signed
+local release bundles, Play preflight, immutable-tag release CI, and downloaded
+release-asset checksum comparison.
+
 ## 2026-08-21 — Android sharesheet draft handoff
 
 Android's sharesheet target now accepts single and multiple text, link, image,

@@ -8,7 +8,7 @@ titleTemplate: Documentação do Hermes-Relay em português
 hero:
   name: Documentação
   text: Comece pelo dispositivo que você quer conectar.
-  tagline: Conecte o aplicativo Android ou a CLI ao Hermes Agent que você já usa. Adicione o Relay somente quando precisar de ferramentas avançadas.
+  tagline: Conecte Android e CLI ao Hermes Agent e adicione a extensão Relay recomendada para o conjunto completo de recursos atuais.
   actions:
     - theme: brand
       text: Início rápido no Android
@@ -25,8 +25,8 @@ features:
     details: Chat, Manage e voz padrão se conectam diretamente a um Hermes Agent sem modificações.
   - title: Duas versões bem definidas
     details: Google Play é a opção recomendada. Sideload acrescenta Device Control para ler a tela, tocar e navegar.
-  - title: Relay continua opcional
-    details: Instale o plugin Relay somente para terminal, controle do celular, mídia, notificações ou ferramentas remotas.
+  - title: Relay é recomendado para a experiência completa
+    details: Upstream continua padrão para Chat, Manage e voz; Relay acrescenta Terminal/TUI, notificações, mídia, ferramentas de desktop e Device Control.
 ---
 
 ## Escopo desta tradução

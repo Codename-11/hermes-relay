@@ -1,21 +1,26 @@
-# Hermes-Relay-Server v__VERSION__
+# Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** August 21, 2026
+**Release Date:** August 25, 2026
 
 ## Summary
 
-This release makes delayed phone delivery and active Bridge access easier to understand. Relay now identifies messages flushed after reconnect, emits one completion signal for the backlog, and reports permanent, timed, and unlimited phone capabilities through status surfaces.
+This release adds a provider-neutral account-usage surface for Android and Dashboard clients. Relay resolves Codex credential pools, structured Nous balances, and OpenCode Go windows on the Hermes host without returning provider credentials.
 
 Standard chat, session history, and Vanilla Hermes voice remain upstream-owned and do not require this plugin.
 
 ## Added
 
-- **Reconnect backlog context.** Messages flushed from the bounded offline queue carry an explicit delayed-delivery marker, followed by one ordered completion event with the delivered count.
-- **Granular phone capability status.** Relay status and `android_phone_status` report permanent, timed, and unlimited Bridge capabilities alongside existing Android permissions and safety state.
+- **Provider-neutral usage snapshots.** Authenticated Dashboard clients can resolve the exact active Codex pool entry, Nous balances, and OpenCode Go account windows through one normalized schema.
+- **Bounded paired-client fallback.** Operators may explicitly enable the Relay usage route for paired standalone clients while credentials remain host-side.
 
 ## Changed
 
-- **Phone surfacing semantics are explicit.** Default delivery persists to Threads and notifies, Inbox delivery remains silent, and Session delivery targets an available active conversation before falling back to a notification.
+- **Usage capabilities are explicit.** Responses identify Relay-enhanced credential pools, structured balances, and provider adapters instead of implying unsupported upstream data.
+- **Public product naming is aligned.** Releases use `Hermes-Relay Plugin` while retaining the `server-v*` tag and installation contract.
+
+## Fixed
+
+- **Custom Hermes homes resolve correctly.** Relay profile discovery and session persistence follow `HERMES_HOME` by default while preserving the explicit `RELAY_HERMES_CONFIG` override.
 
 ## Install / update
 
@@ -34,4 +39,4 @@ Standard chat, session history, and Vanilla Hermes voice remain upstream-owned a
 
 ---
 
-Tag prefixes: Android releases use android-v*, Server releases use server-v*, and Desktop releases use desktop-v*.
+Tag prefixes: Android releases use android-v*, Plugin releases use server-v*, and CLI+UI releases use desktop-v*.

@@ -120,7 +120,13 @@ $resolvedVersion = $version
 if ($version -eq 'latest') {
   Say "-> resolving latest desktop-v* release..."
   try {
-    $releases = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases"
+    $releases = @()
+    $page = 1
+    do {
+      $releasePage = @(Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases?per_page=100&page=$page")
+      $releases += $releasePage
+      $page += 1
+    } while ($releasePage.Count -eq 100)
     # Don't trust the API's first-element ordering — GitHub orders by the
     # release row's created_at which shifts when the row is touched (re-tag,
     # edit). Sort by parsed version components explicitly so a touched
@@ -209,10 +215,6 @@ if ($surface -eq 'tray') {
     if ($expected -ne $actual) { Die "checksum mismatch (expected $expected, got $actual) - refusing to install" }
     Say '   ok'
 
-    if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
-      Unblock-File $installer -ErrorAction SilentlyContinue
-    }
-
     $installerArgs = @()
     if ($env:HERMES_RELAY_TRAY_SILENT -eq '1') {
       $installerArgs += '/S'
@@ -220,7 +222,8 @@ if ($surface -eq 'tray') {
     # NSIS requires /D to be the final argument. Keeping the existing registered
     # install directory avoids splitting an upgrade across two PATH locations.
     $installerArgs += "/D=$dir"
-    Say '-> launching installer...'
+    Say '-> launching unsigned preview installer...'
+    Say '   Windows may show a SmartScreen publisher warning; review it before continuing.'
     $proc = Start-Process -FilePath $installer -ArgumentList $installerArgs -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
       Die "tray installer exited with code $($proc.ExitCode)"

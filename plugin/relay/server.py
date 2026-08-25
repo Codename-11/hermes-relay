@@ -93,6 +93,7 @@ from .model_capabilities import (
     ModelCapabilityResolver,
     SCHEMA_VERSION as MODEL_CAPABILITIES_SCHEMA_VERSION,
 )
+from .provider_usage import collect_provider_usage, resolve_profile_home
 from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
@@ -1169,6 +1170,27 @@ async def handle_sessions_extend(request: web.Request) -> web.Response:
                 for k, v in updated.grants.items()
             },
         }
+    )
+
+
+async def handle_provider_usage(request: web.Request) -> web.Response:
+    """Return provider-neutral account usage to an authenticated paired device."""
+    _require_bearer_session(request)
+    server: RelayServer = request.app["server"]
+    if not server.config.provider_usage_enabled:
+        raise web.HTTPNotFound(text="provider usage is not enabled on this host")
+    try:
+        profile_home = resolve_profile_home(
+            server.config.hermes_config_path,
+            request.query.get("profile"),
+        )
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text="invalid or unknown profile") from exc
+    return web.json_response(
+        await collect_provider_usage(
+            profile_home=profile_home,
+            session_id=request.query.get("session_id"),
+        )
     )
 
 
@@ -4682,6 +4704,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/sessions", handle_sessions_list)
     app.router.add_delete("/sessions/{token_prefix}", handle_sessions_revoke)
     app.router.add_patch("/sessions/{token_prefix}", handle_sessions_extend)
+    app.router.add_get("/usage/providers", handle_provider_usage)
     app.router.add_get("/chat/image-activity", handle_image_activity)
     # Desktop tool dispatch — HTTP shim called by `plugin/tools/desktop_tool.py`
     # running inside hermes-gateway. Both endpoints loopback-only.

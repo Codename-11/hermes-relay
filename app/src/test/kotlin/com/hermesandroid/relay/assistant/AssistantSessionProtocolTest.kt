@@ -7,6 +7,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import android.service.voice.VoiceInteractionSession
+import com.hermesandroid.relay.runtime.assistantHeartbeatExpired
+import com.hermesandroid.relay.runtime.assistantCanTransmitScreenContext
+import com.hermesandroid.relay.runtime.AssistantHeartbeatOwnership
+import com.hermesandroid.relay.runtime.assistantHeartbeatShouldCancel
+import com.hermesandroid.relay.data.VoiceEngineMode
+import com.hermesandroid.relay.viewmodel.voiceSubmissionRejectedState
+import com.hermesandroid.relay.viewmodel.voiceSubmissionRetryState
+import com.hermesandroid.relay.viewmodel.assistantContextTurnDisposition
 
 class AssistantSessionProtocolTest {
     @Test
@@ -79,6 +88,164 @@ class AssistantSessionProtocolTest {
         assertFalse(
             AssistantSessionProtocol.isActivateAction(
                 "com.hermesandroid.relay.assistant.START"
+            )
+        )
+    }
+
+    @Test
+    fun onlyUnlockedContextSession_requestsAssistAndScreenshot() {
+        val unlocked = assistantSessionShowFlags(
+            fromKeyguard = false,
+            captureScreenContext = true,
+        )
+        assertTrue(unlocked and VoiceInteractionSession.SHOW_WITH_ASSIST != 0)
+        assertTrue(unlocked and VoiceInteractionSession.SHOW_WITH_SCREENSHOT != 0)
+        assertEquals(
+            0,
+            assistantSessionShowFlags(fromKeyguard = true, captureScreenContext = true),
+        )
+        assertEquals(
+            0,
+            assistantSessionShowFlags(fromKeyguard = false, captureScreenContext = false),
+        )
+    }
+
+    @Test
+    fun retry_reusesCurrentActivationId() {
+        assertEquals("activation-1", assistantRetryActivationId("activation-1"))
+        assertNull(assistantRetryActivationId(null))
+    }
+
+    @Test
+    fun showFailureRecovery_restartsWakeOnlyWhenEnabled() {
+        assertEquals(
+            AssistantSessionFailureRecovery.RetryWake,
+            assistantSessionFailureRecovery(assistantWakeEnabled = true),
+        )
+        assertEquals(
+            AssistantSessionFailureRecovery.Stop,
+            assistantSessionFailureRecovery(assistantWakeEnabled = false),
+        )
+    }
+
+    @Test
+    fun pendingFirmwareRequest_waitsForVoicePreferences() {
+        assertFalse(assistantPendingRequestCanDrain(serviceReady = false, preferencesLoaded = false))
+        assertFalse(assistantPendingRequestCanDrain(serviceReady = true, preferencesLoaded = false))
+        assertTrue(assistantPendingRequestCanDrain(serviceReady = true, preferencesLoaded = true))
+    }
+
+    @Test
+    fun delayedContextRequest_rechecksKeyguardWhenSessionIsShown() {
+        var keyguardLocked = false
+        val isKeyguardLocked = { keyguardLocked }
+
+        keyguardLocked = true
+        val policy = assistantSessionCapturePolicy(
+            captureScreenContext = true,
+            isKeyguardLocked = isKeyguardLocked,
+        )
+
+        assertTrue(policy.fromKeyguard)
+        assertFalse(policy.expectScreenContext)
+        assertEquals(0, policy.showFlags)
+    }
+
+    @Test
+    fun heartbeatExpiry_usesMonotonicConservativeGrace() {
+        assertFalse(assistantHeartbeatExpired(1_000L, 61_000L, 60_000L))
+        assertTrue(assistantHeartbeatExpired(1_000L, 61_001L, 60_000L))
+        assertFalse(assistantHeartbeatExpired(0L, 100_000L, 60_000L))
+        assertFalse(assistantHeartbeatExpired(10_000L, 9_000L, 60_000L))
+    }
+
+    @Test
+    fun fullVoiceHandoff_disablesSessionHeartbeatCancellation() {
+        fun shouldCancel(ownership: AssistantHeartbeatOwnership) =
+            assistantHeartbeatShouldCancel(
+                ownership = ownership,
+                expectedActivationId = "activation-1",
+                currentActivationId = "activation-1",
+                expectedGeneration = 3L,
+                currentGeneration = 3L,
+                observedHeartbeatElapsedMs = 1_000L,
+                currentHeartbeatElapsedMs = 1_000L,
+                nowElapsedMs = 70_000L,
+                graceMs = 60_000L,
+            )
+
+        assertTrue(shouldCancel(AssistantHeartbeatOwnership.Session))
+        assertFalse(shouldCancel(AssistantHeartbeatOwnership.FullVoice))
+    }
+
+    @Test
+    fun onlyStandardVoice_claimsScreenContextTransport() {
+        assertTrue(assistantCanTransmitScreenContext(VoiceEngineMode.HermesVoiceOutput))
+        assertFalse(assistantCanTransmitScreenContext(VoiceEngineMode.RealtimeAgent))
+    }
+
+    @Test
+    fun rejectedVoiceSubmission_isVisibleAndRetainsVoiceMode() {
+        val rejected = voiceSubmissionRejectedState(
+            VoiceUiState(voiceMode = true, state = VoiceState.Thinking),
+            "Hermes is still handling another turn.",
+        )
+
+        assertTrue(rejected.voiceMode)
+        assertEquals(VoiceState.Error, rejected.state)
+        assertEquals("Hermes is still handling another turn.", rejected.error)
+        val retry = voiceSubmissionRetryState(rejected)
+        assertEquals(VoiceState.Idle, retry.state)
+        assertNull(retry.error)
+    }
+
+    @Test
+    fun missingFirstLoad_retiresActivationWithoutConsumption() {
+        val missing = assistantContextTurnDisposition(
+            expectScreenContext = true,
+            hasActivation = true,
+            stagedContextLoaded = false,
+        )
+        val loaded = assistantContextTurnDisposition(
+            expectScreenContext = true,
+            hasActivation = true,
+            stagedContextLoaded = true,
+        )
+
+        assertTrue(missing.retireForLaterTurns)
+        assertFalse(missing.consumeOnTransportAcceptance)
+        assertTrue(loaded.retireForLaterTurns)
+        assertTrue(loaded.consumeOnTransportAcceptance)
+    }
+
+    @Test
+    fun manualMicProtocol_onlyAllowsIdleStartAndListeningStop() {
+        assertEquals(AssistantMicAction.Start, assistantMicAction(AssistantSessionPhase.Idle))
+        assertEquals(AssistantMicAction.Stop, assistantMicAction(AssistantSessionPhase.Listening))
+        assertEquals(AssistantMicAction.Disabled, assistantMicAction(AssistantSessionPhase.Thinking))
+        assertTrue(
+            AssistantSessionProtocol.isStartListeningAction(
+                "com.hermesandroid.relay.assistant.START_LISTENING"
+            )
+        )
+        assertTrue(
+            AssistantSessionProtocol.isStopListeningAction(
+                "com.hermesandroid.relay.assistant.STOP_LISTENING"
+            )
+        )
+        assertTrue(
+            AssistantSessionProtocol.isHeartbeatAction(
+                "com.hermesandroid.relay.assistant.HEARTBEAT"
+            )
+        )
+        assertTrue(
+            AssistantSessionProtocol.isFullVoiceHandoffAction(
+                "com.hermesandroid.relay.assistant.FULL_VOICE_HANDOFF"
+            )
+        )
+        assertTrue(
+            AssistantSessionProtocol.isRetryVoiceAction(
+                "com.hermesandroid.relay.assistant.RETRY_VOICE"
             )
         )
     }

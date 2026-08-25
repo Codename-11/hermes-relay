@@ -245,6 +245,14 @@ hermes-relay daemon --token <t> --allow-tools    # skip stored-consent gate (onl
 
 `daemon start` (alias `daemon --detach`) re-spawns the foreground daemon detached: no console window, stdio redirected to `~/.hermes/daemon.log`, and it keeps running after you close the terminal. `daemon status` reads the heartbeat file the running daemon maintains and cross-checks that the pid is alive, so a crashed daemon whose file lingers reads as "not running" (and `status` exits non-zero, for scripts). Bare `hermes-relay daemon` still runs in the foreground.
 
+After its first successful authentication, the daemon retries interrupted Relay
+connections indefinitely with bounded exponential backoff. Relay service
+restarts and failed replacement sockets therefore keep the daemon in
+`reconnecting` until the tunnel returns. Authentication rejection and an
+explicit local stop remain terminal. Desktop-tool responses are bounded below
+the Relay WebSocket limit; commands that produce more output return truncation
+or an actionable bounded-output error without taking the connection down.
+
 On Windows, `--administrator` is an explicit UAC boundary for `start`, `stop`,
 or `restart`; it never elevates the tray. `daemon restart --user` is intended
 for an unelevated caller returning an Administrator daemon to normal operation:
@@ -272,7 +280,7 @@ ready                 → DesktopToolRouter attached (advertised_tools list)
 reconnecting          → backoff delay (attempt, delay_ms)
 reconnected           → back online
 shutdown              → SIGTERM/SIGINT/SIGHUP received
-transport_exited      → reconnect budget exhausted; exit 1 so service manager restarts fresh
+transport_exited      → terminal auth/reconnect-policy failure; stopped status persisted, then exit 1
 ```
 
 **Fails closed:** no stored session + no `--token` → exits 1. No `toolsConsented: true` on the stored record → exits 1 unless `--allow-tools` is passed alongside an explicit `--token` (a headless binary must never be the thing that first grants tool access).
@@ -309,8 +317,10 @@ compatibility choice. Backend selection is fixed when a control session starts,
 so an engine setting change affects only new sessions. CUA lifecycle mutations
 require `--yes` and never run automatically. Hermes verifies the upstream
 release manifest and installer checksum, runs the installer with a sanitized
-environment, and accepts only `>=0.19.3 <0.20.0` under the canonical
-`%USERPROFILE%\.cua-driver\packages\current` package.
+environment, and accepts `>=0.20.0` under the canonical
+`%USERPROFILE%\.cua-driver\packages\current` package when its live manifest,
+daemon/MCP arguments, and required tools remain compatible. On Windows, each
+control session owns the manifest-declared direct standard-mode MCP runtime.
 
 ## `hermes-relay grants`
 

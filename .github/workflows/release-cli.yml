@@ -1,4 +1,4 @@
-name: Release Desktop
+name: Hermes-Relay CLI+UI Release
 
 on:
   push:
@@ -58,13 +58,13 @@ jobs:
           if [[ "$version" == *-* ]]; then
             git fetch origin dev --no-tags
             if ! git merge-base --is-ancestor "$tag_commit" origin/dev; then
-              echo "Desktop prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
+              echo "CLI+UI prereleases must be tagged from dev; $tag_commit is not in origin/dev" >&2
               exit 1
             fi
           else
             git fetch origin main --no-tags
             if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-              echo "Stable Desktop releases must be tagged from main; $tag_commit is not in origin/main" >&2
+              echo "Stable CLI+UI releases must be tagged from main; $tag_commit is not in origin/main" >&2
               exit 1
             fi
           fi
@@ -117,6 +117,9 @@ jobs:
       - name: Build Linux x64
         run: npm run build:bin:linux
 
+      - name: Build Linux arm64
+        run: npm run build:bin:linux-arm
+
       - name: Build macOS x64
         run: npm run build:bin:mac-x64
 
@@ -138,18 +141,26 @@ jobs:
 
       - name: Smoke-test Linux binary
         run: |
-          set -e
+          set -euo pipefail
           chmod +x dist/bin/hermes-relay-linux-x64
           for cmd in --version --help doctor; do
-            out=$(./dist/bin/hermes-relay-linux-x64 "$cmd" 2>&1 || true)
+            set +e
+            out=$(./dist/bin/hermes-relay-linux-x64 "$cmd" 2>&1)
             exit_code=$?
-            if [ -z "$out" ] || [ ${#out} -lt 10 ]; then
-              echo "SMOKE FAIL: './hermes-relay-linux-x64 $cmd' produced no output (exit=$exit_code)"
+            set -e
+            if [ "$exit_code" -ne 0 ] || [ -z "$out" ] || [ ${#out} -lt 10 ]; then
+              echo "SMOKE FAIL: './hermes-relay-linux-x64 $cmd' failed or produced no output (exit=$exit_code)"
               echo "Raw output was: [$out]"
               exit 1
             fi
             echo "  smoke OK: $cmd -> $(echo "$out" | head -1)"
           done
+
+      - name: Verify Linux arm64 artifact architecture
+        run: |
+          set -euo pipefail
+          file dist/bin/hermes-relay-linux-arm64 | tee /tmp/hermes-relay-linux-arm64.file
+          grep -Eq 'ELF 64-bit.*(ARM aarch64|ARM64)' /tmp/hermes-relay-linux-arm64.file
 
       - name: Upload CLI release assets
         uses: actions/upload-artifact@v4
@@ -158,6 +169,7 @@ jobs:
           path: |
             desktop/dist/bin/hermes-relay-win-x64.exe
             desktop/dist/bin/hermes-relay-linux-x64
+            desktop/dist/bin/hermes-relay-linux-arm64
             desktop/dist/bin/hermes-relay-darwin-x64
             desktop/dist/bin/hermes-relay-darwin-arm64
           retention-days: 7
@@ -195,6 +207,60 @@ jobs:
           if ($leftovers) {
             throw "Windows CLI smoke left $(@($leftovers).Count) process(es) behind"
           }
+
+  smoke-macos-cli-release-asset:
+    name: Smoke exact macOS CLI release asset
+    runs-on: macos-latest
+    needs:
+      - validate-release
+      - build-cli-binaries
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-binaries
+          path: release-assets
+
+      - name: Launch native release asset and inspect both architectures
+        env:
+          EXPECTED_DESKTOP_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) native_asset=hermes-relay-darwin-x64 ;;
+            arm64) native_asset=hermes-relay-darwin-arm64 ;;
+            *) echo "Unsupported macOS runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          chmod +x "release-assets/$native_asset"
+          version_output=$("release-assets/$native_asset" --version)
+          test "$version_output" = "hermes-relay $EXPECTED_DESKTOP_VERSION"
+          "release-assets/$native_asset" --help | grep -Fq 'Usage:'
+          file release-assets/hermes-relay-darwin-x64 | grep -Fq 'x86_64'
+          file release-assets/hermes-relay-darwin-arm64 | grep -Eq '(arm64|arm64e)'
+
+  smoke-linux-arm64-cli-release-asset:
+    name: Smoke exact Linux arm64 CLI release asset
+    runs-on: ubuntu-24.04-arm
+    needs:
+      - validate-release
+      - build-cli-binaries
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-binaries
+          path: release-assets
+
+      - name: Launch native arm64 release asset
+        env:
+          EXPECTED_DESKTOP_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset=release-assets/hermes-relay-linux-arm64
+          test "$(uname -m)" = "aarch64"
+          chmod +x "$asset"
+          version_output=$("$asset" --version)
+          test "$version_output" = "hermes-relay $EXPECTED_DESKTOP_VERSION"
+          "$asset" --help | grep -Fq 'Usage:'
+          file "$asset" | grep -Eq 'ELF 64-bit.*(ARM aarch64|ARM64)'
 
   build-windows-tray-installer:
     name: Build Windows tray installer
@@ -419,13 +485,15 @@ jobs:
     needs:
       - build-cli-binaries
       - smoke-windows-cli-release-asset
+      - smoke-macos-cli-release-asset
+      - smoke-linux-arm64-cli-release-asset
       - build-windows-tray-installer
     steps:
       # Needed so CLI_RELEASE_NOTES.md is available to render into the release body
       # (the other publish-release steps only consume downloaded build artifacts).
       - uses: actions/checkout@v7
 
-      - name: Extract Desktop version
+      - name: Extract CLI+UI version
         id: version
         run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
 
@@ -457,7 +525,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Hermes-Relay-Desktop v${{ steps.version.outputs.version }}
+          name: Hermes-Relay CLI+UI v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
@@ -466,6 +534,7 @@ jobs:
           files: |
             release-assets/cli-binaries/hermes-relay-win-x64.exe
             release-assets/cli-binaries/hermes-relay-linux-x64
+            release-assets/cli-binaries/hermes-relay-linux-arm64
             release-assets/cli-binaries/hermes-relay-darwin-x64
             release-assets/cli-binaries/hermes-relay-darwin-arm64
             release-assets/cli-windows-installer/hermes-relay-windows-x64-setup.exe
