@@ -165,6 +165,7 @@ fun SettingsScreen(
     onUpdateSupervisedPolicy: (SupervisedModePolicy) -> Unit = {},
     onNavigateToAdvancedSettings: () -> Unit = {},
     onNavigateToSupervisedAppearance: () -> Unit = {},
+    onNavigateToSupervisedControls: () -> Unit = {},
     // Needed by the Active Agent summary card at the top of the screen — it
     // reads the current personality pick so the subtitle can render
     // `connection · model · personality` without re-reading ChatViewModel
@@ -455,6 +456,20 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (supervisedPolicy?.enabled == true && parentAccessUnlocked) {
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Supervised mode",
+                    subtitle = "On · ${supervisedPolicy.pinnedProfileName.orEmpty()}",
+                    badge = SettingsStatusPillModel(
+                        label = "On",
+                        tone = SettingsStatusTone.Good,
+                    ),
+                    onClick = onNavigateToSupervisedControls,
+                    isDarkTheme = isDarkTheme,
+                )
+            }
+
             // ── Active Agent summary ───────────────────────────────────
             // Mirrors the ChatScreen TopAppBar title block (avatar + name
             // + one-line `connection · model · personality` subtitle).
