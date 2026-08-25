@@ -1487,26 +1487,27 @@ private fun AppearanceSummaryRow(
 
 /** Representative, theme-live chat sample so presets are judged in context. */
 @Composable
-private fun AppearanceLivePreview(
+internal fun AppearanceLivePreview(
     palette: BrandPalette,
     shapeScale: AppearanceShapeScale,
+    restricted: Boolean = false,
 ) {
     CompositionLocalProvider(
         LocalBrand provides palette,
         LocalAppearanceShapeScale provides shapeScale,
     ) {
         MaterialTheme(colorScheme = palette.toColorScheme(), shapes = shapeScale.asMaterialShapes()) {
-            AppearanceLivePreviewContent()
+            AppearanceLivePreviewContent(restricted = restricted)
         }
     }
 }
 
 @Composable
-private fun AppearanceLivePreviewContent() {
+private fun AppearanceLivePreviewContent(restricted: Boolean) {
     val backgroundEnabled = LocalBackgroundVisualizationEnabled.current
     val backgroundAvatar = LocalAgentAvatar.current
     Card(
-        modifier = Modifier.fillMaxWidth().height(294.dp),
+        modifier = Modifier.fillMaxWidth().height(if (restricted) 258.dp else 294.dp),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -1648,14 +1649,16 @@ private fun AppearanceLivePreviewContent() {
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(LocalBrand.current.green))
-                        Text(
-                            text = stringResource(R.string.appearance_preview_tool_meta),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                            color = LocalBrand.current.green,
-                            modifier = Modifier.padding(start = 5.dp),
-                        )
+                    if (!restricted) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(LocalBrand.current.green))
+                            Text(
+                                text = stringResource(R.string.appearance_preview_tool_meta),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = LocalBrand.current.green,
+                                modifier = Modifier.padding(start = 5.dp),
+                            )
+                        }
                     }
                 }
                 Box(modifier = Modifier.padding(start = 6.dp).size(38.dp), contentAlignment = Alignment.Center) {
@@ -1678,10 +1681,12 @@ private fun AppearanceLivePreviewContent() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(Icons.Filled.Add, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("gpt-5.6-sol", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
-                    Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
-                    Text("High", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
-                    Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
+                    if (!restricted) {
+                        Text("gpt-5.6-sol", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                        Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
+                        Text("High", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp))
+                        Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(14.dp))
+                    }
                     Text(
                         stringResource(R.string.appearance_preview_message_placeholder),
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
@@ -1691,7 +1696,7 @@ private fun AppearanceLivePreviewContent() {
                     Icon(Icons.Filled.GraphicEq, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
-            Surface(
+            if (!restricted) Surface(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 shape = appearanceRoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1785,7 +1790,7 @@ private fun FontOptionRow(
  * are added.
  */
 @Composable
-private fun ThemeSwatchChip(
+internal fun ThemeSwatchChip(
     appTheme: AppTheme,
     selected: Boolean,
     onClick: () -> Unit,

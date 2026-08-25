@@ -7,7 +7,7 @@ Android's declarative plugin surface is specified in
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-08-22
+**Updated:** 2026-08-24
 
 ---
 
@@ -46,6 +46,10 @@ token, terminal/bridge grants, and optional network candidates.
 4. **Clean UX** — Material 3, minimal setup, and clear route identity for Vanilla Hermes vs Relay.
 5. **Offline-aware** — graceful degradation when connection drops. Auto-reconnect with exponential backoff.
 6. **Server-side state** — the app is a thin client. Sessions, history, memory, profiles, and dashboard state live on the Hermes server.
+7. **Supervision is a client policy** — Android may offer a parent-controlled,
+   profile-pinned restricted interface, but it does not claim to make the
+   selected Hermes profile, server, or agent child-safe. See ADR 66 and the
+   [Supervised Mode guide](../user-docs/guide/supervised-mode.md).
 
 ---
 

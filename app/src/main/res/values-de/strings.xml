@@ -698,6 +698,14 @@
     <string name="settings_analytics_desc">Nutzungsstatistiken, TTFT, Token, Status</string>
     <string name="settings_diagnostics">Diagnose</string>
     <string name="settings_diagnostics_desc">Statusprüfungen sowie letzte API-, Relay-, Sitzungs- und Sprachaktivitäten</string>
+    <string name="settings_advanced">Erweitert</string>
+    <string name="settings_advanced_desc">Beaufsichtigter Modus und weitere optionale Funktionen</string>
+    <string name="settings_advanced_intro">Optionale und spezielle Funktionen befinden sich hier, damit die Haupteinstellungen übersichtlich bleiben.</string>
+    <string name="settings_supervised_mode">Beaufsichtigter Modus</string>
+    <string name="settings_supervised_desc">Profil und erlaubte Chatfunktionen auswählen</string>
+    <string name="settings_supervised_on">Ein</string>
+    <string name="settings_supervised_on_profile">Ein · %1$s</string>
+    <string name="settings_supervised_ready_profile">Bereit · %1$s</string>
     <string name="settings_developer_options">Entwickleroptionen</string>
     <string name="settings_developer_options_desc">Funktionsschalter, Datenverwaltung, Experimente</string>
     <string name="settings_whats_new">Neuigkeiten</string>

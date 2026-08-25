@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -147,6 +148,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
@@ -180,6 +182,10 @@ import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.ProfilePresentationPolicy
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SupervisedAttachmentCategory
+import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedSessionAction
+import com.hermesandroid.relay.data.allowsSessionAction
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
@@ -726,8 +732,40 @@ fun ChatScreen(
     // existing test/preview call sites keep compiling.
     onNavigateToVoiceSettings: () -> Unit = {},
     onNavigateToProfileInspector: (String) -> Unit = {},
+    supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
     onNavigateToBotMode: () -> Unit = {},
 ) {
+    val supervised = supervisedPolicy.enabled
+    val supervisedVisibility = supervisedPolicy.visibility.resolved()
+    LaunchedEffect(supervisedPolicy) {
+        voiceViewModel.updateSupervisedModePolicy(supervisedPolicy)
+    }
+    if (supervised && !supervisedPolicy.isActive) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Supervised chat unavailable") },
+                    actions = {
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "The supervised profile is unavailable. Parent access is required to update this connection.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
@@ -750,7 +788,6 @@ fun ChatScreen(
     LaunchedEffect(voiceUiState.voiceMode) {
         if (!voiceUiState.voiceMode) voicePresentationOverride = null
     }
-
     // Route classified chat errors (media cache, streaming failures, …) to
     // the app-wide snackbar. Same pattern every VM-bound screen uses.
     val snackbarHost = LocalSnackbarHost.current
@@ -812,7 +849,22 @@ fun ChatScreen(
     }
 
 
-    val messages by chatViewModel.messages.collectAsState()
+    val rawMessages by chatViewModel.messages.collectAsState()
+    val messages = remember(rawMessages, supervised, supervisedPolicy.capabilities.generatedImages) {
+        if (!supervised) rawMessages
+        else rawMessages.map { message ->
+            if (message.role == MessageRole.ASSISTANT) {
+                message.copy(
+                    attachments = if (supervisedPolicy.capabilities.generatedImages) {
+                        message.attachments.filter { it.isImage }
+                    } else {
+                        emptyList()
+                    },
+                    cards = emptyList(),
+                )
+            } else message
+        }
+    }
     val messageReactionsSupported by chatViewModel.messageReactionsSupported.collectAsState()
     val newestReactableMessageKeys = remember(messages) {
         setOfNotNull(
@@ -839,10 +891,17 @@ fun ChatScreen(
     // Stable voice can use the standard Hermes dashboard audio routes or the
     // optional Relay voice routes. Gate the mic on either route being usable;
     // availability picks the actionable toast when neither is.
-    val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val connectionVoiceReady by connectionViewModel.voiceReady.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val voiceReady = if (supervised) {
+        supervisedPolicy.capabilities.voice &&
+            standardVoiceAvailability ==
+            com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.Ready
+    } else {
+        connectionVoiceReady
+    }
     val chatSpeakResponseActionsEnabled =
         shouldOfferChatSpeakAction(voiceReady, voiceUiState.state)
-    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
     val standardVoiceSignInRouteHint by
         connectionViewModel.standardVoiceSignInRouteHint.collectAsState()
     val dashboardRouteMovedHint by connectionViewModel.dashboardRouteMovedHint.collectAsState()
@@ -964,8 +1023,15 @@ fun ChatScreen(
         ?: sessionModelState.pickerModel?.let { model ->
             modelProviders.singleOrNull { model in it.models }?.slug
         }
-    val showThinking by connectionViewModel.showThinking.collectAsState()
-    val toolDisplay by connectionViewModel.toolDisplay.collectAsState()
+    val configuredShowThinking by connectionViewModel.showThinking.collectAsState()
+    val configuredToolDisplay by connectionViewModel.toolDisplay.collectAsState()
+    val showThinking = configuredShowThinking &&
+        (!supervised || supervisedVisibility.showReasoning)
+    val toolDisplay = if (!supervised) configuredToolDisplay else when {
+        supervisedVisibility.showToolDetails -> "detailed"
+        supervisedVisibility.showToolNames -> "compact"
+        else -> "off"
+    }
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
@@ -984,7 +1050,10 @@ fun ChatScreen(
     // marker so the user knows approvals are off without opening the agent drawer.
     val yoloEnabled by chatViewModel.yoloEnabled.collectAsState()
     val pendingAttachments by chatViewModel.pendingAttachments.collectAsState()
-    val maxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
+    val configuredMaxAttachmentMb by connectionViewModel.maxAttachmentMb.collectAsState()
+    val maxAttachmentMb = if (supervised) {
+        minOf(configuredMaxAttachmentMb, supervisedPolicy.capabilities.attachmentMaxFileMb)
+    } else configuredMaxAttachmentMb
     val charLimit by connectionViewModel.maxMessageLength.collectAsState()
 
     // === Gateway desktop-parity state ===
@@ -993,6 +1062,9 @@ fun ChatScreen(
     val contextWindow by chatViewModel.contextWindow.collectAsState()
     // Injected-context audit sheet (opened by tapping the context meter).
     var showContextSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(supervised) {
+        if (supervised) showContextSheet = false
+    }
     val steerableTurn by chatViewModel.steerableTurn.collectAsState()
     val steerNotice by chatViewModel.steerNotice.collectAsState()
     val voiceHintSeen by connectionViewModel.voiceHintSeen.collectAsState()
@@ -1988,9 +2060,9 @@ fun ChatScreen(
             }
         }
     }
-    val showAutocomplete by remember(filteredCommands, inputText) {
+    val showAutocomplete by remember(filteredCommands, inputText, supervised) {
         derivedStateOf {
-            inputText.startsWith("/") && filteredCommands.isNotEmpty()
+            !supervised && inputText.startsWith("/") && filteredCommands.isNotEmpty()
         }
     }
 
@@ -2262,7 +2334,7 @@ fun ChatScreen(
         }
     }
     val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
-    val profileShelfAvailable = ProfilePresentationPolicy.shouldShowShelf(
+    val profileShelfAvailable = !supervised && ProfilePresentationPolicy.shouldShowShelf(
         profiles = agentProfiles,
         presentation = profilePresentation,
         selectedKey = selectedProfileKey,
@@ -2289,7 +2361,7 @@ fun ChatScreen(
         // Material routes scrim taps through the drawer's gesture handler.
         // Keep it enabled so tapping outside always dismisses the drawer; the
         // voice overlay already owns input while voice mode is visible.
-        gesturesEnabled = true,
+        gesturesEnabled = !supervised || supervisedPolicy.capabilities.conversationHistory,
         drawerContent = {
             val drawerProfileName = explicitBindingProfileName ?: effectiveProfile?.name
             val drawerTitle = if (drawerProfileName != null) {
@@ -2333,7 +2405,9 @@ fun ChatScreen(
             }
 
             SessionDrawerContent(
-                sessions = sessions,
+                sessions = if (
+                    supervised && !supervisedPolicy.capabilities.conversationHistory
+                ) emptyList() else sessions,
                 currentSessionId = currentSessionId,
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
@@ -2344,14 +2418,19 @@ fun ChatScreen(
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
+                supervisedSessionActions = supervisedPolicy.capabilities.sessionActions
+                    .takeIf { supervised },
+                newChatEnabled = !supervised || supervisedPolicy.capabilities.newChat,
                 onRefresh = { chatViewModel.refreshSessions() },
                 onOpenBotMode = {
                     scope.launch { drawerState.close() }
                     onNavigateToBotMode()
                 },
                 onNewChat = {
-                    chatViewModel.createNewChat()
-                    scope.launch { drawerState.close() }
+                    if (!supervised || supervisedPolicy.capabilities.newChat) {
+                        chatViewModel.createNewChat()
+                        scope.launch { drawerState.close() }
+                    }
                 },
                 onNewDefaultChat = {
                     if (isProfileLocked) return@SessionDrawerContent
@@ -2377,6 +2456,9 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteSession = { sessionId ->
+                    if (supervised && !supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Delete)) {
+                        return@SessionDrawerContent
+                    }
                     val connectionId = activeConnection?.id
                     val profileId = explicitBindingProfileName ?: selectedProfile?.name
                     chatViewModel.deleteSession(sessionId) {
@@ -2390,10 +2472,21 @@ fun ChatScreen(
                     }
                 },
                 onRenameSession = { sessionId, title ->
+                    if (supervised && !supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Rename)) {
+                        return@SessionDrawerContent
+                    }
                     chatViewModel.renameSession(sessionId, title)
                 },
-                onSetSessionPinned = chatViewModel::setSessionPinned,
-                onSetSessionArchived = chatViewModel::setSessionArchived,
+                onSetSessionPinned = { sessionId, pinned ->
+                    if (!supervised || supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Pin)) {
+                        chatViewModel.setSessionPinned(sessionId, pinned)
+                    }
+                },
+                onSetSessionArchived = { sessionId, archived ->
+                    if (!supervised || supervisedPolicy.allowsSessionAction(SupervisedSessionAction.Archive)) {
+                        chatViewModel.setSessionArchived(sessionId, archived)
+                    }
+                },
                 onCopySessionId = { sessionId ->
                     scope.launch {
                         clipboard.setClipEntry(
@@ -2423,7 +2516,7 @@ fun ChatScreen(
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
                 },
-                allProfilesSupported = !isProfileLocked &&
+                allProfilesSupported = !supervised && !isProfileLocked &&
                     !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
@@ -2585,8 +2678,14 @@ fun ChatScreen(
             // Top bar — messaging app style with avatar, name, model subtitle
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                        Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
+                    if (!supervised || supervisedPolicy.capabilities.conversationHistory) {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
+                        }
+                    } else if (supervisedPolicy.capabilities.newChat) {
+                        IconButton(onClick = { chatViewModel.createNewChat() }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "New chat")
+                        }
                     }
                 },
                 title = {
@@ -2618,8 +2717,10 @@ fun ChatScreen(
                     // style subtitle status.
                     var everConnected by remember { mutableStateOf(false) }
                     if (headerChatReady) everConnected = true
+                    val showStreamingState = isStreaming &&
+                        (!supervised || supervisedVisibility.showWorkingStatus)
                     val statusText = when {
-                        headerChatReady -> if (isStreaming) {
+                        headerChatReady -> if (showStreamingState) {
                             stringResource(R.string.chat_streaming)
                         } else {
                             stringResource(R.string.chat_connected_label)
@@ -2669,6 +2770,14 @@ fun ChatScreen(
                     // personality label.
                     val subtitleText = if (!headerChatReady) {
                         statusText
+                    } else if (supervised) {
+                        buildList {
+                            if (supervisedVisibility.showProfileName) {
+                                conversationProfile?.name?.takeIf { it.isNotBlank() }?.let(::add)
+                            }
+                            if (supervisedVisibility.showModelName && !modelName.isNullOrBlank()) add(modelName)
+                            if (isEmpty() && supervisedVisibility.showConnectionStatus) add(statusText)
+                        }.joinToString(" · ")
                     } else {
                         resolveChatHeaderSubtitle(
                             isStreaming = isStreaming,
@@ -2687,7 +2796,7 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier
-                            .clickable {
+                            .clickable(enabled = !supervised) {
                                 if (profileShelfAvailable) {
                                     showProfileShelf = !showProfileShelf
                                 } else {
@@ -2711,7 +2820,7 @@ fun ChatScreen(
                         // Avatar — a plain 40dp circle whose letter swaps to the
                         // active agent (profile or personality). No overlay ring:
                         // the letter itself is the indicator.
-                        Box(modifier = Modifier.size(40.dp)) {
+                        if (!supervised || supervisedVisibility.showAgentIdentity) Box(modifier = Modifier.size(40.dp)) {
                             Surface(
                                 modifier = Modifier.size(40.dp),
                                 shape = CircleShape,
@@ -2761,14 +2870,16 @@ fun ChatScreen(
                                     }
                                 }
                             }
-                            ConnectionStatusBadge(
-                                isConnected = headerChatReady,
-                                isConnecting = isConnecting,
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .align(Alignment.BottomEnd),
-                                size = 10.dp
-                            )
+                            if (!supervised || supervisedVisibility.showConnectionStatus) {
+                                ConnectionStatusBadge(
+                                    isConnected = headerChatReady,
+                                    isConnecting = isConnecting,
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .align(Alignment.BottomEnd),
+                                    size = 10.dp,
+                                )
+                            }
                         }
 
                         // Name + single-line subtitle.
@@ -2809,7 +2920,13 @@ fun ChatScreen(
                                 } else {
                                     Column {
                                         Text(
-                                            text = if (agentDisplayName.isNotBlank()) agentDisplayName else stringResource(R.string.chat_agent_default),
+                                            text = if (supervised && !supervisedVisibility.showAgentIdentity) {
+                                                stringResource(R.string.screen_chat_label)
+                                            } else if (agentDisplayName.isNotBlank()) {
+                                                agentDisplayName
+                                            } else {
+                                                stringResource(R.string.chat_agent_default)
+                                            },
                                             style = MaterialTheme.typography.titleMedium,
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -2846,7 +2963,7 @@ fun ChatScreen(
                                                 maxLines = 1,
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                             )
-                                            if (isStreaming && animationEnabled) {
+                                            if (showStreamingState && animationEnabled) {
                                                 StreamingDots(
                                                     color = subtitleColor,
                                                     modifier = Modifier.clearAndSetSemantics { },
@@ -2867,7 +2984,7 @@ fun ChatScreen(
                     // full explanation (global mode / --yolo / per-session)
                     // lives. Keeps the risk visible without eating subtitle
                     // width on every turn.
-                    if (yoloEnabled == true) {
+                    if (!supervised && yoloEnabled == true) {
                         RelayChromeIconButton(
                             icon = Icons.Filled.Bolt,
                             contentDescription = stringResource(R.string.cd_approvals_off),
@@ -2885,12 +3002,14 @@ fun ChatScreen(
                     // tappable → Connections, so the affordance moved with the
                     // info. Dropping it here declutters the actions row and frees
                     // width for the title subtitle.)
-                    RelayChromeIconButton(
-                        icon = Icons.Filled.Code,
-                        contentDescription = stringResource(R.string.cd_terminal),
-                        onClick = onNavigateToTerminal,
-                        modifier = Modifier.padding(end = 4.dp),
-                    )
+                    if (!supervised) {
+                        RelayChromeIconButton(
+                            icon = Icons.Filled.Code,
+                            contentDescription = stringResource(R.string.cd_terminal),
+                            onClick = onNavigateToTerminal,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
                     RelayChromeIconButton(
                         icon = Icons.Filled.Tune,
                         contentDescription = stringResource(R.string.cd_settings),
@@ -2903,7 +3022,11 @@ fun ChatScreen(
                     // Settings — which is what was squeezing the title subtitle.
                     // Session identity is useful before the first message; sharing only appears
                     // once the conversation has content.
-                    if (messages.isNotEmpty() || !currentSessionId.isNullOrBlank()) {
+                    if (
+                        (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) ||
+                        (supervised && messages.isNotEmpty() &&
+                            supervisedPolicy.allowsSessionAction(SupervisedSessionAction.ShareTranscript))
+                    ) {
                         var showOverflowMenu by remember { mutableStateOf(false) }
                         Box {
                             RelayChromeIconButton(
@@ -2916,7 +3039,7 @@ fun ChatScreen(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
-                                currentSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
+                                currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
                                     DropdownMenuItem(
                                         text = { Text(copySessionIdLabel) },
                                         leadingIcon = {
@@ -2941,7 +3064,7 @@ fun ChatScreen(
                                         },
                                     )
                                 }
-                                if (messages.isNotEmpty()) {
+                                if (!supervised && messages.isNotEmpty()) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.chat_search_conversation)) },
                                         leadingIcon = {
@@ -2959,6 +3082,22 @@ fun ChatScreen(
                                                 imageVector = Icons.Filled.Share,
                                                 contentDescription = null,
                                             )
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            shareConversation(context, messages)
+                                        },
+                                    )
+                                } else if (
+                                    messages.isNotEmpty() &&
+                                    supervisedPolicy.allowsSessionAction(
+                                        SupervisedSessionAction.ShareTranscript,
+                                    )
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_share_conversation)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Share, contentDescription = null)
                                         },
                                         onClick = {
                                             showOverflowMenu = false
@@ -3006,13 +3145,15 @@ fun ChatScreen(
             // and the mode strip — slim bar + `NN% · used/max` token readout,
             // color-graded by fullness. Composes to nothing until the server
             // reports a context_max for the session.
-            ContextMeterBar(
-                usedFraction = contextUsage,
-                usedTokens = contextWindow?.usedTokens,
-                maxTokens = contextWindow?.maxTokens,
-                onClick = { showContextSheet = true },
-            )
-            if (showContextSheet) {
+            if (!supervised || supervisedVisibility.showUsage) {
+                ContextMeterBar(
+                    usedFraction = contextUsage,
+                    usedTokens = contextWindow?.usedTokens,
+                    maxTokens = contextWindow?.maxTokens,
+                    onClick = if (supervised) null else ({ showContextSheet = true }),
+                )
+            }
+            if (!supervised && showContextSheet) {
                 // Live audit of the exact extra context the agent will be
                 // injected with on the next turn (transparency / auditability).
                 InjectedContextSheet(
@@ -3073,7 +3214,31 @@ fun ChatScreen(
                     },
                     label = "chatEmptyStatePhaseTransition",
                 ) { targetConnectState ->
-                    if (targetConnectState == ChatConnectState.Connecting) {
+                    if (supervised && targetConnectState != ChatConnectState.Ready) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (supervisedVisibility.showConnectionStatus) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    if (targetConnectState == ChatConnectState.Connecting) {
+                                        CircularProgressIndicator()
+                                    }
+                                    Text(
+                                        text = if (targetConnectState == ChatConnectState.Connecting) {
+                                            stringResource(R.string.chat_connecting_dots)
+                                        } else {
+                                            stringResource(R.string.chat_disconnected_label)
+                                        },
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    } else if (targetConnectState == ChatConnectState.Connecting) {
                     ChatColdStartLoadingState(
                         animationEnabled = animationEnabled,
                         streamingIntensity = streamingIntensity,
@@ -3113,7 +3278,10 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.weight(0.15f))
 
                             // ASCII sphere (constrained to square aspect)
-                            if (LocalBackgroundVisualizationEnabled.current) {
+                            if (
+                                LocalBackgroundVisualizationEnabled.current &&
+                                (!supervised || supervisedVisibility.showAgentIdentity)
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -3141,7 +3309,10 @@ fun ChatScreen(
                                     // thread itself (not just the header) -
                                     // the desktop's intro.
                                     ChatConnectState.Ready ->
-                                        if (effectiveProfile != null) {
+                                        if (
+                                            effectiveProfile != null &&
+                                            (!supervised || supervisedVisibility.showAgentIdentity)
+                                        ) {
                                             stringResource(R.string.chat_prompt_chat_with, agentDisplayName)
                                         } else {
                                             stringResource(R.string.chat_start_conversation)
@@ -3159,7 +3330,11 @@ fun ChatScreen(
                             val profileBlurb = effectiveProfile?.description
                                 ?.trim()
                                 ?.takeIf { it.isNotBlank() && !it.equals(agentDisplayName, ignoreCase = true) }
-                            if (targetConnectState == ChatConnectState.Ready && profileBlurb != null) {
+                            if (
+                                targetConnectState == ChatConnectState.Ready &&
+                                profileBlurb != null &&
+                                (!supervised || supervisedVisibility.showAgentIdentity)
+                            ) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = profileBlurb,
@@ -3276,6 +3451,7 @@ fun ChatScreen(
                     // Ambient avatar behind messages
                     if (
                         LocalBackgroundVisualizationEnabled.current &&
+                        (!supervised || supervisedVisibility.showAgentIdentity) &&
                         animationBehindChat &&
                         !ambientMode
                     ) {
@@ -3297,8 +3473,13 @@ fun ChatScreen(
                     // /media/by-path route when a relay session is paired,
                     // instead of degrading to the "image is on the server"
                     // notice. Null when no relay (standard no-plugin) → notice.
-                    val relayServerImageResolver = remember(chatViewModel) {
-                        RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
+                    val relayServerImageResolver = remember(
+                        chatViewModel,
+                        supervised,
+                        supervisedPolicy.capabilities.generatedImages,
+                    ) {
+                        if (supervised && !supervisedPolicy.capabilities.generatedImages) null
+                        else RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
                     }
                     val thinkingIndicatorConfig = remember(
                         thinkingIndicatorStyle,
@@ -3353,6 +3534,7 @@ fun ChatScreen(
                         items(messages.size, key = { messages[it].uiKey }) { index ->
                             val message = messages[index]
                             val processNotification = message.hermesProcessNotificationOrNull()
+                                ?.takeIf { !supervised || supervisedVisibility.showToolNames }
 
                             // Skip empty bubbles (content stripped by annotation parser, no tool calls,
                             // no attachments). Attachments keep the bubble alive for inbound media;
@@ -3377,7 +3559,10 @@ fun ChatScreen(
                                 messages[index + 1].timestamp - message.timestamp > GROUP_GAP_MS
 
                             // Date separator
-                            if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
+                            if (
+                                (!supervised || supervisedVisibility.showTimestamps) &&
+                                (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp))
+                            ) {
                                 DateSeparator(timestamp = message.timestamp)
                             }
 
@@ -3389,7 +3574,9 @@ fun ChatScreen(
                                     message.attachments.isNotEmpty() ||
                                     message.cards.isNotEmpty()
 
-                            message.backgroundTask?.let { task ->
+                            message.backgroundTask
+                                ?.takeIf { !supervised || supervisedVisibility.showWorkingStatus }
+                                ?.let { task ->
                                 val taskModifier = Modifier.padding(
                                     top = if (isFirstInGroup) 6.dp else 2.dp,
                                     bottom = if (shouldRenderBubble) 3.dp else 0.dp,
@@ -3447,6 +3634,14 @@ fun ChatScreen(
                                     },
                                     maxBubbleWidth = maxBubbleWidth,
                                     showThinking = showThinking,
+                                    showAgentIdentity = !supervised || supervisedVisibility.showAgentIdentity,
+                                    showTimestamps = !supervised || supervisedVisibility.showTimestamps,
+                                    showWorkingStatus = !supervised || supervisedVisibility.showWorkingStatus,
+                                    showUsage = !supervised || supervisedVisibility.showUsage,
+                                    showTechnicalBadges = !supervised || supervisedVisibility.showTechnicalRoute,
+                                    showAssistantImages = !supervised || supervisedPolicy.capabilities.generatedImages,
+                                    allowAssistantImageExport = !supervised ||
+                                        supervisedPolicy.capabilities.shareGeneratedImages,
                                     isFirstInGroup = isFirstInGroup,
                                     isLastInGroup = isLastInGroup,
                                     recoveringAnswer = recoveringAnswer,
@@ -3459,9 +3654,9 @@ fun ChatScreen(
                                     onAttachmentManualFetch = { msgId, idx ->
                                         chatViewModel.manualFetchAttachment(msgId, idx)
                                     },
-                                    onCardAction = handleCardAction,
-                                    onCardInput = handleCardInput,
-                                    onSessionReference = { reference ->
+                                    onCardAction = if (supervised) ({ _, _, _ -> }) else handleCardAction,
+                                    onCardInput = if (supervised) ({ _, _, _ -> }) else handleCardInput,
+                                    onSessionReference = if (supervised) null else { reference ->
                                         val target = agentProfiles.firstOrNull {
                                             it.name.equals(reference.profile, ignoreCase = true)
                                         }
@@ -3479,6 +3674,7 @@ fun ChatScreen(
                                         }
                                     },
                                     onReact = if (
+                                        !supervised &&
                                         isGatewayTransport &&
                                         messageReactionsSupported &&
                                         !message.isStreaming &&
@@ -3492,6 +3688,7 @@ fun ChatScreen(
                                         null
                                     },
                                     onEditMessage = if (
+                                        (!supervised || supervisedPolicy.capabilities.editAndResend) &&
                                         isGatewayTransport &&
                                         !isStreaming &&
                                         message.role == MessageRole.USER &&
@@ -3510,10 +3707,14 @@ fun ChatScreen(
                                         null
                                     },
                                     animationEnabled = animationEnabled,
-                                    onQuoteMessage = { quoted ->
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        quotedMessage = quoted
-                                    },
+                                    onQuoteMessage = if (
+                                        !supervised || supervisedPolicy.capabilities.quoteReplies
+                                    ) {
+                                        { quoted ->
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            quotedMessage = quoted
+                                        }
+                                    } else null,
                                     onNavigateToMessage = { messageId ->
                                         val targetIndex = messages.indexOfFirst { it.id == messageId }
                                         if (targetIndex >= 0) {
@@ -3524,7 +3725,10 @@ fun ChatScreen(
                                             scope.launch { listState.animateScrollToItem(targetIndex + 1) }
                                         }
                                     },
-                                    onSpeakMessage = if (chatSpeakResponseActionsEnabled) {
+                                    onSpeakMessage = if (
+                                        chatSpeakResponseActionsEnabled &&
+                                        (!supervised || supervisedPolicy.capabilities.voice)
+                                    ) {
                                         { text -> voiceViewModel.speakResponse(text) }
                                     } else {
                                         null
@@ -3535,6 +3739,9 @@ fun ChatScreen(
                                         null
                                     },
                                     onCopyMessage = { text ->
+                                        if (supervised && !supervisedPolicy.capabilities.copyResponses) {
+                                            return@MessageBubble
+                                        }
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         // The new Clipboard API is suspend-based, so the
                                         // setClipEntry call has to live inside a coroutine.
@@ -4003,7 +4210,8 @@ fun ChatScreen(
             // Gateway redirect is text-only. Attachment-bearing follow-ups must
             // retain their files in the session-owned queue instead of showing
             // a correction action that cannot carry them.
-            val canSteerCurrentMessage = steerableTurn && pendingAttachments.isEmpty()
+            val canSteerCurrentMessage = steerableTurn && pendingAttachments.isEmpty() &&
+                (!supervised || supervisedPolicy.capabilities.steerResponse)
             val trailing = when {
                 !isStreaming && hasContent -> ChatInputTrailing.SEND
                 !isStreaming -> ChatInputTrailing.VOICE
@@ -4136,7 +4344,7 @@ fun ChatScreen(
                     }
                 }
             }
-            val modelControl = modelPickerOptions.takeIf { it.isNotEmpty() }?.let {
+            val modelControl = modelPickerOptions.takeIf { !supervised && it.isNotEmpty() }?.let {
                 ChatInputPickerControl(
                     value = compactModelChipLabel(currentModelForInput, modelDefaultLabel),
                     contentDescription = stringResource(R.string.cd_select_model),
@@ -4187,6 +4395,7 @@ fun ChatScreen(
             // is definitively unreachable (SSE-only) — the agent sheet carries the
             // disabled-with-reason version there.
             val effortControl = if (
+                !supervised &&
                 chatGatewayAvailability != GatewayAvailability.Unreachable &&
                 effortAvailability.supported != false &&
                 effortPickerOptions.isNotEmpty()
@@ -4203,7 +4412,13 @@ fun ChatScreen(
             }
 
             visibleChatFailure?.let { failure ->
-                val failureRouteLabel = when (failure.route) {
+                val displayFailure = if (!supervised) failure else failure.copy(
+                    model = failure.model.takeIf { supervisedVisibility.showModelName },
+                    provider = failure.provider.takeIf { supervisedVisibility.showTechnicalRoute },
+                )
+                val failureRouteLabel = if (
+                    supervised && !supervisedVisibility.showTechnicalRoute
+                ) "" else when (failure.route) {
                     ChatFailureRoute.GATEWAY ->
                         stringResource(R.string.chat_failure_route_gateway)
                     ChatFailureRoute.API_FALLBACK ->
@@ -4211,23 +4426,28 @@ fun ChatScreen(
                     null -> ""
                 }
                 ChatFailurePanel(
-                    failure = failure,
+                    failure = displayFailure,
                     routeLabel = failureRouteLabel,
                     onDetails = { showChatFailureDetails = true },
-                    onRetry = { chatViewModel.retryLastMessage() },
+                    onRetry = {
+                        if (!supervised || supervisedPolicy.capabilities.retryResponse) {
+                            chatViewModel.retryLastMessage()
+                        }
+                    },
                     onDismiss = chatViewModel::dismissChatFailure,
+                    showDetails = !supervised || supervisedVisibility.showTechnicalRoute,
                 )
                 if (showChatFailureDetails) {
                     ChatFailureDetailsDialog(
-                        failure = failure,
+                        failure = displayFailure,
                         routeLabel = failureRouteLabel,
                         onCopy = {
                             val details = buildString {
                                 append(failureRouteLabel)
-                                failure.provider?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-                                failure.model?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                displayFailure.provider?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                displayFailure.model?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
                                 append("\n\n")
-                                append(failure.rawError)
+                                append(displayFailure.rawError)
                             }
                             scope.launch {
                                 clipboard.setClipEntry(
@@ -4309,6 +4529,9 @@ fun ChatScreen(
                     )
                 },
                 onStop = {
+                    if (supervised && !supervisedPolicy.capabilities.cancelResponse) {
+                        return@ChatInputBar
+                    }
                     chatViewModel.cancelStream()
                     // Firm haptic (LongPress — TextHandleMove was near-
                     // imperceptible) plus a "Stopped" badge stamped on the turn
@@ -4324,14 +4547,44 @@ fun ChatScreen(
                     }
                 },
                 onAttachPhotos = {
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
+                    val allowed = !supervised || (
+                        supervisedPolicy.capabilities.attachments &&
+                            SupervisedAttachmentCategory.Images in
+                            supervisedPolicy.capabilities.attachmentCategories &&
+                            pendingAttachments.size < supervisedPolicy.capabilities.attachmentMaxCount
+                        )
+                    if (allowed) {
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
                 },
-                onAttachFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
-                onAttachCamera = requestCameraCapture,
-                onPasteImage = pasteImageFromClipboard,
-                onLongPressAttach = { showCommandPalette = true },
+                onAttachFiles = {
+                    if (!supervised || supervisedPolicy.capabilities.attachments) {
+                        val mimeTypes = if (!supervised) arrayOf("*/*") else buildList {
+                            val categories = supervisedPolicy.capabilities.attachmentCategories
+                            if (SupervisedAttachmentCategory.Images in categories) add("image/*")
+                            if (SupervisedAttachmentCategory.Audio in categories) add("audio/*")
+                            if (SupervisedAttachmentCategory.Video in categories) add("video/*")
+                            if (SupervisedAttachmentCategory.Documents in categories) {
+                                add("text/*")
+                                add("application/pdf")
+                            }
+                        }.toTypedArray()
+                        if (mimeTypes.isNotEmpty()) filePickerLauncher.launch(mimeTypes)
+                    }
+                },
+                onAttachCamera = if (!supervised || (
+                        supervisedPolicy.capabilities.attachments &&
+                            SupervisedAttachmentCategory.Images in
+                            supervisedPolicy.capabilities.attachmentCategories
+                        )) requestCameraCapture else ({ }),
+                onPasteImage = if (!supervised || (
+                        supervisedPolicy.capabilities.attachments &&
+                            SupervisedAttachmentCategory.Images in
+                            supervisedPolicy.capabilities.attachmentCategories
+                        )) pasteImageFromClipboard else ({ }),
+                onLongPressAttach = { if (!supervised) showCommandPalette = true },
                 charLimit = charLimit,
                 caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
@@ -4343,8 +4596,13 @@ fun ChatScreen(
                 submitEnabled = pendingAttachments.none {
                     it.state == com.hermesandroid.relay.data.AttachmentState.LOADING
                 },
-                largePasteThreshold = LARGE_PASTE_THRESHOLD_CHARS
-                    .takeIf { convertLargePastesToAttachments },
+                largePasteThreshold = LARGE_PASTE_THRESHOLD_CHARS.takeIf {
+                    convertLargePastesToAttachments && (!supervised || (
+                        supervisedPolicy.capabilities.attachments &&
+                            SupervisedAttachmentCategory.Documents in
+                            supervisedPolicy.capabilities.attachmentCategories
+                        ))
+                },
                 onLargePaste = { pastedText ->
                     val owner = activeComposerDraftKey ?: composerDraftKey
                     val sizeBytes = pastedText.toByteArray(Charsets.UTF_8).size.toLong()
@@ -4662,7 +4920,7 @@ fun ChatScreen(
     }
 
     // Command palette bottom sheet
-    if (showCommandPalette) {
+    if (showCommandPalette && !supervised) {
         CommandPalette(
             commands = allCommands,
             onSelect = { cmd ->
@@ -4690,7 +4948,7 @@ fun ChatScreen(
     // personality, connection summary). Replaces the old AlertDialog and the
     // two top-bar chips (ProfilePicker + PersonalityPicker). Tap target is
     // the title Row in the TopAppBar above.
-    if (showAgentInfo) {
+    if (showAgentInfo && !supervised) {
         AgentInfoSheet(
             connectionViewModel = connectionViewModel,
             chatViewModel = chatViewModel,

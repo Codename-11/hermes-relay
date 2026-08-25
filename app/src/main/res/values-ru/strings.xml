@@ -668,6 +668,14 @@
     <string name="settings_analytics_desc">Статистика использования, TTFT, токены, состояние</string>
     <string name="settings_diagnostics">Диагностика</string>
     <string name="settings_diagnostics_desc">Проверка состояния, а также недавняя активность API, Relay, сессий и голосовых данных</string>
+    <string name="settings_advanced">Дополнительно</string>
+    <string name="settings_advanced_desc">Режим с контролем и другие дополнительные функции</string>
+    <string name="settings_advanced_intro">Дополнительные и специальные функции собраны здесь, чтобы не перегружать главный экран настроек.</string>
+    <string name="settings_supervised_mode">Режим с контролем</string>
+    <string name="settings_supervised_desc">Выберите профиль и разрешённые функции чата</string>
+    <string name="settings_supervised_on">Вкл.</string>
+    <string name="settings_supervised_on_profile">Вкл. · %1$s</string>
+    <string name="settings_supervised_ready_profile">Готово · %1$s</string>
     <string name="settings_developer_options">Настройки разработчика</string>
     <string name="settings_developer_options_desc">Флаги функций, управление данными, экспериментальные</string>
     <string name="settings_whats_new">Что нового</string>
