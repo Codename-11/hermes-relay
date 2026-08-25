@@ -16,6 +16,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -27,6 +28,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class GitStateWriteViewModelTest {
+    private val ownerKey = "connection-a\u0000default\u0000dashboard"
     private val mainDispatcher = UnconfinedTestDispatcher()
     private lateinit var application: Application
     private lateinit var server: MockWebServer
@@ -46,8 +48,8 @@ class GitStateWriteViewModelTest {
 
     private fun viewModel(grant: Boolean = true): GitStateViewModel {
         val vm = GitStateViewModel(application)
-        vm.configure(DashboardApiClient(server.url("/").toString()))
-        vm.setWriteGrant(grant)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey)
+        vm.setWriteGrant(ownerKey, grant)
         return vm
     }
 
@@ -137,6 +139,49 @@ class GitStateWriteViewModelTest {
         val req = server.takeRequest()
         assertTrue(req.path!!.contains("/git/commit"))
         assertTrue(req.body.readUtf8().contains("add feature"))
+    }
+
+    @Test
+    fun `commit success callback fires only after successful response`() = runBlocking {
+        val vm = viewModel()
+        selectAlpha(vm)
+        enqueuePostSuccess("abc")
+        var committedTarget: GitTarget? = null
+
+        vm.commit("add feature") { committedTarget = it }
+        withTimeout(5_000) { vm.mutation.filterIsInstance<GitMutationState.Success>().first() }
+
+        assertEquals("alpha", committedTarget?.repoId)
+    }
+
+    @Test
+    fun `commit failure never invokes success callback`() = runBlocking {
+        val vm = viewModel()
+        selectAlpha(vm)
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"detail":"failed"}"""))
+        var callbackCalled = false
+
+        vm.commit("add feature") { callbackCalled = true }
+        withTimeout(5_000) { vm.mutation.filterIsInstance<GitMutationState.Error>().first() }
+
+        assertFalse(callbackCalled)
+    }
+
+    @Test
+    fun `connection change revokes grant and rejects prior target`() = runBlocking {
+        val vm = viewModel()
+        selectAlpha(vm)
+        val priorTarget = vm.currentTarget()!!
+        enqueueJson("""{"repos":[]}""")
+
+        vm.configure(DashboardApiClient(server.url("/").toString()), "connection-b")
+        vm.setWriteGrant(ownerKey, true)
+        withTimeout(5_000) { vm.repos.filterIsInstance<GitStateUiState.Ready>().first() }
+        vm.push(GitConfirmationStrings.PUSH, expectedTarget = priorTarget)
+
+        assertFalse(vm.hasWriteGrant())
+        assertEquals(null, vm.currentTarget())
+        assertTrue(vm.mutation.value is GitMutationState.Error)
     }
 
     @Test

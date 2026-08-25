@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+RESERVED_PLUGIN_IDS = frozenset({"git"})
 MAX_DOCUMENT_BYTES = 512 * 1024
 ALLOWED_LIFECYCLES = frozenset({"session", "persistent"})
 ALLOWED_ELEMENT_TYPES = frozenset(
@@ -132,6 +133,8 @@ class MobilePluginStore:
         for path in sorted(self.root.glob("*.json")):
             if not PLUGIN_ID_RE.fullmatch(path.stem):
                 continue
+            if path.stem in RESERVED_PLUGIN_IDS:
+                continue
             entry = self._read(path.stem, required=False)
             if entry:
                 entries.append({k: v for k, v in entry.items() if k != "document"})
@@ -200,6 +203,8 @@ class MobilePluginStore:
         normalized = str(plugin_id).strip().lower()
         if not PLUGIN_ID_RE.fullmatch(normalized):
             raise MobilePluginStoreError("invalid plugin id")
+        if normalized in RESERVED_PLUGIN_IDS:
+            raise MobilePluginStoreError("plugin id is reserved")
         return normalized
 
     @staticmethod
@@ -331,6 +336,8 @@ class MobilePluginStore:
             if required:
                 raise MobilePluginNotFoundError(plugin_id)
             return {}
+        except MobilePluginStoreError:
+            raise
         except (OSError, ValueError, json.JSONDecodeError):
             if required:
                 raise MobilePluginNotFoundError(plugin_id)

@@ -92,6 +92,15 @@ class MobilePluginApiTests(unittest.TestCase):
         self.assertEqual("git", body["pages"][0]["id"])
         self.assertEqual(1, body["host_revision"])
 
+    def test_reserved_git_plugin_id_is_rejected(self) -> None:
+        response = self.client.put(
+            "/mobile/plugins/git/draft",
+            json={"title": "Shadow", "document": _document()},
+        )
+        self.assertEqual(400, response.status_code, response.text)
+        manifest = self.client.get("/mobile/manifest").json()
+        self.assertEqual(["git"], [item["id"] for item in manifest["contributions"]])
+
     def test_traversal_and_bad_document_are_rejected(self) -> None:
         traversal = self.client.put(
             "/mobile/plugins/..%5Coutside/draft",

@@ -84,6 +84,11 @@ class MobilePluginStoreTests(unittest.TestCase):
                 document={"schemaVersion": 1, "pages": []},
             )
 
+    def test_rejects_reserved_git_id(self) -> None:
+        with self.assertRaisesRegex(MobilePluginStoreError, "reserved"):
+            self.store.draft("git", title="Shadow", description="", document=_document())
+        self.assertEqual(["git"], [item["id"] for item in self.store.manifest()["contributions"]])
+
     def test_listing_omits_document_payload(self) -> None:
         self.store.draft("compact", title="Compact", description="", document=_document())
         self.assertNotIn("document", self.store.list()[0])

@@ -27,6 +27,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class GitStateExtrasViewModelTest {
+    private val ownerKey = "connection-a\u0000default\u0000dashboard"
     private val mainDispatcher = UnconfinedTestDispatcher()
     private lateinit var application: Application
     private lateinit var server: MockWebServer
@@ -46,8 +47,8 @@ class GitStateExtrasViewModelTest {
 
     private fun viewModel(grant: Boolean = true): GitStateViewModel {
         val vm = GitStateViewModel(application)
-        vm.configure(DashboardApiClient(server.url("/").toString()))
-        vm.setWriteGrant(grant)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey)
+        vm.setWriteGrant(ownerKey, grant)
         return vm
     }
 

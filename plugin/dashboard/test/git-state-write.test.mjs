@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   normalizeMutationResult,
   confirmationFor,
   requiresConfirmation,
   CONFIRMATIONS,
+  isCurrentRepoRequest,
+  shouldOfferPushAfterCommit,
 } from "../src/lib/git-state.mjs";
 
 test("normalizeMutationResult maps head/status/branches safely", () => {
@@ -47,6 +50,33 @@ test("requiresConfirmation gates only destructive ops", () => {
   assert.equal(requiresConfirmation("stage"), false);
   assert.equal(requiresConfirmation("commit"), false);
   assert.equal(requiresConfirmation("fetch"), false);
+});
+
+test("repository request ownership rejects stale repo or generation", () => {
+  assert.equal(isCurrentRepoRequest("a", 2, "a", 2), true);
+  assert.equal(isCurrentRepoRequest("b", 2, "a", 2), false);
+  assert.equal(isCurrentRepoRequest("a", 3, "a", 2), false);
+});
+
+test("push-after-commit requires the exact commit to succeed", () => {
+  assert.equal(shouldOfferPushAfterCommit(true, true), true);
+  assert.equal(shouldOfferPushAfterCommit(false, true), false);
+  assert.equal(shouldOfferPushAfterCommit(true, false), false);
+});
+
+test("GitState commits the complete index and dispatches clean checkout", () => {
+  const source = readFileSync(new URL("../src/tabs/GitState.jsx", import.meta.url), "utf8");
+  assert.match(source, /applyMutation\("commit", \[\], \{ message \}\)/);
+  assert.doesNotMatch(source, /applyMutation\("commitSelected"/);
+  assert.match(source, /op === "checkout" \|\| op === "dirty-checkout"/);
+});
+
+test("GitState bulk actions dispatch one bounded path array", () => {
+  const source = readFileSync(new URL("../src/tabs/GitState.jsx", import.meta.url), "utf8");
+  assert.match(source, /onClick=\{onStageAll\}/);
+  assert.match(source, /onClick=\{onUnstageAll\}/);
+  assert.match(source, /onClick=\{onDiscardAll\}/);
+  assert.doesNotMatch(source, /forEach\(onStage\)|forEach\(onUnstage\)|forEach\(onDiscard\)/);
 });
 
 // ── Phase 3 extras ─────────────────────────────────────────────────────────

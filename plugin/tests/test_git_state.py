@@ -10,6 +10,7 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from plugin import git_state
 
@@ -43,6 +44,15 @@ def _init_repo(root: Path, name: str) -> Path:
 
 def _add_remote(repo: Path, remote_url: str, name: str = "origin") -> None:
     _git(repo, "remote", "add", name, remote_url)
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        _run(["cmd", "/c", "mklink", "/J", str(link), str(target)], link.parent)
 
 
 class GitStateScanTests(unittest.TestCase):
@@ -92,6 +102,26 @@ class GitStateScanTests(unittest.TestCase):
         repos = git_state.scan_repos(base)
         dirty = next(r for r in repos if r["name"] == "dirty")
         self.assertTrue(dirty["dirty"])
+
+    def test_nested_same_name_repos_have_distinct_round_trip_ids(self) -> None:
+        base = self.tmp / "projects"
+        base.mkdir(parents=True)
+        first = _init_repo(base / "team-a", "service")
+        second = _init_repo(base / "team-b", "service")
+
+        repos = git_state.scan_repos(base)
+        self.assertEqual({"team-a/service", "team-b/service"}, {repo["id"] for repo in repos})
+        self.assertEqual(first.resolve(), git_state.resolve_repo(base, "team-a/service"))
+        self.assertEqual(second.resolve(), git_state.resolve_repo(base, "team-b/service"))
+
+    def test_scan_rejects_linked_repo_outside_base(self) -> None:
+        base = self.tmp / "projects"
+        base.mkdir(parents=True)
+        outside = _init_repo(self.tmp, "outside")
+        link = base / "linked"
+        _link_directory(link, outside)
+
+        self.assertEqual([], git_state.scan_repos(base))
 
 
 class GitStateStatusTests(unittest.TestCase):
@@ -297,6 +327,35 @@ class GitStateFileTests(unittest.TestCase):
             git_state.read_file(self.repo, "latin1.txt")
         self.assertIn("not valid UTF-8 text", str(ctx.exception))
 
+    def test_read_tracked_link_outside_repo_is_rejected(self) -> None:
+        if os.name == "nt":
+            outside = self.base / "outside"
+            outside.mkdir()
+            (outside / "secret.txt").write_text("secret", encoding="utf-8")
+            link = self.repo / "leak"
+            _link_directory(link, outside)
+            tracked_path = "leak/secret.txt"
+        else:
+            outside = self.base / "outside.txt"
+            outside.write_text("secret", encoding="utf-8")
+            (self.repo / "leak.txt").symlink_to(outside)
+            tracked_path = "leak.txt"
+        _git(self.repo, "add", tracked_path)
+        _git(self.repo, "commit", "-q", "-m", "track link")
+
+        with self.assertRaisesRegex(git_state.GitStateError, "escapes repository"):
+            git_state.read_file(self.repo, tracked_path)
+
+    def test_read_tracked_file_is_bounded_during_read(self) -> None:
+        (self.repo / "large.txt").write_text("x" * (git_state.MAX_FILE_BYTES + 100), encoding="utf-8")
+        _git(self.repo, "add", "large.txt")
+        _git(self.repo, "commit", "-q", "-m", "large")
+
+        result = git_state.read_file(self.repo, "large.txt")
+
+        self.assertTrue(result["truncated"])
+        self.assertEqual(git_state.MAX_FILE_BYTES, len(result["content"]))
+
 
 class GitStateDocumentTests(unittest.TestCase):
     def test_document_missing_base_notice_leaks_no_path(self) -> None:
@@ -343,11 +402,25 @@ class GitStateSecurityTests(unittest.TestCase):
             self.assertNotIn("user:", remote["url"])
             self.assertNotIn("git@", remote["url"])
 
+    def test_git_error_text_scrubs_embedded_remote_credentials(self) -> None:
+        message = git_state._safe_git_error(
+            "fatal: unable to access 'https://user:secret@example.com/repo.git'"
+        )
+        self.assertNotIn("user", message)
+        self.assertNotIn("secret", message)
+
     def test_allowlist_accepts_only_scanned_repos(self) -> None:
         scanned = git_state.scan_repos(self.base)
         ids = {r["id"] for r in scanned}
         self.assertIn(git_state.repo_id(self.repo), ids)
         self.assertNotIn("bogus-id", ids)
+
+    def test_git_output_over_cap_fails_closed(self) -> None:
+        for index in range(20):
+            (self.repo / f"long-untracked-name-{index}.txt").write_text("x", encoding="utf-8")
+        with patch.object(git_state, "MAX_GIT_OUTPUT_BYTES", 32):
+            with self.assertRaisesRegex(git_state.GitStateError, "output exceeded"):
+                git_state.repo_status(self.repo)
 
 
 if __name__ == "__main__":
