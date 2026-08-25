@@ -46,14 +46,17 @@ class MobilePluginStoreTests(unittest.TestCase):
 
         manifest = self.store.manifest()
         self.assertEqual("hermes-relay", manifest["id"])
-        contribution = manifest["contributions"][0]
+        contribution = next(c for c in manifest["contributions"] if c["id"] == "daily-brief")
         self.assertEqual("Draft: Daily Brief", contribution["title"])
         self.assertEqual("mobile/pages/daily-brief", contribution["document"]["path"])
         self.assertEqual(_document(), self.store.get("daily-brief")["document"])
 
         published = self.store.publish("daily-brief")
         self.assertEqual("published", published["status"])
-        self.assertEqual("Daily Brief", self.store.manifest()["contributions"][0]["title"])
+        published_contribution = next(
+            c for c in self.store.manifest()["contributions"] if c["id"] == "daily-brief"
+        )
+        self.assertEqual("Daily Brief", published_contribution["title"])
 
         self.assertEqual({"ok": True, "id": "daily-brief"}, self.store.remove("daily-brief"))
         self.assertEqual([], self.store.list())

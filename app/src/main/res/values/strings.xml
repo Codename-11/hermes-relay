@@ -4210,6 +4210,51 @@
     <string name="plugins_keep">Keep</string>
     <string name="plugins_remove">Remove</string>
     <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
+    <string name="git_state_title">Git</string>
+    <string name="git_state_back">Back</string>
+    <string name="git_state_staged">Staged</string>
+    <string name="git_state_modified">Modified</string>
+    <string name="git_state_untracked">Untracked</string>
+    <string name="git_state_branches">Branches</string>
+    <string name="git_state_truncated">Results truncated — showing the first entries only.</string>
+    <string name="git_state_no_changes">(no changes)</string>
+
+    <!-- Git write surface (Phase 2). All mutations require the plugin.api.write grant. -->
+    <string name="git_state_write_grant_required">Write changes require the plugin change permission. Enable “Allow plugin changes (plugin.api.write)” in the Plugins grant settings.</string>
+    <string name="git_state_stage">Stage</string>
+    <string name="git_state_unstage">Unstage</string>
+    <string name="git_state_discard">Discard</string>
+    <string name="git_state_commit">Commit</string>
+    <string name="git_state_commit_title">Commit staged changes</string>
+    <string name="git_state_commit_message_hint">Commit message</string>
+    <string name="git_state_commit_confirm">Commit</string>
+    <string name="git_state_cancel">Cancel</string>
+    <string name="git_state_fetch">Fetch</string>
+    <string name="git_state_pull">Pull</string>
+    <string name="git_state_push">Push</string>
+    <string name="git_state_new_branch_hint">New branch name</string>
+    <string name="git_state_create_branch">Create branch</string>
+    <string name="git_state_track_remote">Track remote branch</string>
+    <string name="git_state_switch">Switch</string>
+    <string name="git_state_current">Current</string>
+    <string name="git_state_mutation_in_progress">%1$s in progress…</string>
+    <string name="git_state_mutation_success">%1$s completed. HEAD %2$s</string>
+    <string name="git_state_mutation_failed">%1$s failed: %2$s</string>
+    <!-- Destructive-op confirmations (token is sent only on explicit user confirmation). -->
+    <string name="git_state_confirm_discard_title">Discard changes?</string>
+    <string name="git_state_confirm_discard_text">Local changes to the selected file(s) will be discarded and cannot be recovered.</string>
+    <string name="git_state_confirm_discard_confirm">Discard</string>
+    <string name="git_state_confirm_push_title">Push changes?</string>
+    <string name="git_state_confirm_push_text">Push the current branch to its remote. This sends local commits to the remote repository.</string>
+    <string name="git_state_confirm_push_confirm">Push</string>
+    <string name="git_state_confirm_checkout_dirty_title">Switch branch with local changes?</string>
+    <string name="git_state_confirm_checkout_dirty_text">The working tree has uncommitted changes. Switching may carry them onto the target branch.</string>
+    <string name="git_state_confirm_checkout_confirm">Switch</string>
+    <string name="git_state_generate_message">Generate commit message</string>
+    <string name="git_state_generating_message">Generating commit message…</string>
+    <string name="git_state_push_after_commit">Push after commit</string>
+    <string name="git_state_switch_stash">Switch (stash if dirty)</string>
+
     <string name="support_bundle_review">Review support information</string>
     <string name="support_bundle_title">Support information</string>
     <string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains up to %1$d recent reports.</string>

@@ -178,6 +178,8 @@ import com.hermesandroid.relay.ui.screens.SupervisedAppearanceSettingsScreen
 import com.hermesandroid.relay.ui.screens.UsageLimitsScreen
 import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
+import com.hermesandroid.relay.ui.screens.GitStateScreen
+import com.hermesandroid.relay.viewmodel.GitStateViewModel
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
@@ -197,7 +199,9 @@ import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.plugins.runtime.PLUGIN_API_WRITE_CAPABILITY
 import com.hermesandroid.relay.viewmodel.PluginsViewModel
+import com.hermesandroid.relay.viewmodel.PluginsHubState
 import com.hermesandroid.relay.viewmodel.ProfileInspectorViewModel
 import com.hermesandroid.relay.viewmodel.TerminalViewModel
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
@@ -445,6 +449,7 @@ sealed class Screen(
     }
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
     data object Plugins : Screen("plugins", "Plugins", Icons.Filled.Extension)
+    data object GitState : Screen("git_state", "Git", Icons.Filled.Code)
     data object PluginPage : Screen(
         "plugins/{pluginId}/pages/{pageId}",
         "Plugin",
@@ -631,6 +636,7 @@ fun RelayApp() {
     val chatViewModel: ChatViewModel = processRuntime.chatViewModel
     val terminalViewModel: TerminalViewModel = viewModel()
     val pluginsViewModel: PluginsViewModel = viewModel()
+    val gitStateViewModel: GitStateViewModel = viewModel()
     val voiceViewModel: VoiceViewModel = processRuntime.voiceViewModel
     val runtimeInitializationState by processRuntime.initializationState.collectAsState()
 
@@ -862,6 +868,24 @@ fun RelayApp() {
             dashboardFactory = connectionViewModel::dashboardClientForActive,
             sessionId = currentChatSessionId,
         )
+        val dashboard = effectiveDashboardUrl
+            .takeIf { it.isNotBlank() }
+            ?.let { connectionViewModel.dashboardClientForActive(it) }
+        gitStateViewModel.configure(dashboard)
+    }
+
+    // Mirror the plugin.api.write grant into the Git view model so write
+    // mutations are refused client-side until the user grants write access
+    // (matches the plug-in's grant gating in PluginsViewModel).
+    val pluginsHubState by pluginsViewModel.hubState.collectAsState()
+    LaunchedEffect(pluginsHubState) {
+        val granted = (pluginsHubState as? PluginsHubState.Ready)
+            ?.plugins
+            ?.firstOrNull { it.catalog.id == "hermes-relay" }
+            ?.preferences
+            ?.grants
+            ?.contains(PLUGIN_API_WRITE_CAPABILITY) == true
+        gitStateViewModel.setWriteGrant(granted)
     }
 
     // What's New auto-show
@@ -2730,8 +2754,18 @@ fun RelayApp() {
                         viewModel = pluginsViewModel,
                         onBack = { navController.popBackStack() },
                         onOpenPage = { pluginId, pageId ->
-                            navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                            if (pluginId == "hermes-relay" && pageId == "git") {
+                                navController.navigate(Screen.GitState.route)
+                            } else {
+                                navController.navigate(Screen.PluginPage.route(pluginId, pageId))
+                            }
                         },
+                    )
+                }
+                composable(Screen.GitState.route) {
+                    GitStateScreen(
+                        viewModel = gitStateViewModel,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(
