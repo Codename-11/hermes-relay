@@ -48,6 +48,9 @@ interface VoiceAudioClient {
     val effectiveRoute: VoiceAudioRoute
         get() = route
 
+    /** Temporary client-policy override; the shared router honors it before user prefs. */
+    fun setRouteOverride(route: VoiceAudioRoute?) = Unit
+
     suspend fun transcribe(audioFile: File): Result<String>
     suspend fun synthesize(text: String): Result<File>
 
@@ -82,8 +85,15 @@ class AutoVoiceAudioClient(
     private val standardReadyProvider: () -> Boolean,
     private val relayReadyProvider: () -> Boolean,
 ) : VoiceAudioClient {
+    @Volatile
+    private var routeOverride: VoiceAudioRoute? = null
+
+    override fun setRouteOverride(route: VoiceAudioRoute?) {
+        routeOverride = route
+    }
+
     override val route: VoiceAudioRoute
-        get() = routeProvider()
+        get() = routeOverride ?: routeProvider()
 
     /**
      * Resolve the configured preference to the backend a call would land on:
@@ -92,7 +102,7 @@ class AutoVoiceAudioClient(
      * decide whether standard-only limitations (global TTS) currently apply.
      */
     override val effectiveRoute: VoiceAudioRoute
-        get() = when (routeProvider()) {
+        get() = when (route) {
             VoiceAudioRoute.Standard -> VoiceAudioRoute.Standard
             VoiceAudioRoute.Relay -> VoiceAudioRoute.Relay
             VoiceAudioRoute.Auto ->
@@ -114,7 +124,7 @@ class AutoVoiceAudioClient(
     private suspend fun <T> runWithSelectedRoute(
         block: suspend (VoiceAudioClient) -> Result<T>,
     ): Result<T> {
-        return when (routeProvider()) {
+        return when (route) {
             VoiceAudioRoute.Standard -> {
                 if (!standardReadyProvider()) {
                     Result.failure(

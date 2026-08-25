@@ -483,6 +483,7 @@ fun FloatingPetCompanion(
     compact: Boolean,
     animationEnabled: Boolean,
     appForeground: Boolean,
+    interactive: Boolean = true,
     route: String?,
     visitRequest: PetVisitRequest?,
     onVisitRequestConsumed: (String) -> Unit,
@@ -2318,13 +2319,14 @@ fun FloatingPetCompanion(
                 }
                 .pointerInput(
                     pet.id,
+                    interactive,
                     safeBounds,
                     roamingRails,
                     settledHabitat,
                     positioned,
                     surfaceScrolling,
                 ) {
-                    if (!floatingPetAcceptsPointerInput(positioned, surfaceScrolling)) {
+                    if (!interactive || !floatingPetAcceptsPointerInput(positioned, surfaceScrolling)) {
                         return@pointerInput
                     }
                     detectDragGesturesAfterLongPress(
@@ -2399,16 +2401,16 @@ fun FloatingPetCompanion(
                     )
                 }
                 .clickable(
-                    enabled = floatingPetAcceptsPointerInput(positioned, surfaceScrolling),
+                    enabled = interactive && floatingPetAcceptsPointerInput(positioned, surfaceScrolling),
                 ) {
                     tapReactionNonce += 1
                     setMenuExpanded(true)
                 }
                 .semantics(mergeDescendants = true) {
-                    role = Role.Button
+                    if (interactive) role = Role.Button
                     contentDescription = companionDescription
                     stateDescription = stateLabel
-                    customActions = buildList {
+                    customActions = if (interactive) buildList {
                         add(CustomAccessibilityAction(moveStartLabel) {
                             onPlacementChanged(placement.copy(edge = PetLogicalEdge.Start)); true
                         })
@@ -2438,7 +2440,7 @@ fun FloatingPetCompanion(
                         add(CustomAccessibilityAction(resetLabel) { onResetPlacement(); true })
                         add(CustomAccessibilityAction(appearanceLabel) { onOpenAppearance(); true })
                         add(CustomAccessibilityAction(hideLabel) { onHide(); true })
-                    }
+                    } else emptyList()
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -2482,7 +2484,7 @@ fun FloatingPetCompanion(
             }
 
             DropdownMenu(
-                expanded = menuExpanded,
+                expanded = interactive && menuExpanded,
                 onDismissRequest = { setMenuExpanded(false) },
             ) {
                 DropdownMenuItem(

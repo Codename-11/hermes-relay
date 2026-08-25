@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Provider usage and limits are available from top-level Settings.** Codex credential pools, Nous balances, and OpenCode Go account windows share one provider-neutral screen with Summary, Expanded, and Hidden presentation modes. Provider credentials remain on the Hermes host.
 - **Android Bot Mode provides one messenger-style workspace across saved Hermes gateways.** Bots and read-only group rooms aggregate without changing the foreground connection, Bot Chats retain exact gateway/profile ownership, and unavailable gateways keep clearly marked last-known roster entries.
 - **Android Assistant screen context.** Compatible unlocked assistant-button invocations can open Hermes, begin listening, and include bounded visible text plus an available screenshot in the first Standard voice turn. Ordinary wake and keyguard invocations remain screen-context free.
+- **Android Supervised Mode presents a parent-controlled, profile-pinned chat surface.** Parents can limit attachments, Standard voice, generated media, conversation history, actions, and technical metadata while device authentication protects full settings. Hermes-Relay can identify and revoke a paired supervised client without becoming the policy enforcement boundary.
 
 ### Changed
 
