@@ -1770,19 +1770,9 @@ private fun Modifier.sessionActivityBorder(
     state: SessionActivityState?,
     animated: Boolean,
 ): Modifier {
-    if (state == null) return this
-    val color = when (state) {
-        SessionActivityState.Starting,
-        SessionActivityState.Working -> RelayRefresh.Relay
-        SessionActivityState.NeedsInput -> RelayRefresh.Amber
-        SessionActivityState.BackgroundWork,
-        SessionActivityState.Checking,
-        SessionActivityState.Unavailable,
-        -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val shouldRotate = animated && (
-        state == SessionActivityState.Starting || state == SessionActivityState.Working
-    )
+    if (!sessionActivityShowsRowBorder(state)) return this
+    val color = RelayRefresh.Relay
+    val shouldRotate = animated
     val phase = if (shouldRotate) {
         val transition = rememberInfiniteTransition(label = "session-activity")
         transition.animateFloat(

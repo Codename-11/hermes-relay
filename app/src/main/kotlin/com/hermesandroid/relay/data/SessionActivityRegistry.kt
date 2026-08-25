@@ -90,10 +90,10 @@ data class SessionActivityRecord(
         }
     }
 
-    /** Presentation projection that never labels uncertain or background activity as Working. */
+    /** Presentation projection that never labels missing optional runtime data as session state. */
     fun presentationState(nowMillis: Long = Long.MIN_VALUE): SessionActivityState? = when (freshness) {
-        SessionActivityFreshness.Revalidating -> SessionActivityState.Checking
-        SessionActivityFreshness.Unavailable -> SessionActivityState.Unavailable
+        SessionActivityFreshness.Revalidating -> null
+        SessionActivityFreshness.Unavailable -> null
         SessionActivityFreshness.Confirmed -> when (phase(nowMillis)) {
             SessionActivityPhase.Starting -> SessionActivityState.Starting
             SessionActivityPhase.Working -> SessionActivityState.Working
@@ -294,7 +294,9 @@ data class SessionActivityRegistry(
 
     private fun observeOwner(update: SessionActivityUpdate.ObserveOwner): SessionActivityRegistry {
         val existing = records[update.owner]
-        if (existing?.freshness == SessionActivityFreshness.Confirmed) return this
+        // Directory rows establish ownership only. They are not live evidence and must not
+        // turn an unsupported/failed active-list probe back into a permanent Checking row.
+        if (existing != null) return this
         val observed = SessionActivityRecord(
             owner = update.owner,
             turnPhase = SessionActivityPhase.Idle,
