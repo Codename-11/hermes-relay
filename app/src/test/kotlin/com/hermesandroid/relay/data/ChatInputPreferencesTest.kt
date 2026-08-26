@@ -30,6 +30,25 @@ class ChatInputPreferencesTest {
     }
 
     @Test
+    fun `Git workspace in Chat defaults on and round trips without replacing other settings`() = runTest {
+        val unrelatedKey = stringPreferencesKey("unrelated_git_chat_test")
+        val store = InMemoryChatInputDataStore(
+            mutablePreferencesOf(unrelatedKey to "keep-me"),
+        )
+        val repository = ChatInputPreferencesRepository(store)
+
+        assertEquals(true, repository.showGitWorkspaceInChat.first())
+
+        repository.setShowGitWorkspaceInChat(false)
+        assertEquals(false, repository.showGitWorkspaceInChat.first())
+        assertEquals("keep-me", store.data.first()[unrelatedKey])
+
+        repository.setShowGitWorkspaceInChat(true)
+        assertEquals(true, repository.showGitWorkspaceInChat.first())
+        assertEquals("keep-me", store.data.first()[unrelatedKey])
+    }
+
+    @Test
     fun `enter defaults to send and unknown values fall back safely`() = runTest {
         assertEquals(
             PhysicalKeyboardEnterBehavior.SendMessage,

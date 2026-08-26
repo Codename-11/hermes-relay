@@ -193,6 +193,9 @@ import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatGitContextButton
+import com.hermesandroid.relay.ui.components.ChatGitWorkspaceRail
+import com.hermesandroid.relay.ui.components.ChatGitWorkspaceSummary
 import com.hermesandroid.relay.ui.components.ChatFailureDetailsDialog
 import com.hermesandroid.relay.ui.components.ChatFailurePanel
 import com.hermesandroid.relay.viewmodel.ChatFailureRoute
@@ -719,6 +722,9 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
     supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
     onNavigateToBotMode: () -> Unit = {},
+    gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
+    gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
+    onNavigateToGitWorkspace: () -> Unit = {},
 ) {
     val supervised = supervisedPolicy.enabled
     val supervisedVisibility = supervisedPolicy.visibility.resolved()
@@ -1067,6 +1073,13 @@ fun ChatScreen(
         connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
     val convertLargePastesToAttachments by
         connectionViewModel.convertLargePastesToAttachments.collectAsState()
+    val showGitWorkspaceInChat by
+        connectionViewModel.showGitWorkspaceInChat.collectAsState()
+    val visibleGitWorkspaceSummary = gitWorkspaceSummary?.takeIf {
+        !supervised && showGitWorkspaceInChat && it.branch.isNotBlank()
+    }
+    val showGitWorkspaceContextEntry =
+        !supervised && showGitWorkspaceInChat && gitWorkspaceAvailable
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -2996,6 +3009,12 @@ fun ChatScreen(
                     // info. Dropping it here declutters the actions row and frees
                     // width for the title subtitle.)
                     if (!supervised) {
+                        if (showGitWorkspaceContextEntry) {
+                            ChatGitContextButton(
+                                onClick = onNavigateToGitWorkspace,
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
                         RelayChromeIconButton(
                             icon = Icons.Filled.Code,
                             contentDescription = stringResource(R.string.cd_terminal),
@@ -4455,6 +4474,14 @@ fun ChatScreen(
                         onDismiss = { showChatFailureDetails = false },
                     )
                 }
+            }
+
+            visibleGitWorkspaceSummary?.let { summary ->
+                ChatGitWorkspaceRail(
+                    summary = summary,
+                    onClick = onNavigateToGitWorkspace,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
             }
 
             ChatInputBar(

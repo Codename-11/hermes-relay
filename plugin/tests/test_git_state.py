@@ -150,9 +150,18 @@ class GitStateStatusTests(unittest.TestCase):
         self.assertEqual(1, status["counts"]["staged"])
         self.assertEqual(1, status["counts"]["modified"])
         self.assertEqual(1, status["counts"]["untracked"])
+        self.assertEqual(3, status["counts"]["changes"])
+        self.assertEqual(2, status["counts"]["additions"])
+        self.assertEqual(2, status["counts"]["deletions"])
         self.assertEqual("tracked.txt", status["staged"][0]["path"])
+        self.assertEqual(1, status["staged"][0]["additions"])
+        self.assertEqual(1, status["staged"][0]["deletions"])
         self.assertEqual("README.md", status["modified"][0]["path"])
+        self.assertEqual(1, status["modified"][0]["additions"])
+        self.assertEqual(1, status["modified"][0]["deletions"])
         self.assertEqual("untracked.txt", status["untracked"][0]["path"])
+        self.assertIsNone(status["untracked"][0]["additions"])
+        self.assertIsNone(status["untracked"][0]["deletions"])
         self.assertFalse(status["truncated"])
 
     def test_status_truncates_when_over_cap(self) -> None:
@@ -160,6 +169,7 @@ class GitStateStatusTests(unittest.TestCase):
             (self.repo / f"file-{i}.txt").write_text("x", encoding="utf-8")
         status = git_state.repo_status(self.repo)
         self.assertTrue(status["truncated"])
+        self.assertEqual(git_state.MAX_STATUS_ENTRIES + 5, status["counts"]["changes"])
         self.assertLessEqual(
             len(status["untracked"]),
             git_state.MAX_STATUS_ENTRIES,
@@ -193,6 +203,8 @@ class GitStateStatusTests(unittest.TestCase):
 
         status = git_state.repo_status(self.repo)
         self.assertEqual(["new.txt"], [e["path"] for e in status["staged"]])
+        self.assertEqual(0, status["staged"][0]["additions"])
+        self.assertEqual(0, status["staged"][0]["deletions"])
         self.assertEqual([], status["modified"])
         self.assertEqual([], status["untracked"])
 

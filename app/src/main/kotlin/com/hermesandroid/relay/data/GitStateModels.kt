@@ -28,11 +28,17 @@ data class GitStatusCounts(
     val staged: Int = 0,
     val modified: Int = 0,
     val untracked: Int = 0,
+    /** Unique changed paths. -1 means an older plugin did not provide it. */
+    val changes: Int = -1,
+    val additions: Int = 0,
+    val deletions: Int = 0,
 )
 
 @Serializable
 data class GitStatusEntry(
     val path: String,
+    val additions: Int? = null,
+    val deletions: Int? = null,
 )
 
 /** A branch from /git/branches. */

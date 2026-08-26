@@ -12,6 +12,7 @@ const productAssets = [
   { sceneId: '03_voice', destination: 'voice.png' },
   { sceneId: '01_voice_conversation', destination: 'voice-conversation.png' },
   { sceneId: '06_manage', destination: 'manage.png' },
+  { sceneId: '15_git_workspace', destination: 'git-workspace.png' },
 ];
 
 const mode = process.argv[2] ?? 'check';

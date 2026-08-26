@@ -2501,6 +2501,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    val showGitWorkspaceInChat: StateFlow<Boolean> =
+        chatInputPreferencesRepository.showGitWorkspaceInChat
+            .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setShowGitWorkspaceInChat(enabled: Boolean) {
+        viewModelScope.launch {
+            chatInputPreferencesRepository.setShowGitWorkspaceInChat(enabled)
+        }
+    }
+
     // Turn-complete notification (default ON). RelayApp mirrors this into
     // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
     // + the POST_NOTIFICATIONS runtime request on first enable.

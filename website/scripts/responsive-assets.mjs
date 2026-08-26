@@ -15,6 +15,8 @@ const variants = [
   { source: 'voice-conversation.png', destination: 'voice-conversation-720.webp', width: 720 },
   { source: 'manage.png', destination: 'manage-360.webp', width: 360 },
   { source: 'manage.png', destination: 'manage-720.webp', width: 720 },
+  { source: 'git-workspace.png', destination: 'git-workspace-360.webp', width: 360 },
+  { source: 'git-workspace.png', destination: 'git-workspace-720.webp', width: 720 },
 ];
 
 if (!['check', 'sync'].includes(mode)) {

@@ -4152,4 +4152,13 @@
     <string name="custom_theme_saved_to">Изменения сохранены в %1$s</string>
     <string name="custom_theme_modified">Несохраненные изменения</string>
     <string name="custom_theme_saved_count">Сохранено тем: %1$d</string>
+    <string name="chat_settings_show_git_workspace">Показывать рабочую область Git в чате</string>
+    <string name="chat_settings_show_git_workspace_desc">Показывает ветку и изменения над полем ввода</string>
+    <string name="chat_git_open_workspace">Открыть рабочую область Git</string>
+    <string name="chat_git_branch">Ветка %1$s</string>
+    <string name="chat_git_additions">Добавлено строк: %1$d</string>
+    <string name="chat_git_deletions">Удалено строк: %1$d</string>
+    <plurals name="chat_git_change_count"><item quantity="one">%1$d изменение</item><item quantity="few">%1$d изменения</item><item quantity="many">%1$d изменений</item><item quantity="other">%1$d изменения</item></plurals>
+    <string name="settings_git_workspace">Рабочая область Git</string>
+    <string name="settings_git_workspace_desc">Изменения, ветки, коммиты и удалённые репозитории</string>
 </resources>
