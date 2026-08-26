@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.13.1 - Accurate session activity
+v1.13.2 - Supervised Mode and clearer activity
 
-Session activity now follows live Hermes runtime state instead of a recent-activity estimate. Working, Starting, Needs input, Idle, Checking, Unavailable, and Background work stay accurate, and stale state clears only after a complete, unambiguous update.
+Supervised Mode adds a parent-configured, profile-pinned chat view with device-authenticated settings. Parents can limit attachments, Standard voice, generated media, history, actions, and technical details. Session rows stay neutral while live activity is unavailable, and returning from parent settings no longer blanks Supervised Chat.
 ```
 ## Category
 
