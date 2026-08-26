@@ -250,6 +250,7 @@ export default defineConfig({
             { text: 'Token Tracking', link: '/features/tokens' },
             { text: 'Tool Progress', link: '/features/tools' },
             { text: 'Plugins', link: '/features/plugins' },
+            { text: 'Git Workspace', link: '/features/git-workspace' },
             { text: 'Phone Control Tools', link: '/features/phone-control-tools' },
             { text: 'Dashboard Plugin', link: '/features/dashboard' },
           ],

@@ -30,7 +30,7 @@
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "en": {
       "native_name": "English",
@@ -65,7 +65,7 @@
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "ja": {
       "native_name": "\u65e5\u672c\u8a9e",
@@ -89,7 +89,7 @@
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "pt-BR": {
       "native_name": "Portugu\u00eas (Brasil)",
@@ -113,7 +113,7 @@
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "ru": {
       "native_name": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
@@ -152,7 +152,7 @@
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
         "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     }
   }
 }

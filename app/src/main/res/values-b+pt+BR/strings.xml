@@ -4265,4 +4265,13 @@
     <string name="custom_theme_saved_to">Alterações salvas em %1$s</string>
     <string name="custom_theme_modified">Alterações não salvas</string>
     <string name="custom_theme_saved_count">%1$d temas salvos</string>
+    <string name="chat_settings_show_git_workspace">Mostrar o espaço de trabalho Git no chat</string>
+    <string name="chat_settings_show_git_workspace_desc">Mostra a branch e as alterações acima do campo de mensagem</string>
+    <string name="chat_git_open_workspace">Abrir o espaço de trabalho Git</string>
+    <string name="chat_git_branch">Branch %1$s</string>
+    <string name="chat_git_additions">%1$d adições</string>
+    <string name="chat_git_deletions">%1$d exclusões</string>
+    <plurals name="chat_git_change_count"><item quantity="one">%1$d alteração</item><item quantity="other">%1$d alterações</item></plurals>
+    <string name="settings_git_workspace">Espaço de trabalho Git</string>
+    <string name="settings_git_workspace_desc">Revise alterações, branches, commits e remotos</string>
 </resources>

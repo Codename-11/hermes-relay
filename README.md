@@ -159,6 +159,11 @@ manual fallbacks when QR or clipboard transfer is unavailable.
   </tr>
 </table>
 
+<p align="center">
+  <img src="assets/screenshots/supplemental/15_git_workspace.png" alt="Native Git workspace showing repository changes, an inline diff, and staging controls" width="260"><br>
+  <sub><b>Native Git workspace</b> — optional Hermes-Relay plugin</sub>
+</p>
+
 ### Simplified Chinese
 
 <table>

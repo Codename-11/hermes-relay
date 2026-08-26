@@ -18,6 +18,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -86,6 +87,20 @@ class GitStateViewModelTest {
     }
 
     @Test
+    fun `loadRepos maps missing plugin route to friendly unavailable state`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(404)
+                .setBody("""{"detail":"No such API endpoint"}"""),
+        )
+        val vm = viewModel()
+        val state = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Unavailable>().first()
+        }
+        assertEquals("Git isn't available on this Hermes host yet.", state.message)
+    }
+
+    @Test
     fun `selectRepo loads status and branches and preserves truncation flag`() = runBlocking {
         enqueueJson(
             """{"repos":[{"id":"alpha","name":"alpha","root":"/p/alpha","current_branch":"main","dirty":true}]}""",
@@ -107,6 +122,10 @@ class GitStateViewModelTest {
         assertEquals(1, ready.status.counts.staged)
         assertEquals(2, ready.status.counts.modified)
         assertEquals(3, ready.status.counts.untracked)
+        assertEquals(-1, ready.status.counts.changes)
+        assertEquals(0, ready.status.counts.additions)
+        assertEquals(0, ready.status.counts.deletions)
+        assertNull(ready.status.staged.single().additions)
         assertTrue(ready.status.truncated)
         assertEquals("main", ready.branches.single().name)
         assertTrue(ready.branches.single().isCurrent)

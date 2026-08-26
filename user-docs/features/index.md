@@ -22,6 +22,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 | [Plugins](/features/plugins) | Native reactive pages, including Relay-assisted agent-created previews |
+| [Git workspace](/features/git-workspace) | Native repository status, diffs, branches, staging, commits, and remotes through the Relay plugin |
 
 ## Bridge Core
 
