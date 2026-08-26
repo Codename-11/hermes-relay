@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Android What's New leads with one curated release highlight without interrupting startup.** A timed post-update toast can be swiped or closed, previews additional feature/fix counts when a release has meaningful secondary items, expands into the centered highlight view on request, and keeps the full technical history available. Each release can present one plain-language summary, up to three primary benefits, and up to two quieter improvements, while release checks keep the structured entry, fallback, Play copy, and public release records aligned.
 
+### Fixed
+
+- **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added
