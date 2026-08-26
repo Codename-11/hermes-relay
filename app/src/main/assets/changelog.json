@@ -1,6 +1,27 @@
 {
  "versions": [
   {
+   "version": "1.13.2",
+   "title": "Supervised Mode and clearer activity",
+   "date": "2026-08-25",
+   "sections": [
+    {
+     "header": "Use a supervised chat",
+     "bullets": [
+      "Configure a profile-pinned restricted chat with parent-controlled attachments, voice, media, history, actions, and technical details.",
+      "Protect full settings with device authentication and keep Supervised Chat visible when parent access relocks."
+     ]
+    },
+    {
+     "header": "Show only confirmed activity",
+     "bullets": [
+      "Keep session rows neutral while optional live activity is unavailable or still loading.",
+      "Show full-row activity borders only during actual Starting or Working turns."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.13.1",
    "title": "Accurate session activity",
    "date": "2026-08-25",
