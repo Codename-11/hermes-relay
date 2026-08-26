@@ -8,8 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Android Git State can browse and manage host repositories exposed by the optional Hermes-Relay plugin.** Repository status, branches, diffs, and files are readable after enabling the plugin; staging, commits, sync, checkout, discard, and stash-switch remain behind scoped write grants and confirmations.
-- **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, scoped write grants, and explicit confirmation protect repository reads and mutations.
+- **Android presents Relay Git as a first-class native workspace.** A compact optional Chat rail opens repository status, line totals, filters, diffs, branches, staging, commits, and remotes; the full workspace remains available from Settings when Chat controls are hidden.
+- **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, tracked line totals, scoped write grants, and explicit confirmation protect repository reads and mutations.
 
 ### Fixed
 
