@@ -76,10 +76,14 @@ fun BotChatScreen(
 ) {
     val handler = remember(route.key) { ChatHandler() }
     val context = LocalContext.current
-    val messages by chatViewModel.messages.collectAsState()
-    val isStreaming by chatViewModel.isStreaming.collectAsState()
+    // This screen owns its handler, but ChatViewModel binds it from a
+    // DisposableEffect after the first composition. Collecting the ViewModel's
+    // fallback flows here can therefore leave the screen permanently empty when
+    // a fast history load completes before Compose schedules another frame.
+    val messages by handler.messages.collectAsState()
+    val isStreaming by handler.isStreaming.collectAsState()
     val isLoading by chatViewModel.isLoadingHistory.collectAsState()
-    val error by chatViewModel.error.collectAsState()
+    val error by handler.error.collectAsState()
     val iconPath by connectionViewModel
         .profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
