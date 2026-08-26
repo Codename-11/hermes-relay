@@ -101,6 +101,7 @@ import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.ProviderUsageLandingMode
 import com.hermesandroid.relay.data.ProviderUsagePreferences
 import com.hermesandroid.relay.data.ProviderUsagePreferencesRepository
+import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.network.usage.ProviderUsageRepository
 import com.hermesandroid.relay.network.usage.ProviderUsageResponse
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -157,6 +158,14 @@ fun SettingsScreen(
     connectionViewModel: ConnectionViewModel,
     /** Header back affordance — Settings is a pushed destination, not a tab. */
     onBack: (() -> Unit)? = null,
+    supervisedPolicy: SupervisedModePolicy? = null,
+    parentAccessUnlocked: Boolean = false,
+    /** Called only after the restricted surface completes device authentication. */
+    onRequestParentAccess: () -> Unit = {},
+    onUpdateSupervisedPolicy: (SupervisedModePolicy) -> Unit = {},
+    onNavigateToAdvancedSettings: () -> Unit = {},
+    onNavigateToSupervisedAppearance: () -> Unit = {},
+    onNavigateToSupervisedControls: () -> Unit = {},
     // Needed by the Active Agent summary card at the top of the screen — it
     // reads the current personality pick so the subtitle can render
     // `connection · model · personality` without re-reading ChatViewModel
@@ -206,6 +215,21 @@ fun SettingsScreen(
     // discoverable before a pair-and-pick happens.
     onNavigateToProfileInspector: (profileName: String) -> Unit,
 ) {
+    // Keep the restricted root when an enabled policy becomes temporarily
+    // unusable (for example, its profile was renamed). Parent authentication,
+    // not a configuration error, is what unlocks the full settings surface.
+    if (supervisedPolicy?.enabled == true && !parentAccessUnlocked) {
+        SupervisedSettingsScreen(
+            connectionViewModel = connectionViewModel,
+            policy = supervisedPolicy,
+            onPolicyChange = onUpdateSupervisedPolicy,
+            onBack = onBack,
+            onNavigateToAppearance = onNavigateToSupervisedAppearance,
+            onParentAccessGranted = onRequestParentAccess,
+        )
+        return
+    }
+
     val context = LocalContext.current
     val isDarkTheme = LocalBrand.current.isDark
 
@@ -432,6 +456,20 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (supervisedPolicy?.enabled == true && parentAccessUnlocked) {
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Security,
+                    title = "Supervised mode",
+                    subtitle = "On · ${supervisedPolicy.pinnedProfileName.orEmpty()}",
+                    badge = SettingsStatusPillModel(
+                        label = "On",
+                        tone = SettingsStatusTone.Good,
+                    ),
+                    onClick = onNavigateToSupervisedControls,
+                    isDarkTheme = isDarkTheme,
+                )
+            }
+
             // ── Active Agent summary ───────────────────────────────────
             // Mirrors the ChatScreen TopAppBar title block (avatar + name
             // + one-line `connection · model · personality` subtitle).
@@ -496,6 +534,7 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
                 modifier = Modifier.settingsPetSurface("settings-card:profile-lock"),
             )
+
 
             // ── Quick Controls ─────────────────────────────────────────
             // The switches flipped most often, pinned to the top-level Settings
@@ -663,6 +702,24 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_appearance),
                 subtitle = stringResource(R.string.settings_appearance_desc),
                 onClick = onNavigateToAppearanceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = stringResource(R.string.settings_advanced),
+                subtitle = when {
+                    supervisedPolicy?.isActive == true -> "On · ${supervisedPolicy.pinnedProfileName}"
+                    supervisedPolicy?.isConfigured == true -> "Ready · ${supervisedPolicy.pinnedProfileName}"
+                    else -> stringResource(R.string.settings_advanced_desc)
+                },
+                badge = supervisedPolicy?.takeIf { it.isActive }?.let {
+                    SettingsStatusPillModel(
+                        label = "On",
+                        tone = SettingsStatusTone.Good,
+                    )
+                },
+                onClick = onNavigateToAdvancedSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -1280,12 +1337,12 @@ private fun ProfileLockOptionRow(
     }
 }
 
-private data class SettingsStatusPillModel(
+internal data class SettingsStatusPillModel(
     val label: String,
     val tone: SettingsStatusTone = SettingsStatusTone.Neutral,
 )
 
-private enum class SettingsStatusTone {
+internal enum class SettingsStatusTone {
     Neutral,
     Good,
     Info,
@@ -1483,18 +1540,22 @@ private fun SettingsSectionHeader(
  * mega-SettingsScreen.
  */
 @Composable
-private fun SettingsCategoryRow(
+internal fun SettingsCategoryRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
     onClick: () -> Unit,
     isDarkTheme: Boolean,
     badge: SettingsStatusPillModel? = null,
-    petPerchKey: String = title,
+    petPerchKey: String? = title,
 ) {
+    val surfaceModifier = if (petPerchKey != null) {
+        Modifier.settingsPetSurface("settings-category:$petPerchKey")
+    } else {
+        Modifier
+    }
     Card(
-        modifier = Modifier
-            .settingsPetSurface("settings-category:$petPerchKey")
+        modifier = surfaceModifier
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),

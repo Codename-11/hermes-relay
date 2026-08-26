@@ -53,6 +53,7 @@ voice routes. Sideload builds additionally expose Android Device Control routes.
 - [Quick Start](/guide/quick-start) — Recommended Android + Relay setup
 - [Installation & Setup](/guide/getting-started) — Builds, manual setup, and fallbacks
 - [Chat Guide](/guide/chat) — Using the chat interface
+- [Supervised Mode](/guide/supervised-mode) — Planned parent-controlled, profile-pinned Android interface
 - [Sessions](/guide/sessions) — Managing conversations
 - [Features](/features/) — All features at a glance
 - [Architecture](/architecture/) — How it works under the hood

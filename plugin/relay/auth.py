@@ -97,6 +97,29 @@ _PAIRING_CODE_TTL = 600.0
 DEFAULT_REFRESH_TTL_SECONDS: float = 180 * 24 * 3600  # 180 days
 _REFRESH_TOKEN_BYTES = 32
 
+# Client-reported supervised-mode metadata is intentionally small and
+# non-authoritative. Relay stores it only so paired-device surfaces can show
+# the operator which Android client is presenting a restricted UI. The
+# Android client remains the enforcement owner.
+SUPERVISED_PROFILE_LABEL_MAX_LENGTH = 80
+SUPERVISED_CAPABILITY_MAX_COUNT = 12
+SUPERVISED_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "attachments",
+        "cancel",
+        "copy",
+        "generated_images",
+        "new_chat",
+        "quote_reply",
+        "retry",
+        "share_images",
+        "steer",
+        "text_chat",
+        "timestamps",
+        "voice",
+    }
+)
+
 
 # ── Data models ──────────────────────────────────────────────────────────────
 
@@ -112,6 +135,58 @@ def _generate_refresh_token() -> str:
 
 def _refresh_token_hash(token: str) -> str:
     return sha256(token.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class SupervisedMode:
+    """Bounded, client-reported metadata for paired-device display only."""
+
+    active: bool = False
+    profile_label: str = ""
+    capabilities: tuple[str, ...] = ()
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Return the stable public wire shape for an active report."""
+        return {
+            "active": True,
+            "profile_label": self.profile_label,
+            "capabilities": list(self.capabilities),
+            "enforcement_owner": "android_client",
+        }
+
+
+def parse_supervised_mode(value: Any) -> SupervisedMode:
+    """Validate untrusted supervised-mode metadata.
+
+    Missing, inactive, malformed, oversized, or unknown values all normalize
+    to ordinary mode. Capability values are allowlisted so this public summary
+    cannot become a side channel for model, tool, path, or arbitrary client
+    data.
+    """
+    ordinary = SupervisedMode()
+    if not isinstance(value, dict) or value.get("active") is not True:
+        return ordinary
+
+    raw_label = value.get("profile_label")
+    raw_capabilities = value.get("capabilities", [])
+    if not isinstance(raw_label, str) or not isinstance(raw_capabilities, list):
+        return ordinary
+
+    if not raw_label.isprintable():
+        return ordinary
+    label = raw_label.strip()
+    if not label or len(label) > SUPERVISED_PROFILE_LABEL_MAX_LENGTH:
+        return ordinary
+    if len(raw_capabilities) > SUPERVISED_CAPABILITY_MAX_COUNT:
+        return ordinary
+
+    capabilities: list[str] = []
+    for candidate in raw_capabilities:
+        if not isinstance(candidate, str) or candidate not in SUPERVISED_CAPABILITIES:
+            return ordinary
+        if candidate not in capabilities:
+            capabilities.append(candidate)
+    return SupervisedMode(True, label, tuple(capabilities))
 
 
 def _default_grants(ttl_seconds: float, now: float) -> dict[str, float]:
@@ -229,6 +304,7 @@ class Session:
     refresh_token: str | None = field(default=None, repr=False, compare=False)
     device_model: str = "unknown"
     device_platform: str = "unknown"
+    supervised_mode: SupervisedMode = field(default_factory=SupervisedMode)
 
     def __post_init__(self) -> None:
         if self.expires_at == 0.0:
@@ -290,6 +366,7 @@ class TrustedDevice:
     device_form_factor: str = "unknown"
     device_model: str = "unknown"
     device_platform: str = "unknown"
+    supervised_mode: SupervisedMode = field(default_factory=SupervisedMode)
 
     def __post_init__(self) -> None:
         if self.expires_at == 0.0:
@@ -458,7 +535,7 @@ def _session_to_json(session: Session) -> dict[str, Any]:
             return "never"
         return v
 
-    return {
+    payload = {
         "token": session.token,
         "device_name": session.device_name,
         "device_id": session.device_id,
@@ -473,6 +550,9 @@ def _session_to_json(session: Session) -> dict[str, Any]:
         "device_platform": session.device_platform,
         "first_seen": session.first_seen,
     }
+    if session.supervised_mode.active:
+        payload["supervised_mode"] = session.supervised_mode.to_public_dict()
+    return payload
 
 
 def _session_from_json(payload: dict[str, Any]) -> Session | None:
@@ -508,6 +588,7 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
         device_model = str(payload.get("device_model", "unknown"))
         device_platform = str(payload.get("device_platform", "unknown"))
         first_seen = float(payload.get("first_seen", created_at))
+        supervised_mode = parse_supervised_mode(payload.get("supervised_mode"))
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -525,6 +606,7 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
         device_model=device_model,
         device_platform=device_platform,
         first_seen=first_seen,
+        supervised_mode=supervised_mode,
     )
 
 
@@ -550,6 +632,8 @@ def _trusted_device_to_json(device: TrustedDevice) -> dict[str, Any]:
     }
     if device.grants is not None:
         payload["grants"] = dict(device.grants)
+    if device.supervised_mode.active:
+        payload["supervised_mode"] = device.supervised_mode.to_public_dict()
     return payload
 
 
@@ -586,6 +670,7 @@ def _trusted_device_from_json(payload: dict[str, Any]) -> TrustedDevice | None:
         device_form_factor = str(payload.get("device_form_factor", "unknown"))
         device_model = str(payload.get("device_model", "unknown"))
         device_platform = str(payload.get("device_platform", "unknown"))
+        supervised_mode = parse_supervised_mode(payload.get("supervised_mode"))
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -606,6 +691,7 @@ def _trusted_device_from_json(payload: dict[str, Any]) -> TrustedDevice | None:
         device_form_factor=device_form_factor,
         device_model=device_model,
         device_platform=device_platform,
+        supervised_mode=supervised_mode,
     )
 
 
@@ -883,6 +969,7 @@ class SessionManager:
         device_form_factor: str = "unknown",
         device_model: str = "unknown",
         device_platform: str = "unknown",
+        supervised_mode: SupervisedMode | None = None,
         issue_refresh_token: bool = False,
     ) -> Session:
         """Create a new session for an authenticated device.
@@ -913,6 +1000,9 @@ class SessionManager:
         device_platform:
             Optional operating-system/platform metadata retained for device
             details. Neither field participates in authorization.
+        supervised_mode:
+            Optional bounded report of Android's supervised client state.
+            Informational only; Relay does not enforce the reported policy.
         issue_refresh_token:
             When True, also create a persisted trusted-device credential and
             attach the raw one-time refresh token to the returned
@@ -922,6 +1012,7 @@ class SessionManager:
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
+        supervised_mode = supervised_mode or SupervisedMode()
 
         now = time.time()
         if ttl_seconds == 0:
@@ -981,6 +1072,7 @@ class SessionManager:
                 device_form_factor=device_form_factor,
                 device_model=device_model,
                 device_platform=device_platform,
+                supervised_mode=supervised_mode,
             )
 
         token = str(uuid.uuid4())
@@ -997,6 +1089,7 @@ class SessionManager:
             device_form_factor=device_form_factor,
             device_model=device_model,
             device_platform=device_platform,
+            supervised_mode=supervised_mode,
             first_seen=now,
             refresh_token=refresh_token,
         )
@@ -1051,6 +1144,7 @@ class SessionManager:
             device_form_factor=session.device_form_factor,
             device_model=session.device_model,
             device_platform=session.device_platform,
+            supervised_mode=session.supervised_mode,
         )
         session.refresh_token = refresh_token
         self._save_to_disk()
@@ -1067,6 +1161,7 @@ class SessionManager:
         device_form_factor: str = "unknown",
         device_model: str = "unknown",
         device_platform: str = "unknown",
+        supervised_mode: SupervisedMode | None = None,
     ) -> Session | None:
         """Mint a replacement session from a trusted-device refresh token.
 
@@ -1121,6 +1216,8 @@ class SessionManager:
             trusted.device_model = device_model
         if device_platform and device_platform != "unknown":
             trusted.device_platform = device_platform
+        if supervised_mode is not None:
+            trusted.supervised_mode = supervised_mode
         self._trusted_devices[new_refresh_hash] = trusted
 
         session = self.create_session(
@@ -1133,6 +1230,7 @@ class SessionManager:
             device_form_factor=trusted.device_form_factor,
             device_model=trusted.device_model,
             device_platform=trusted.device_platform,
+            supervised_mode=trusted.supervised_mode,
             issue_refresh_token=False,
         )
         session.refresh_token = new_refresh_token
@@ -1153,6 +1251,7 @@ class SessionManager:
         device_platform: str | None = None,
         client_surface: str | None = None,
         device_form_factor: str | None = None,
+        supervised_mode: SupervisedMode | None = None,
     ) -> None:
         """Adopt identity metadata from a valid reconnecting client.
 
@@ -1180,6 +1279,10 @@ class SessionManager:
                 setattr(session, field_name, value)
                 changed = True
 
+        if supervised_mode is not None and session.supervised_mode != supervised_mode:
+            session.supervised_mode = supervised_mode
+            changed = True
+
         for trusted in self._trusted_devices.values():
             if trusted.device_id != session.device_id:
                 continue
@@ -1192,6 +1295,9 @@ class SessionManager:
                 if getattr(trusted, field_name) != value:
                     setattr(trusted, field_name, value)
                     changed = True
+            if supervised_mode is not None and trusted.supervised_mode != supervised_mode:
+                trusted.supervised_mode = supervised_mode
+                changed = True
 
         if changed:
             self._save_to_disk()

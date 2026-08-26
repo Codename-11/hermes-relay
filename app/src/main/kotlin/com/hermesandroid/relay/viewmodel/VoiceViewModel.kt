@@ -21,6 +21,8 @@ import com.hermesandroid.relay.data.DEFAULT_VOICE_STOP_PHRASES
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
+import com.hermesandroid.relay.data.SupervisedCapabilities
+import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoiceIntentTrace
@@ -278,6 +280,23 @@ internal fun realtimeTranscriptState(micCaptureActive: Boolean): VoiceState =
  * in V2b — the ViewModel just stores the current selection.
  */
 enum class InteractionMode { TapToTalk, HoldToTalk, Continuous }
+
+internal fun isVoiceCommandAllowed(
+    action: VoiceCommandAction,
+    policy: SupervisedModePolicy,
+): Boolean {
+    if (!policy.enabled) return true
+    val capabilities: SupervisedCapabilities = policy.capabilities
+    return when (action) {
+        VoiceCommandAction.StartNewChat -> capabilities.newChat
+        VoiceCommandAction.StopResponse,
+        VoiceCommandAction.CancelBackgroundTask -> capabilities.cancelResponse
+        VoiceCommandAction.EndVoiceChat,
+        VoiceCommandAction.PauseContinuousListening,
+        VoiceCommandAction.ResumeContinuousListening,
+        VoiceCommandAction.RepeatBackgroundAnswer -> capabilities.voice
+    }
+}
 
 internal fun InteractionMode.storageValue(): String = when (this) {
     InteractionMode.TapToTalk -> "tap"
@@ -723,6 +742,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var voicePreferences: VoicePreferencesRepository? = null
     private var voicePreferencesJob: Job? = null
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
+    private var supervisedModePolicy: SupervisedModePolicy = SupervisedModePolicy()
     private var voiceStopPhrases: List<String> = DEFAULT_VOICE_STOP_PHRASES
     private var finalAnswerOnly: Boolean = false
     private var realtimeTraceDetails: Boolean = false
@@ -1380,6 +1400,28 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Apply the active Android client policy at the voice coordinator boundary. */
+    fun updateSupervisedModePolicy(policy: SupervisedModePolicy) {
+        supervisedModePolicy = policy
+        val supervised = policy.enabled
+        voiceAudioClient?.setRouteOverride(if (supervised) VoiceAudioRoute.Standard else null)
+        if (supervised) {
+            if (voiceEngineMode == VoiceEngineMode.RealtimeAgent) closeRealtimeSession()
+            voiceEngineMode = VoiceEngineMode.HermesVoiceOutput
+            _voiceStats.update {
+                it.copy(
+                    voiceEngineMode = VoiceEngineMode.HermesVoiceOutput.storageValue,
+                )
+            }
+            if (!policy.capabilities.voice && _uiState.value.voiceMode) exitVoiceMode()
+        } else {
+            val prefs = voicePreferences ?: return
+            viewModelScope.launch {
+                prefs.settings.firstOrNull()?.let { applyVoiceSettingsSnapshot(it) }
+            }
+        }
+    }
+
     private fun persistInteractionMode(mode: InteractionMode) {
         val prefs = voicePreferences ?: return
         viewModelScope.launch {
@@ -1485,7 +1527,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             closeRealtimeSession()
         }
-        voiceEngineMode = nextEngineMode
+        voiceEngineMode = if (supervisedModePolicy.enabled) {
+            VoiceEngineMode.HermesVoiceOutput
+        } else {
+            nextEngineMode
+        }
         voiceStopPhrases = settings.stopPhrases
         finalAnswerOnly = settings.finalAnswerOnly
         realtimeTraceDetails = settings.realtimeTraceDetails
@@ -1506,7 +1552,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 vadThresholdMs = settings.silenceThresholdMs,
                 interactionMode = settings.interactionMode,
-                voiceEngineMode = settings.engineMode,
+                voiceEngineMode = voiceEngineMode.storageValue,
                 realtimeModel = settings.realtimeModel,
                 realtimeVoice = settings.realtimeVoice,
             )
@@ -1540,6 +1586,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         activationId: String? = null,
         expectScreenContext: Boolean = false,
     ) {
+        if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.voice) return
         val freshEntry = !_uiState.value.voiceMode
         val orphanedRun = _uiState.value
             .takeIf { freshEntry }
@@ -2430,6 +2477,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         if (!canSpeakSettledResponse(state, providerRealtimeAgentTurnActive.get())) {
             return false
         }
+        if (
+            supervisedModePolicy.enabled &&
+            voiceAudioClient?.effectiveRoute != VoiceAudioRoute.Standard
+        ) return false
 
         val spoken = sanitizeForTts(text)
         if (spoken.isBlank()) return false
@@ -3007,6 +3058,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return null
         }
 
+        if (!isVoiceCommandAllowed(action, supervisedModePolicy)) {
+            _uiState.update {
+                it.copy(
+                    state = VoiceState.Idle,
+                    outputAudioActive = false,
+                    responseText = "That voice action is disabled by Parent controls.",
+                )
+            }
+            return action
+        }
+
         Log.i(TAG, "Hands-free voice command action=$action source=${if (fromRealtime) "realtime" else "stt"}")
         DiagnosticsLog.record(
             category = DiagnosticCategory.Voice,
@@ -3076,12 +3138,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             setError("Voice pipeline not initialized")
             return
         }
+        if (
+            supervisedModePolicy.enabled &&
+            audioClient.effectiveRoute != VoiceAudioRoute.Standard
+        ) {
+            setError("Supervised voice requires the Standard Hermes voice route")
+            return
+        }
         currentTurnPcm = inputPcm
         currentTurnPcmSampleRate = inputSampleRate
         resetBrokeredToolSpeechState()
         resetRealtimeSpeechCoalescer()
         resetTtsTurnStats()
-        val engineModeForTurn = voiceEngineMode
+        val engineModeForTurn = if (supervisedModePolicy.enabled) {
+            VoiceEngineMode.HermesVoiceOutput
+        } else {
+            voiceEngineMode
+        }
         Log.i(
             TAG,
             "Processing voice input engine=${engineModeForTurn.storageValue} " +
@@ -3230,7 +3303,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // ever mis-edited. If/when a `BuildFlavor.bridgeTier3` compile-
         // time constant exists we should still short-circuit here for
         // clarity, but today the factory already does the right thing.
-        val bridgeHandler = voiceBridgeIntentHandler
+        val bridgeHandler = voiceBridgeIntentHandler.takeUnless { supervisedModePolicy.enabled }
 
         // === PHASE3-voice-cancel-midcountdown ===
         // Voice-in-voice cancel: if a destructive action is currently
@@ -4906,7 +4979,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun shouldPreferRealtimeVoice(): Boolean =
-        voiceOutputAvailable != false &&
+        !supervisedModePolicy.enabled &&
+            voiceOutputAvailable != false &&
             realtimePcmPlayer != null &&
             voiceClient != null &&
             // Use the RESOLVED route: AutoVoiceAudioClient.effectiveRoute maps

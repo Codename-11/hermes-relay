@@ -109,6 +109,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
@@ -208,6 +209,8 @@ fun SessionDrawerContent(
     animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
     archiveSupported: Boolean = true,
+    supervisedSessionActions: SupervisedSessionActions? = null,
+    newChatEnabled: Boolean = true,
     onRefresh: (() -> Unit)? = null,
     /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
     onOpenBotMode: (() -> Unit)? = null,
@@ -288,8 +291,10 @@ fun SessionDrawerContent(
         allowBareSessionIds = !showAllProfiles,
     )
     val sourceSessions = sourceRows.map { it.session }
-    val showThreads = threadsCapabilityActive || sourceSessions.any { isThreadSource(it.source) }
-    val activeFilter = resolveSessionDrawerFilter(filter, showThreads, archiveSupported)
+    val showThreads = supervisedSessionActions == null &&
+        (threadsCapabilityActive || sourceSessions.any { isThreadSource(it.source) })
+    val effectiveArchiveSupported = archiveSupported && supervisedSessionActions?.archive != false
+    val activeFilter = resolveSessionDrawerFilter(filter, showThreads, effectiveArchiveSupported)
     // External gateway sources present (discord/telegram/cron/…) for the source
     // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
     val presentSources = sourceSessions
@@ -405,7 +410,7 @@ fun SessionDrawerContent(
                 )
                 // Source filter — show/hide gateway sources (default hides the
                 // noisy cron+webhook). Only when external sources are present.
-                if (onToggleSourceHidden != null && presentSources.isNotEmpty()) {
+                if (supervisedSessionActions == null && onToggleSourceHidden != null && presentSources.isNotEmpty()) {
                     Box {
                         IconButton(
                             onClick = { sourceFilterOpen = true },
@@ -466,7 +471,7 @@ fun SessionDrawerContent(
                 // Threads affordance — a clean thread-spool that toggles the Threads
                 // filter. Shown only when the Threads capability is active (or a Thread is
                 // already present), so an ordinary no-relay drawer is visually unchanged.
-                if (showThreads) {
+                if (supervisedSessionActions == null && showThreads) {
                     IconButton(
                         onClick = {
                             filter = if (filter == SessionDrawerFilter.Threads) {
@@ -537,7 +542,8 @@ fun SessionDrawerContent(
                         onNewChat()
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = newChatEnabled,
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
@@ -602,8 +608,10 @@ fun SessionDrawerContent(
                 }
                 SessionDrawerFilter.entries
                     .filter { item ->
-                        (item != SessionDrawerFilter.Threads || showThreads) &&
-                            (item != SessionDrawerFilter.Archive || archiveSupported)
+                        (item != SessionDrawerFilter.Threads ||
+                            (supervisedSessionActions == null && showThreads)) &&
+                            (item != SessionDrawerFilter.Archive ||
+                                effectiveArchiveSupported)
                     }
                     .forEach { item ->
                         FilterChip(
@@ -635,17 +643,19 @@ fun SessionDrawerContent(
                         )
                     }
             }
-            TextButton(
-                onClick = { customizeOpen = true },
-                modifier = Modifier.align(Alignment.Start),
-            ) {
-                Icon(
-                    Icons.Filled.FilterList,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(stringResource(R.string.drawer_customize_sessions))
+            if (supervisedSessionActions == null) {
+                TextButton(
+                    onClick = { customizeOpen = true },
+                    modifier = Modifier.align(Alignment.Start),
+                ) {
+                    Icon(
+                        Icons.Filled.FilterList,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.drawer_customize_sessions))
+                }
             }
             // "+ New Thread" — Discord-style user-created thread, shown when the
             // Threads filter is active. The first message opens the conversation.
@@ -779,13 +789,20 @@ fun SessionDrawerContent(
                             showTokens = viewOptions.showTokens,
                             showCost = viewOptions.showCost,
                             nowMillis = drawerNowMillis,
-                            actionsEnabled = !provisional,
+                            actionsEnabled = !provisional && (
+                                supervisedSessionActions == null ||
+                                    supervisedSessionActions.pin ||
+                                    supervisedSessionActions.rename ||
+                                    supervisedSessionActions.delete ||
+                                    (supervisedSessionActions.archive && archiveSupported)
+                                ),
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
                             animationEnabled = animationEnabled && isOpen,
                             pinned = session.pinned,
                             archived = session.archived,
                             archiveSupported = archiveSupported,
+                            supervisedSessionActions = supervisedSessionActions,
                             onClick = {
                                 if (showAllProfiles) {
                                     onSelectProfileSession?.invoke(row.profile, session.sessionId)
@@ -1347,6 +1364,7 @@ private fun SessionItem(
     pinned: Boolean,
     archived: Boolean,
     archiveSupported: Boolean,
+    supervisedSessionActions: SupervisedSessionActions?,
     onClick: () -> Unit,
     onTogglePinned: () -> Unit,
     onToggleArchived: () -> Unit,
@@ -1510,7 +1528,7 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
-                DropdownMenuItem(
+                if (supervisedSessionActions?.pin != false) DropdownMenuItem(
                     text = {
                         Text(
                             if (pinned) {
@@ -1536,7 +1554,7 @@ private fun SessionItem(
                         onTogglePinned()
                     },
                 )
-                DropdownMenuItem(
+                if (supervisedSessionActions == null) DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_copy_session_id)) },
                     leadingIcon = {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
@@ -1546,7 +1564,7 @@ private fun SessionItem(
                         onCopySessionId()
                     },
                 )
-                DropdownMenuItem(
+                if (supervisedSessionActions?.rename != false) DropdownMenuItem(
                     text = { Text(stringResource(R.string.drawer_rename)) },
                     leadingIcon = {
                         Icon(Icons.Filled.Edit, contentDescription = null)
@@ -1556,7 +1574,7 @@ private fun SessionItem(
                         onRename()
                     },
                 )
-                if (archiveSupported) {
+                if (archiveSupported && supervisedSessionActions?.archive != false) {
                     DropdownMenuItem(
                         text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
                         leadingIcon = {
@@ -1576,7 +1594,7 @@ private fun SessionItem(
                         },
                     )
                 }
-                DropdownMenuItem(
+                if (supervisedSessionActions?.delete != false) DropdownMenuItem(
                     text = {
                         Text(
                             text = stringResource(R.string.drawer_delete),
@@ -1752,19 +1770,9 @@ private fun Modifier.sessionActivityBorder(
     state: SessionActivityState?,
     animated: Boolean,
 ): Modifier {
-    if (state == null) return this
-    val color = when (state) {
-        SessionActivityState.Starting,
-        SessionActivityState.Working -> RelayRefresh.Relay
-        SessionActivityState.NeedsInput -> RelayRefresh.Amber
-        SessionActivityState.BackgroundWork,
-        SessionActivityState.Checking,
-        SessionActivityState.Unavailable,
-        -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val shouldRotate = animated && (
-        state == SessionActivityState.Starting || state == SessionActivityState.Working
-    )
+    if (!sessionActivityShowsRowBorder(state)) return this
+    val color = RelayRefresh.Relay
+    val shouldRotate = animated
     val phase = if (shouldRotate) {
         val transition = rememberInfiniteTransition(label = "session-activity")
         transition.animateFloat(

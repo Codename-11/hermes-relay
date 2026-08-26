@@ -98,6 +98,12 @@ Google Play builds do not include AccessibilityService-backed screen reading or 
 | Message history | Loads from server on session switch |
 | Persistence | Last session resumes on app restart |
 
+## Supervised access
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Android Supervised Mode | Planned | Parent-controlled, profile-pinned restricted client interface; not a server-enforced child account. See the [Supervised Mode guide](/guide/supervised-mode). |
+
 ## Analytics
 
 | Feature | Description |

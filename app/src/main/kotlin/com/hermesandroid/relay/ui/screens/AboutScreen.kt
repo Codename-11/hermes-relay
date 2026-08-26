@@ -87,6 +87,8 @@ fun AboutScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
     onUnlockDeveloperOptions: () -> Unit = {},
+    /** Supervised clients may read About without gaining a settings mutation backdoor. */
+    allowDeveloperUnlock: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -218,7 +220,7 @@ fun AboutScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
+                            .clickable(enabled = allowDeveloperUnlock) {
                                 if (devOptionsUnlocked) return@clickable
                                 val now = System.currentTimeMillis()
                                 if (now - lastTapTime > 2000) {

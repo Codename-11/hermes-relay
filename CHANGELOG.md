@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.13.2] - 2026-08-25
+
+### Added
+
+- **Android Supervised Mode presents a parent-controlled, profile-pinned chat surface.** Parents can limit attachments, Standard voice, generated media, conversation history, actions, and technical metadata while device authentication protects full settings. Hermes-Relay can identify and revoke a paired supervised client without becoming the policy enforcement boundary.
+
+### Fixed
+
+- **Android session rows stay neutral when optional live activity is unavailable or still loading.** Directory refreshes no longer restore a persistent Checking state, and full-row activity borders are reserved for actual Starting or Working turns.
+- **Returning from parent settings keeps Supervised Chat rendered.** Parent access now relocks without rebuilding the active navigation graph, and full Settings keeps a prominent shortcut back to Supervised Mode controls.
+
 ## [Android 1.13.1] - 2026-08-25
 
 ### Fixed

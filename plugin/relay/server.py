@@ -53,6 +53,7 @@ from .auth import (
     RateLimiter,
     Session,
     SessionManager,
+    parse_supervised_mode,
 )
 from .channels.bridge import BridgeError, BridgeHandler
 from .channels.chat import ChatHandler
@@ -887,7 +888,7 @@ def _session_to_dict(session: Session, current_token: str | None) -> dict[str, A
         return None if math.isinf(ts) else ts
 
     grants_out = {k: _norm(v) for k, v in session.grants.items()}
-    return {
+    payload = {
         "token_prefix": session.token[:8],
         "device_name": session.device_name,
         "device_id": session.device_id,
@@ -903,6 +904,9 @@ def _session_to_dict(session: Session, current_token: str | None) -> dict[str, A
         "device_platform": session.device_platform,
         "is_current": current_token is not None and session.token == current_token,
     }
+    if session.supervised_mode.active:
+        payload["supervised_mode"] = session.supervised_mode.to_public_dict()
+    return payload
 
 
 def _require_bearer_session(
@@ -1012,6 +1016,18 @@ async def handle_sessions_revoke(request: web.Request) -> web.Response:
     target = matches[0]
     revoked_self = current_token is not None and target.token == current_token
     server.sessions.revoke_session(target.token)
+    # Revocation ends already-connected Relay sockets as well as preventing
+    # future authentication. This does not enforce the Android supervised
+    # policy; it revokes the ordinary paired Relay session that reported it.
+    revoked_sockets = [
+        ws for ws, token in server._clients.items() if token == target.token
+    ]
+    for ws in revoked_sockets:
+        if not ws.closed:
+            await ws.close(
+                code=aiohttp.WSCloseCode.POLICY_VIOLATION,
+                message=b"Relay session revoked",
+            )
     route_credential_id = credential_id_for(target.token)
     server.secure_link_route_credentials.pop(route_credential_id, None)
     if server.secure_link_connector is not None:
@@ -4209,6 +4225,8 @@ def _build_auth_ok_payload(
     }
     if session.refresh_token:
         payload["refresh_token"] = session.refresh_token
+    if session.supervised_mode.active:
+        payload["supervised_mode"] = session.supervised_mode.to_public_dict()
     if route_credential is not None:
         payload["route_credential"] = route_credential
     return payload
@@ -4310,6 +4328,11 @@ async def _authenticate(
     device_platform = str(
         payload.get("device_platform", "unknown") or "unknown"
     ).strip()
+    # Every authentication is a fresh client report. Missing or invalid
+    # metadata explicitly returns the paired session to ordinary mode rather
+    # than leaving a stale supervised badge behind after the client disables
+    # the mode or downgrades.
+    supervised_mode = parse_supervised_mode(payload.get("supervised_mode"))
 
     # Pairing policy is attached by a loopback-only operator flow. Clients
     # may still send ttl_seconds / grants for wire compatibility, but those
@@ -4338,6 +4361,7 @@ async def _authenticate(
                 device_form_factor=(
                     device_form_factor if "device_form_factor" in payload else None
                 ),
+                supervised_mode=supervised_mode,
             )
             if (
                 not refresh_token_attempt
@@ -4370,6 +4394,7 @@ async def _authenticate(
             device_form_factor=device_form_factor,
             device_model=device_model,
             device_platform=device_platform,
+            supervised_mode=supervised_mode,
         )
         if session is not None:
             server.rate_limiter.record_success(remote_ip)
@@ -4403,6 +4428,7 @@ async def _authenticate(
                 device_form_factor=device_form_factor,
                 device_model=device_model,
                 device_platform=device_platform,
+                supervised_mode=supervised_mode,
                 issue_refresh_token=True,
             )
             server.rate_limiter.record_success(remote_ip)
@@ -4584,6 +4610,40 @@ async def _handle_system(
     elif msg_type == "pong":
         # Client responding to our ping — nothing to do
         pass
+    elif msg_type == "supervised.update":
+        # Informational update from an already-authenticated Android client.
+        # The socket's paired session is the only ownership input: payload
+        # fields cannot select or modify another session. Relay deliberately
+        # does not enforce the reported client policy.
+        token = server._clients.get(ws)
+        session = server.sessions.get_session(token) if token else None
+        if session is None:
+            await _send_system(
+                ws,
+                "error",
+                {"message": "Authenticated Relay session is no longer valid"},
+                msg_id,
+            )
+            return
+        if not isinstance(payload, dict):
+            payload = {}
+        supervised_mode = parse_supervised_mode(payload.get("supervised_mode"))
+        server.sessions.update_session_device_metadata(
+            session,
+            supervised_mode=supervised_mode,
+        )
+        applied: dict[str, Any] = {
+            "active": False,
+            "enforcement_owner": "android_client",
+        }
+        if supervised_mode.active:
+            applied = supervised_mode.to_public_dict()
+        await _send_system(
+            ws,
+            "supervised.updated",
+            {"supervised_mode": applied},
+            msg_id,
+        )
     else:
         logger.debug("Unhandled system message type: %s", msg_type)
 
