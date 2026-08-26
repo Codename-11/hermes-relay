@@ -64,13 +64,24 @@ import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
 import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
 import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureDiagnostic
 import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureStage
+import com.hermesandroid.relay.network.upstream.sameDashboardBase
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.CookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import kotlin.coroutines.resume
 
 private const val NATIVE_DASHBOARD_AUTH_LOG_TAG = "HermesNativeAuth"
 
@@ -114,8 +125,8 @@ fun DashboardSignInScreen(
                 ?: EncryptedDashboardCookieStore(appContext, connectionId)
         }
     }
-    val clientFactory = remember(dashboardUrl, connectionViewModel) {
-        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
+    val clientFactory = remember(connectionViewModel) {
+        { baseUrl: String -> connectionViewModel.dashboardClientForActive(baseUrl) }
     }
 
     suspend fun verifyAndRecord(client: DashboardApiClient): DashboardAuthSession? {
@@ -150,7 +161,7 @@ fun DashboardSignInScreen(
             actionMessage = resources.getString(R.string.dashboard_no_url_configured)
             return@LaunchedEffect
         }
-        val client = clientFactory()
+        val client = clientFactory(dashboardUrl)
         try {
             val status = client.getStatus().getOrElse {
                 actionMessage = it.message ?: resources.getString(R.string.dashboard_request_failed)
@@ -183,7 +194,7 @@ fun DashboardSignInScreen(
         actionMessage = null
         actionIsError = false
         scope.launch {
-            val client = clientFactory()
+            val client = clientFactory(dashboardUrl)
             try {
                 val result = client.loginPassword(provider, username, password)
                 val session = if (result.isSuccess) verifyAndRecord(client) else null
@@ -235,7 +246,7 @@ fun DashboardSignInScreen(
                         launchNativeDashboardAuthorization(context, authorizationUrl)
                     }
                 }
-                val client = clientFactory()
+                val client = clientFactory(dashboardUrl)
                 val session = try {
                     verifyAndRecord(client)
                 } finally {
@@ -308,16 +319,26 @@ fun DashboardSignInScreen(
     }
 
     oauthProvider?.let { provider ->
+        val redirectProbeClient = remember(dashboardUrl, connectionViewModel) {
+            connectionViewModel.dashboardHttpClientForActive(dashboardUrl)
+        }
         DashboardOAuthScreen(
             dashboardUrl = dashboardUrl,
             provider = provider,
             cookieStoreFactory = cookieStoreFactory,
             clientFactory = clientFactory,
+            redirectProbeClient = redirectProbeClient,
             onDismiss = { oauthProvider = null },
-            onAuthenticated = { session ->
-                oauthProvider = null
-                scope.launch {
-                    val client = clientFactory()
+            onAuthenticated = { session, authBaseUrl ->
+                val routeReady = sameDashboardBase(authBaseUrl, dashboardUrl) ||
+                    connectionViewModel.promoteAuthenticatedDashboardOrigin(authBaseUrl)
+                if (!routeReady) {
+                    actionMessage = resources.getString(R.string.dashboard_signin_failed)
+                    actionIsError = true
+                    false
+                } else {
+                    oauthProvider = null
+                    val client = clientFactory(authBaseUrl)
                     try {
                         verifyAndRecord(client)
                     } finally {
@@ -327,6 +348,7 @@ fun DashboardSignInScreen(
                         resources.getString(R.string.dashboard_signed_in_with, it)
                     } ?: resources.getString(R.string.dashboard_signed_in)
                     finishAuthentication()
+                    true
                 }
             },
             onError = {
@@ -559,9 +581,10 @@ private fun DashboardOAuthScreen(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
-    clientFactory: () -> DashboardApiClient,
+    clientFactory: (String) -> DashboardApiClient,
+    redirectProbeClient: OkHttpClient,
     onDismiss: () -> Unit,
-    onAuthenticated: (DashboardAuthSession) -> Unit,
+    onAuthenticated: suspend (DashboardAuthSession, String) -> Boolean,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -574,17 +597,28 @@ private fun DashboardOAuthScreen(
     var checking by remember { mutableStateOf(false) }
     var pageProgress by remember { mutableStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
-    val loginUrl = remember(dashboardUrl, provider.name) {
+    var authBaseUrl by remember(dashboardUrl, provider.name) { mutableStateOf<String?>(null) }
+    val loginUrl = remember(authBaseUrl, provider.name) {
+        val resolvedBase = authBaseUrl ?: return@remember null
         DashboardApiClient.authLoginUrl(
-            baseUrl = dashboardUrl,
+            baseUrl = resolvedBase,
             provider = provider.name,
-            next = DashboardApiClient.authLandingPath(dashboardUrl),
+            next = DashboardApiClient.authLandingPath(resolvedBase),
+        )
+    }
+
+    LaunchedEffect(dashboardUrl, provider.name, redirectProbeClient) {
+        authBaseUrl = resolveDashboardWebViewAuthBase(
+            dashboardUrl = dashboardUrl,
+            provider = provider.name,
+            client = redirectProbeClient,
         )
     }
 
     fun handleNavigation(url: String?) {
         val loadedUrl = url?.takeIf { it.isNotBlank() } ?: return
-        when (dashboardWebViewAuthNavigation(dashboardUrl, loadedUrl)) {
+        val resolvedBase = authBaseUrl ?: return
+        when (dashboardWebViewAuthNavigation(resolvedBase, loadedUrl)) {
             DashboardWebViewAuthNavigation.Continue -> return
             DashboardWebViewAuthNavigation.RejectLoopbackCallback -> {
                 statusText = notAcceptedStatus
@@ -604,10 +638,12 @@ private fun DashboardOAuthScreen(
         checking = true
         statusText = verifyingStatus
         scope.launch {
-            val client = clientFactory()
+            val client = clientFactory(resolvedBase)
             try {
                 val session = client.currentSession().getOrNull()
-                if (session?.authenticated == true) onAuthenticated(session) else {
+                val accepted = session?.takeIf { it.authenticated }
+                    ?.let { onAuthenticated(it, resolvedBase) } == true
+                if (!accepted) {
                     checking = false
                     statusText = notAcceptedStatus
                 }
@@ -674,15 +710,19 @@ private fun DashboardOAuthScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            if (loginUrl == null) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+                return@Column
+            }
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 factory = { viewContext ->
-                    CookieManager.getInstance().setAcceptCookie(true)
                     WebView(viewContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
+                        configureDashboardAuthWebView(this)
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView, newProgress: Int) {
                                 pageProgress = newProgress
@@ -695,7 +735,7 @@ private fun DashboardOAuthScreen(
                             ): Boolean {
                                 val target = request.url.toString()
                                 if (
-                                    dashboardWebViewAuthNavigation(dashboardUrl, target) ==
+                                    dashboardWebViewAuthNavigation(authBaseUrl ?: dashboardUrl, target) ==
                                     DashboardWebViewAuthNavigation.RejectLoopbackCallback
                                 ) {
                                     handleNavigation(target)
@@ -730,6 +770,114 @@ private fun DashboardOAuthScreen(
                 },
             )
         }
+    }
+}
+
+/**
+ * Resolve the dashboard origin that owns the cookie-based OIDC transaction.
+ * Upstream declares that origin in the provider authorization redirect's
+ * `redirect_uri`; probing the selected private route before opening WebView
+ * prevents Hermes' temporary PKCE cookie from being scoped to a LAN host while
+ * the provider returns to a public host.
+ */
+internal suspend fun resolveDashboardWebViewAuthBase(
+    dashboardUrl: String,
+    provider: String,
+    client: OkHttpClient,
+): String {
+    val selected = dashboardUrl.trim().trimEnd('/').toHttpUrlOrNull()
+        ?: return dashboardUrl
+    val loginUrl = DashboardApiClient.authLoginUrl(
+        baseUrl = selected.toString().trimEnd('/'),
+        provider = provider,
+        next = DashboardApiClient.authLandingPath(selected.toString()),
+    )
+    val probeClient = client.newBuilder()
+        .cookieJar(CookieJar.NO_COOKIES)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .callTimeout(5, TimeUnit.SECONDS)
+        .build()
+    val request = Request.Builder().url(loginUrl).get().build()
+    val location = suspendCancellableCoroutine { continuation ->
+        val call = probeClient.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runCatching {
+                    if (continuation.isActive) continuation.resume(null)
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val redirect = if (it.code in 300..399) it.header("Location") else null
+                    runCatching {
+                        if (continuation.isActive) continuation.resume(redirect)
+                    }
+                }
+            }
+        })
+    }
+    return canonicalDashboardWebViewAuthBase(dashboardUrl, location)
+}
+
+internal fun canonicalDashboardWebViewAuthBase(
+    dashboardUrl: String,
+    redirectLocation: String?,
+): String {
+    val selected = dashboardUrl.trim().trimEnd('/').toHttpUrlOrNull()
+        ?: return dashboardUrl
+    val providerUrl = redirectLocation?.toHttpUrlOrNull()
+        ?: return selected.toString().trimEnd('/')
+    val callback = providerUrl.queryParameter("redirect_uri")?.toHttpUrlOrNull()
+        ?: return selected.toString().trimEnd('/')
+    if (
+        providerUrl.username.isNotEmpty() || providerUrl.password.isNotEmpty() ||
+        callback.username.isNotEmpty() || callback.password.isNotEmpty() ||
+        callback.query != null || callback.fragment != null
+    ) {
+        return selected.toString().trimEnd('/')
+    }
+    val callbackSuffix = "/auth/callback"
+    if (!callback.encodedPath.endsWith(callbackSuffix)) {
+        return selected.toString().trimEnd('/')
+    }
+    val callbackBasePath = callback.encodedPath.removeSuffix(callbackSuffix).ifBlank { "/" }
+    val callbackBase = callback.newBuilder()
+        .encodedPath(callbackBasePath)
+        .query(null)
+        .fragment(null)
+        .build()
+    val sameBase = selected.scheme == callbackBase.scheme &&
+        selected.host.equals(callbackBase.host, ignoreCase = true) &&
+        selected.port == callbackBase.port &&
+        selected.encodedPath.trimEnd('/') == callbackBase.encodedPath.trimEnd('/')
+    if (sameBase) return selected.toString().trimEnd('/')
+
+    // A different origin becomes trusted for this browser transaction only
+    // when both the provider hop and its declared callback are HTTPS.
+    if (providerUrl.scheme != "https" || callbackBase.scheme != "https") {
+        return selected.toString().trimEnd('/')
+    }
+    return callbackBase.toString().trimEnd('/')
+}
+
+/**
+ * Dashboard OIDC crosses from the configured dashboard to its identity
+ * provider and back. Modern Android targets reject third-party cookies by
+ * default, which can leave federated provider pages without the temporary
+ * state they need to render or complete sign-in. Keep that compatibility
+ * exception scoped to this short-lived authentication WebView.
+ */
+internal fun configureDashboardAuthWebView(webView: WebView) {
+    CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(webView, true)
+    }
+    webView.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
     }
 }
 

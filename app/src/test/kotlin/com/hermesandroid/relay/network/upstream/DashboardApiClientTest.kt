@@ -2,7 +2,13 @@ package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.SessionPruneFilters
 import com.hermesandroid.relay.network.upstream.models.SessionPrunePreview
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -21,6 +27,7 @@ import okio.Buffer
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class DashboardApiClientTest {
 
@@ -1193,6 +1200,101 @@ class DashboardApiClientTest {
         val request = server.takeRequest()
         // No profile → omit the param so upstream reads the launch (default) DB.
         assertEquals(null, request.requestUrl!!.queryParameter("profile"))
+    }
+
+    @Test
+    fun listSessions_cancellationCancelsTheActiveHttpCall() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val httpClient = DashboardApiClient.defaultClient()
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            okHttpClient = httpClient,
+        )
+
+        val read = async(Dispatchers.IO) { client.listSessions(profile = "mizu") }
+        assertTrue(server.takeRequest(5, TimeUnit.SECONDS) != null)
+        read.cancelAndJoin()
+
+        withTimeout(2_000L) {
+            while (httpClient.dispatcher.runningCallsCount() != 0) delay(10L)
+        }
+        assertEquals(0, httpClient.dispatcher.runningCallsCount())
+    }
+
+    @Test
+    fun listSessions_returnsRowsAndRetriesOptionalEnrichmentAfterItsBudgetExpires() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"sess-a","profile":"mizu","cwd":"/work/repo"}]}""",
+                ),
+        )
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionEnrichmentBudgetMillis = 500L,
+        )
+
+        val sessions = client.listSessions(profile = "mizu").getOrThrow()
+
+        assertEquals(listOf("sess-a"), sessions.map { it.id })
+        assertEquals(null, sessions.single().pullRequest)
+        assertEquals("/api/sessions", server.takeRequest().requestUrl!!.encodedPath)
+        assertEquals("/api/profiles/sessions/pull-requests", server.takeRequest().requestUrl!!.encodedPath)
+
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"sess-a","profile":"mizu","cwd":"/work/repo","git_branch":"fix/latency"}]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"sess-a":{"number":399,"url":"https://github.com/example/repo/pull/399"}},"scanned":["sess-a"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"ghReady":true,"prs":[{"branch":"fix/latency","draft":false,"number":399,"state":"open","title":"Latency","url":"https://github.com/example/repo/pull/399"}]}""",
+            ),
+        )
+
+        val retried = client.listSessions(profile = "mizu").getOrThrow()
+
+        assertEquals(399, retried.single().pullRequest?.number)
+    }
+
+    @Test
+    fun listSessions_failsWithinTheBoundedSessionReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.listSessions(profile = "mizu").isFailure)
+    }
+
+    @Test
+    fun getSessionMessages_failsWithinTheBoundedSessionReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.getSessionMessages("sess-a", profile = "mizu").isFailure)
+    }
+
+    @Test
+    fun requestWsTicket_failsWithinTheBoundedReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.requestWsTicket().isFailure)
     }
 
     @Test

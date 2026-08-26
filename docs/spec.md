@@ -214,7 +214,14 @@ credential values, cookie contents, endpoint URLs, or storage identifiers.
 Self-hosted OIDC remains on the dashboard cookie flow: Android opens
 `/auth/login` in a full-screen embedded browser destination, lets the provider
 return through the public `/auth/callback`, imports only same-origin cookies,
-and verifies them through `/api/auth/me`. HTTPS is required on public routes;
+and verifies them through `/api/auth/me`. When the selected LAN, private, or
+Tailscale route advertises a different canonical HTTPS callback, Android first
+probes the redirect without cookies, starts the real transaction on that
+canonical base, and promotes it as the authenticated Dashboard-only route
+before Gateway tickets, Manage, sessions, or standard voice continue. Secure
+cookies are never copied back to cleartext LAN, while API and Relay routes stay
+unchanged. The short-lived auth WebView permits third-party cookies for
+compatible federated identity-provider pages. HTTPS is required on public routes;
 explicit private-LAN and Tailscale-IP dashboards may use their existing HTTP
 transport. When such a private route advertises a canonical HTTPS Nous callback,
 Android starts the browser on that canonical origin so Hermes' temporary PKCE

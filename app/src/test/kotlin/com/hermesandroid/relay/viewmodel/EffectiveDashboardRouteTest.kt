@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.RelayEndpoint
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -104,6 +105,40 @@ class EffectiveDashboardRouteTest {
             "https://dashboard.example.com",
             resolveEffectiveDashboardUrl(connection, incompleteRoute),
         )
+    }
+
+    @Test
+    fun `authenticated dashboard promotion preserves API and Relay ownership`() {
+        val originalRoute = EndpointCandidate(
+            role = "lan",
+            api = ApiEndpoint("192.168.1.20", 8642),
+            relay = RelayEndpoint("ws://192.168.1.20:8767"),
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+        )
+        val original = connection(
+            dashboardUrl = "http://192.168.1.20:9119",
+            apiServerUrl = "http://192.168.1.20:8642",
+        ).copy(relayUrl = "ws://192.168.1.20:8767", routeCandidates = listOf(originalRoute))
+
+        val promoted = withAuthenticatedDashboardOrigin(original, "https://hermes.example.com")
+
+        assertEquals("https://hermes.example.com", promoted.dashboardUrl)
+        assertEquals(AUTHENTICATED_DASHBOARD_ROUTE_ROLE, promoted.preferredRouteRole)
+        assertEquals(originalRoute, promoted.routeCandidates.first())
+        val publicRoute = promoted.routeCandidates.last()
+        assertEquals(AUTHENTICATED_DASHBOARD_ROUTE_ROLE, publicRoute.role)
+        assertEquals(DashboardEndpoint("https://hermes.example.com"), publicRoute.dashboard)
+        assertEquals(null, publicRoute.api)
+        assertEquals(null, publicRoute.relay)
+    }
+
+    @Test
+    fun `authenticated dashboard origin rejects unsafe or non-origin inputs`() {
+        assertEquals("https://hermes.example.com", normalizeAuthenticatedDashboardOrigin("https://hermes.example.com/"))
+        assertEquals(null, normalizeAuthenticatedDashboardOrigin("http://hermes.example.com"))
+        assertEquals(null, normalizeAuthenticatedDashboardOrigin("https://user:pass@hermes.example.com"))
+        assertEquals(null, normalizeAuthenticatedDashboardOrigin("https://hermes.example.com?next=evil"))
+        assertEquals(null, normalizeAuthenticatedDashboardOrigin("https://hermes.example.com#fragment"))
     }
 
     private fun connection(

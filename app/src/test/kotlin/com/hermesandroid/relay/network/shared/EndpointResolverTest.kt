@@ -7,7 +7,10 @@ import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -22,6 +25,7 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.system.measureTimeMillis
 
 /**
  * Unit tests for [EndpointResolver] — ADR 24 "Multi-endpoint pairing +
@@ -214,6 +218,78 @@ class EndpointResolverTest {
             "a fresh probe should have fired after TTL",
             reachableServer.requestCount > requestsAfterFirst,
         )
+    }
+
+    @Test
+    fun samePriority_fastSiblingWinsWithoutWaitingForSlowFirstCandidate() = runTest {
+        val slow = MockWebServer().apply {
+            enqueue(MockResponse().setHeadersDelay(3, TimeUnit.SECONDS).setResponseCode(200))
+            start()
+        }
+        try {
+            val slowFirst = candidate("slow-first", priority = 0, server = slow)
+            val fastSecond = candidate("fast-second", priority = 0, server = reachableServer)
+            val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            lateinit var winner: EndpointCandidate
+
+            val elapsed = measureTimeMillis {
+                winner = resolver.resolve(listOf(slowFirst, fastSecond))!!
+            }
+
+            assertEquals("fast-second", winner.role)
+            assertTrue(
+                "completion order must win; input order must not add the slow sibling delay (elapsed=${elapsed}ms)",
+                elapsed < 1_500L,
+            )
+        } finally {
+            slow.shutdown()
+        }
+    }
+
+    @Test
+    fun concurrentResolve_sharesOnePhysicalProbe() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        }
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        val winners = listOf(
+            async { resolver.resolve(listOf(lan), EndpointSurface.Api) },
+            async { resolver.resolve(listOf(lan), EndpointSurface.Api) },
+        ).awaitAll()
+
+        assertEquals(listOf(lan, lan), winners)
+        assertEquals(
+            "concurrent lifecycle callers must share the same route probe",
+            1,
+            reachableServer.requestCount,
+        )
+    }
+
+    @Test
+    fun cancellingFirstWaiter_doesNotCancelSharedProbeForSecondWaiter() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        }
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        val first = async(start = CoroutineStart.UNDISPATCHED) {
+            resolver.resolve(listOf(lan), EndpointSurface.Api)
+        }
+        assertNotNull(reachableServer.takeRequest(5, TimeUnit.SECONDS))
+        first.cancel()
+        val second = resolver.resolve(listOf(lan), EndpointSurface.Api)
+
+        assertEquals(lan, second)
+        assertEquals(1, reachableServer.requestCount)
     }
 
     // ---------------------------------------------------------------

@@ -2317,10 +2317,15 @@ cookie flow by default:
 
 - open `/auth/login?provider=...&next=...` in a full-screen embedded sign-in
   destination with a normal app bar rather than a modal WebView;
+- preflight that route without cookies or redirect-following and, when the
+  provider authorization URL declares a different canonical HTTPS Dashboard
+  `/auth/callback`, begin the real browser transaction on that canonical base;
 - allow the provider to return through the dashboard's public
   `/auth/callback`;
 - import only cookies observed on the configured dashboard origin;
 - verify the imported session through `/api/auth/me`;
+- persist the successfully authenticated canonical base as a Dashboard-only
+  preferred route before resuming Gateway, Manage, session, or voice calls;
 - reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
   navigation instead of following or importing it.
 
@@ -2340,13 +2345,19 @@ dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
 dashboard routes retain the same HTTP allowance as their existing cookie
 sessions. If the provider redirect from a private route declares a canonical
 HTTPS dashboard callback, Android begins browser authorization on that
-canonical origin so the temporary PKCE cookie and callback remain same-origin;
-the one-time code exchange and resulting exact-origin bearer stay bound to the
-active private route.
+canonical origin so the temporary PKCE cookie and callback remain same-origin.
+After the cookie session verifies, that HTTPS base becomes the connection's
+preferred Dashboard-only route. Android never downgrades its Secure cookies to
+the private HTTP route, and the connection's API and Relay routes retain their
+existing ownership. The auth WebView permits third-party cookies only for its
+short lifetime so compatible federated provider pages can preserve their own
+browser state.
 
 **Consequences.**
 
 - Self-hosted OIDC uses the same public callback registered for the dashboard.
+- A private discovery route cannot strand a successful public cookie session
+  by returning subsequent Dashboard traffic to a different origin.
 - Android Manage, Chat, Voice, and onboarding continue to share one verified
   dashboard cookie session.
 - A server-wide desktop capability can no longer switch Android into a

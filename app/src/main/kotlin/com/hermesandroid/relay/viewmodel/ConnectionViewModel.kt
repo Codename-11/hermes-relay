@@ -325,6 +325,41 @@ internal fun resolveEffectiveDashboardUrl(
     return connection.resolvedDashboardUrl
 }
 
+internal const val AUTHENTICATED_DASHBOARD_ROUTE_ROLE = "authenticated_dashboard"
+
+/** Accept only an absolute credential-free HTTPS Dashboard base. */
+internal fun normalizeAuthenticatedDashboardOrigin(raw: String): String? {
+    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
+    if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+    if (parsed.host.isNullOrBlank() || parsed.userInfo != null) return null
+    if (parsed.query != null || parsed.fragment != null) return null
+    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
+}
+
+/**
+ * Persist a verified public Dashboard as a dedicated route. Existing API and
+ * Relay candidates remain byte-for-byte owned by their original routes.
+ */
+internal fun withAuthenticatedDashboardOrigin(
+    connection: Connection,
+    normalizedOrigin: String,
+): Connection {
+    val candidate = EndpointCandidate(
+        role = AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+        priority = 0,
+        dashboard = DashboardEndpoint(normalizedOrigin),
+        security = "https",
+        recommended = true,
+        displayName = "Authenticated Dashboard",
+    )
+    return connection.copy(
+        dashboardUrl = normalizedOrigin,
+        routeCandidates = connection.routeCandidates
+            .filterNot { it.role.equals(AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true) } + candidate,
+        preferredRouteRole = AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+    )
+}
+
 /**
  * Resolve the runtime API route only after the optional fallback was explicitly
  * configured. Discovery may attach a conventional same-host API candidate to a
@@ -1196,6 +1231,60 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun activeDashboardUrl(): String? =
         effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
+
+    /**
+     * Promote the exact HTTPS Dashboard origin that completed cookie/OIDC
+     * authentication. This is intentionally Dashboard-only: API fallback and
+     * Relay routes retain their existing endpoints and credentials.
+     *
+     * Persistence is rolled back unless the resolver can select this exact
+     * route, preventing the sign-in UI from declaring success while subsequent
+     * Manage/Gateway/session requests still target a private origin.
+     */
+    suspend fun promoteAuthenticatedDashboardOrigin(origin: String): Boolean {
+        val normalized = normalizeAuthenticatedDashboardOrigin(origin) ?: return false
+        val activeId = connectionStore.activeConnectionId.value ?: return false
+        val previous = connectionStore.connections.value
+            .firstOrNull { it.id == activeId }
+            ?: return false
+        val verificationClient = upstreamTransport.dashboardClientFor(activeId, normalized)
+        val verifiedHermes = try {
+            withTimeoutOrNull(8_000L) {
+                val status = verificationClient.getStatus().getOrNull() ?: return@withTimeoutOrNull false
+                !status.authRequired || verificationClient.currentSession().getOrNull()?.authenticated == true
+            } == true
+        } finally {
+            verificationClient.shutdown()
+        }
+        if (!verifiedHermes) return false
+        val previousOverride = connectionManager.getManualRoleOverride()
+        val promoted = withAuthenticatedDashboardOrigin(previous, normalized)
+
+        return try {
+            connectionStore.updateConnection(promoted)
+            if (connectionStore.activeConnectionId.value != activeId) return false
+            connectionManager.setManualRoleOverride(AUTHENTICATED_DASHBOARD_ROUTE_ROLE)
+            val winner = connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            val selected = winner?.role.equals(
+                AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+                ignoreCase = true,
+            )
+            val effective = withTimeoutOrNull(2_000L) {
+                effectiveDashboardUrl.first {
+                    it.trimEnd('/').equals(normalized, ignoreCase = true)
+                }
+            }
+            selected && effective != null && connectionStore.activeConnectionId.value == activeId
+        } catch (_: Exception) {
+            false
+        }.also { success ->
+            if (!success && connectionStore.activeConnectionId.value == activeId) {
+                connectionStore.updateConnection(previous)
+                connectionManager.setManualRoleOverride(previousOverride)
+                connectionManager.refreshActiveEndpoint(clearProbeCache = true)
+            }
+        }
+    }
 
     /**
      * Cookie store for [connectionId] — ONE instance per connection,

@@ -1,5 +1,35 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-26 — Android OIDC origin continuity and route latency
+
+Self-hosted dashboard OIDC now preflights the selected route's `/auth/login`
+without sending or retaining cookies, reads the provider-declared public
+callback, and begins the real WebView transaction on that canonical HTTPS
+Dashboard origin. Successful sign-in promotes a Dashboard-only authenticated
+route before Gateway, Manage, session, or standard-voice work resumes. Secure
+cookies are never copied to cleartext LAN routes, API and Relay ownership remain
+unchanged, unsafe redirects and foreign loopback callbacks remain rejected, and
+third-party cookies are enabled only for the short-lived authentication WebView.
+
+Optional API discovery no longer blocks a healthy Dashboard/Gateway route.
+Concurrent probes are shared, negative results are cached for a bounded window,
+same-priority routes race by completion, and connection generations prevent a
+late old route from overwriting a new one. Dashboard session and message reads
+now cancel with their coroutine, one bounded budget covers the complete session
+list, WebSocket-ticket minting is bounded, and optional pull-request decoration
+falls off the critical path while preserving exact profile-scoped rows.
+
+Focused auth, Dashboard, resolver, route, and native-sign-in coverage passed
+135 tests on the final `origin/dev` merge, followed by Android lint and sideload
+assembly. The matching Android 16 sideload was installed in place with app data
+preserved. Cold-route evidence showed Dashboard selection completing in hundreds
+of milliseconds, unavailable API fallback work continuing in the background,
+and unauthenticated ticket failures returning immediately instead of stalling.
+An upstream-compatible live-writer certification separately kept five full
+profile-roster RPCs below one second while concurrent ticket mints stayed in
+single-digit milliseconds. Final interactive provider consent/callback remains
+a human gate because the test device was locked after deployment.
+
 ## 2026-08-24 — Single dev integration authority
 
 `origin/dev` is the sole integration authority. Primary local `dev` checkouts are

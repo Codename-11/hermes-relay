@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.network.shared.EndpointResolver
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -14,6 +15,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -27,6 +29,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowNetwork
 import java.util.concurrent.TimeUnit
+import kotlin.system.measureTimeMillis
 
 /**
  * Standard-route (no relay socket) coverage for [ConnectionManager]'s ADR 24
@@ -63,7 +66,7 @@ class ConnectionManagerRouteTest {
         server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse =
-                if (request.path?.endsWith("/health") == true) {
+                if (request.path?.endsWith("/health") == true || request.path == "/api/status") {
                     MockResponse().setResponseCode(200)
                 } else {
                     MockResponse().setResponseCode(404)
@@ -195,6 +198,95 @@ class ConnectionManagerRouteTest {
             "the failed outcome must be published, not silently swallowed",
             manager.activeEndpoint.value,
         )
+    }
+
+    @Test
+    fun `optional API timeout does not block healthy Dashboard refresh and is deduplicated`() {
+        val slowApi = MockWebServer().apply {
+            enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            start()
+        }
+        val route = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            dashboard = DashboardEndpoint(server.url("/").toString().trimEnd('/')),
+            api = ApiEndpoint(host = slowApi.hostName, port = slowApi.port, tls = false),
+        )
+        val manager = buildManager { listOf(route) }
+
+        try {
+            val firstElapsed = measureTimeMillis {
+                val winner = runBlocking { manager.refreshActiveEndpoint() }
+                assertEquals("lan", winner?.role)
+            }
+            assertEquals("the healthy Dashboard route must publish immediately", "lan", manager.activeEndpoint.value?.role)
+            org.junit.Assert.assertTrue(
+                "optional API discovery must not add its four-second timeout to Dashboard readiness (elapsed=${firstElapsed}ms)",
+                firstElapsed < 1_500L,
+            )
+            assertNotNull("background API discovery should still run", slowApi.takeRequest(2, TimeUnit.SECONDS))
+
+            val secondElapsed = measureTimeMillis {
+                runBlocking { manager.refreshActiveEndpoint() }
+            }
+            org.junit.Assert.assertTrue(
+                "a concurrent refresh must not wait for the in-flight optional probe (elapsed=${secondElapsed}ms)",
+                secondElapsed < 1_500L,
+            )
+            assertEquals("the in-flight optional probe must be coalesced", 1, slowApi.requestCount)
+        } finally {
+            slowApi.shutdown()
+        }
+    }
+
+    @Test
+    fun `stale optional API probe cannot publish over a newer route set`() {
+        val slowApi = MockWebServer().apply {
+            enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            start()
+        }
+        val fastApi = MockWebServer().apply {
+            enqueue(MockResponse().setResponseCode(200))
+            start()
+        }
+        var routes = listOf(
+            EndpointCandidate(
+                role = "connection-a",
+                dashboard = DashboardEndpoint(server.url("/").toString().trimEnd('/')),
+                api = ApiEndpoint(slowApi.hostName, slowApi.port, tls = false),
+            ),
+        )
+        val manager = buildManager { routes }
+
+        try {
+            runBlocking { manager.refreshActiveEndpoint() }
+            assertNotNull(slowApi.takeRequest(2, TimeUnit.SECONDS))
+
+            routes = listOf(
+                EndpointCandidate(
+                    role = "connection-b",
+                    dashboard = DashboardEndpoint(server.url("/").toString().trimEnd('/')),
+                    api = ApiEndpoint(fastApi.hostName, fastApi.port, tls = false),
+                ),
+            )
+            runBlocking { manager.refreshActiveEndpoint() }
+
+            val current = runBlocking {
+                withTimeout(10_000L) {
+                    manager.activeApiEndpoint.first { it?.role == "connection-b" }
+                }
+            }
+            assertEquals("connection-b", current?.role)
+            assertEquals(
+                "the completed stale probe must never become active while the current route resolves",
+                "connection-b",
+                manager.activeApiEndpoint.value?.role,
+            )
+            assertEquals(1, fastApi.requestCount)
+        } finally {
+            slowApi.shutdown()
+            fastApi.shutdown()
+        }
     }
 
     @Test

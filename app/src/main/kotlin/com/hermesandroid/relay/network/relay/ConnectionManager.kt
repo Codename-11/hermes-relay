@@ -273,6 +273,11 @@ class ConnectionManager(
     @Volatile
     private var networkResolveJob: kotlinx.coroutines.Job? = null
 
+    /** Optional API discovery is never part of Dashboard/Gateway readiness. */
+    @Volatile
+    private var apiResolveJob: Job? = null
+    private var apiResolveRevision: Long = 0L
+
     /** Deferred reaction to a network loss — cancelled if a network returns within the grace. */
     private var networkLossJob: kotlinx.coroutines.Job? = null
 
@@ -364,12 +369,11 @@ class ConnectionManager(
         scope.launch {
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
                 ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+            scheduleApiResolution()
             val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
             val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
             _activeRelayEndpoint.value = relayResolved
-            _activeApiEndpoint.value = apiResolved
             if (resolved != null) {
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: standard resolver picked role=${resolved.role} " +
@@ -631,6 +635,46 @@ class ConnectionManager(
     }
 
     /**
+     * Discover the optional API fallback without holding up the standard
+     * Dashboard/Gateway route. A single manager-level job coalesces lifecycle
+     * callers; [EndpointResolver] additionally shares an in-flight request per
+     * route/surface. The negative cache keeps ordinary profile changes cheap,
+     * while network callbacks and explicit probes still invalidate it.
+     */
+    private fun scheduleApiResolution() {
+        synchronized(this) {
+            apiResolveRevision += 1L
+            if (apiResolveJob?.isActive != true) {
+                startApiResolutionLocked(apiResolveRevision)
+            }
+        }
+    }
+
+    /** Caller must hold this manager's monitor. */
+    private fun startApiResolutionLocked(revision: Long) {
+        apiResolveJob = scope.launch {
+            try {
+                val resolved = resolveBestEndpointSafe(EndpointSurface.Api)
+                synchronized(this@ConnectionManager) {
+                    // A route/connection refresh may have arrived while this
+                    // optional probe was waiting. Never publish its stale
+                    // winner over the newer connection's API ownership.
+                    if (revision == apiResolveRevision) {
+                        _activeApiEndpoint.value = resolved
+                    }
+                }
+            } finally {
+                synchronized(this@ConnectionManager) {
+                    apiResolveJob = null
+                    if (revision != apiResolveRevision && supervisorJob.isActive) {
+                        startApiResolutionLocked(apiResolveRevision)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * User-triggered re-probe. Forces a fresh resolve + reconnect regardless
      * of cache state. Backs the "Probe now" row action in the Endpoints card.
      * Fire-and-forget wrapper around [probeAndReconnectNow] for callers that
@@ -657,7 +701,7 @@ class ConnectionManager(
         val current = serverUrl
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
             ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+        scheduleApiResolution()
         val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
@@ -666,7 +710,6 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        _activeApiEndpoint.value = apiResolved
         if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
         val targetUrl = relayResolved?.relayWebSocketUrl() ?: current ?: return resolved
         val normalizedTarget = normalizeRelayUrl(targetUrl)
@@ -707,7 +750,7 @@ class ConnectionManager(
         if (clearProbeCache) endpointResolver?.clearCache()
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
             ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+        scheduleApiResolution()
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // (slow resume, mid-handoff blip) — keep publishing the live
@@ -716,7 +759,6 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        _activeApiEndpoint.value = apiResolved
         return resolved
     }
 
@@ -761,7 +803,7 @@ class ConnectionManager(
             val current = serverUrl
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
                 ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+            scheduleApiResolution()
             if (resolved == null) {
                 // Hysteresis for the AUTOMATIC (network-callback) path. A
                 // transient cold-route probe miss must NOT null the published
@@ -798,7 +840,6 @@ class ConnectionManager(
             }
             sustainedLossDeclared = false
             _activeEndpoint.value = resolved
-            _activeApiEndpoint.value = apiResolved
             if (current == null) return@launch
             // After an explicit disconnect() the route still publishes above
             // (HTTP surfaces keep roaming), but no socket action: without

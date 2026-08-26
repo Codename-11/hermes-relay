@@ -12,16 +12,21 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -129,6 +134,8 @@ class EndpointResolver(
     )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
+    private val inFlightProbes = ConcurrentHashMap<String, Deferred<Boolean>>()
+    private val probeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _probeOutcomes = MutableStateFlow<Map<String, RouteProbeOutcome>>(emptyMap())
 
@@ -177,12 +184,15 @@ class EndpointResolver(
         const val CACHE_TTL_MS = 60_000L
 
         /**
-         * Failed probe-result cache TTL. Keep this intentionally short:
+         * Failed probe-result cache TTL. Keep this bounded but long enough
+         * that ordinary screen/profile lifecycle work cannot repeatedly pay
+         * the full probe timeout:
          * Android may report a new cellular/VPN network before Tailscale has
          * finished routing, so a single early ConnectException must not keep a
-         * viable fallback route suppressed through the voice resume window.
+         * viable fallback route suppressed for long. Network-change and
+         * explicit-probe paths invalidate the cache immediately.
          */
-        const val NEGATIVE_CACHE_TTL_MS = 2_000L
+        const val NEGATIVE_CACHE_TTL_MS = 15_000L
 
         /** Shared timeout wording so HEAD-timeout and socket-timeout read the same. */
         private const val PROBE_TIMEOUT_DETAIL = "No answer (timed out)"
@@ -316,20 +326,23 @@ class EndpointResolver(
         }
 
         return coroutineScope {
-            val deferred = group.map { candidate ->
-                async(Dispatchers.IO) {
-                    if (isReachable(candidate, surface)) candidate else null
+            val completions = Channel<EndpointCandidate?>(group.size)
+            val waiters = group.map { candidate ->
+                launch(Dispatchers.IO) {
+                    completions.send(if (isReachable(candidate, surface)) candidate else null)
                 }
             }
-            // Collect results in arrival order: iterate through awaitAll +
-            // pick the first non-null. awaitAll preserves input order, which
-            // means a slow-but-reachable priority-0 candidate would block a
-            // fast-and-reachable sibling. But HEAD /health against a healthy
-            // API route replies in <100ms and the timeout caps stragglers at 2s,
-            // so this is acceptable in practice. A true "first to arrive"
-            // would need kotlinx.coroutines Channel plumbing that's not
-            // worth the weight here.
-            deferred.awaitAll().firstOrNull { it != null }
+            repeat(group.size) {
+                val completed = completions.receive()
+                if (completed != null) {
+                    // Cancelling these waiters does not cancel the shared
+                    // physical probes below; their outcomes still populate
+                    // the cache for the next resolution.
+                    waiters.forEach { it.cancel() }
+                    return@coroutineScope completed
+                }
+            }
+            null
         }
     }
 
@@ -350,10 +363,21 @@ class EndpointResolver(
             return cached.reachable
         }
 
-        val reachable = probe(candidate, surface)
-        val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
-        probeCache[key] = CacheEntry(expiresAt = now + ttl, reachable = reachable)
-        return reachable
+        // Resolution is triggered from several independent lifecycle paths
+        // (connection hydration, profile restoration, network callbacks, and
+        // explicit probes). Share one physical request per route/surface so a
+        // slow optional endpoint cannot accumulate duplicate 4-second probes.
+        val created = probeScope.async(start = CoroutineStart.LAZY) {
+            val reachable = probe(candidate, surface)
+            val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
+            probeCache[key] = CacheEntry(expiresAt = clock() + ttl, reachable = reachable)
+            reachable
+        }
+        val shared = inFlightProbes.putIfAbsent(key, created) ?: created.also { deferred ->
+            deferred.invokeOnCompletion { inFlightProbes.remove(key, deferred) }
+            deferred.start()
+        }
+        return shared.await()
     }
 
     /**
@@ -624,6 +648,12 @@ class EndpointResolver(
      */
     internal fun clearCache() {
         probeCache.clear()
+        // An explicit re-probe must not join a request that began before the
+        // invalidation signal. Cancellation is resolver-owned (not waiter-
+        // owned), so ordinary lifecycle cancellation still leaves shared
+        // probes alive for other callers.
+        inFlightProbes.values.forEach { it.cancel() }
+        inFlightProbes.clear()
     }
 
     /** Test-only: snapshot the current cache for assertion purposes. */

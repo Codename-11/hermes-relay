@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+- **Android self-hosted OIDC keeps its PKCE cookie and callback on one trusted Dashboard origin.** Private and Tailscale routes discover a provider-declared canonical HTTPS callback before opening sign-in, then promote that authenticated Dashboard-only route without downgrading Secure cookies or changing API/Relay ownership. Compatible federated providers can retain their scoped WebView cookies. (#399)
+- **Android Dashboard connections and profile drawers no longer wait on unavailable optional routes.** API fallback discovery runs outside Dashboard/Gateway readiness, concurrent route probes are shared and generation-safe, healthy same-priority routes win immediately, superseded session reads cancel their HTTP calls, and optional PR decoration stays outside the session-list critical path.
 
 ## [Android 1.13.2] - 2026-08-25
 
