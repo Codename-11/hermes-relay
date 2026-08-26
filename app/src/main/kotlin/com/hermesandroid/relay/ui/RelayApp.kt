@@ -39,6 +39,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -67,6 +68,8 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -126,6 +129,7 @@ import com.hermesandroid.relay.ui.components.HostResourcePressureBanner
 import com.hermesandroid.relay.ui.components.rememberUpdateAvailability
 import com.hermesandroid.relay.ui.components.resolveChatTransportStatus
 import com.hermesandroid.relay.ui.components.WhatsNewDialog
+import com.hermesandroid.relay.ui.components.WhatsNewToast
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BridgePreferencesRepository
 import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
@@ -164,6 +168,7 @@ import com.hermesandroid.relay.ui.screens.BotModeScreen
 // === END PHASE3-safety-rails ===
 import com.hermesandroid.relay.ui.screens.ChatScreen
 import com.hermesandroid.relay.ui.screens.ChatSettingsScreen
+import com.hermesandroid.relay.ui.screens.ChangelogScreen
 import com.hermesandroid.relay.ui.screens.DashboardManagementScreen
 import com.hermesandroid.relay.ui.screens.DashboardSignInScreen
 import com.hermesandroid.relay.ui.screens.DeveloperSettingsScreen
@@ -898,11 +903,39 @@ fun RelayApp() {
         gitStateViewModel.setWriteGrant(gitOwnerKey, granted)
     }
 
-    // What's New auto-show
+    // Post-update What's New starts as a non-blocking toast and expands only
+    // when requested; manual Settings/About entry points retain the full view.
     val showWhatsNew by connectionViewModel.showWhatsNew.collectAsState()
+    var showWhatsNewExpanded by rememberSaveable { mutableStateOf(false) }
+    var showWhatsNewHistory by rememberSaveable { mutableStateOf(false) }
 
-    if (showWhatsNew) {
-        WhatsNewDialog(onDismiss = { connectionViewModel.dismissWhatsNew() })
+    if (showWhatsNew && !showWhatsNewExpanded) {
+        WhatsNewToast(
+            onDismiss = { connectionViewModel.dismissWhatsNew() },
+            onExpand = {
+                connectionViewModel.dismissWhatsNew()
+                showWhatsNewExpanded = true
+            },
+        )
+    }
+    if (showWhatsNewExpanded) {
+        WhatsNewDialog(
+            onDismiss = { showWhatsNewExpanded = false },
+            onViewHistory = {
+                showWhatsNewExpanded = false
+                showWhatsNewHistory = true
+            },
+        )
+    }
+    if (showWhatsNewHistory) {
+        Dialog(
+            onDismissRequest = { showWhatsNewHistory = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                ChangelogScreen(onClose = { showWhatsNewHistory = false })
+            }
+        }
     }
 
     // Mark version as seen on first launch (when there's no previous version)

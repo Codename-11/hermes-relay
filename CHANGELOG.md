@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android Git State can browse and manage host repositories exposed by the optional Hermes-Relay plugin.** Repository status, branches, diffs, and files are readable after enabling the plugin; staging, commits, sync, checkout, discard, and stash-switch remain behind scoped write grants and confirmations.
 - **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, scoped write grants, and explicit confirmation protect repository reads and mutations.
 
+### Changed
+
+- **Android What's New leads with one curated release highlight without interrupting startup.** A timed post-update toast can be swiped or closed, previews additional feature/fix counts when a release has meaningful secondary items, expands into the centered highlight view on request, and keeps the full technical history available. Each release can present one plain-language summary, up to three primary benefits, and up to two quieter improvements, while release checks keep the structured entry, fallback, Play copy, and public release records aligned.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added

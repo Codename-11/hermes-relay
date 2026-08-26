@@ -1,9 +1,31 @@
 {
+ "schema": 2,
  "versions": [
   {
    "version": "1.13.2",
    "title": "Supervised Mode and clearer activity",
    "date": "2026-08-25",
+   "highlight": {
+    "title": "Supervised Mode",
+    "summary": "Create a simpler, profile-focused chat and choose which features remain available.",
+    "bullets": [
+     "Protect parent settings with your phone's device authentication.",
+     "Choose access to attachments, Standard voice, generated media, history, actions, and technical details.",
+     "Keep Supervised Chat open when returning from parent settings."
+    ]
+   },
+   "improvements": [
+    "Activity indicators now appear only while Hermes is genuinely working."
+   ],
+   "toastDigest": {
+    "additionalFeatureCount": 0,
+    "fixCount": 2,
+    "preview": [
+     "Accurate activity",
+     "safer return"
+    ]
+   },
+   "playNotes": "Supervised Mode creates a simpler, profile-focused chat with device-protected parent settings and control over attachments, Standard voice, generated media, history, actions, and technical details. Activity indicators now appear only while Hermes is genuinely working, and returning from parent settings keeps Supervised Chat open.",
    "sections": [
     {
      "header": "Use a supervised chat",

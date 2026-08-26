@@ -15,6 +15,7 @@ const none = {
 assert.deepEqual(classifyCiPaths(['README.md']), none);
 assert.deepEqual(classifyCiPaths(['desktop/src/cli.ts']), { ...none, desktop: true });
 assert.deepEqual(classifyCiPaths(['relay-core/src/main/kotlin/Wire.kt']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/check-android-release-notes.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['plugin/relay/server.py']), { ...none, plugin: true });
 assert.deepEqual(classifyCiPaths(['plugin/dashboard/src/App.tsx']), { ...none, dashboard: true });
 assert.deepEqual(classifyCiPaths(['user-docs/index.md']), { ...none, docs: true });
