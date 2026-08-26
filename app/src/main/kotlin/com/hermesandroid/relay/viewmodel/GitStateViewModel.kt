@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 
 sealed interface GitStateUiState {
     data object Loading : GitStateUiState
+    data class Unavailable(val message: String) : GitStateUiState
     data class Error(val message: String) : GitStateUiState
     data class Ready(val repos: List<GitRepo>, val notice: String?) : GitStateUiState
 }
@@ -106,6 +107,9 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     private val _writeGrant = MutableStateFlow(false)
     val writeGrant: StateFlow<Boolean> = _writeGrant.asStateFlow()
 
+    private val _selectedRepoId = MutableStateFlow<String?>(null)
+    val selectedRepoId: StateFlow<String?> = _selectedRepoId.asStateFlow()
+
     private var api: GitStateApiClient? = null
     private var reposJob: Job? = null
     private var detailJob: Job? = null
@@ -114,13 +118,11 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     private var messageJob: Job? = null
     private var scopeKey: String? = null
     private var targetGeneration: Long = 0
-    private var selectedRepoId: String? = null
-
-    fun selectedRepoIdForDisplay(): String? = selectedRepoId
+    fun selectedRepoIdForDisplay(): String? = _selectedRepoId.value
 
     fun currentTarget(): GitTarget? {
         val owner = scopeKey ?: return null
-        val repo = selectedRepoId ?: return null
+        val repo = _selectedRepoId.value ?: return null
         return GitTarget(owner, repo, targetGeneration)
     }
 
@@ -132,7 +134,7 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         messageJob?.cancel()
         targetGeneration += 1
         scopeKey = ownerKey
-        selectedRepoId = null
+        _selectedRepoId.value = null
         _writeGrant.value = false
         _detail.value = GitRepoDetailState.Idle
         _content.value = GitContentViewState.Idle
@@ -168,7 +170,17 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
                 },
                 onFailure = { error ->
                     if (scopeKey == expectedScope) {
-                        _repos.value = GitStateUiState.Error(error.message ?: "Failed to load repositories")
+                        val message = error.message.orEmpty()
+                        _repos.value = if (
+                            message.contains("HTTP 404", ignoreCase = true) ||
+                            message.contains("No such API endpoint", ignoreCase = true)
+                        ) {
+                            GitStateUiState.Unavailable(
+                                "Git isn't available on this Hermes host yet.",
+                            )
+                        } else {
+                            GitStateUiState.Error(message.ifBlank { "Failed to load repositories" })
+                        }
                     }
                 },
             )
@@ -178,7 +190,7 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     fun selectRepo(repoId: String) {
         val client = api ?: return
         targetGeneration += 1
-        selectedRepoId = repoId
+        _selectedRepoId.value = repoId
         val target = currentTarget() ?: return
         _content.value = GitContentViewState.Idle
         _mutation.value = GitMutationState.Idle

@@ -14,6 +14,10 @@ const assets = [
     source: resolve(repoRoot, 'assets/screenshots/07_connections.png'),
     destination: resolve(docsRoot, 'public/connections-demo.png'),
   },
+  {
+    source: resolve(repoRoot, 'assets/screenshots/supplemental/15_git_workspace.png'),
+    destination: resolve(docsRoot, 'public/git-workspace.png'),
+  },
 ]
 
 const desktopManifest = JSON.parse(

@@ -4425,4 +4425,13 @@
     <string name="custom_theme_saved_to">Änderungen in %1$s gespeichert</string>
     <string name="custom_theme_modified">Nicht gespeicherte Änderungen</string>
     <string name="custom_theme_saved_count">%1$d gespeicherte Presets</string>
+    <string name="chat_settings_show_git_workspace">Git-Arbeitsbereich im Chat anzeigen</string>
+    <string name="chat_settings_show_git_workspace_desc">Zeigt Branch und Änderungen über dem Eingabefeld an</string>
+    <string name="chat_git_open_workspace">Git-Arbeitsbereich öffnen</string>
+    <string name="chat_git_branch">Branch %1$s</string>
+    <string name="chat_git_additions">%1$d Hinzufügungen</string>
+    <string name="chat_git_deletions">%1$d Löschungen</string>
+    <plurals name="chat_git_change_count"><item quantity="one">%1$d Änderung</item><item quantity="other">%1$d Änderungen</item></plurals>
+    <string name="settings_git_workspace">Git-Arbeitsbereich</string>
+    <string name="settings_git_workspace_desc">Änderungen, Branches, Commits und Remotes prüfen</string>
 </resources>

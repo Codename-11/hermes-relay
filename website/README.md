@@ -32,7 +32,7 @@ No analytics or third-party tracking scripts are included.
 
 ## Product screenshots
 
-Chat, Voice, and Manage imagery comes from the repository's canonical,
+Chat, Voice, Manage, and Git workspace imagery comes from the repository's canonical,
 deterministically rendered Android scenes in `../assets/screenshots/`. The
 mapping is read from `../docs/media/screenshots.json`; files under
 `public/product/` are deployment copies, not an independent source of truth.

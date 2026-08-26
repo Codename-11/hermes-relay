@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Extension
@@ -190,6 +191,7 @@ fun SettingsScreen(
     onNavigateToManage: () -> Unit,
     onNavigateToProviderUsage: () -> Unit,
     onNavigateToPlugins: () -> Unit,
+    onNavigateToGitWorkspace: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
     onNavigateToBridge: () -> Unit,
@@ -600,6 +602,14 @@ fun SettingsScreen(
                 title = stringResource(R.string.plugins_title),
                 subtitle = stringResource(R.string.settings_plugins_desc),
                 onClick = onNavigateToPlugins,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.AccountTree,
+                title = stringResource(R.string.settings_git_workspace),
+                subtitle = stringResource(R.string.settings_git_workspace_desc),
+                onClick = onNavigateToGitWorkspace,
                 isDarkTheme = isDarkTheme,
             )
 

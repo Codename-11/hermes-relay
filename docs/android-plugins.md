@@ -94,6 +94,17 @@ therefore cannot reach Relay management APIs or acquire executable backend behav
 The contribution ID `git` is reserved for the Relay plugin's native Git workspace;
 generated drafts cannot shadow or duplicate that route.
 
+Android presents that reserved contribution as a first-class native surface rather
+than a generic declarative page. When the live plugin API confirms Git is available,
+Chat can show a compact branch/change rail and a dot-only context action; **Chat →
+Show Git workspace in Chat** hides those two Chat affordances without disabling the
+workspace. The full native workspace remains reachable from Settings and Plugins and
+owns repository/branch selection, diffs, staging, confirmed destructive actions,
+commits, and remotes. Session `git_repo_root`/`cwd` metadata selects an exact matching
+repository when possible; ambiguous catalogs require an explicit user choice. Mobile
+discovery alone is not treated as runtime readiness: a missing Git API route renders a
+retryable unavailable state instead of exposing the raw Dashboard error.
+
 The Relay mobile manifest exposes drafts as preview pages under the authenticated
 `hermes-relay` plugin namespace. Android polls the catalog every five seconds while
 the Plugins hub is visible and polls a visible generated page every five seconds.
