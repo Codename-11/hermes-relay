@@ -5,12 +5,10 @@ import org.junit.Test
 
 class MorphingSphereMotionPolicyTest {
     @Test
-    fun `visible idle sphere uses lightweight ambient motion`() {
+    fun `every visible sphere uses smooth procedural motion`() {
         assertEquals(
-            SphereMotionMode.AmbientLayer,
+            SphereMotionMode.Procedural,
             sphereMotionMode(
-                state = SphereState.Idle,
-                voiceMode = false,
                 motionVisible = true,
                 fixedTime = null,
                 fixedColorPhase = null,
@@ -19,26 +17,14 @@ class MorphingSphereMotionPolicyTest {
     }
 
     @Test
-    fun `hidden or paused idle sphere is still`() {
+    fun `hidden or paused sphere is still`() {
         assertEquals(
             SphereMotionMode.Still,
-            sphereMotionMode(SphereState.Idle, false, false, null, null),
+            sphereMotionMode(false, null, null),
         )
         assertEquals(
             SphereMotionMode.Still,
-            sphereMotionMode(SphereState.Idle, false, true, 0f, 0f),
-        )
-    }
-
-    @Test
-    fun `visible active and voice states keep procedural motion`() {
-        assertEquals(
-            SphereMotionMode.Procedural,
-            sphereMotionMode(SphereState.Thinking, false, true, null, null),
-        )
-        assertEquals(
-            SphereMotionMode.Procedural,
-            sphereMotionMode(SphereState.Idle, true, true, null, null),
+            sphereMotionMode(true, 0f, 0f),
         )
     }
 }
