@@ -155,6 +155,13 @@ class WakeWordForegroundService : Service() {
         val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord)
         if (lease == null) {
             setRuntimeState(WakeWordRuntimeState.PausedForVoice)
+            // Mirror HermesVoiceInteractionService.scheduleRetry: another relay
+            // surface (voice overlay, barge-in) currently holds the mic. Recover
+            // automatically once it releases, instead of waiting for the user to
+            // toggle Auto Mode.
+            if (!stopRequested.get() && currentPreferences.enabled && !voiceSessionActive) {
+                scheduleRetry()
+            }
             return
         }
         microphoneLease = lease
@@ -222,6 +229,16 @@ class WakeWordForegroundService : Service() {
                 if (!stopRequested.get()) {
                     Log.w(TAG, "wake listening failed", t)
                     fail(t.message ?: "Wake-word listener failed")
+                    // Auto Mode (Android Auto) frequently contends with other mic
+                    // holders (Chrome, dialer, media apps): AudioRecord returns
+                    // STATE_UNINITIALIZED and the listener dies. The legacy
+                    // HermesVoiceInteractionService handles this with
+                    // scheduleRetry() — the foreground service was missing it,
+                    // so a single transient conflict stranded the listener in
+                    // Error until the user toggled Auto Mode off→on.
+                    if (currentPreferences.enabled && !voiceSessionActive) {
+                        scheduleRetry()
+                    }
                 }
             } finally {
                 runCatching { unattachedDetector?.close() }
@@ -344,6 +361,33 @@ class WakeWordForegroundService : Service() {
         }
     }
 
+    /**
+     * Recover after a transient mic failure by re-arming the listener once
+     * another mic holder has likely released the OS handle. Mirrors the
+     * scheduleRetry() in HermesVoiceInteractionService — the foreground
+     * service had no equivalent, which is why a single transient contention
+     * (Chrome, dialer, media app) stranded the wake listener in Error until
+     * the user toggled Auto Mode off→on.
+     *
+     * The retry is single-shot per failure: it replaces the failed job, waits
+     * [RETRY_DELAY_MS], then re-attempts startRecognition(). If that also
+     * fails, its own catch will schedule another retry. This avoids both a
+     * tight loop (no delay) and silent permanent death (no retry).
+     */
+    private fun scheduleRetry() {
+        if (recognitionJob?.isActive == true || voiceSessionActive) return
+        recognitionJob = scope.launch {
+            delay(RETRY_DELAY_MS)
+            recognitionJob = null
+            if (!voiceSessionActive &&
+                !stopRequested.get() &&
+                currentPreferences.enabled
+            ) {
+                startRecognition(currentPreferences)
+            }
+        }
+    }
+
     private fun onWakeDetected(preferences: WakeWordPreferences) {
         // releaseRecognitionResources() has completed before this callback.
         Log.i(TAG, "wake phrase detected; microphone released before activation")
@@ -457,6 +501,11 @@ class WakeWordForegroundService : Service() {
         private const val SAMPLE_RATE = 16_000
         private const val FRAME_SAMPLES = 1_600
         private const val TEST_DURATION_MS = 10_000L
+        // Mirrors HermesVoiceInteractionService.RETRY_DELAY_MS — see that file
+        // for the original rationale. Short enough to feel responsive to the
+        // user (~500ms = ~one missed wake), long enough that we don't spin when
+        // another app still holds the OS-level mic handle.
+        private const val RETRY_DELAY_MS = 500L
 
         private val _runtimeState = MutableStateFlow(WakeWordRuntimeState.Stopped)
         val runtimeState: StateFlow<WakeWordRuntimeState> = _runtimeState.asStateFlow()
