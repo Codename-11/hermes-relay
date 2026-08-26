@@ -1,5 +1,5 @@
-v1.13.1 - Accurate session activity
+v1.13.2 - Supervised Mode and clearer activity
 
-* Follow live Hermes runtime state for Working, Starting, Needs input, and Idle.
-* Keep stale activity visible until a complete, unambiguous snapshot clears it.
-* Distinguish Checking, Unavailable, and Background work in the session drawer.
+* Configure a profile-pinned Supervised Mode with device-authenticated parent settings.
+* Keep Supervised Chat visible when parent access relocks after full settings.
+* Keep uncertain session activity neutral until live work is confirmed.
