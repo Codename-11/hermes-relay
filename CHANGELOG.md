@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android Git State can browse and manage host repositories exposed by the optional Hermes-Relay plugin.** Repository status, branches, diffs, and files are readable after enabling the plugin; staging, commits, sync, checkout, discard, and stash-switch remain behind scoped write grants and confirmations.
 - **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, scoped write grants, and explicit confirmation protect repository reads and mutations.
 
+### Fixed
+
+- **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added
