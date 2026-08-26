@@ -104,6 +104,20 @@ The legacy `relay_server/` directory is a thin compatibility shim around `plugin
 | **CI/CD** | GitHub Actions (lint, build, test, signed APK artifacts) |
 | **Min SDK** | 26 (Android 8.0) / Target SDK 36 |
 
+## Issues and automated triage
+
+New issues may receive one first response headed **Hermes-Relay automated
+triage**. It reads the live report against current code, documentation, related
+issues, and public release state; it may add existing type/area labels and ask
+for a focused, safe diagnostic such as the app version, interaction mode, or a
+sanitized log excerpt.
+
+That reply is an acknowledgement and initial analysis, not a maintainer
+decision. The automated path does not close issues, assign work, set milestones
+or priority, promise a fix or release, or continue the conversation. It will
+say when a maintainer needs to review the remaining question, and a maintainer
+will follow up on the thread.
+
 ## Running the Relay Locally
 
 Only needed if you're working on the bridge, voice, notifications, or media features. Chat alone doesn't need the relay.
