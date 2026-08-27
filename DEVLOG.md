@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-26 — Canonical pull request intake contract
+
+The repository now supplies one pull request template derived from the structure
+already used by successful Android, plugin, desktop, docs, release, and salvage
+PRs. It asks for a concise summary, focused changes, exact verification, visual
+evidence when applicable, compatibility/risk notes, contributor lineage, and the
+existing cross-surface checklist.
+
+Checkboxes require evidence or an explicit N/A rationale. The template does not
+turn every surface into a mandatory test lane, does not replace CI or maintainer
+review, and keeps normal work targeting `dev` while preserving the documented
+release/hotfix exceptions.
+
 ## 2026-08-26 — Bounded public issue triage contract
 
 New GitHub issues may receive one clearly identified Hermes-Relay automated
