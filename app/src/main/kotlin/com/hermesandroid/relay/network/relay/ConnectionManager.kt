@@ -787,6 +787,34 @@ class ConnectionManager(
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
     }
 
+    /** Admission is stronger evidence than `/transport/health`: reject this ingress and retain direct fallback. */
+    private suspend fun fallbackFromBrokenDashboardIngress(url: String, reason: String): Boolean {
+        if (!isDashboardRelayIngressUrl(url)) return false
+        val failed = _activeRelayEndpoint.value ?: return false
+        val failedUrl = failed.relayWebSocketUrl()?.let(::normalizeRelayUrl)
+        if (failedUrl != normalizeRelayUrl(url)) return false
+        endpointResolver?.markUnreachable(failed, EndpointSurface.Relay) ?: return false
+        val replacement = resolveBestEndpointSafe(EndpointSurface.Relay) ?: return false
+        val replacementUrl = replacement.relayWebSocketUrl()?.takeIf(String::isNotBlank) ?: return false
+        if (normalizeRelayUrl(replacementUrl) == normalizeRelayUrl(url)) return false
+        _activeRelayEndpoint.value = replacement
+        Log.i(TAG, "Dashboard Relay ingress rejected; switching to ${replacement.role} ($reason)")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Warning,
+            title = "Relay ingress unavailable",
+            detail = "Dashboard admission failed; using retained direct Relay route.",
+            operation = "Select Relay transport after admission failure",
+            endpointRole = failed.role,
+            requestUrl = url,
+        )
+        connectToUrlOnMainPath(
+            replacementUrl,
+            replaceReason = "Dashboard Relay ingress admission failed",
+        )
+        return true
+    }
+
     /**
      * Debounced network-change re-resolution, shared by both NetworkCallback
      * events. Re-runs the resolver and publishes the winner to
@@ -1118,7 +1146,9 @@ class ConnectionManager(
                 runCatching { stale.close(1000, replaceReason) }
                 stale.cancel()
             }
-            scheduleReconnect()
+            if (!fallbackFromBrokenDashboardIngress(url, "request provider or ticket unavailable")) {
+                scheduleReconnect()
+            }
             return
         }
 
@@ -1209,9 +1239,18 @@ class ConnectionManager(
                     requestUrl = url,
                     suggestion = if (code == 1000) null else "Check the Relay server logs for the matching close code and reason.",
                 )
+                val admitted = authenticated
                 authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
-                scheduleReconnect()
+                if (isDashboardRelayIngressUrl(url) && !admitted && code != 1000) {
+                    scope.launch {
+                        if (!fallbackFromBrokenDashboardIngress(url, "pre-auth close $code")) {
+                            scheduleReconnect()
+                        }
+                    }
+                } else {
+                    scheduleReconnect()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -1237,6 +1276,16 @@ class ConnectionManager(
                     } ?: NetworkDiagnosticGuidance.forThrowable(t, "Relay"),
                 )
                 lastUpgradeResponseCode = code
+                if (isDashboardRelayIngressUrl(url) && response != null) {
+                    authenticated = false
+                    _connectionState.value = ConnectionState.Disconnected
+                    scope.launch {
+                        if (!fallbackFromBrokenDashboardIngress(url, "HTTP admission ${response.code}")) {
+                            scheduleReconnect()
+                        }
+                    }
+                    return
+                }
                 if (response == null) {
                     // Transport-level failure (no HTTP upgrade response): on a
                     // remote (Tailscale) link the first handshake can fail cold.

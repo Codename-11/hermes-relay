@@ -895,7 +895,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // because AuthManager.getOrCreateDeviceId() is suspending.
         deviceIdProvider = { runCatching { authManager.getOrCreateDeviceId() }.getOrNull() },
         dashboardRelayRequestProvider = { relayUrl ->
-            dashboardRelayRequest(relayUrl)
+            dashboardRelayRequestForIngress(relayUrl)
         },
     )
 
@@ -1498,7 +1498,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /** Mint a new single-use Dashboard ticket for every Relay ingress dial. */
-    private suspend fun dashboardRelayRequest(relayUrl: String): Request? {
+    suspend fun dashboardRelayRequestForIngress(relayUrl: String): Request? {
         val dashboardUrl = dashboardOriginForRelayIngress(activeDashboardUrl(), relayUrl)
             ?: return null
         val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
@@ -6380,6 +6380,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     },
                     apiBearerTokenProvider = { authManager.getApiKey() },
                     dashboardHttpClientProvider = ::dashboardHttpClientForRelayIngress,
+                    dashboardIngressWebSocketRequestProvider = ::dashboardRelayRequestForIngress,
                 ).getVoiceConfig()
             } else {
                 standardVoiceResult

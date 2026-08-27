@@ -824,6 +824,7 @@ private fun DashboardOAuthScreen(
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val initialStatus = stringResource(
         if (fallbackFromNative) R.string.dashboard_native_signin_embedded_fallback
@@ -854,7 +855,7 @@ private fun DashboardOAuthScreen(
         )
         authBaseUrl = resolvedBase
         if (!sameDashboardBase(resolvedBase, dashboardUrl)) {
-            statusText = context.getString(R.string.dashboard_oauth_canonical_origin, resolvedBase)
+            statusText = resources.getString(R.string.dashboard_oauth_canonical_origin, resolvedBase)
         }
     }
 
