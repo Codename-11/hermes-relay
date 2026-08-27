@@ -805,6 +805,16 @@
     <string name="chat_settings_keep_keyboard_open_desc">Stay in the composer after sending. Turn off to dismiss the keyboard after each sent message.</string>
     <string name="chat_settings_large_pastes">Convert large pastes to attachments</string>
     <string name="chat_settings_large_pastes_desc">Turn pastes of 5,000 or more characters into reviewable text attachments. On by default.</string>
+    <string name="chat_settings_show_git_workspace">Show Git workspace in Chat</string>
+    <string name="chat_settings_show_git_workspace_desc">Show the Git status entry and changes rail in Chat. The full Git workspace remains available when this is off.</string>
+    <string name="chat_git_open_workspace">Open Git workspace</string>
+    <string name="chat_git_branch">Git branch %1$s</string>
+    <string name="chat_git_additions">%1$d additions</string>
+    <string name="chat_git_deletions">%1$d deletions</string>
+    <plurals name="chat_git_change_count">
+        <item quantity="one">%1$d change</item>
+        <item quantity="other">%1$d changes</item>
+    </plurals>
     <string name="chat_large_paste_attached">Large paste added as a text attachment</string>
     <string name="chat_large_paste_too_large">Pasted text exceeds the %1$d MB attachment limit</string>
     <string name="chat_settings_physical_keyboard_enter">Physical keyboard Enter key</string>
@@ -4449,4 +4459,6 @@
     <string name="provider_usage_capability_relay_body">Credential pools, structured Nous balances, and OpenCode Go are provided by the Relay plugin.</string>
     <string name="provider_usage_capability_basic_title">Basic usage from Hermes</string>
     <string name="provider_usage_capability_basic_body">Install or update the Relay plugin for credential pools, structured Nous balances, and OpenCode Go.</string>
+    <string name="settings_git_workspace">Git workspace</string>
+    <string name="settings_git_workspace_desc">Review changes, branches, commits, and remotes</string>
 </resources>

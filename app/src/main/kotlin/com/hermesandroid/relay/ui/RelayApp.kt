@@ -186,6 +186,7 @@ import com.hermesandroid.relay.ui.screens.PluginsScreen
 import com.hermesandroid.relay.ui.screens.PluginPageScreen
 import com.hermesandroid.relay.ui.screens.GitStateScreen
 import com.hermesandroid.relay.viewmodel.GitStateViewModel
+import com.hermesandroid.relay.viewmodel.GitStateUiState
 import com.hermesandroid.relay.ui.screens.TerminalScreen
 import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
@@ -901,6 +902,42 @@ fun RelayApp() {
             ?.grants
             ?.contains(PLUGIN_API_WRITE_CAPABILITY) == true
         gitStateViewModel.setWriteGrant(gitOwnerKey, granted)
+    }
+
+    val gitReposState by gitStateViewModel.repos.collectAsState()
+    val gitDetailState by gitStateViewModel.detail.collectAsState()
+    val selectedGitRepoId by gitStateViewModel.selectedRepoId.collectAsState()
+    val chatSessions by chatViewModel.sessions.collectAsState()
+    val activeChatSession = remember(chatSessions, currentChatSessionId) {
+        chatSessions.firstOrNull { it.sessionId == currentChatSessionId }
+    }
+
+    // Bind Git to the active coding session when upstream supplies its exact
+    // workspace metadata. CWD fallback only matches a path-segment descendant;
+    // an ambiguous multi-repo catalog stays unselected until the user chooses.
+    LaunchedEffect(gitReposState, activeChatSession, selectedGitRepoId) {
+        val repos = (gitReposState as? GitStateUiState.Ready)?.repos.orEmpty()
+        val target = selectGitRepoForWorkspace(
+            repos = repos,
+            selectedRepoId = selectedGitRepoId,
+            sessionRepoRoot = activeChatSession?.gitRepoRoot,
+            sessionWorkingDirectory = activeChatSession?.workingDirectory,
+        )
+        if (target != null && target.id != selectedGitRepoId) {
+            gitStateViewModel.selectRepo(target.id)
+        }
+    }
+
+    val gitWorkspaceAvailable = gitReposState is GitStateUiState.Ready
+    val gitWorkspaceSummary = remember(
+        gitReposState,
+        gitDetailState,
+        selectedGitRepoId,
+    ) {
+        val repo = (gitReposState as? GitStateUiState.Ready)
+            ?.repos
+            ?.firstOrNull { it.id == selectedGitRepoId }
+        buildChatGitWorkspaceSummary(repo, gitDetailState)
     }
 
     // Post-update What's New starts as a non-blocking toast and expands only
@@ -2328,6 +2365,11 @@ fun RelayApp() {
                         onNavigateToBotMode = {
                             navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
                         },
+                        gitWorkspaceAvailable = gitWorkspaceAvailable,
+                        gitWorkspaceSummary = gitWorkspaceSummary,
+                        onNavigateToGitWorkspace = {
+                            navController.navigate(Screen.GitState.route) { launchSingleTop = true }
+                        },
                     )
                 }
                 composable(Screen.BotMode.route) {
@@ -2682,6 +2724,9 @@ fun RelayApp() {
                         },
                         onNavigateToPlugins = {
                             navController.navigate(Screen.Plugins.route)
+                        },
+                        onNavigateToGitWorkspace = {
+                            navController.navigate(Screen.GitState.route)
                         },
                         onNavigateToChatSettings = {
                             navController.navigate(Screen.ChatSettings.route)

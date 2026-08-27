@@ -4124,4 +4124,13 @@
     <string name="custom_theme_saved_to">Cambios guardados en %1$s</string>
     <string name="custom_theme_modified">Cambios sin guardar</string>
     <string name="custom_theme_saved_count">%1$d preajustes guardados</string>
+    <string name="chat_settings_show_git_workspace">Mostrar el espacio de Git en el chat</string>
+    <string name="chat_settings_show_git_workspace_desc">Muestra la rama y los cambios encima del cuadro de texto</string>
+    <string name="chat_git_open_workspace">Abrir el espacio de Git</string>
+    <string name="chat_git_branch">Rama %1$s</string>
+    <string name="chat_git_additions">%1$d adiciones</string>
+    <string name="chat_git_deletions">%1$d eliminaciones</string>
+    <plurals name="chat_git_change_count"><item quantity="one">%1$d cambio</item><item quantity="other">%1$d cambios</item></plurals>
+    <string name="settings_git_workspace">Espacio de Git</string>
+    <string name="settings_git_workspace_desc">Revisa cambios, ramas, commits y remotos</string>
 </resources>

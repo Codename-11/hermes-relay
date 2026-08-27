@@ -33,6 +33,8 @@ class ChatInputPreferencesRepository(
             stringPreferencesKey("physical_keyboard_enter_behavior")
         internal val KEY_CONVERT_LARGE_PASTES =
             booleanPreferencesKey("convert_large_pastes_to_attachments")
+        internal val KEY_SHOW_GIT_WORKSPACE_IN_CHAT =
+            booleanPreferencesKey("show_git_workspace_in_chat")
     }
 
     val physicalKeyboardEnterBehavior: Flow<PhysicalKeyboardEnterBehavior> = dataStore.data
@@ -47,6 +49,10 @@ class ChatInputPreferencesRepository(
         .map { preferences -> preferences[KEY_CONVERT_LARGE_PASTES] ?: true }
         .distinctUntilChanged()
 
+    val showGitWorkspaceInChat: Flow<Boolean> = dataStore.data
+        .map { preferences -> preferences[KEY_SHOW_GIT_WORKSPACE_IN_CHAT] ?: true }
+        .distinctUntilChanged()
+
     suspend fun setPhysicalKeyboardEnterBehavior(behavior: PhysicalKeyboardEnterBehavior) {
         dataStore.edit { preferences ->
             preferences[KEY_PHYSICAL_KEYBOARD_ENTER] = behavior.storedValue
@@ -56,6 +62,12 @@ class ChatInputPreferencesRepository(
     suspend fun setConvertLargePastesToAttachments(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[KEY_CONVERT_LARGE_PASTES] = enabled
+        }
+    }
+
+    suspend fun setShowGitWorkspaceInChat(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[KEY_SHOW_GIT_WORKSPACE_IN_CHAT] = enabled
         }
     }
 }

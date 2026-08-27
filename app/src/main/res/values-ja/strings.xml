@@ -4435,4 +4435,13 @@
     <string name="custom_theme_saved_to">変更を %1$s に保存しました</string>
     <string name="custom_theme_modified">未保存の変更</string>
     <string name="custom_theme_saved_count">保存済み %1$d 件</string>
+    <string name="chat_settings_show_git_workspace">チャットに Git ワークスペースを表示</string>
+    <string name="chat_settings_show_git_workspace_desc">入力欄の上にブランチと変更内容を表示します</string>
+    <string name="chat_git_open_workspace">Git ワークスペースを開く</string>
+    <string name="chat_git_branch">ブランチ %1$s</string>
+    <string name="chat_git_additions">%1$d 件の追加</string>
+    <string name="chat_git_deletions">%1$d 件の削除</string>
+    <plurals name="chat_git_change_count"><item quantity="other">%1$d 件の変更</item></plurals>
+    <string name="settings_git_workspace">Git ワークスペース</string>
+    <string name="settings_git_workspace_desc">変更、ブランチ、コミット、リモートを確認</string>
 </resources>

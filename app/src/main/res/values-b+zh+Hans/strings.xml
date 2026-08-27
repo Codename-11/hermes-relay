@@ -4362,4 +4362,13 @@
     <string name="custom_theme_saved_to">更改已保存到 %1$s</string>
     <string name="custom_theme_modified">未保存的更改</string>
     <string name="custom_theme_saved_count">已保存 %1$d 个预设</string>
+    <string name="chat_settings_show_git_workspace">在聊天中显示 Git 工作区</string>
+    <string name="chat_settings_show_git_workspace_desc">在输入框上方显示分支和更改</string>
+    <string name="chat_git_open_workspace">打开 Git 工作区</string>
+    <string name="chat_git_branch">分支 %1$s</string>
+    <string name="chat_git_additions">新增 %1$d 行</string>
+    <string name="chat_git_deletions">删除 %1$d 行</string>
+    <plurals name="chat_git_change_count"><item quantity="other">%1$d 个更改</item></plurals>
+    <string name="settings_git_workspace">Git 工作区</string>
+    <string name="settings_git_workspace_desc">查看更改、分支、提交和远程仓库</string>
 </resources>

@@ -281,10 +281,45 @@ def resolve_repo_path(repo: Path, path: str) -> str:
 def repo_status(repo: Path) -> dict[str, Any]:
     """Return grouped working-tree status with counts and truncation flag."""
     porcelain = _git(repo, "status", "--porcelain=v1", "-z")
-    staged: list[dict[str, str]] = []
-    modified: list[dict[str, str]] = []
-    untracked: list[dict[str, str]] = []
+    staged: list[dict[str, Any]] = []
+    modified: list[dict[str, Any]] = []
+    untracked: list[dict[str, Any]] = []
     truncated = False
+
+    def _numstat(*args: str) -> dict[str, tuple[int, int]]:
+        """Return bounded text-line deltas keyed by the destination path.
+
+        ``--numstat -z`` keeps tabs/newlines in filenames unambiguous. Binary
+        files report ``-`` for each count and intentionally remain without a
+        line delta in the UI.
+        """
+        raw = _git(repo, "diff", "--numstat", "-z", *args)
+        values = raw.split("\0")
+        result: dict[str, tuple[int, int]] = {}
+        index = 0
+        while index < len(values):
+            record = values[index]
+            index += 1
+            if not record:
+                continue
+            fields = record.split("\t", 2)
+            if len(fields) != 3:
+                continue
+            added, deleted, path = fields
+            if not path:
+                # Rename/copy records place old and new paths in the next two
+                # NUL-delimited fields. Status exposes the destination path.
+                index += 1
+                if index >= len(values):
+                    break
+                path = values[index]
+                index += 1
+            if added.isdigit() and deleted.isdigit():
+                result[path] = (int(added), int(deleted))
+        return result
+
+    staged_numstat = _numstat("--cached", "--")
+    modified_numstat = _numstat("--")
 
     # -z separates records with NUL; each record is "<XY> <path>\0". A rename
     # or copy emits TWO records ("R  new\0old\0"); the bare source-path record
@@ -301,23 +336,32 @@ def repo_status(repo: Path) -> dict[str, Any]:
         if not path:
             continue
         if xy == "??":
-            untracked.append({"path": path})
+            untracked.append({"path": path, "additions": None, "deletions": None})
         # Independent checks: a file staged AND modified lands in both groups.
         if xy[0] in ("M", "A", "D", "R", "C"):
-            staged.append({"path": path})
+            additions, deletions = staged_numstat.get(path, (None, None))
+            staged.append({"path": path, "additions": additions, "deletions": deletions})
         if xy[1] in ("M", "D"):
-            modified.append({"path": path})
+            additions, deletions = modified_numstat.get(path, (None, None))
+            modified.append({"path": path, "additions": additions, "deletions": deletions})
         if xy[0] in ("R", "C"):
             # The immediately following record is the rename/copy source path;
             # skip it so it is not misparsed as an XY record.
             i += 1
 
-    def _bounded(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    def _bounded(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         nonlocal truncated
         if len(items) > MAX_STATUS_ENTRIES:
             truncated = True
             return items[:MAX_STATUS_ENTRIES]
         return items
+
+    staged_count = len(staged)
+    modified_count = len(modified)
+    untracked_count = len(untracked)
+    changed_count = len({entry["path"] for entry in (*staged, *modified, *untracked)})
+    additions = sum(added for added, _ in (*staged_numstat.values(), *modified_numstat.values()))
+    deletions = sum(deleted for _, deleted in (*staged_numstat.values(), *modified_numstat.values()))
 
     staged = _bounded(staged)
     modified = _bounded(modified)
@@ -325,9 +369,12 @@ def repo_status(repo: Path) -> dict[str, Any]:
 
     return {
         "counts": {
-            "staged": len(staged),
-            "modified": len(modified),
-            "untracked": len(untracked),
+            "staged": staged_count,
+            "modified": modified_count,
+            "untracked": untracked_count,
+            "changes": changed_count,
+            "additions": additions,
+            "deletions": deletions,
         },
         "staged": staged,
         "modified": modified,

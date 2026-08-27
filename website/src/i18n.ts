@@ -25,6 +25,7 @@ type Copy = {
   surfaces: {
     kicker: string; title: string; lede: string; androidTitle: string; androidLede: string;
     chatDescription: string; voiceDescription: string; manageDescription: string; additional: string;
+    gitCaption: string; gitAlt: string;
     cliTitle: string; cliLede: string; terminal: string; consentTitle: string; consentBody: string;
     capabilities: string; sessionsTitle: string; sessionsBody: string; daemonTitle: string; daemonBody: string;
     auditTitle: string; auditBody: string; uiTitle: string; uiBody: string; meetCli: string;
@@ -84,6 +85,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: 'Take conversations on the go, speak naturally, and manage the Hermes you already run.',
       chatDescription: 'Streaming conversations and live agent work.', voiceDescription: 'Speak naturally, interrupt, and keep moving.',
       manageDescription: 'Profiles, skills, models, and automations.', additional: 'Additional Android surfaces',
+      gitCaption: 'Git workspace · Relay', gitAlt: 'Hermes-Relay native Git workspace with changes, inline diff, and staging controls',
       cliTitle: 'Consent-gated access on your machine.', cliLede: 'Give Hermes hands on the machine — only when you allow it.',
       terminal: 'Hermes-Relay command line preview', consentTitle: 'Consent is explicit and local.',
       consentBody: 'You decide when Hermes can run commands, read files, or make changes.', capabilities: 'CLI capabilities',
@@ -166,6 +168,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: 'Setze Gespräche unterwegs fort, sprich natürlich und verwalte den Hermes, den du bereits betreibst.',
       chatDescription: 'Streaming-Gespräche und laufende Agentenarbeit.', voiceDescription: 'Sprich natürlich, unterbrich und bleib in Bewegung.',
       manageDescription: 'Profile, Skills, Modelle und Automatisierungen.', additional: 'Weitere Android-Oberflächen',
+      gitCaption: 'Git-Arbeitsbereich · Relay', gitAlt: 'Nativer Git-Arbeitsbereich von Hermes-Relay mit Änderungen, Inline-Diff und Staging-Steuerung',
       cliTitle: 'Zustimmungspflichtiger Zugriff auf deinen Rechner.', cliLede: 'Gib Hermes Hände auf dem Rechner — nur wenn du es erlaubst.',
       terminal: 'Hermes-Relay Kommandozeilenvorschau', consentTitle: 'Zustimmung ist ausdrücklich und lokal.',
       consentBody: 'Du entscheidest, wann Hermes Befehle ausführen, Dateien lesen oder Änderungen vornehmen darf.', capabilities: 'CLI-Funktionen',
@@ -248,6 +251,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: 'Continúa conversaciones, habla con naturalidad y administra el Hermes que ya utilizas.',
       chatDescription: 'Conversaciones en streaming y trabajo del agente en vivo.', voiceDescription: 'Habla con naturalidad, interrumpe y sigue en movimiento.',
       manageDescription: 'Perfiles, skills, modelos y automatizaciones.', additional: 'Otras superficies de Android',
+      gitCaption: 'Espacio de Git · Relay', gitAlt: 'Espacio de Git nativo de Hermes-Relay con cambios, diff en línea y controles de staging',
       cliTitle: 'Acceso a tu equipo sujeto a consentimiento.', cliLede: 'Dale manos a Hermes en el equipo, solo cuando tú lo permitas.',
       terminal: 'Vista previa de la línea de comandos de Hermes-Relay', consentTitle: 'El consentimiento es explícito y local.',
       consentBody: 'Tú decides cuándo Hermes puede ejecutar comandos, leer archivos o realizar cambios.', capabilities: 'Funciones de la CLI',
@@ -330,6 +334,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: '外出先でも会話を続け、自然に話し、すでに動かしている Hermes を管理できます。',
       chatDescription: '会話と Agent の作業をリアルタイムにストリーミング。', voiceDescription: '自然に話し、割り込み、そのまま行動できます。',
       manageDescription: 'プロファイル、Skills、モデル、自動化を管理。', additional: 'その他の Android 画面',
+      gitCaption: 'Git ワークスペース · Relay', gitAlt: '変更、インライン差分、ステージ操作を表示する Hermes-Relay のネイティブ Git ワークスペース',
       cliTitle: '同意で保護されたマシンアクセス。', cliLede: '許可したときだけ、Hermes にマシンを操作する手を与えます。',
       terminal: 'Hermes-Relay コマンドラインのプレビュー', consentTitle: '同意は明示的かつローカルです。',
       consentBody: 'Hermes がコマンドを実行し、ファイルを読み、変更できるタイミングはあなたが決めます。', capabilities: 'CLI の機能',
@@ -412,6 +417,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: 'Continue conversas em qualquer lugar, fale naturalmente e gerencie o Hermes que você já executa.',
       chatDescription: 'Conversas por streaming e trabalho do agente em tempo real.', voiceDescription: 'Fale naturalmente, interrompa e continue em movimento.',
       manageDescription: 'Perfis, skills, modelos e automações.', additional: 'Outras interfaces Android',
+      gitCaption: 'Espaço de trabalho Git · Relay', gitAlt: 'Espaço de trabalho Git nativo do Hermes-Relay com alterações, diff em linha e controles de staging',
       cliTitle: 'Acesso à sua máquina controlado por consentimento.', cliLede: 'Dê mãos ao Hermes na máquina — somente quando você permitir.',
       terminal: 'Prévia da linha de comando do Hermes-Relay', consentTitle: 'O consentimento é explícito e local.',
       consentBody: 'Você decide quando o Hermes pode executar comandos, ler arquivos ou fazer alterações.', capabilities: 'Recursos da CLI',
@@ -494,6 +500,7 @@ export const translations: Record<Locale, Copy> = {
       androidLede: '随时继续对话，自然交谈，并管理您已在运行的 Hermes。',
       chatDescription: '流式对话和实时 Agent 工作。', voiceDescription: '自然交谈、随时打断，并保持移动。',
       manageDescription: '管理配置文件、Skills、模型和自动化。', additional: '其他 Android 界面',
+      gitCaption: 'Git 工作区 · Relay', gitAlt: 'Hermes-Relay 原生 Git 工作区，显示更改、内联差异和暂存控件',
       cliTitle: '通过同意控制计算机访问。', cliLede: '只有在您允许时，才让 Hermes 操作计算机。',
       terminal: 'Hermes-Relay 命令行预览', consentTitle: '同意是明确且本地的。',
       consentBody: '由您决定 Hermes 何时可以运行命令、读取文件或进行更改。', capabilities: 'CLI 功能',
