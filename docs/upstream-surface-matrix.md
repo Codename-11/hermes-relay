@@ -45,7 +45,7 @@ Verified upstream source snapshot:
 | Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*`, `/api/providers/custom-endpoints*` | Upstream dashboard | No | Manage | Do not proxy through Relay. MCP list/actions/OAuth carry Android's effective profile explicitly; Android detects hosted-OAuth support with a read-only missing-flow status GET and caches that capability per dashboard/profile. Hosted OAuth itself stays server-owned, opens only the returned HTTPS URL, and persists only the opaque flow id/server/profile plus a normalized non-secret dashboard/connection identity; polling is held whenever the active connection does not own that flow. Custom-endpoint routes are process-scoped in the current public contract, so Android does not claim or append profile scoping; credentials are write-only and blank edits preserve an existing key. |
 | `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
 | `POST /relay/model-capabilities` | Hermes-Relay plugin/server | Optional | Refine reasoning-effort choices for exact upstream provider/model pairs | Never supplies model inventory or gates chat. Missing, old, unpaired, malformed, or unreachable Relay falls back to standard advisory choices. Remote calls require a paired bearer with an active `chat` grant. |
-| Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab | FastAPI plugin backend proxies loopback requests to the Relay server. |
+| Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab and same-origin Relay ingress | FastAPI plugin backend proxies an explicit allowlist to the independently supervised loopback Relay. HTTP requires Dashboard auth plus `X-Hermes-Relay-Session`; WebSockets require a fresh Dashboard ticket before Relay's own pairing/session frame. Loopback administration routes are never exposed. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |
 | `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Injects only compatibility-only gaps: session search, memory, legacy skill detail/toggle, config, available-models, slash middleware. Sessions CRUD and skill/toolset lists are native upstream and retired from the bootstrap. Retained session-database work is offloaded (`AsyncSessionDB` when available, `asyncio.to_thread` fallback), and memory mutations reset newer upstream's request-local consolidation-failure budget. |
 
@@ -165,7 +165,7 @@ capabilities, not identity:
 |---------|--------------|--------------------------------|
 | Dashboard/Gateway | Primary chat, auth, sessions, Manage, and Vanilla Hermes voice | Yes |
 | API server | Automatic chat fallback and advanced headless compatibility | No |
-| Relay | Pairing, terminal, bridge/device control, media, and enhanced voice | No |
+| Relay | Pairing, terminal, bridge/device control, media, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
 
 Existing API-only records and headless deployments remain supported compatibility
 configurations. They do not redefine normal onboarding or make an API key a
@@ -182,7 +182,9 @@ The app should present Vanilla Hermes as the default path:
 4. When needed, fall back to API-server
    SSE.
 5. Use Vanilla Hermes dashboard voice when audio routes are present.
-6. Offer Relay pairing only for Relay-owned power features.
+6. Offer Relay pairing only for Relay-owned power features. Prefer the
+   Dashboard-origin plugin ingress advertised by pairing; retain a direct Relay
+   listener only as an advanced/headless/Desktop compatibility route.
 
 When Auto voice selects Relay because a paired Relay is healthy, the UI should
 make that active route visible and continue to fall back to Vanilla Hermes voice when
@@ -192,6 +194,11 @@ Setup payloads should carry an explicit Dashboard/Gateway URL for new
 connections. Legacy API-first QRs remain importable; when their optional
 `dashboard_url` is absent Android may derive the conventional same-host `:9119`
 URL for compatibility.
+
+New pairing payloads may omit API host/key fields entirely. When the Dashboard
+plugin ingress is available, the priority candidate carries the Dashboard URL
+and a Relay base at `/api/plugins/hermes-relay/transport`; direct Relay and API
+routes, when configured, remain lower-priority compatibility candidates.
 
 ## API Fallback Compatibility Details
 
