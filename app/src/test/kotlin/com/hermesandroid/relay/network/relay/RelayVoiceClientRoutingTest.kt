@@ -2161,9 +2161,9 @@ class RelayVoiceClientRoutingTest {
     @Test
     fun realtimeAgentResumeCursorIgnoresReplayControlEventsDuringRouteChurn() = runBlocking {
         var activeRelayUrl = relayUrl(lanServer)
-        val routeSwitch = CompletableDeferred<String>()
         val routeWatcherStarted = CountDownLatch(1)
         val firstReplayInterrupted = CountDownLatch(1)
+        val socketAttempts = AtomicInteger(0)
         val openedUrls = Collections.synchronizedList(mutableListOf<String>())
         val sentMessages = Collections.synchronizedList(mutableListOf<String>())
         lanServer.dispatcher = sessionOnlyDispatcher(
@@ -2191,12 +2191,14 @@ class RelayVoiceClientRoutingTest {
                 flow {
                     emit(activeRelayUrl)
                     routeWatcherStarted.countDown()
-                    emit(routeSwitch.await())
+                    while (firstReplayInterrupted.count > 0L) delay(10L)
+                    activeRelayUrl = relayUrl(tailscaleServer)
+                    emit(activeRelayUrl)
                 }
             },
             sessionTokenProvider = { "session-token" },
             webSocketFactory = { request, listener ->
-                val index = openedUrls.size
+                val index = socketAttempts.getAndIncrement()
                 lateinit var socket: ScriptedWebSocket
                 socket = ScriptedWebSocket(request, listener) { message ->
                     sentMessages.add(message)
@@ -2240,19 +2242,20 @@ class RelayVoiceClientRoutingTest {
             },
         )
 
-        val deferred = async(Dispatchers.IO) {
-            client.runRealtimeAgent(
-                prompt = "Realtime replay cursor test",
-                inputPcm = ByteArray(0),
-            ) { _, _ -> }
+        val resultAttempt = runCatching {
+            withTimeout(10_000) {
+                client.runRealtimeAgent(
+                    prompt = "Realtime replay cursor test",
+                    inputPcm = ByteArray(0),
+                ) { _, _ -> }
+            }
         }
-        assertTrue(firstReplayInterrupted.await(2, TimeUnit.SECONDS))
-        assertTrue(routeWatcherStarted.await(2, TimeUnit.SECONDS))
-        val nextRelayUrl = relayUrl(tailscaleServer)
-        routeSwitch.complete(nextRelayUrl)
-
-        val result = withTimeout(5_000) { deferred.await() }
-        activeRelayUrl = nextRelayUrl
+        assertTrue(
+            "realtime replay churn did not settle; opened=$openedUrls sent=$sentMessages",
+            resultAttempt.isSuccess,
+        )
+        val result = resultAttempt.getOrThrow()
+        assertEquals(0L, routeWatcherStarted.count)
         val resumeMessages = sentMessages.filter { it.contains("session.resume") }
 
         assertTrue(result.exceptionOrNull()?.message, result.isSuccess)

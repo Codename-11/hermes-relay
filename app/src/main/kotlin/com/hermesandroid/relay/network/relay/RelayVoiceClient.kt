@@ -1817,12 +1817,20 @@ class RelayVoiceClient(
                                 // A synchronous failure callback can replace this
                                 // socket while setup sends are still unwinding. A
                                 // stale attempt must not terminate the newer route.
-                                if (currentSocket.get() !== webSocket || completed.get()) return
+                                if (
+                                    terminalCallbackSeen.get() ||
+                                    currentSocket.get() !== webSocket ||
+                                    completed.get()
+                                ) return
                                 completeFailure("Realtime agent websocket rejected session setup")
                                 webSocket.close(1011, "session setup failed")
                                 return
                             }
-                            if (currentSocket.get() !== webSocket || completed.get()) return
+                            if (
+                                terminalCallbackSeen.get() ||
+                                currentSocket.get() !== webSocket ||
+                                completed.get()
+                            ) return
                             if (resume) {
                                 Log.i(TAG, "Realtime agent resume sent; awaiting relay confirmation")
                             } else {
@@ -2348,9 +2356,7 @@ class RelayVoiceClient(
             null
         }
 
-        val socket = openSocket(resume = false)
-            ?: currentSocket.get()
-            ?: throw IOException("Realtime agent websocket handshake was already pending")
+        val initialSocket = openSocket(resume = false) ?: currentSocket.get()
         val routeWatcherResumeEpisode = AtomicLong(0L)
         val routeWatcher = startRouteResumeWatcher(
             surface = "Realtime agent",
@@ -2432,7 +2438,7 @@ class RelayVoiceClient(
             awaitRealtimeAgentCompletion()
         } catch (e: Exception) {
             currentSocket.get()?.close(1001, "timeout")
-            socket.close(1001, "timeout")
+            initialSocket?.close(1001, "timeout")
             Result.failure(IOException(e.message ?: "Realtime agent timed out", e))
         } finally {
             routeWatcher?.cancel()
