@@ -1,7 +1,9 @@
 package com.hermesandroid.relay.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayEndpointContractTest {
@@ -36,6 +38,16 @@ class RelayEndpointContractTest {
 
         assertEquals(first, RelayEndpointContract.parseOrNull(first.webSocketUrl))
         assertEquals(first, RelayEndpointContract.parseOrNull(first.healthUrl))
+    }
+
+    @Test
+    fun `dashboard plugin ingress is recognized across canonical route forms`() {
+        val base = "https://dashboard.example.test/api/plugins/hermes-relay/transport"
+
+        assertTrue(isDashboardRelayIngressUrl(base))
+        assertTrue(isDashboardRelayIngressUrl(base.replace("https://", "wss://") + "/ws"))
+        assertTrue(isDashboardRelayIngressUrl("$base/health"))
+        assertFalse(isDashboardRelayIngressUrl("wss://dashboard.example.test/relay/ws"))
     }
 
     @Test

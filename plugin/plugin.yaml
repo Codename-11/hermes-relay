@@ -1,8 +1,19 @@
 name: hermes-relay
-manifest_version: 1
+manifest_version: 2
+api_version: 1
 version: 1.10.0
 description: "Hermes-Relay plugin for QR pairing, relay sessions, dashboard management, remote desktop/phone tooling, and optional legacy compatibility diagnostics. Standard chat, Manage, and dashboard voice remain vanilla upstream Hermes surfaces."
 author: Axiom Labs
+license: MIT
+homepage: https://github.com/Codename-11/hermes-relay
+tags: [android, dashboard, gateway, relay, remote-access, voice]
+python_dependencies:
+  - "requests>=2.28.0,<3"
+  - "aiohttp>=3.14.1,<4"
+  - "segno>=1.6.0,<2"
+  - "pyyaml>=6.0,<7"
+  - "httpx>=0.25.0,<1"
+  - "websocket-client>=1.8.0,<2"
 # All three are OPTIONAL — only needed if you use the relay's extra /
 # provider-native voice engines. The standard (no-plugin) chat, Manage, and
 # dashboard voice path needs none of these. `hermes plugins install` prompts
@@ -82,15 +93,19 @@ provides_tools:
   - desktop_computer_action
   - desktop_computer_grant_request
   - desktop_computer_cancel
+  - desktop_usb_devices
+  - desktop_usb_run
+  - desktop_adb_devices
+  - desktop_adb_shell
+  - desktop_adb_push
+  - desktop_adb_pull
+  - desktop_adb_install
+  - desktop_adb_logcat
   - relay_plugin_draft
   - relay_plugin_publish
   - relay_plugin_remove
   - relay_plugin_list
-# Gateway platforms this plugin registers programmatically via
-# ctx.register_platform() in register(). Documentation parity with
-# provides_tools — the plugin stays kind=standalone (multi-capability),
-# it is not a dedicated kind=platform plugin. The "phone" platform lets the
-# agent proactively push to the paired device (send_message target=phone,
-# cron deliver=phone); off by default behind PHONE_ENABLED.
-provides_platforms:
-  - phone
+provides_hooks:
+  - on_session_start
+  - pre_llm_call
+  - post_llm_call

@@ -7,6 +7,7 @@ import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,7 +90,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class RelayVoiceClient(
     private val context: Context,
-    private val okHttpClient: OkHttpClient,
+    okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
     private val profileNameProvider: () -> String? = { null },
@@ -100,7 +101,22 @@ class RelayVoiceClient(
     private val realtimeResumeRetryIntervalMs: Long = REALTIME_RESUME_RETRY_INTERVAL_MS,
     private val realtimeResumeRetryWindowMs: Long = REALTIME_RESUME_RETRY_WINDOW_MS,
     private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
+    /** Dashboard-authenticated transport for same-origin plugin ingress. */
+    private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
 ) {
+
+    private val directOkHttpClient: OkHttpClient = okHttpClient
+
+    /** Resolve lazily so a Dashboard route/client handoff is observed. */
+    private val okHttpClient: OkHttpClient
+        get() {
+            val relayUrl = relayUrlProvider()?.trim().orEmpty()
+            return if (isDashboardRelayIngressUrl(relayUrl)) {
+                dashboardHttpClientProvider?.invoke(relayUrl) ?: directOkHttpClient
+            } else {
+                directOkHttpClient
+            }
+        }
 
     companion object {
         private const val TAG = "RelayVoiceClient"
@@ -144,13 +160,21 @@ class RelayVoiceClient(
         }
     }
 
+    private fun callClient(url: String): OkHttpClient =
+        if (isDashboardRelayIngressUrl(url)) {
+            dashboardHttpClientProvider?.invoke(url) ?: directOkHttpClient
+        } else {
+            directOkHttpClient
+        }
+
     private fun sessionClient(): OkHttpClient =
         okHttpClient.newBuilder()
             .callTimeout(SESSION_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
 
     private fun openWebSocket(request: Request, listener: WebSocketListener): WebSocket =
-        webSocketFactory?.invoke(request, listener) ?: okHttpClient.newWebSocket(request, listener)
+        webSocketFactory?.invoke(request, listener)
+            ?: callClient(request.url.toString()).newWebSocket(request, listener)
 
     private fun requestRouteProbeOnce(
         surface: String,
@@ -196,7 +220,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/transcribe"))
             .post(body)
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -278,7 +302,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/synthesize")
             .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "audio/mpeg")
             .build()
 
@@ -333,7 +357,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -375,7 +399,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -414,7 +438,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -462,7 +486,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -515,7 +539,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -618,7 +642,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime-agent/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -650,7 +674,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -689,7 +713,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -741,7 +765,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -812,7 +836,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -913,7 +937,7 @@ class RelayVoiceClient(
                 ?: throw IOException("Relay URL not configured")
             val request = Request.Builder()
                 .url("$currentWsBase${session.websocketPath}")
-                .header("Authorization", "Bearer $token")
+                .relaySessionCredential(token, isDashboardRelayIngressUrl(currentWsBase))
                 .build()
             Log.i(
                 TAG,
@@ -1180,7 +1204,7 @@ class RelayVoiceClient(
 
         val request = Request.Builder()
             .url("$wsBase${session.websocketPath}")
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(wsBase))
             .build()
 
         val listener = object : WebSocketListener() {
@@ -1675,7 +1699,7 @@ class RelayVoiceClient(
                     ?: throw IOException("Relay URL not configured")
                 val socketRequest = Request.Builder()
                     .url("$base${session.websocketPath}")
-                    .header("Authorization", "Bearer $token")
+                    .relaySessionCredential(token, isDashboardRelayIngressUrl(base))
                     .build()
                 Log.i(
                     TAG,
@@ -2454,7 +2478,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$path"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2493,7 +2517,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2541,7 +2565,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2593,7 +2617,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$path"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2678,7 +2702,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/realtime/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {
@@ -2763,7 +2787,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/realtime-agent/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {
@@ -2804,7 +2828,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/output/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {

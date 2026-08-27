@@ -13,7 +13,6 @@
 // in-band). The `sig` field is parsed + carried for future use.
 
 import {
-  type ApiEndpoint,
   type EndpointCandidate,
   type RelayEndpoint,
   apiUrl,
@@ -221,18 +220,25 @@ function parseCandidate(v: unknown): EndpointCandidate | null {
       }
     }
   }
-  if (!isApiEndpointShape(o.api)) return null
   if (!isRelayEndpointShape(o.relay)) return null
-  const api: ApiEndpoint = {
-    host: o.api.host,
-    port: o.api.port,
-    tls: typeof o.api.tls === 'boolean' ? o.api.tls : false,
-  }
   const relay: RelayEndpoint = {
     url: o.relay.url,
     ...(o.relay.transport_hint !== undefined ? { transportHint: o.relay.transport_hint } : {}),
   }
-  const candidate: EndpointCandidate = { role: o.role, priority, api, relay }
+  const candidate: EndpointCandidate = { role: o.role, priority, relay }
+  if (isApiEndpointShape(o.api)) {
+    candidate.api = {
+      host: o.api.host,
+      port: o.api.port,
+      tls: typeof o.api.tls === 'boolean' ? o.api.tls : false,
+    }
+  }
+  if (typeof o.dashboard === 'object' && o.dashboard !== null) {
+    const dashboard = o.dashboard as Record<string, unknown>
+    if (typeof dashboard.url === 'string' && dashboard.url.trim().length > 0) {
+      candidate.dashboard = { url: dashboard.url }
+    }
+  }
   if (typeof o.security === 'string') candidate.security = o.security
   if (typeof o.recommended === 'boolean') candidate.recommended = o.recommended
   if (typeof o.experimental === 'boolean') candidate.experimental = o.experimental
@@ -284,18 +290,27 @@ export function decodePairingPayload(raw: string): PairingPayload {
   if (hermes < 1) {
     throw new Error(`unsupported pairing schema version: ${hermes}`)
   }
-  if (typeof o.host !== 'string' || o.host.length === 0) {
+  const hasExplicitRelay =
+    (typeof o.relay === 'object' && o.relay !== null &&
+      typeof (o.relay as Record<string, unknown>).url === 'string') ||
+    (Array.isArray(o.endpoints) && o.endpoints.some((entry) => {
+      if (typeof entry !== 'object' || entry === null) return false
+      const candidate = entry as Record<string, unknown>
+      return isRelayEndpointShape(candidate.relay) ||
+        (typeof candidate.proxy === 'object' && candidate.proxy !== null)
+    }))
+  if ((typeof o.host !== 'string' || o.host.length === 0) && !hasExplicitRelay) {
     throw new Error('pairing payload missing `host`')
   }
-  if (typeof o.key !== 'string') {
+  if (typeof o.key !== 'string' && !hasExplicitRelay) {
     throw new Error('pairing payload missing `key`')
   }
 
   const payload: PairingPayload = {
     hermes,
-    host: o.host,
+    host: typeof o.host === 'string' ? o.host : '',
     port: typeof o.port === 'number' ? o.port : 8642,
-    key: o.key,
+    key: typeof o.key === 'string' ? o.key : '',
     tls: typeof o.tls === 'boolean' ? o.tls : false,
   }
 
@@ -356,19 +371,22 @@ export function payloadToCandidates(p: PairingPayload): EndpointCandidate[] {
   if (p.endpoints && p.endpoints.length > 0) {
     return p.endpoints
   }
-  const role = looksLikeTailscale(p.host) ? 'tailscale' : 'lan'
+  if (!p.host.trim() && !p.relay?.url?.trim()) return []
+  const relayHost = (() => {
+    try { return new URL(p.relay?.url ?? '').hostname } catch { return '' }
+  })()
+  const identityHost = p.host.trim() || relayHost
+  const role = looksLikeTailscale(identityHost) ? 'tailscale' : 'lan'
   const relay: RelayEndpoint = {
     url: p.relay?.url ?? '',
     ...(p.relay?.transport_hint !== undefined ? { transportHint: p.relay.transport_hint } : {}),
   }
-  return [
-    {
-      role,
-      priority: 0,
-      api: { host: p.host, port: p.port, tls: p.tls },
-      relay,
-    },
-  ]
+  return [{
+    role,
+    priority: 0,
+    ...(p.host.trim() ? { api: { host: p.host, port: p.port, tls: p.tls } } : {}),
+    relay,
+  }]
 }
 
 /**
@@ -378,7 +396,20 @@ export function payloadToCandidates(p: PairingPayload): EndpointCandidate[] {
  * same host:port share reachability state.
  */
 function cacheKey(c: EndpointCandidate): string {
-  return `${c.role}|${c.api.host.toLowerCase()}:${c.api.port}`
+  const route = c.api
+    ? `${c.api.host.toLowerCase()}:${c.api.port}`
+    : c.dashboard?.url?.toLowerCase() ?? c.relay.url.toLowerCase()
+  return `${c.role}|${route}`
+}
+
+function relayHealthUrl(raw: string): string {
+  const parsed = new URL(raw)
+  parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
+  const path = parsed.pathname.replace(/\/+$/, '')
+  parsed.pathname = path.endsWith('/ws') ? `${path.slice(0, -3)}/health` : `${path}/health`
+  parsed.search = ''
+  parsed.hash = ''
+  return parsed.toString()
 }
 
 interface CacheEntry {
@@ -479,7 +510,7 @@ export async function probeCandidate(
   // Reachability remains anchored to its non-sensitive Relay health route.
   const url = isValidPinnedProxyCandidate(c)
     ? `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`
-    : `${apiUrl(c.api)}/health`
+    : c.api ? `${apiUrl(c.api)}/health` : relayHealthUrl(c.relay.url)
   try {
     if (isValidPinnedProxyCandidate(c)) {
       const url = `${c.proxy!.url.replace(/\/+$/, '')}/relay/health`

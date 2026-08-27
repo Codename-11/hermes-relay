@@ -285,15 +285,12 @@ fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
 
 private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
     return try {
-        // Quick check: must contain a `host` field and be valid JSON. We no
-        // longer reject based on the `hermes` version int — future v4+ QRs
-        // should still parse so wire-format growth does not require an app
-        // release for every compatible payload version.
+        // Future compatible versions remain accepted. The legacy top-level
+        // API host is optional when Dashboard plus Relay identity is present.
         val obj = json.decodeFromString<JsonObject>(raw)
         val version = obj["hermes"]?.jsonPrimitive?.intOrNull ?: 1
         if (version < 1) return null
         val decoded = json.decodeFromString<HermesPairingPayload>(raw)
-        if (decoded.host.isBlank()) return null
         val dashboardAlias = firstString(obj, "dashboardUrl")
         val decodedWithAliases =
             if (decoded.dashboardUrl.isNullOrBlank() && dashboardAlias != null) {
@@ -301,6 +298,9 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
             } else {
                 decoded
             }
+        if (decodedWithAliases.host.isBlank() &&
+            !decodedWithAliases.hasDashboardRelayIdentity()
+        ) return null
         val normalizedKey = normalizeCredentialForHeader(
             decodedWithAliases.key,
             "API credential",
@@ -318,7 +318,13 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
         // v3+ payloads with an explicit array pass through untouched.
         if (decodedWithSafeCredential.endpoints.isNullOrEmpty()) {
             decodedWithSafeCredential.copy(
-                endpoints = listOf(synthesizeLegacyEndpoint(decodedWithSafeCredential)),
+                endpoints = listOf(
+                    if (decodedWithSafeCredential.hasApiServer) {
+                        synthesizeLegacyEndpoint(decodedWithSafeCredential)
+                    } else {
+                        synthesizeDashboardRelayEndpoint(decodedWithSafeCredential)
+                    },
+                ),
             )
         } else {
             decodedWithSafeCredential
@@ -326,6 +332,30 @@ private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
     } catch (_: Exception) {
         null
     }
+}
+
+private fun HermesPairingPayload.hasDashboardRelayIdentity(): Boolean {
+    if (!hasUsableRelayPairing()) return false
+    val uri = dashboardUrl
+        ?.trim()
+        ?.let { runCatching { URI(it) }.getOrNull() }
+        ?: return false
+    return uri.scheme?.lowercase() in setOf("http", "https") && !uri.host.isNullOrBlank()
+}
+
+private fun synthesizeDashboardRelayEndpoint(
+    payload: HermesPairingPayload,
+): EndpointCandidate {
+    val dashboardUrl = requireNotNull(payload.dashboardUrl).trim().trimEnd('/')
+    return EndpointCandidate(
+        role = Connection.inferRouteRole(dashboardUrl),
+        priority = 0,
+        dashboard = DashboardEndpoint(dashboardUrl),
+        relay = RelayEndpoint(
+            url = requireNotNull(payload.relay).url,
+            transportHint = payload.relay.transportHint,
+        ),
+    )
 }
 
 private fun parseGenericApiJsonQr(raw: String): HermesPairingPayload? {

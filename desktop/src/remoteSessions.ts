@@ -13,8 +13,9 @@ import type { EndpointCandidate } from './endpoint.js'
 export interface StoredRouteCandidate {
   role: string
   priority: number
-  api: { host: string; port: number; tls: boolean }
+  api?: { host: string; port: number; tls: boolean }
   relay: { url: string; transportHint?: string }
+  dashboard?: { url: string }
   proxy?: { url: string; transportHint?: string; pinSha256: string; certificateDerBase64?: string; surfaces?: string[] }
   security?: string
   recommended?: boolean
