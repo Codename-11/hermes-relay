@@ -6,6 +6,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -323,5 +324,63 @@ class ConnectionManagerRouteTest {
             withTimeout(5_000) { manager.activeRelayEndpoint.first { it?.role == "direct" } }
         }
         assertEquals("direct", winner?.role)
+    }
+
+    @Test
+    fun `stale ingress close cannot poison successful same-url replacement`() {
+        val fallbackStarted = CompletableDeferred<Unit>()
+        val releaseFallback = CompletableDeferred<Unit>()
+        val replacementOpened = CompletableDeferred<Unit>()
+        val ingressSockets = AtomicInteger(0)
+        val ticketRequests = AtomicInteger(0)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path?.endsWith("/health") == true -> MockResponse().setResponseCode(200)
+                request.path?.startsWith("/api/plugins/hermes-relay/transport/ws") == true -> {
+                    val number = ingressSockets.incrementAndGet()
+                    MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            if (number == 1) {
+                                webSocket.close(4403, "old admission denied")
+                            } else {
+                                webSocket.send(
+                                    """{"channel":"system","type":"auth.ok","payload":{}}""",
+                                )
+                                replacementOpened.complete(Unit)
+                            }
+                        }
+                    })
+                }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val manager = ConnectionManager(
+            ChannelMultiplexer(),
+            context = context,
+            endpointResolver = EndpointResolver(httpClient = OkHttpClient()),
+            endpointCandidatesProvider = { listOf(ingressCandidate(), directCandidate()) },
+            dashboardRelayRequestProvider = { url ->
+                val ticket = ticketRequests.incrementAndGet()
+                Request.Builder().url("$url?ticket=ticket-$ticket").build()
+            },
+            beforeIngressFailureCommit = {
+                fallbackStarted.complete(Unit)
+                releaseFallback.await()
+            },
+        ).also {
+            managers.add(it)
+            it.setInsecureMode(true)
+        }
+
+        manager.connect("ws://${server.hostName}:${server.port}")
+        runBlocking { withTimeout(5_000) { fallbackStarted.await() } }
+        assertEquals(true, manager.reconnectForAuthenticatedMetadataUpdate())
+        runBlocking { withTimeout(5_000) { replacementOpened.await() } }
+        releaseFallback.complete(Unit)
+        Thread.sleep(100)
+
+        assertEquals("dashboard-ingress", manager.activeRelayEndpoint.value?.role)
+        assertEquals(ConnectionState.Connected, manager.connectionState.value)
+        assertEquals(2, ticketRequests.get())
     }
 }

@@ -44,6 +44,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 enum class ConnectionState {
     Disconnected,
@@ -158,6 +159,8 @@ class ConnectionManager(
      * invocation. Direct Relay listeners never call this provider.
      */
     private val dashboardRelayRequestProvider: (suspend (String) -> Request?)? = null,
+    /** Deterministic race seam immediately before an ingress failure may poison route state. */
+    private val beforeIngressFailureCommit: suspend () -> Unit = {},
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -198,6 +201,9 @@ class ConnectionManager(
 
     @Volatile
     private var webSocket: WebSocket? = null
+    private val socketGeneration = AtomicLong(0L)
+    @Volatile
+    private var activeSocketGeneration: Long = 0L
 
     @Volatile
     private var serverUrl: String? = null
@@ -746,8 +752,20 @@ class ConnectionManager(
     }
 
     /** Admission is stronger evidence than `/transport/health`: reject this ingress and retain direct fallback. */
-    private suspend fun fallbackFromBrokenDashboardIngress(url: String, reason: String): Boolean {
+    private suspend fun fallbackFromBrokenDashboardIngress(
+        url: String,
+        reason: String,
+        failingSocket: WebSocket? = null,
+        failingGeneration: Long? = null,
+    ): Boolean {
         if (!isDashboardRelayIngressUrl(url)) return false
+        if (failingGeneration != null) {
+            beforeIngressFailureCommit()
+            if (activeSocketGeneration != failingGeneration || webSocket !== failingSocket) {
+                Log.i(TAG, "Ignoring stale Dashboard ingress failure ($reason)")
+                return false
+            }
+        }
         val failed = _activeRelayEndpoint.value ?: return false
         val failedUrl = failed.relayWebSocketUrl()?.let(::normalizeRelayUrl)
         if (failedUrl != normalizeRelayUrl(url)) return false
@@ -1009,7 +1027,8 @@ class ConnectionManager(
         webSocket?.send(text)
     }
 
-    private fun isActiveSocket(socket: WebSocket): Boolean = webSocket === socket
+    private fun isActiveSocket(socket: WebSocket, generation: Long): Boolean =
+        webSocket === socket && activeSocketGeneration == generation
 
     private fun doConnect(
         url: String,
@@ -1112,9 +1131,11 @@ class ConnectionManager(
         }
 
         Log.i(TAG, "doConnect: opening WSS to $url")
+        val generation = socketGeneration.incrementAndGet()
+        activeSocketGeneration = generation
         val newSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onOpen: stale WSS handshake ignored ($url)")
                     runCatching { webSocket.close(1000, "Stale relay socket") }
                     webSocket.cancel()
@@ -1157,7 +1178,7 @@ class ConnectionManager(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onMessage: stale WSS envelope ignored ($url)")
                     return
                 }
@@ -1184,7 +1205,7 @@ class ConnectionManager(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onClosed: stale WSS close ignored ($url code=$code reason=$reason)")
                     return
                 }
@@ -1203,7 +1224,13 @@ class ConnectionManager(
                 _connectionState.value = ConnectionState.Disconnected
                 if (isDashboardRelayIngressUrl(url) && !admitted && code != 1000) {
                     scope.launch {
-                        if (!fallbackFromBrokenDashboardIngress(url, "pre-auth close $code")) {
+                        if (!fallbackFromBrokenDashboardIngress(
+                                url,
+                                "pre-auth close $code",
+                                webSocket,
+                                generation,
+                            ) && activeSocketGeneration == generation
+                        ) {
                             scheduleReconnect()
                         }
                     }
@@ -1213,7 +1240,7 @@ class ConnectionManager(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onFailure: stale WSS failure ignored ($url ${t.javaClass.simpleName}: ${t.message})")
                     return
                 }
@@ -1239,7 +1266,13 @@ class ConnectionManager(
                     authenticated = false
                     _connectionState.value = ConnectionState.Disconnected
                     scope.launch {
-                        if (!fallbackFromBrokenDashboardIngress(url, "HTTP admission ${response.code}")) {
+                        if (!fallbackFromBrokenDashboardIngress(
+                                url,
+                                "HTTP admission ${response.code}",
+                                webSocket,
+                                generation,
+                            ) && activeSocketGeneration == generation
+                        ) {
                             scheduleReconnect()
                         }
                     }
