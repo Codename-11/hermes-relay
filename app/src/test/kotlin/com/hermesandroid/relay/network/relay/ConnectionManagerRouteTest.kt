@@ -11,6 +11,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -240,5 +243,85 @@ class ConnectionManagerRouteTest {
             "/api/plugins/hermes-relay/transport/ws?ticket=ticket-2",
             second?.path,
         )
+    }
+
+    private fun ingressCandidate(priority: Int = 0) = EndpointCandidate(
+        role = "dashboard-ingress",
+        priority = priority,
+        relay = RelayEndpoint(
+            "ws://${server.hostName}:${server.port}/api/plugins/hermes-relay/transport",
+        ),
+    )
+
+    private fun directCandidate(priority: Int = 1) = EndpointCandidate(
+        role = "direct",
+        priority = priority,
+        relay = RelayEndpoint("ws://${server.hostName}:${server.port}"),
+    )
+
+    private fun ingressFallbackManager(
+        requestProvider: (suspend (String) -> Request?)?,
+    ): ConnectionManager = ConnectionManager(
+        ChannelMultiplexer(),
+        context = context,
+        endpointResolver = EndpointResolver(httpClient = OkHttpClient()),
+        endpointCandidatesProvider = { listOf(ingressCandidate(), directCandidate()) },
+        dashboardRelayRequestProvider = requestProvider,
+    ).also {
+        managers.add(it)
+        it.setInsecureMode(true)
+    }
+
+    @Test
+    fun `missing dashboard ingress request provider falls back to direct relay`() {
+        val manager = ingressFallbackManager(requestProvider = null)
+
+        manager.connect("ws://${server.hostName}:${server.port}")
+
+        val winner = runBlocking {
+            withTimeout(5_000) { manager.activeRelayEndpoint.first { it?.role == "direct" } }
+        }
+        assertEquals("direct", winner?.role)
+    }
+
+    @Test
+    fun `dashboard ingress ticket failure falls back to direct relay`() {
+        val manager = ingressFallbackManager(requestProvider = { null })
+
+        manager.connect("ws://${server.hostName}:${server.port}")
+
+        val winner = runBlocking {
+            withTimeout(5_000) { manager.activeRelayEndpoint.first { it?.role == "direct" } }
+        }
+        assertEquals("direct", winner?.role)
+    }
+
+    @Test
+    fun `dashboard ingress admission close falls back to direct relay`() {
+        val ingressListener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.close(4403, "admission denied")
+            }
+        }
+        val directListener = object : WebSocketListener() {}
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path?.endsWith("/health") == true -> MockResponse().setResponseCode(200)
+                request.path?.startsWith("/api/plugins/hermes-relay/transport/ws") == true ->
+                    MockResponse().withWebSocketUpgrade(ingressListener)
+                request.path == "/ws" -> MockResponse().withWebSocketUpgrade(directListener)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val manager = ingressFallbackManager { url ->
+            Request.Builder().url("$url?ticket=admission-ticket").build()
+        }
+
+        manager.connect("ws://${server.hostName}:${server.port}")
+
+        val winner = runBlocking {
+            withTimeout(5_000) { manager.activeRelayEndpoint.first { it?.role == "direct" } }
+        }
+        assertEquals("direct", winner?.role)
     }
 }

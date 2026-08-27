@@ -565,6 +565,7 @@ private fun DashboardOAuthScreen(
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val initialStatus = stringResource(R.string.dashboard_oauth_initial_status)
     val verifyingStatus = stringResource(R.string.dashboard_oauth_verifying)

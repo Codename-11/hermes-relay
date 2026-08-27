@@ -104,6 +104,7 @@ internal class HermesRuntimeBinder(
             },
             apiBearerTokenProvider = connection::getApiKey,
             dashboardHttpClientProvider = connection::dashboardHttpClientForRelayIngress,
+            dashboardIngressWebSocketRequestProvider = connection::dashboardRelayRequestForIngress,
         )
         val standardVoiceClient = StandardHermesVoiceClient(
             context = application,

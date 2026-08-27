@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -103,6 +104,9 @@ class RelayVoiceClient(
     private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
     /** Dashboard-authenticated transport for same-origin plugin ingress. */
     private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
+    /** Fresh Dashboard ticket request for every ingress voice socket dial. */
+    private val dashboardIngressWebSocketRequestProvider:
+        (suspend (String) -> Request?)? = null,
 ) {
 
     private val directOkHttpClient: OkHttpClient = okHttpClient
@@ -175,6 +179,21 @@ class RelayVoiceClient(
     private fun openWebSocket(request: Request, listener: WebSocketListener): WebSocket =
         webSocketFactory?.invoke(request, listener)
             ?: callClient(request.url.toString()).newWebSocket(request, listener)
+
+    private fun voiceWebSocketRequest(url: String, relayToken: String): Request {
+        val dashboardIngress = isDashboardRelayIngressUrl(url)
+        val outerRequest = if (dashboardIngress) {
+            val provider = dashboardIngressWebSocketRequestProvider
+                ?: throw IOException("Dashboard Relay voice authorization is unavailable")
+            runBlocking { provider(url) }
+                ?: throw IOException("Dashboard Relay voice ticket could not be minted")
+        } else {
+            Request.Builder().url(url).build()
+        }
+        return outerRequest.newBuilder()
+            .relaySessionCredential(relayToken, dashboardIngress)
+            .build()
+    }
 
     private fun requestRouteProbeOnce(
         surface: String,
@@ -935,10 +954,10 @@ class RelayVoiceClient(
             val generation = socketGeneration.incrementAndGet()
             val currentWsBase = overrideWsBase ?: resolveWebSocketBase()
                 ?: throw IOException("Relay URL not configured")
-            val request = Request.Builder()
-                .url("$currentWsBase${session.websocketPath}")
-                .relaySessionCredential(token, isDashboardRelayIngressUrl(currentWsBase))
-                .build()
+            val request = voiceWebSocketRequest(
+                "$currentWsBase${session.websocketPath}",
+                token,
+            )
             Log.i(
                 TAG,
                 "Voice output websocket opening resume=$resume url=${request.url}",
@@ -1202,10 +1221,7 @@ class RelayVoiceClient(
         var audioChunks = 0
         var audioBytes = 0
 
-        val request = Request.Builder()
-            .url("$wsBase${session.websocketPath}")
-            .relaySessionCredential(token, isDashboardRelayIngressUrl(wsBase))
-            .build()
+        val request = voiceWebSocketRequest("$wsBase${session.websocketPath}", token)
 
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -1697,10 +1713,10 @@ class RelayVoiceClient(
             val (currentWsBase, request) = try {
                 val base = overrideWsBase ?: resolveWebSocketBase()
                     ?: throw IOException("Relay URL not configured")
-                val socketRequest = Request.Builder()
-                    .url("$base${session.websocketPath}")
-                    .relaySessionCredential(token, isDashboardRelayIngressUrl(base))
-                    .build()
+                val socketRequest = voiceWebSocketRequest(
+                    "$base${session.websocketPath}",
+                    token,
+                )
                 Log.i(
                     TAG,
                     "Realtime agent websocket opening resume=$resume url=${socketRequest.url}",
