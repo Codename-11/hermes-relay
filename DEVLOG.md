@@ -14,6 +14,10 @@ replying after the first response. Replies identify themselves as automated and
 explicitly hand the remaining decision to a maintainer. Contributor guidance and
 agent instructions carry the same boundary.
 
+Public labels and comments are attributed to the repository-scoped
+`hermes-relay-triage[bot]` GitHub App rather than a maintainer's personal
+account. The App identity does not expand the bounded action contract.
+
 ## 2026-08-24 — Single dev integration authority
 
 `origin/dev` is the sole integration authority. Primary local `dev` checkouts are
