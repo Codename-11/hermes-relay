@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
+### Fixed
+
+- **Android Bot Chats render loaded history immediately.** Route-owned chat screens now observe their own message state instead of remaining subscribed to an empty pre-bind fallback until navigation begins.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added
