@@ -27,8 +27,11 @@ fun isDashboardRelayIngressUrl(raw: String?): Boolean {
     val path = runCatching { URI(endpoints.httpBaseUrl).rawPath.orEmpty() }
         .getOrDefault("")
         .trimEnd('/')
-    return path == DASHBOARD_RELAY_INGRESS_PATH ||
-        path.startsWith("$DASHBOARD_RELAY_INGRESS_PATH/")
+    val marker = path.indexOf(DASHBOARD_RELAY_INGRESS_PATH)
+    if (marker < 0) return false
+    val markerEndsAt = marker + DASHBOARD_RELAY_INGRESS_PATH.length
+    val suffixBoundary = markerEndsAt == path.length || path[markerEndsAt] == '/'
+    return suffixBoundary
 }
 
 /**

@@ -47,7 +47,17 @@ class RelayEndpointContractTest {
         assertTrue(isDashboardRelayIngressUrl(base))
         assertTrue(isDashboardRelayIngressUrl(base.replace("https://", "wss://") + "/ws"))
         assertTrue(isDashboardRelayIngressUrl("$base/health"))
+        assertTrue(
+            isDashboardRelayIngressUrl(
+                "wss://dashboard.example.test/base/api/plugins/hermes-relay/transport/ws",
+            ),
+        )
         assertFalse(isDashboardRelayIngressUrl("wss://dashboard.example.test/relay/ws"))
+        assertFalse(
+            isDashboardRelayIngressUrl(
+                "wss://dashboard.example.test/not-api/plugins/hermes-relay/transportish/ws",
+            ),
+        )
     }
 
     @Test
