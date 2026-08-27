@@ -162,6 +162,13 @@ documentation fixes.
 `main` is release history, not the normal contribution target; it receives
 approved release PRs from `dev` and focused hotfix PRs based on production tags.
 
+Pull requests use [the repository template](.github/pull_request_template.md).
+Keep the body grounded: describe the outcome and focused changes, list exact
+verification, include visual evidence when applicable, state compatibility or
+risk, and preserve contributor lineage when replacing or salvaging prior work.
+Check an item when it is satisfied or when its N/A rationale is written in the
+body; do not use checked boxes as a substitute for evidence.
+
 `origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
 fast-forward-only mirror and create each task in its own branch/worktree from the
 current `origin/dev`. Do not accumulate unpublished commits on local `dev`. If a
