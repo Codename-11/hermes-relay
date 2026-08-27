@@ -116,10 +116,11 @@ GitHub displays the response as authored by `hermes-relay-triage[bot]`, a
 repository-scoped App rather than a maintainer's personal account.
 
 That reply is an acknowledgement and initial analysis, not a maintainer
-decision. The automated path does not close issues, assign work, set milestones
-or priority, promise a fix or release, or continue the conversation. It will
-say when a maintainer needs to review the remaining question, and a maintainer
-will follow up on the thread.
+decision. The automated path may assign `Codename-11` as the fixed owner for
+follow-up, but assignment does not mean acceptance, priority, implementation,
+or a release commitment. It does not close issues, choose another assignee, set
+milestones or priority, promise a fix or release, or continue the conversation.
+A maintainer will follow up on the thread.
 
 ## Running the Relay Locally
 
@@ -168,6 +169,14 @@ verification, include visual evidence when applicable, state compatibility or
 risk, and preserve contributor lineage when replacing or salvaging prior work.
 Check an item when it is satisfied or when its N/A rationale is written in the
 body; do not use checked boxes as a substitute for evidence.
+
+New non-draft pull requests may receive one **Hermes-Relay automated PR intake**
+reply from `hermes-relay-triage[bot]`. The bot checks the live body, base branch,
+changed-path areas, template completeness, stated verification, visual proof,
+and lineage without checking out or executing contributor code. It may add
+bounded area/intake labels and identify missing evidence, but it does not review
+code correctness, approve, request changes, merge, close, assign, request
+reviewers, push commits, edit the PR, rerun workflows, or select review bundles.
 
 `origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
 fast-forward-only mirror and create each task in its own branch/worktree from the
