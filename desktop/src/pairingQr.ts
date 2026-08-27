@@ -444,6 +444,7 @@ export function assertDesktopCompatibleRelayUrl(raw: string): void {
         'select a direct Relay fallback',
     )
   }
+}
 
 interface CacheEntry {
   expiresAt: number
