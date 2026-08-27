@@ -581,6 +581,24 @@
     <string name="changelog_no_notes">Заметки о выпуске недоступны.</string>
     <string name="changelog_collapse">Свернуть</string>
     <string name="changelog_expand">Развернуть</string>
+    <string name="changelog_state_expanded">Развернуто</string>
+    <string name="changelog_state_collapsed">Свернуто</string>
+    <string name="changelog_installed">Установлено</string>
+    <string name="changelog_also_improved">Также улучшено</string>
+    <string name="changelog_toast_also">Также: %1$s</string>
+    <string name="changelog_view_all">Показать все</string>
+    <plurals name="changelog_additional_feature_count">
+        <item quantity="one">%1$d функция</item>
+        <item quantity="few">%1$d функции</item>
+        <item quantity="many">%1$d функций</item>
+        <item quantity="other">%1$d функции</item>
+    </plurals>
+    <plurals name="changelog_fix_count">
+        <item quantity="one">%1$d исправление</item>
+        <item quantity="few">%1$d исправления</item>
+        <item quantity="many">%1$d исправлений</item>
+        <item quantity="other">%1$d исправления</item>
+    </plurals>
     <string name="diag_title">Диагностика</string>
     <string name="diag_back">Назад</string>
     <string name="diag_status">Статус</string>
@@ -679,7 +697,7 @@
     <string name="settings_developer_options">Настройки разработчика</string>
     <string name="settings_developer_options_desc">Флаги функций, управление данными, экспериментальные</string>
     <string name="settings_whats_new">Что нового</string>
-    <string name="settings_whats_new_desc">Примечания к выпуску и полный журнал изменений</string>
+    <string name="settings_whats_new_desc">История выпусков Android</string>
     <string name="settings_about">О приложении</string>
     <string name="settings_about_desc">Версия, кредиты, документация</string>
     <string name="settings_profile_lock">Блокировка профиля</string>

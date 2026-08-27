@@ -603,6 +603,18 @@
     <string name="changelog_no_notes">リリースノートはありません。</string>
     <string name="changelog_collapse">崩壊</string>
     <string name="changelog_expand">拡大する</string>
+    <string name="changelog_state_expanded">展開済み</string>
+    <string name="changelog_state_collapsed">折りたたみ済み</string>
+    <string name="changelog_installed">インストール済み</string>
+    <string name="changelog_also_improved">その他の改善</string>
+    <string name="changelog_toast_also">その他: %1$s</string>
+    <string name="changelog_view_all">すべて表示</string>
+    <plurals name="changelog_additional_feature_count">
+        <item quantity="other">%1$d 件の機能</item>
+    </plurals>
+    <plurals name="changelog_fix_count">
+        <item quantity="other">%1$d 件の修正</item>
+    </plurals>
 
     <!-- DiagnosticsScreen -->
     <string name="diag_title">診断</string>
@@ -709,7 +721,7 @@
     <string name="settings_developer_options">開発者向けオプション</string>
     <string name="settings_developer_options_desc">機能フラグ、データ管理、実験的</string>
     <string name="settings_whats_new">新着情報</string>
-    <string name="settings_whats_new_desc">リリースノートと完全な変更ログ</string>
+    <string name="settings_whats_new_desc">Android のリリース履歴</string>
     <string name="settings_about">について</string>
     <string name="settings_about_desc">バージョン、クレジット、ドキュメント</string>
     <string name="settings_profile_lock">プロファイルロック</string>

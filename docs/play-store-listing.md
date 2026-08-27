@@ -93,7 +93,7 @@ Paste into Play Console → **What's new** (≤500 characters):
 ```
 v1.13.2 - Supervised Mode and clearer activity
 
-Supervised Mode adds a parent-configured, profile-pinned chat view with device-authenticated settings. Parents can limit attachments, Standard voice, generated media, history, actions, and technical details. Session rows stay neutral while live activity is unavailable, and returning from parent settings no longer blanks Supervised Chat.
+Supervised Mode creates a simpler, profile-focused chat with device-protected parent settings and control over attachments, Standard voice, generated media, history, actions, and technical details. Activity indicators now appear only while Hermes is genuinely working, and returning from parent settings keeps Supervised Chat open.
 ```
 ## Category
 

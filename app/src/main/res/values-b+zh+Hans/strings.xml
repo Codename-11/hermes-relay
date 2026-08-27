@@ -603,6 +603,18 @@
     <string name="changelog_no_notes">暂无发行说明。</string>
     <string name="changelog_collapse">收起</string>
     <string name="changelog_expand">展开</string>
+    <string name="changelog_state_expanded">已展开</string>
+    <string name="changelog_state_collapsed">已收起</string>
+    <string name="changelog_installed">已安装</string>
+    <string name="changelog_also_improved">其他改进</string>
+    <string name="changelog_toast_also">另外：%1$s</string>
+    <string name="changelog_view_all">查看全部</string>
+    <plurals name="changelog_additional_feature_count">
+        <item quantity="other">%1$d 项功能</item>
+    </plurals>
+    <plurals name="changelog_fix_count">
+        <item quantity="other">%1$d 项修复</item>
+    </plurals>
 
     <!-- DiagnosticsScreen -->
     <string name="diag_title">诊断</string>
@@ -709,7 +721,7 @@
     <string name="settings_developer_options">开发者选项</string>
     <string name="settings_developer_options_desc">功能标志、数据管理、实验性</string>
     <string name="settings_whats_new">新功能</string>
-    <string name="settings_whats_new_desc">发行说明和完整变更日志</string>
+    <string name="settings_whats_new_desc">Android 版本历史</string>
     <string name="settings_about">关于</string>
     <string name="settings_about_desc">版本、致谢、文档</string>
     <string name="settings_profile_lock">配置文件锁定</string>

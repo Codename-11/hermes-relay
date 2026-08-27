@@ -530,10 +530,16 @@ the new app version and a higher `appVersionCode`.
   run Android's retrace tool with the matching flavor mapping:
   `retrace <mapping.txt> <obfuscated-trace.txt>`. Play reports can additionally
   use the mapping bundled into the uploaded AAB through Play Console.
-- `app/src/main/assets/whats_new.txt` — in-app "What's New" content
-  shown in the settings/about screen. Update with the version number
-  and a brief feature summary. Gets stale silently if forgotten
-  (v0.4.0 shipped with 0.1.0 content until caught post-release).
+- `app/src/main/assets/changelog.json` — curated source for the in-app
+  **What's New** dialog and Android release history. Prepend the newest entry
+  with one explicit `highlight` (`title`, plain-language `summary`, and 1–3
+  user-benefit bullets), up to two quieter `improvements`, Android-only
+  `playNotes`, a `toastDigest` with counts and 0–2 short previews for noteworthy
+  items beyond the hero, and the existing technical `sections` used by older clients.
+  Do not derive the highlight mechanically from `CHANGELOG.md`; choosing the
+  release's main reason to care is an editorial release-prep decision.
+- `app/src/main/assets/whats_new.txt` — legacy in-app fallback generated from
+  the newest structured entry. Do not edit it independently.
 - `app/src/googlePlay/play/release-notes/en-US/default.txt` — the Play
   Console **"What's new"** text, which gradle-play-publisher reads at
   upload to fill the Production-draft release notes. This is **separate**
@@ -541,19 +547,60 @@ the new app version and a higher `appVersionCode`.
   this file is missing or stale, the Play draft ships with empty/wrong
   notes (shipped empty in v1.1.0 until caught post-release). Keep it
   **≤500 chars per language**, user-facing, Android-only.
-- `docs/play-store-listing.md` — Play Store listing copy. Update
-  the version reference and the "Release Notes" section that gets
-  pasted into the Play Console "What's new" field. Keep the Play
-  "What's new" within **500 characters** and framed around the
-  release's themes, not a feature dump. Compare its **Foreground service
+- `docs/play-store-listing.md` — Play Store listing copy. Its release-note
+  block and the Gradle Play Publisher note are generated from `playNotes`.
+  After editing the newest structured entry, run
+  `python scripts/check-android-release-notes.py --write`, then run it again
+  without `--write` to validate the 1–3 / 0–2 editorial limits, current Android
+  version, GitHub-release/changelog headings, derived files, and Play's
+  **500-character** limit. Frame Play copy around the release's themes, not a
+  feature dump. Compare its **Foreground service
   permissions** section with the merged `googlePlayRelease` manifest and
   complete Play Console declarations for every declared service type before
   approval; the Publisher API can upload a draft and still reject promotion
   when an App content declaration is missing.
 
+#### Generate release copy from the verified changes
+
+When release copy is generated with an agent, this section is the canonical
+authoring contract; do not maintain a separate prompt file.
+
+1. Read the exact Android version/SHA, the Android-only entries selected from
+   `[Unreleased]`, the implemented behavior, and any compatibility or security
+   boundary that users must understand. Do not generate from commit titles or
+   a mixed-surface changelog block alone.
+2. Before editing release files, show a temporary coverage ledger in the task
+   output. Map every selected source change to exactly one placement:
+   `hero`, `secondary`, or `full-only`. Include the change kind (`feature`,
+   `change`, or `fix`) and a short reason. The ledger is review evidence, not a
+   committed public artifact; no selected source item may disappear silently.
+3. Choose exactly one `hero`: the strongest user-facing reason to care about
+   the release. Its summary is one plain-language outcome, and its 1–3 bullets
+   are distinct user benefits rather than implementation steps or filler.
+4. Use `secondary` for other important user-visible features and fixes. The
+   `toastDigest` counts only these items, excluding the hero. Preview the
+   strongest 1–2 secondary items in short phrases. If there are no legitimate
+   secondary items, set both counts to `0` and `preview` to `[]`; the app hides
+   the footer. Never invent an item to satisfy the layout.
+5. Use `full-only` for technically relevant details that belong in
+   `RELEASE_NOTES.md` or `CHANGELOG.md` but would make the collapsed update card
+   noisy. Preserve user-relevant trust and compatibility limits; omit branches,
+   worktrees, CI mechanics, debugging history, and private/operator context.
+6. Write each surface for its audience:
+   - `RELEASE_NOTES.md`: concise Summary plus Added/Changed/Fixed; keep the
+     deterministic Download and Install/Verify scaffolding intact.
+   - `CHANGELOG.md`: complete, crisp public history for the released surface.
+   - `changelog.json`: curated hero, optional improvements, digest, Play copy,
+     and compatibility `sections` for older clients.
+   - `playNotes`: Android-only themes within the rendered 500-character limit.
+7. Before presenting the draft, check that wording begins with user outcomes,
+   avoids unexplained implementation terminology, uses exact public product
+   names, makes no unverified device claim, and passes the public-distribution
+   scrub below.
+
 #### Scrub for public distribution
 
-This is a **public repo** and these four files are user-facing. Before
+This is a **public repo** and these release-note files are user-facing. Before
 promoting the `[Unreleased]` block and writing the notes, scrub the
 versioned CHANGELOG block and all three release-notes artifacts for
 wording that shouldn't ship publicly. The CHANGELOG accumulates in a
@@ -639,7 +686,9 @@ git checkout dev
 git pull --ff-only origin dev
 
 git add gradle/libs.versions.toml RELEASE_NOTES.md CHANGELOG.md \
-        app/src/main/assets/whats_new.txt docs/play-store-listing.md
+        app/src/main/assets/changelog.json app/src/main/assets/whats_new.txt \
+        app/src/googlePlay/play/release-notes/en-US/default.txt \
+        docs/play-store-listing.md
 git commit -m "release(android): android-v0.6.2"
 git push origin dev
 
