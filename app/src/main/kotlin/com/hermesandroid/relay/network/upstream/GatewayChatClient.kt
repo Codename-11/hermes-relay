@@ -2549,10 +2549,10 @@ class GatewayChatClient(
         }
 
         // A just-died pooled socket can poison the first WebSocket upgrade, so
-        // that narrow transport failure gets one fresh-ticket retry. Ticket
-        // mint failures are authoritative for this attempt (auth rejection,
-        // HTTP timeout, or dashboard failure): repeating the identical 8s call
-        // only doubles reconnect latency and can never repair local state.
+        // that narrow transport failure gets one fresh-ticket retry. A ticket
+        // 5xx is transient too (notably while the Dashboard restarts), while
+        // auth rejection, rate limiting, and local HTTP timeouts stay single-
+        // attempt so reconnect never doubles an authoritative delay.
         var lastFailure = "gateway connect failed"
         for (attempt in 0 until CONNECT_ATTEMPTS) {
             try {
@@ -2588,7 +2588,8 @@ class GatewayChatClient(
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
-            val authFailure = (e as? DashboardHttpException)?.statusCode in setOf(401, 403)
+            val statusCode = (e as? DashboardHttpException)?.statusCode
+            val authFailure = statusCode in setOf(401, 403)
             throw GatewayConnectAttemptException(
                 message = "ws-ticket mint failed: ${e.message}",
                 stage = if (authFailure) {
@@ -2596,7 +2597,7 @@ class GatewayChatClient(
                 } else {
                     GatewayConnectFailureStage.Ticket
                 },
-                retryable = false,
+                retryable = statusCode != null && statusCode in 500..599,
             )
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000

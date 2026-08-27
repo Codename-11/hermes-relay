@@ -59,6 +59,7 @@ class GatewayClientHarness(
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
+    val transientTicketFailures = AtomicInteger(0)
     var ticketResponseDelayMs = 0L
     var closeBeforeReadyCode: Int? = null
     var resumeFails = false
@@ -604,6 +605,11 @@ class GatewayClientHarness(
                         ticketMints.incrementAndGet()
                         if (failTicketMint) {
                             MockResponse().setResponseCode(401).setBody("""{"error":"no session"}""")
+                        } else if (transientTicketFailures.getAndUpdate { remaining ->
+                                (remaining - 1).coerceAtLeast(0)
+                            } > 0
+                        ) {
+                            MockResponse().setResponseCode(502).setBody("Bad Gateway")
                         } else {
                             MockResponse()
                                 .setResponseCode(200)
@@ -1873,6 +1879,22 @@ class GatewayChatClientTest {
         assertEquals("auth failure must not repeat an identical ticket request", 1, harness.ticketMints.get())
         assertTrue(signInRequiredMarked)
         assertFalse(unreachableMarked)
+    }
+
+    @Test
+    fun `transient ticket server failure retries immediately with a fresh ticket`() {
+        harness.transientTicketFailures.set(1)
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertEquals(2, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(r.errors.isEmpty())
     }
 
     @Test

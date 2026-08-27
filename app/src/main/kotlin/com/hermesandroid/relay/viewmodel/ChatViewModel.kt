@@ -4387,7 +4387,10 @@ class ChatViewModel : ViewModel() {
         val sessionProfileName = targetProfileName
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
-        _isLoadingSessions.value = false
+        // The old profile's rows are cleared below. Keep the drawer in its
+        // loading state until HermesRuntimeBinder starts and settles the exact-
+        // profile replacement fetch.
+        _isLoadingSessions.value = true
         activateModelOptionsProfile(contextKey)
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
@@ -4592,12 +4595,15 @@ class ChatViewModel : ViewModel() {
         val generation = sessionRefreshGeneration.incrementAndGet()
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        // Set this before dispatching the fetch coroutine. Otherwise Compose can
+        // render the newly-cleared list as "No sessions" for a frame (or longer
+        // while profile selection settles) before the coroutine marks it busy.
+        if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
         sessionRefreshJob?.cancel()
         sessionRefreshJob = viewModelScope.launch {
             // Treat refreshes over an existing list as quiet background syncs.
             // The drawer keeps rendering the current rows instead of flashing
             // through a loading state whenever it opens or a turn completes.
-            _isLoadingSessions.value = handler.sessions.value.isEmpty()
             try {
                 // On the gateway, scope the drawer to the ACTIVE PROFILE via the
                 // dashboard `/api/sessions?profile=` surface (it opens that

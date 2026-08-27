@@ -573,6 +573,32 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun emptySessionRefreshMarksDrawerLoadingBeforeFetchCoroutineRuns() {
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            releaseLoad.await()
+            Result.success(emptyList())
+        }
+
+        viewModel.refreshSessions()
+
+        assertTrue(viewModel.isLoadingSessions.value)
+        releaseLoad.complete(Unit)
+        awaitCondition { !viewModel.isLoadingSessions.value }
+    }
+
+    @Test
+    fun profileContextSwitchKeepsClearedDrawerInLoadingState() {
+        viewModel.switchProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", "sentinel"),
+            sessionId = null,
+        )
+
+        assertTrue(handler.sessions.value.isEmpty())
+        assertTrue(viewModel.isLoadingSessions.value)
+    }
+
+    @Test
     fun lifecycleReconciliationDuringHydrationCannotMoveOrEraseExplicitSession() {
         val global = Profile(name = "mizu", model = "grok-4.5", description = "Mizu")
         val owner = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
