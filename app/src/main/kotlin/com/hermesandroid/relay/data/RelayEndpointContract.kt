@@ -11,6 +11,26 @@ data class RelayEndpoints(
     val healthUrl: String,
 )
 
+/** Dashboard plugin namespace used when Relay rides the Dashboard origin. */
+const val DASHBOARD_RELAY_INGRESS_PATH: String =
+    "/api/plugins/hermes-relay/transport"
+
+/**
+ * True when [raw] points at the Dashboard-mounted Relay transport rather than
+ * a directly exposed Relay listener. The distinction is authentication
+ * relevant: the outer Dashboard request keeps its cookie/bearer credential,
+ * while Relay's independently scoped session travels in
+ * `X-Hermes-Relay-Session`.
+ */
+fun isDashboardRelayIngressUrl(raw: String?): Boolean {
+    val endpoints = RelayEndpointContract.parseOrNull(raw) ?: return false
+    val path = runCatching { URI(endpoints.httpBaseUrl).rawPath.orEmpty() }
+        .getOrDefault("")
+        .trimEnd('/')
+    return path == DASHBOARD_RELAY_INGRESS_PATH ||
+        path.startsWith("$DASHBOARD_RELAY_INGRESS_PATH/")
+}
+
 /**
  * Parses the accepted Relay URL forms and derives every route from one base.
  *

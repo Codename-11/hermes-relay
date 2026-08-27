@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from fastapi import FastAPI
@@ -61,6 +61,196 @@ def _build_client() -> TestClient:
 class PluginApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = _build_client()
+
+
+class TransportIngressTests(PluginApiTestCase):
+    def test_health_is_the_only_route_without_relay_session_header(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            self.assertNotIn("Authorization", request.headers)
+            return httpx.Response(200, json={"status": "ok"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get("/transport/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(
+            response.json()["dashboard_ingress"]["path"],
+            "/api/plugins/hermes-relay/transport",
+        )
+
+    def test_client_route_requires_separate_relay_session_header(self) -> None:
+        response = self.client.get("/transport/sessions")
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("relay session", response.json()["detail"])
+
+    def test_session_header_is_rewritten_and_dashboard_auth_is_not_forwarded(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/usage/providers")
+            self.assertEqual(request.url.params["profile"], "victor")
+            self.assertEqual(request.headers["Authorization"], "Bearer relay-token")
+            self.assertEqual(
+                request.headers[plugin_api._DASHBOARD_PROXY_SECRET_HEADER],
+                "proxy-secret",
+            )
+            self.assertNotIn(plugin_api._TRANSPORT_SESSION_HEADER, request.headers)
+            self.assertNotIn("Cookie", request.headers)
+            return httpx.Response(200, json={"providers": []})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get(
+                "/transport/usage/providers?profile=victor",
+                headers={
+                    plugin_api._TRANSPORT_SESSION_HEADER: "relay-token",
+                    "Authorization": "Bearer dashboard-token",
+                    "Cookie": "session=dashboard-cookie",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_binary_body_status_and_safe_response_headers_are_preserved(self) -> None:
+        payload = b"\x00voice-bytes\xff"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/voice/transcribe")
+            self.assertEqual(request.content, payload)
+            return httpx.Response(
+                206,
+                content=b"partial",
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Range": "bytes 0-6/7",
+                    "Set-Cookie": "must-not-escape=1",
+                    "Connection": "close",
+                },
+            )
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.post(
+                "/transport/voice/transcribe",
+                content=payload,
+                headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+            )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.content, b"partial")
+        self.assertEqual(response.headers["content-range"], "bytes 0-6/7")
+        self.assertNotIn("set-cookie", response.headers)
+
+    def test_dynamic_profile_path_is_encoded_for_fixed_loopback_hop(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.host, "127.0.0.1")
+            self.assertEqual(request.url.port, plugin_api.RELAY_PORT)
+            self.assertEqual(request.url.path, "/api/profiles/my profile/soul")
+            self.assertEqual(request.url.raw_path, b"/api/profiles/my%20profile/soul")
+            return httpx.Response(200, json={"content": "soul"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get(
+                "/transport/api/profiles/my%20profile/soul",
+                headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_and_wildcard_routes_are_not_mounted(self) -> None:
+        headers = {plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"}
+        for method, path in (
+            ("POST", "/transport/pairing/register"),
+            ("GET", "/transport/media/inspect"),
+            ("GET", "/transport/bridge/activity"),
+            ("POST", "/transport/desktop/android_tap"),
+            ("PATCH", "/transport/relay/security"),
+            ("POST", "/transport/phone/message"),
+        ):
+            with self.subTest(path=path):
+                response = self.client.request(method, path, headers=headers)
+                self.assertEqual(response.status_code, 404)
+
+    def test_wrong_method_does_not_fall_through_to_loopback(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise AssertionError("disallowed method must not reach Relay")
+
+        _install_mock_transport(self, handler)
+        response = self.client.delete(
+            "/transport/media/upload",
+            headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_oversized_relay_response_is_rejected_from_content_length(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"12345")
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_TRANSPORT_RESPONSE_LIMIT", 4), patch.object(
+            plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"
+        ):
+            response = self.client.get("/transport/health")
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("size limit", response.json()["detail"])
+
+
+class TransportWebSocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    class _Socket:
+        def __init__(self) -> None:
+            self.closed: tuple[int, str] | None = None
+            self.headers: dict[str, str] = {}
+
+        async def close(self, code: int, reason: str) -> None:
+            self.closed = (code, reason)
+
+    async def test_missing_upstream_private_helpers_fails_closed(self) -> None:
+        socket = self._Socket()
+        with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=True), patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=None
+        ):
+            selected = await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertIsNone(selected)
+        self.assertEqual(socket.closed[0], 1011)  # type: ignore[index]
+
+    async def test_request_and_auth_guards_run_before_admission(self) -> None:
+        socket = self._Socket()
+        socket._hermes_ws_subprotocol = "hermes-gateway-v1"  # type: ignore[attr-defined]
+        socket.headers["sec-websocket-protocol"] = "hermes-gateway-v1"
+        request_allowed = Mock(return_value=True)
+        auth_ok = Mock(return_value=True)
+        with patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        ), patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ):
+            selected = await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(selected, "hermes-gateway-v1")
+        self.assertIsNone(socket.closed)
+        request_allowed.assert_called_once_with(socket)
+        auth_ok.assert_called_once_with(socket)
+
+    async def test_failed_dashboard_ticket_is_policy_close(self) -> None:
+        socket = self._Socket()
+        with patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        ), patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(lambda _ws: True, lambda _ws: False),
+        ):
+            await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
+
+    async def test_disabled_plugin_is_rejected_before_dashboard_ticket_consumption(self) -> None:
+        socket = self._Socket()
+        guards = Mock()
+        with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=False), patch.object(
+            plugin_api, "_dashboard_ws_guards", guards
+        ):
+            await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
+        guards.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

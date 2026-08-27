@@ -11,6 +11,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
@@ -151,6 +152,12 @@ class ConnectionManager(
     private val proxyClientProvider: ((String) -> OkHttpClient?)? = null,
     /** Test seam for observing lifecycle teardown without opening a socket. */
     private val okHttpClientFactory: (() -> OkHttpClient)? = null,
+    /**
+     * Builds a Dashboard-authorized WebSocket request for plugin ingress.
+     * Implementations mint a fresh single-use Dashboard WS ticket on every
+     * invocation. Direct Relay listeners never call this provider.
+     */
+    private val dashboardRelayRequestProvider: (suspend (String) -> Request?)? = null,
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -1010,7 +1017,7 @@ class ConnectionManager(
         scope.launch { doConnectInternal(url, previousSocketToClose, replaceReason) }
     }
 
-    private fun doConnectInternal(
+    private suspend fun doConnectInternal(
         url: String,
         previousSocketToClose: WebSocket? = null,
         replaceReason: String = "Relay socket replaced",
@@ -1035,7 +1042,11 @@ class ConnectionManager(
             buildClient(url)
         }
 
-        val request = buildRelayRequestOrNull(url)
+        val request = if (isDashboardRelayIngressUrl(url)) {
+            dashboardRelayRequestProvider?.invoke(url)
+        } else {
+            buildRelayRequestOrNull(url)
+        }
         if (request == null) {
             // A malformed relay URL (an invalid/empty host from a corrupt or
             // hand-edited pairing payload) can't be built into a request. This
@@ -1047,8 +1058,16 @@ class ConnectionManager(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
                 title = "Invalid relay URL",
-                detail = "The relay address could not be parsed; re-pair to refresh it.",
-                operation = "Build Relay WebSocket request",
+                detail = if (isDashboardRelayIngressUrl(url)) {
+                    "Dashboard authorization could not prepare the Relay WebSocket request."
+                } else {
+                    "The relay address could not be parsed; re-pair to refresh it."
+                },
+                operation = if (isDashboardRelayIngressUrl(url)) {
+                    "Mint Dashboard Relay WebSocket ticket"
+                } else {
+                    "Build Relay WebSocket request"
+                },
                 configuredUrl = url,
                 suggestion = "Edit or re-pair the Relay route to replace the invalid address.",
             )

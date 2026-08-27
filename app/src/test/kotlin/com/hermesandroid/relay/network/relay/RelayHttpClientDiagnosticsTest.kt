@@ -10,9 +10,11 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
 
 class RelayHttpClientDiagnosticsTest {
     @Before
@@ -71,6 +73,87 @@ class RelayHttpClientDiagnosticsTest {
             val entry = DiagnosticsLog.recent(setOf(DiagnosticCategory.Relay)).first()
             assertEquals("ws://[host]/relay/ws", entry.configuredUrl)
             assertEquals("http://[host]/relay/health", entry.requestUrl)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun dashboardIngressUsesOuterAuthClientAndSeparateRelayHeader() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"sessions":[]}"""))
+        server.start()
+        try {
+            val ingress = "http://${server.hostName}:${server.port}" +
+                "/api/plugins/hermes-relay/transport"
+            val providerCalls = AtomicInteger(0)
+            val outerAuthClient = OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    chain.proceed(
+                        chain.request().newBuilder()
+                            .header("X-Dashboard-Test-Auth", "ready")
+                            .build(),
+                    )
+                }
+                .build()
+            val client = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { ingress },
+                sessionTokenProvider = { "relay-session" },
+                dashboardHttpClientProvider = {
+                    providerCalls.incrementAndGet()
+                    outerAuthClient
+                },
+            )
+
+            assertTrue(client.listSessions().isSuccess)
+            val request = server.takeRequest()
+            assertEquals(1, providerCalls.get())
+            assertEquals("/api/plugins/hermes-relay/transport/sessions", request.path)
+            assertEquals("ready", request.getHeader("X-Dashboard-Test-Auth"))
+            assertEquals("relay-session", request.getHeader(RELAY_SESSION_HEADER))
+            assertNull(request.getHeader("Authorization"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun dashboardIngressHealthTimeoutClientDerivesFromOuterAuthClient() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"status":"ok","version":"1.0.0","clients":0,"sessions":0}""",
+            ),
+        )
+        server.start()
+        try {
+            val ingress = "http://${server.hostName}:${server.port}" +
+                "/api/plugins/hermes-relay/transport"
+            val providerCalls = AtomicInteger(0)
+            val client = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { ingress },
+                sessionTokenProvider = { null },
+                dashboardHttpClientProvider = {
+                    providerCalls.incrementAndGet()
+                    OkHttpClient.Builder()
+                        .addInterceptor { chain ->
+                            chain.proceed(
+                                chain.request().newBuilder()
+                                    .header("X-Dashboard-Test-Auth", "ready")
+                                    .build(),
+                            )
+                        }
+                        .build()
+                },
+            )
+
+            assertTrue(client.probeHealth(ingress).isSuccess)
+            val request = server.takeRequest()
+            assertEquals(1, providerCalls.get())
+            assertEquals("ready", request.getHeader("X-Dashboard-Test-Auth"))
+            assertEquals("/api/plugins/hermes-relay/transport/health", request.path)
         } finally {
             server.shutdown()
         }

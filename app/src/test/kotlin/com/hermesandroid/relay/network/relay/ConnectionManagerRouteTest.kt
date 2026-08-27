@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -27,6 +28,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowNetwork
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Standard-route (no relay socket) coverage for [ConnectionManager]'s ADR 24
@@ -207,5 +209,36 @@ class ConnectionManagerRouteTest {
         val request = server.takeRequest(5, TimeUnit.SECONDS)
         assertNotNull(request)
         assertEquals("/relay/ws", request!!.path)
+    }
+
+    @Test
+    fun `dashboard relay ingress asks for a fresh authorized request per dial`() {
+        val requestCount = AtomicInteger(0)
+        val manager = ConnectionManager(
+            ChannelMultiplexer(),
+            dashboardRelayRequestProvider = { url ->
+                val ticket = requestCount.incrementAndGet()
+                Request.Builder().url("$url?ticket=ticket-$ticket").build()
+            },
+        ).also { managers.add(it) }
+        manager.setInsecureMode(true)
+        val ingress = "ws://${server.hostName}:${server.port}" +
+            "/api/plugins/hermes-relay/transport/ws"
+
+        manager.connect(ingress)
+        val first = server.takeRequest(5, TimeUnit.SECONDS)
+        manager.disconnect()
+        manager.connect(ingress)
+        val second = server.takeRequest(5, TimeUnit.SECONDS)
+
+        assertEquals(2, requestCount.get())
+        assertEquals(
+            "/api/plugins/hermes-relay/transport/ws?ticket=ticket-1",
+            first?.path,
+        )
+        assertEquals(
+            "/api/plugins/hermes-relay/transport/ws?ticket=ticket-2",
+            second?.path,
+        )
     }
 }

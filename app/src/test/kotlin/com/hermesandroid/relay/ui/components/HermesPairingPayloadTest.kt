@@ -27,6 +27,64 @@ import org.junit.Test
 class HermesPairingPayloadTest {
 
     @Test
+    fun apiLessDashboardRelayPayload_isAccepted() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                "code": "ABC123",
+                "transport_hint": "wss"
+              },
+              "endpoints": [
+                {
+                  "role": "https",
+                  "priority": 0,
+                  "dashboard": { "url": "https://dashboard.example.test" },
+                  "relay": {
+                    "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                    "transport_hint": "wss"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertFalse(payload!!.hasApiServer)
+        assertEquals("", payload.serverUrl)
+        assertEquals("https", payload.endpoints!!.single().role)
+        assertNull(payload.endpoints!!.single().api)
+        assertEquals(
+            "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+            payload.endpoints!!.single().relay?.url,
+        )
+    }
+
+    @Test
+    fun apiLessDashboardRelayPayload_withoutEndpoints_synthesizesIngressCandidate() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                "code": "ABC123"
+              }
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertEquals("https://dashboard.example.test", payload!!.endpoints!!.single().dashboard?.url)
+        assertNull(payload.endpoints!!.single().api)
+    }
+
+    @Test
     fun multilineApiCredentialIsRejectedAcrossPairingQrShapes() {
         assertNull(
             parseHermesPairingQr(
