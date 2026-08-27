@@ -3402,6 +3402,8 @@ fun RelayApp() {
                                         okHttpClient = profileInspectorHttpClient,
                                         relayUrlProvider = { relayUrl },
                                         sessionTokenProvider = { relayToken },
+                                        dashboardHttpClientProvider =
+                                            connectionViewModel::dashboardHttpClientForRelayIngress,
                                     ),
                                     gatewayClient = inspectorGatewayClient,
                                     savedStateHandle = ssh,
