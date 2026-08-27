@@ -648,6 +648,20 @@
     <string name="changelog_no_notes">No release notes available.</string>
     <string name="changelog_collapse">Collapse</string>
     <string name="changelog_expand">Expand</string>
+    <string name="changelog_state_expanded">Expanded</string>
+    <string name="changelog_state_collapsed">Collapsed</string>
+    <string name="changelog_installed">Installed</string>
+    <string name="changelog_also_improved">Also improved</string>
+    <string name="changelog_toast_also">Also: %1$s</string>
+    <string name="changelog_view_all">View all</string>
+    <plurals name="changelog_additional_feature_count">
+        <item quantity="one">%1$d feature</item>
+        <item quantity="other">%1$d features</item>
+    </plurals>
+    <plurals name="changelog_fix_count">
+        <item quantity="one">%1$d fix</item>
+        <item quantity="other">%1$d fixes</item>
+    </plurals>
 
     <!-- DiagnosticsScreen -->
     <string name="diag_title">Diagnostics</string>
@@ -754,7 +768,7 @@
     <string name="settings_developer_options">Developer options</string>
     <string name="settings_developer_options_desc">Feature flags, data management, experimental</string>
     <string name="settings_whats_new">What\'s New</string>
-    <string name="settings_whats_new_desc">Release notes and full changelog</string>
+    <string name="settings_whats_new_desc">Android release history</string>
     <string name="settings_about">About</string>
     <string name="settings_about_desc">Version, credits, docs</string>
     <string name="settings_profile_lock">Profile lock</string>

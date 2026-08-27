@@ -1,5 +1,9 @@
 v1.13.2 - Supervised Mode and clearer activity
 
-* Configure a profile-pinned Supervised Mode with device-authenticated parent settings.
-* Keep Supervised Chat visible when parent access relocks after full settings.
-* Keep uncertain session activity neutral until live work is confirmed.
+Supervised Mode
+* Protect parent settings with your phone's device authentication.
+* Choose access to attachments, Standard voice, generated media, history, actions, and technical details.
+* Keep Supervised Chat open when returning from parent settings.
+
+Also improved
+* Activity indicators now appear only while Hermes is genuinely working.

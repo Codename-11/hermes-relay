@@ -37,6 +37,47 @@ class ChangelogParserTest {
     }
 
     @Test
+    fun parsesCuratedHighlightAndImprovements() {
+        val raw = """
+            {
+              "schema": 2,
+              "versions": [
+                {
+                  "version": "1.2.0",
+                  "title": "A useful release",
+                  "date": "2026-06-20",
+                  "highlight": {
+                    "title": "The main reason to care",
+                    "summary": "A plain-language explanation.",
+                    "bullets": ["a", "b", "c"]
+                  },
+                  "improvements": ["d", "e"],
+                  "toastDigest": {
+                    "additionalFeatureCount": 1,
+                    "fixCount": 2,
+                    "preview": ["Secondary feature", "Important fix"]
+                  },
+                  "playNotes": "Concise Play copy."
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val entry = ChangelogStore.parse(raw).versions.single()
+
+        assertEquals("The main reason to care", entry.highlight?.title)
+        assertEquals("A plain-language explanation.", entry.highlight?.summary)
+        assertEquals(listOf("a", "b", "c"), entry.highlight?.bullets)
+        assertEquals(listOf("d", "e"), entry.improvements)
+        assertEquals(1, entry.toastDigest?.additionalFeatureCount)
+        assertEquals(2, entry.toastDigest?.fixCount)
+        assertEquals(listOf("Secondary feature", "Important fix"), entry.toastDigest?.preview)
+        assertEquals("Concise Play copy.", entry.playNotes)
+        assertEquals("v1.2.0 · 2026-06-20", entry.versionLine())
+        assertEquals(listOf("The main reason to care", "Also improved"), entry.toGroups().map { it.header })
+    }
+
+    @Test
     fun blankInputYieldsEmptyChangelog() {
         assertTrue(ChangelogStore.parse("").versions.isEmpty())
         assertTrue(ChangelogStore.parse("   \n  ").versions.isEmpty())

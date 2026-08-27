@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android presents Relay Git as a first-class native workspace.** A compact optional Chat rail opens repository status, line totals, filters, diffs, branches, staging, commits, and remotes; the full workspace remains available from Settings when Chat controls are hidden.
 - **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, tracked line totals, scoped write grants, and explicit confirmation protect repository reads and mutations.
 
+### Changed
+
+- **Android What's New leads with one curated release highlight without interrupting startup.** A timed post-update toast can be swiped or closed, previews additional feature/fix counts when a release has meaningful secondary items, expands into the centered highlight view on request, and keeps the full technical history available. Each release can present one plain-language summary, up to three primary benefits, and up to two quieter improvements, while release checks keep the structured entry, fallback, Play copy, and public release records aligned.
+
 ### Fixed
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.

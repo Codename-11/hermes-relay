@@ -538,6 +538,20 @@
     <string name="changelog_no_notes">No hay notas de versión disponibles.</string>
     <string name="changelog_collapse">Colapsar</string>
     <string name="changelog_expand">Expandir</string>
+    <string name="changelog_state_expanded">Expandido</string>
+    <string name="changelog_state_collapsed">Contraído</string>
+    <string name="changelog_installed">Instalada</string>
+    <string name="changelog_also_improved">También mejorado</string>
+    <string name="changelog_toast_also">También: %1$s</string>
+    <string name="changelog_view_all">Ver todo</string>
+    <plurals name="changelog_additional_feature_count">
+        <item quantity="one">%1$d función</item>
+        <item quantity="other">%1$d funciones</item>
+    </plurals>
+    <plurals name="changelog_fix_count">
+        <item quantity="one">%1$d corrección</item>
+        <item quantity="other">%1$d correcciones</item>
+    </plurals>
     <string name="diag_title">Diagnóstico</string>
     <string name="diag_back">Atrás</string>
     <string name="diag_status">Estado</string>
@@ -636,7 +650,7 @@
     <string name="settings_developer_options">Opciones de desarrollador</string>
     <string name="settings_developer_options_desc">Indicadores de funciones, gestión de datos, experimental.</string>
     <string name="settings_whats_new">Novedades</string>
-    <string name="settings_whats_new_desc">Notas de la versión y registro de cambios completo</string>
+    <string name="settings_whats_new_desc">Historial de versiones de Android</string>
     <string name="settings_about">Acerca de</string>
     <string name="settings_about_desc">Versión, créditos, documentos.</string>
     <string name="settings_profile_lock">Bloqueo de perfil</string>

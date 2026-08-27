@@ -150,6 +150,7 @@ jobs:
       - name: Validate release metadata and Android API compatibility
         run: |
           python3 scripts/check-version-tracks.py
+          python3 scripts/check-android-release-notes.py
           python3 scripts/check-privacy-policy.py
           python3 scripts/check-android-locales.py
           python3 scripts/check-android-collection-apis.py

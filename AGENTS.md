@@ -102,6 +102,21 @@ PR; never resolve those cases by choosing a side automatically.
 - Prioritize findings that warrant holding the merge. State the impacted path
   and the concrete failure mode.
 
+## Automated public issue triage
+
+New public issues may receive one clearly labeled **Hermes-Relay automated
+triage** reply. That first response may classify the report with existing
+type/area labels, point to related issues or current code/docs, ask for safe
+sanitized diagnostics, and flag the thread for maintainer review.
+
+GitHub attributes that reply to the repository-scoped
+`hermes-relay-triage[bot]` App, never to a maintainer's personal account.
+
+The automated lane never closes, assigns, milestones, prioritizes, promises a
+fix/release/timeline, or continues replying after its first response. A related
+issue is not automatically a duplicate. Human maintainer comments and decisions
+remain authoritative; read the complete live thread before acting on an issue.
+
 ## Public-repo writing hygiene
 
 Everything committed is public. In CHANGELOG, DEVLOG, README, docs, and release

@@ -756,8 +756,10 @@ cancels). Ranked next increments, in value-per-complexity order:
 
 Plan: `docs/plans/2026-07-06-open-issue-resolution.md` (13 open issues triaged;
 fix-state claims verified against tags with `git merge-base --is-ancestor`).
-**Automation never posts to GitHub** — every comment/close/label below is an
-owner action, deliberately queued here:
+This historical batch remains owner-controlled. The bounded new-issue triage
+lane may post one clearly identified first response and basic type/area labels,
+but it does not execute backlog actions. Every comment, close, relabel, and
+milestone below remains an owner action deliberately queued here:
 
 - [ ] **#131** — close: fixed by `3573ba8` (PR #136), shipped android-v1.2.5
       (reporter was on 1.2.3). Optionally re-check Play vitals for the
