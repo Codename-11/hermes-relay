@@ -412,6 +412,27 @@ function relayHealthUrl(raw: string): string {
   return parsed.toString()
 }
 
+const DASHBOARD_RELAY_INGRESS_PATH = '/api/plugins/hermes-relay/transport'
+
+/**
+ * Dashboard Relay ingress requires a fresh Dashboard WebSocket ticket for
+ * every dial. Desktop does not implement that authentication flow yet, so an
+ * advertised ingress route must remain available for persistence and display
+ * without becoming a selectable transport candidate.
+ */
+export function isDashboardRelayIngressCandidate(candidate: EndpointCandidate): boolean {
+  try {
+    const parsed = new URL(candidate.relay.url)
+    const path = parsed.pathname.replace(/\/+$/, '')
+    const marker = path.indexOf(DASHBOARD_RELAY_INGRESS_PATH)
+    if (marker < 0) return false
+    const markerEndsAt = marker + DASHBOARD_RELAY_INGRESS_PATH.length
+    return markerEndsAt === path.length || path[markerEndsAt] === '/'
+  } catch {
+    return false
+  }
+}
+
 interface CacheEntry {
   expiresAt: number
   reachable: boolean
@@ -578,11 +599,18 @@ export async function probeCandidatesByPriority(
 
   const total = candidates.length
   const indexOf = new Map<EndpointCandidate, number>(candidates.map((c, i) => [c, i + 1]))
+  const selectableCandidates = candidates.filter(candidate => !isDashboardRelayIngressCandidate(candidate))
+  if (selectableCandidates.length === 0) {
+    throw new Error(
+      'no Desktop-compatible endpoint candidates to probe — ' +
+        'Dashboard Relay ingress requires Dashboard WebSocket ticket support',
+    )
+  }
   const now = Date.now()
   // Bucket by priority ascending. Sort after the groupBy so cache-hit
   // fast-path and the live race both see tiers in the same order.
   const groups = new Map<number, EndpointCandidate[]>()
-  for (const c of candidates) {
+  for (const c of selectableCandidates) {
     const bucket = groups.get(c.priority) ?? []
     bucket.push(c)
     groups.set(c.priority, bucket)
