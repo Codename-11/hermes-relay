@@ -170,13 +170,15 @@ risk, and preserve contributor lineage when replacing or salvaging prior work.
 Check an item when it is satisfied or when its N/A rationale is written in the
 body; do not use checked boxes as a substitute for evidence.
 
-New non-draft pull requests may receive one **Hermes-Relay automated PR intake**
-reply from `hermes-relay-triage[bot]`. The bot checks the live body, base branch,
-changed-path areas, template completeness, stated verification, visual proof,
-and lineage without checking out or executing contributor code. It may add
-bounded area/intake labels and identify missing evidence, but it does not review
-code correctness, approve, request changes, merge, close, assign, request
-reviewers, push commits, edit the PR, rerun workflows, or select review bundles.
+New external-contributor, non-draft pull requests may receive one
+**Hermes-Relay automated PR intake** reply from `hermes-relay-triage[bot]`.
+Owner-authored `Codename-11` PRs and bot PRs skip this lane. For eligible PRs,
+the bot checks the live body, base branch, changed-path areas, template
+completeness, stated verification, visual proof, and lineage without checking
+out or executing contributor code. It may add bounded area/intake labels and
+identify missing evidence, but it does not review code correctness, approve,
+request changes, merge, close, assign, request reviewers, push commits, edit the
+PR, rerun workflows, or select review bundles.
 
 `origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
 fast-forward-only mirror and create each task in its own branch/worktree from the
