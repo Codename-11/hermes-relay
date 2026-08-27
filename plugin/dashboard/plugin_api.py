@@ -498,6 +498,15 @@ async def _proxy_transport_websocket(
                         elif message.type == aiohttp.WSMsgType.ERROR:
                             await websocket.close(code=1011, reason="Relay WebSocket failed")
                             return
+                    # aiohttp's client iterator normally stops when it consumes
+                    # the peer CLOSE frame instead of yielding that frame.  Do
+                    # not leave the Dashboard client half-open in that normal
+                    # shutdown path.
+                    if websocket.application_state.name != "DISCONNECTED":
+                        await websocket.close(
+                            code=int(upstream.close_code or 1000),
+                            reason="",
+                        )
 
                 async def plugin_enabled_watch() -> None:
                     while _dashboard_plugin_is_enabled():

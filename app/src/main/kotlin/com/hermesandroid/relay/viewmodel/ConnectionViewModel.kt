@@ -47,6 +47,7 @@ import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.data.ChatInputPreferencesRepository
 import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.DASHBOARD_RELAY_INGRESS_PATH
 import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
@@ -199,6 +200,12 @@ internal fun dashboardOriginForRelayIngress(
         !dashboard.host.equals(relay.host, ignoreCase = true) ||
         effectivePort(dashboard, dashboardScheme) != effectivePort(relay, relayDashboardScheme)
     ) {
+        return null
+    }
+    val dashboardPath = dashboard.rawPath.orEmpty().trimEnd('/').takeUnless { it == "/" }.orEmpty()
+    val expectedIngressPath = "$dashboardPath$DASHBOARD_RELAY_INGRESS_PATH"
+    val relayPath = relay.rawPath.orEmpty().trimEnd('/')
+    if (relayPath != expectedIngressPath && !relayPath.startsWith("$expectedIngressPath/")) {
         return null
     }
     return dashboardUrl?.trim()?.trimEnd('/')

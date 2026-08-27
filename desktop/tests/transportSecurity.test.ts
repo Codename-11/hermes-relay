@@ -178,3 +178,13 @@ test('secure proxy transport sends the Relay session on the WebSocket upgrade', 
   assert.deepEqual(headers, { 'X-Hermes-Relay-Session': 'session-secret' })
   transport.kill()
 })
+
+test('RelayTransport rejects Dashboard ingress without ticket support', () => {
+  assert.throws(
+    () => new RelayTransport({
+      url: 'wss://dashboard.example.test/base/api/plugins/hermes-relay/transport/ws',
+      sessionToken: 'session-secret',
+    }),
+    /Dashboard WebSocket ticket support/,
+  )
+})

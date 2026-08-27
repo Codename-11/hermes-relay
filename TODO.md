@@ -6,6 +6,20 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Upstream a public Dashboard plugin WebSocket admission seam
+
+The same-origin Relay ingress follows current upstream's bundled Dashboard
+plugin pattern but must feature-detect private
+`hermes_cli.web_server._ws_request_is_allowed` and `_ws_auth_ok` helpers.
+Propose one public helper that combines Host/Origin policy, single-use ticket
+authentication, and runtime plugin-enabled gating for `APIRouter` WebSockets.
+After it is available in the supported Hermes baseline, replace the private
+imports and remove the Relay plugin's local runtime-disable polling. Until
+then, missing helpers fail closed and direct Relay remains an advanced
+compatibility route.
+
+---
+
 ## Certify Android session activity across lifecycle and profile boundaries
 
 The contract fixture now covers every upstream live status, complete-snapshot

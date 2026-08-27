@@ -102,6 +102,27 @@ test('select and access commands update shared host state', async () => {
   assert.equal(stored.hosts[url]?.access_mode, 'full_access')
 })
 
+test('hosts select rejects a persisted Dashboard Relay ingress alternate', async () => {
+  const { url } = await setup()
+  const ingress = 'wss://home.example.test/api/plugins/hermes-relay/transport'
+  await saveSession(url, 'secret-token', '1.2.3', {
+    routeCandidates: [
+      {
+        role: 'https',
+        priority: 0,
+        dashboard: { url: 'https://home.example.test' },
+        relay: { url: ingress },
+      },
+      { role: 'tailscale', priority: 1, relay: { url } },
+    ],
+  })
+
+  assert.equal(await hostsCommand(args(['select', ingress], { 'no-color': true })), 1)
+  assert.equal(await getActiveDesktopRelayUrl(), null)
+  assert.equal(await getSession(ingress), null)
+  assert.ok((await getSession(url))?.routeCandidates?.some(candidate => candidate.relay.url === ingress))
+})
+
 test('full access requires an explicit confirmation flag', async () => {
   const { url } = await setup()
   assert.equal(await hostsCommand(args(['access', 'full-access'], { remote: url })), 2)

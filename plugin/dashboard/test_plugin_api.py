@@ -6,6 +6,10 @@ Uses FastAPI's ``TestClient`` + ``httpx.MockTransport`` patched over
 
 from __future__ import annotations
 
+import asyncio
+import os
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,10 +17,15 @@ from typing import Callable, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+from aiohttp import web
 from fastapi import FastAPI
+from fastapi import WebSocket
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from plugin.dashboard import plugin_api
+from plugin.relay.config import RelayConfig
+from plugin.relay.server import RelayServer, handle_ws
 
 
 # ---------------------------------------------------------------------------
@@ -52,10 +61,85 @@ def _install_mock_transport(
     return captured
 
 
-def _build_client() -> TestClient:
+def _build_client(*, prefix: str = "") -> TestClient:
     app = FastAPI()
-    app.include_router(plugin_api.router)
+    app.include_router(plugin_api.router, prefix=prefix)
     return TestClient(app)
+
+
+class _EphemeralRelay:
+    """Run a real aiohttp Relay WebSocket on an OS-assigned loopback port."""
+
+    def __init__(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.port = 0
+        self.error: BaseException | None = None
+        self.runner: web.AppRunner | None = None
+        self.server = RelayServer(
+            RelayConfig(
+                host="127.0.0.1",
+                port=0,
+                profile_discovery_enabled=False,
+                session_persistence_path=None,
+                secure_proxy_enabled=False,
+                experimental_reach_enabled=False,
+            )
+        )
+
+    async def _echo_ws(self, request: web.Request) -> web.WebSocketResponse:
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for message in socket:
+            if message.type == web.WSMsgType.TEXT:
+                await socket.send_str(message.data)
+            elif message.type == web.WSMsgType.BINARY:
+                await socket.send_bytes(message.data)
+                await socket.close(code=1001, message=b"echo complete")
+        return socket
+
+    async def _start(self) -> None:
+        app = web.Application()
+        app["server"] = self.server
+        app.router.add_get("/ws", handle_ws)
+        app.router.add_get("/echo", self._echo_ws)
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, "127.0.0.1", 0)
+        await site.start()
+        sockets = getattr(site, "_server").sockets
+        self.port = int(sockets[0].getsockname()[1])
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self._start())
+        except BaseException as exc:  # pragma: no cover - startup diagnostics
+            self.error = exc
+            self.ready.set()
+            return
+        self.ready.set()
+        self.loop.run_forever()
+
+    def start(self) -> None:
+        self.thread.start()
+        if not self.ready.wait(timeout=10):
+            raise TimeoutError("ephemeral Relay did not start")
+        if self.error is not None:
+            raise RuntimeError("ephemeral Relay failed to start") from self.error
+
+    def stop(self) -> None:
+        async def _stop() -> None:
+            await self.server.close()
+            if self.runner is not None:
+                await self.runner.cleanup()
+
+        future = asyncio.run_coroutine_threadsafe(_stop(), self.loop)
+        future.result(timeout=10)
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=10)
+        self.loop.close()
 
 
 class PluginApiTestCase(unittest.TestCase):
@@ -252,6 +336,205 @@ class TransportWebSocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
         guards.assert_not_called()
 
+
+class TransportWebSocketIntegrationTests(unittest.TestCase):
+    """Exercise the complete FastAPI -> aiohttp Relay WebSocket path."""
+
+    prefix = "/base/api/plugins/hermes-relay"
+
+    def setUp(self) -> None:
+        self.relay = _EphemeralRelay()
+        self.relay.start()
+        self.addCleanup(self.relay.stop)
+
+        environment = patch.dict(
+            os.environ,
+            {"HERMES_RELAY_DASHBOARD_PROXY_SECRET": "integration-test-secret"},
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+
+        relay_port = patch.object(plugin_api, "RELAY_PORT", self.relay.port)
+        relay_port.start()
+        self.addCleanup(relay_port.stop)
+
+        enabled = patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        )
+        enabled.start()
+        self.addCleanup(enabled.stop)
+
+    @staticmethod
+    def _auth_payload(**payload: str) -> dict[str, object]:
+        return {
+            "channel": "system",
+            "type": "auth",
+            "id": "auth-1",
+            "payload": {
+                "device_name": "Hermetic phone",
+                "device_id": "hermetic-phone-1",
+                **payload,
+            },
+        }
+
+    def _client(self, *, include_echo: bool = False) -> TestClient:
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix=self.prefix)
+        if include_echo:
+            path = f"{self.prefix}/transport/echo-test"
+
+            @app.websocket(path)
+            async def echo_transport(websocket: WebSocket) -> None:
+                await plugin_api._proxy_transport_websocket(
+                    websocket,
+                    "/echo",
+                    require_session_header=False,
+                )
+
+        return TestClient(app)
+
+    def test_prefixed_ingress_pairs_reconnects_and_runs_guards_before_accept(self) -> None:
+        pairing_code = "ABC123"
+        self.assertTrue(self.relay.server.pairing.register_code(pairing_code))
+        guard_events: list[tuple[str, str]] = []
+
+        def request_allowed(websocket: WebSocket) -> bool:
+            guard_events.append(("request", websocket.application_state.name))
+            return True
+
+        def auth_ok(websocket: WebSocket) -> bool:
+            guard_events.append(("auth", websocket.application_state.name))
+            return True
+
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ), self._client() as client:
+            with client.websocket_connect(path) as socket:
+                socket.send_json(self._auth_payload(pairing_code=pairing_code))
+                paired = socket.receive_json()
+                self.assertEqual(paired["type"], "auth.ok")
+                session_token = paired["payload"]["session_token"]
+
+                socket.send_bytes(b"relay-binary-frame")
+                socket.send_json(
+                    {
+                        "channel": "system",
+                        "type": "ping",
+                        "id": "ping-1",
+                        "payload": {"ts": 42},
+                    }
+                )
+                pong = socket.receive_json()
+                self.assertEqual(pong["type"], "pong")
+                self.assertEqual(pong["id"], "ping-1")
+                self.assertEqual(pong["payload"]["ts"], 42)
+
+            with client.websocket_connect(path) as socket:
+                socket.send_json(self._auth_payload(session_token=session_token))
+                reconnected = socket.receive_json()
+                self.assertEqual(reconnected["type"], "auth.ok")
+                self.assertEqual(
+                    reconnected["payload"]["session_token"], session_token
+                )
+
+        self.assertEqual(
+            guard_events,
+            [
+                ("request", "CONNECTING"),
+                ("auth", "CONNECTING"),
+                ("request", "CONNECTING"),
+                ("auth", "CONNECTING"),
+            ],
+        )
+        deadline = time.monotonic() + 2
+        while self.relay.server.client_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.relay.server.client_count, 0)
+
+    def test_binary_and_relay_close_are_forwarded_bidirectionally(self) -> None:
+        guards = (lambda _ws: True, lambda _ws: True)
+        path = f"{self.prefix}/transport/echo-test"
+        with patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=guards
+        ), self._client(include_echo=True) as client:
+            with client.websocket_connect(path) as socket:
+                socket.send_bytes(b"\x00relay\xff")
+                self.assertEqual(socket.receive_bytes(), b"\x00relay\xff")
+                close = socket.receive()
+                self.assertEqual(close["type"], "websocket.close")
+                self.assertEqual(close["code"], 1001)
+
+    def test_single_use_ticket_replay_is_denied_before_relay_connect(self) -> None:
+        tickets = {"fresh-ticket"}
+        guard_events: list[str] = []
+
+        def request_allowed(_websocket: WebSocket) -> bool:
+            guard_events.append("request")
+            return True
+
+        def auth_ok(websocket: WebSocket) -> bool:
+            guard_events.append("auth")
+            protocols = {
+                item.strip()
+                for item in websocket.headers.get(
+                    "sec-websocket-protocol", ""
+                ).split(",")
+            }
+            credential = next(
+                (
+                    item.removeprefix("hermes-gateway-ticket.")
+                    for item in protocols
+                    if item.startswith("hermes-gateway-ticket.")
+                ),
+                "",
+            )
+            if "hermes-gateway-v1" not in protocols or credential not in tickets:
+                return False
+            tickets.remove(credential)
+            websocket._hermes_ws_subprotocol = "hermes-gateway-v1"  # type: ignore[attr-defined]
+            return True
+
+        subprotocols = [
+            "hermes-gateway-v1",
+            "hermes-gateway-ticket.fresh-ticket",
+        ]
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ), self._client() as client:
+            with client.websocket_connect(path, subprotocols=subprotocols) as socket:
+                self.assertEqual(socket.accepted_subprotocol, "hermes-gateway-v1")
+                socket.send_json(
+                    self._auth_payload(
+                        session_token=self.relay.server.sessions.create_session(
+                            "Hermetic phone", "hermetic-phone-1"
+                        ).token
+                    )
+                )
+                self.assertEqual(socket.receive_json()["type"], "auth.ok")
+
+            with self.assertRaises(WebSocketDisconnect) as denied:
+                with client.websocket_connect(path, subprotocols=subprotocols):
+                    pass
+            self.assertEqual(denied.exception.code, 1008)
+
+        self.assertEqual(guard_events, ["request", "auth", "request", "auth"])
+
+    def test_missing_dashboard_helpers_denies_upgrade_without_relay_client(self) -> None:
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=None
+        ), self._client() as client:
+            with self.assertRaises(WebSocketDisconnect) as denied:
+                with client.websocket_connect(path):
+                    pass
+        self.assertEqual(denied.exception.code, 1011)
+        self.assertEqual(self.relay.server.client_count, 0)
 
 # ---------------------------------------------------------------------------
 # 2xx passthrough
