@@ -109,6 +109,9 @@ triage** reply. That first response may classify the report with existing
 type/area labels, point to related issues or current code/docs, ask for safe
 sanitized diagnostics, and flag the thread for maintainer review.
 
+GitHub attributes that reply to the repository-scoped
+`hermes-relay-triage[bot]` App, never to a maintainer's personal account.
+
 The automated lane never closes, assigns, milestones, prioritizes, promises a
 fix/release/timeline, or continues replying after its first response. A related
 issue is not automatically a duplicate. Human maintainer comments and decisions

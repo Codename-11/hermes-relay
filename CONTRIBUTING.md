@@ -112,6 +112,9 @@ issues, and public release state; it may add existing type/area labels and ask
 for a focused, safe diagnostic such as the app version, interaction mode, or a
 sanitized log excerpt.
 
+GitHub displays the response as authored by `hermes-relay-triage[bot]`, a
+repository-scoped App rather than a maintainer's personal account.
+
 That reply is an acknowledgement and initial analysis, not a maintainer
 decision. The automated path does not close issues, assign work, set milestones
 or priority, promise a fix or release, or continue the conversation. It will
