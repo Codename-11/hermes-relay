@@ -104,6 +104,10 @@ class GatewayChatClient(
     private val callbackDispatcher: (block: () -> Unit) -> Unit = MainThreadDispatcher,
     /** Surface for "this server has no usable /api/ws" — flips availability to Unsupported. */
     private val onGatewayUnsupported: () -> Unit = {},
+    /** Ticket/upgrade auth rejection is distinct from an unsupported Gateway. */
+    private val onGatewaySignInRequired: () -> Unit = {},
+    /** A bounded ticket/connect failure makes this route unreachable for now. */
+    private val onGatewayUnreachable: () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** Max wall-clock a single mid-turn reconnect keeps retrying before failing the turn. */
     private val midTurnRejoinWindowMs: Long = MAX_MIDTURN_REJOIN_MS,
@@ -2544,18 +2548,32 @@ class GatewayChatClient(
             throw GatewayPreflightException("gateway connect cooling down")
         }
 
-        // Two attempts: a just-died socket (network switch, server restart)
-        // can poison the first try via a stale pooled connection. Each
-        // attempt mints a FRESH single-use ticket — never reuse one.
+        // A just-died pooled socket can poison the first WebSocket upgrade, so
+        // that narrow transport failure gets one fresh-ticket retry. A ticket
+        // 5xx is transient too (notably while the Dashboard restarts), while
+        // auth rejection, rate limiting, and local HTTP timeouts stay single-
+        // attempt so reconnect never doubles an authoritative delay.
         var lastFailure = "gateway connect failed"
-        repeat(CONNECT_ATTEMPTS) { attempt ->
+        for (attempt in 0 until CONNECT_ATTEMPTS) {
             try {
                 connectOnce()
                 connectCooldownUntil = 0L
                 return
             } catch (e: GatewayConnectAttemptException) {
                 lastFailure = e.message ?: lastFailure
-                Log.w(TAG, "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed: $lastFailure")
+                Log.w(
+                    TAG,
+                    "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed " +
+                        "(stage=${e.stage.logName}, retryable=${e.retryable}): $lastFailure",
+                )
+                when (e.stage) {
+                    GatewayConnectFailureStage.TicketAuth,
+                    GatewayConnectFailureStage.UpgradeAuth -> onGatewaySignInRequired()
+                    GatewayConnectFailureStage.Ticket,
+                    GatewayConnectFailureStage.Upgrade -> onGatewayUnreachable()
+                    GatewayConnectFailureStage.Unsupported -> onGatewayUnsupported()
+                }
+                if (!e.retryable) break
             }
         }
         connectCooldownUntil = System.currentTimeMillis() + CONNECT_FAILURE_COOLDOWN_MS
@@ -2570,14 +2588,28 @@ class GatewayChatClient(
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
-            throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
+            val statusCode = (e as? DashboardHttpException)?.statusCode
+            val authFailure = statusCode in setOf(401, 403)
+            throw GatewayConnectAttemptException(
+                message = "ws-ticket mint failed: ${e.message}",
+                stage = if (authFailure) {
+                    GatewayConnectFailureStage.TicketAuth
+                } else {
+                    GatewayConnectFailureStage.Ticket
+                },
+                retryable = statusCode != null && statusCode in 500..599,
+            )
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
         val url = dashboardClient.gatewayWebSocketUrl(
             ticket = ticket.ticket,
             profile = currentSessionProfile(),
         )
-            ?: throw GatewayConnectAttemptException("could not build /api/ws URL")
+            ?: throw GatewayConnectAttemptException(
+                "could not build /api/ws URL",
+                GatewayConnectFailureStage.Unsupported,
+                retryable = false,
+            )
 
         _connectionState.value = GatewayConnectionState.Connecting
         val ready = CompletableDeferred<Unit>()
@@ -2589,13 +2621,28 @@ class GatewayChatClient(
         webSocket = socket
 
         _connectionState.value = GatewayConnectionState.AwaitingReady
-        val readyOk = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-            runCatching { ready.await() }.isSuccess
-        } ?: false
-        if (!readyOk) {
+        val readyResult: Result<Unit>? = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+            runCatching { ready.await() }
+        }
+        val readyFailure = readyResult?.exceptionOrNull()
+            ?: if (readyResult == null) {
+                GatewayConnectAttemptException(
+                    "gateway.ready never arrived",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = false,
+                )
+            } else {
+                null
+            }
+        if (readyFailure != null) {
             socket.cancel()
             webSocket = null
-            throw GatewayConnectAttemptException("gateway.ready never arrived")
+            throw (readyFailure as? GatewayConnectAttemptException
+                ?: GatewayConnectAttemptException(
+                    "gateway connection failed: ${readyFailure.message}",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = true,
+                ))
         }
         // Split the cold-connect cost so a slow ticket mint (HTTP) is told
         // apart from a slow WS upgrade + gateway.ready (socket/TLS) on device.
@@ -2941,29 +2988,78 @@ class GatewayChatClient(
             // the connection as gone immediately: the server is going away.
             webSocket.close(code, null)
             if (this@GatewayChatClient.webSocket === webSocket) {
+                if (!ready.isCompleted) {
+                    ready.completeExceptionally(preReadyCloseFailure(code, reason))
+                }
                 onSocketDown("closing: $code $reason")
             }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (this@GatewayChatClient.webSocket === webSocket) {
+                if (!ready.isCompleted) {
+                    ready.completeExceptionally(preReadyCloseFailure(code, reason))
+                }
                 onSocketDown("closed: $code $reason")
             }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (this@GatewayChatClient.webSocket !== webSocket) return
-            when (response?.code) {
-                404, 403 -> {
+            val connectFailure = when (response?.code) {
+                404 -> {
                     // No /api/ws on this build (or embedded chat disabled) —
                     // sticky downgrade so auto-resolution stops picking gateway.
                     Log.w(TAG, "Gateway WS upgrade rejected (${response.code}) — marking unsupported")
                     onGatewayUnsupported()
+                    GatewayConnectAttemptException(
+                        "gateway websocket is unsupported",
+                        GatewayConnectFailureStage.Unsupported,
+                        retryable = false,
+                    )
                 }
-                429 -> connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                401, 403 -> GatewayConnectAttemptException(
+                    "gateway websocket authentication was rejected",
+                    GatewayConnectFailureStage.UpgradeAuth,
+                    retryable = false,
+                )
+                429 -> {
+                    connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                    GatewayConnectAttemptException(
+                        "gateway websocket rate limited",
+                        GatewayConnectFailureStage.Upgrade,
+                        retryable = false,
+                    )
+                }
+                else -> GatewayConnectAttemptException(
+                    "gateway websocket upgrade failed: ${t.message}",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = true,
+                )
             }
-            if (!ready.isCompleted) ready.completeExceptionally(t)
+            if (!ready.isCompleted) ready.completeExceptionally(connectFailure)
             onSocketDown("failure: ${t.message}")
+        }
+    }
+
+    private fun preReadyCloseFailure(code: Int, reason: String): GatewayConnectAttemptException {
+        val safeReason = reason.take(160).ifBlank { "closed before gateway.ready" }
+        return when (code) {
+            4401 -> GatewayConnectAttemptException(
+                "gateway authentication was rejected ($safeReason)",
+                GatewayConnectFailureStage.UpgradeAuth,
+                retryable = false,
+            )
+            4403 -> GatewayConnectAttemptException(
+                "gateway origin or access guard rejected the connection ($safeReason)",
+                GatewayConnectFailureStage.Upgrade,
+                retryable = false,
+            )
+            else -> GatewayConnectAttemptException(
+                "gateway closed before ready (code=$code, $safeReason)",
+                GatewayConnectFailureStage.Upgrade,
+                retryable = false,
+            )
         }
     }
 
@@ -4151,8 +4247,20 @@ internal class GatewayPreflightException(message: String) : Exception(message)
 /** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */
 internal class GatewayAttachmentPreflightException(message: String) : Exception(message)
 
-/** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
-internal class GatewayConnectAttemptException(message: String) : Exception(message)
+/** One connect attempt failed; only a transient WebSocket upgrade may retry immediately. */
+internal class GatewayConnectAttemptException(
+    message: String,
+    val stage: GatewayConnectFailureStage,
+    val retryable: Boolean,
+) : Exception(message)
+
+internal enum class GatewayConnectFailureStage(val logName: String) {
+    TicketAuth("ticket_auth"),
+    Ticket("ticket"),
+    UpgradeAuth("upgrade_auth"),
+    Upgrade("upgrade"),
+    Unsupported("unsupported"),
+}
 
 /** Server intentionally refused a durable resume; never create/fallback into a context-free turn. */
 internal class GatewayAuthoritativeResumeException(message: String) : Exception(message)

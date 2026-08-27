@@ -248,6 +248,31 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun dashboardHistoryLoadsWhileGatewaySocketRouteIsUnavailable() {
+        val dashboardLoad = CompletableDeferred<Unit>()
+        viewModel.streamingEndpoint = "sessions"
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            dashboardLoad.complete(Unit)
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "dashboard-answer",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Readable without a Gateway socket"),
+                    ),
+                ),
+            )
+        }
+
+        viewModel.switchSession("dashboard-session")
+
+        awaitCondition { dashboardLoad.isCompleted && !viewModel.isLoadingHistory.value }
+        assertEquals("Readable without a Gateway socket", handler.messages.value.single().content)
+        assertEquals(0, apiMessageRequestCount.get())
+    }
+
+    @Test
     fun supersededHistoryFailureCannotClearOrErrorNewerSession() {
         DiagnosticsLog.clear()
         val oldLoadStarted = CompletableDeferred<Unit>()
@@ -531,6 +556,46 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.switchSession("x-bot-sibling")
         assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals("x-bot-sibling", persistedSession)
+    }
+
+    @Test
+    fun dashboardSessionListLoadsWhileGatewaySocketRouteIsUnavailable() {
+        var listed = false
+        viewModel.streamingEndpoint = "sessions"
+        viewModel.setProfileSessionLister {
+            listed = true
+            Result.success(emptyList())
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition { listed && !viewModel.isLoadingSessions.value }
+    }
+
+    @Test
+    fun emptySessionRefreshMarksDrawerLoadingBeforeFetchCoroutineRuns() {
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            releaseLoad.await()
+            Result.success(emptyList())
+        }
+
+        viewModel.refreshSessions()
+
+        assertTrue(viewModel.isLoadingSessions.value)
+        releaseLoad.complete(Unit)
+        awaitCondition { !viewModel.isLoadingSessions.value }
+    }
+
+    @Test
+    fun profileContextSwitchKeepsClearedDrawerInLoadingState() {
+        viewModel.switchProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", "sentinel"),
+            sessionId = null,
+        )
+
+        assertTrue(handler.sessions.value.isEmpty())
+        assertTrue(viewModel.isLoadingSessions.value)
     }
 
     @Test

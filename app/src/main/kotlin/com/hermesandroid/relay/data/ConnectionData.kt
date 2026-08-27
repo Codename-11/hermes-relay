@@ -65,6 +65,14 @@ data class Connection(
      * "derive from [apiServerUrl] using the conventional same-host :9119".
      */
     val dashboardUrl: String? = null,
+    /**
+     * Credential-free origin that most recently completed Dashboard
+     * authentication for this connection. Public origins require HTTPS;
+     * loopback/private-overlay HTTP retains upstream's trusted-network mode.
+     * Dashboard/Gateway consumers prefer this origin, while [routeCandidates]
+     * continue to own only network route selection for API and Relay.
+     */
+    val authenticatedDashboardOrigin: String? = null,
     val dashboardAuthRequired: Boolean? = null,
     val dashboardAuthProviders: List<String> = emptyList(),
     val dashboardLastStatus: DashboardConnectionStatus? = null,
@@ -86,21 +94,27 @@ data class Connection(
     /** Epoch milliseconds. The auth.ok `expires_at` field is seconds — multiply by 1000 at the call site. */
     val expiresAt: Long? = null,
 ) {
-    /**
-     * Effective Dashboard/Gateway endpoint. Legacy records did not persist a
-     * dashboard URL, so they retain the conventional same-host `:9119`
-     * derivation from the API server. Dashboard-only records persist an
-     * explicit URL and may leave [apiServerUrl] and [relayUrl] blank.
-     */
-    val resolvedDashboardUrl: String
+    /** Saved Dashboard/Gateway route before any authenticated-origin override. */
+    val configuredDashboardUrl: String
         get() = dashboardUrl
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: deriveDefaultDashboardUrl(apiServerUrl).orEmpty()
 
+    /**
+     * Effective Dashboard/Gateway endpoint. A verified authenticated origin
+     * wins without rewriting the saved network route. Legacy records retain
+     * the conventional same-host `:9119` derivation through
+     * [configuredDashboardUrl].
+     */
+    val resolvedDashboardUrl: String
+        get() = authenticatedDashboardOrigin
+            ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+            ?: configuredDashboardUrl
+
     /** Stable display/host identity that does not depend on the API surface. */
     val primaryEndpointUrl: String
-        get() = resolvedDashboardUrl.takeIf { it.isNotBlank() }
+        get() = configuredDashboardUrl.takeIf { it.isNotBlank() }
             ?: apiServerUrl.trim().takeIf { it.isNotBlank() }
             ?: relayUrl.trim()
 
@@ -556,4 +570,46 @@ data class Connection(
             }
         }
     }
+}
+
+/** Normalize an absolute, credential-free HTTPS origin for authenticated Dashboard use. */
+internal fun normalizeCredentialFreeHttpsOrigin(raw: String): String? {
+    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
+    if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+    if (parsed.host.isNullOrBlank() || parsed.userInfo != null) return null
+    if (parsed.query != null || parsed.fragment != null) return null
+    if (parsed.port > 65_535) return null
+    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
+}
+
+/**
+ * Normalize a reviewed Dashboard credential owner. Public origins require
+ * HTTPS; cleartext is accepted only for literal loopback, RFC1918/link-local,
+ * or Tailscale CGNAT addresses.
+ */
+internal fun normalizeCredentialFreeAuthenticatedDashboardOrigin(raw: String): String? {
+    normalizeCredentialFreeHttpsOrigin(raw)?.let { return it }
+    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
+    if (!parsed.scheme.equals("http", ignoreCase = true)) return null
+    val host = parsed.host
+        ?.lowercase()
+        ?.removePrefix("[")
+        ?.removeSuffix("]")
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    if (parsed.userInfo != null || parsed.query != null || parsed.fragment != null) return null
+    if (parsed.port > 65_535) return null
+    val trustedHost = host == "localhost" || host == "127.0.0.1" || host == "::1" ||
+        host.split('.').mapNotNull(String::toIntOrNull).let { octets ->
+            octets.size == 4 && octets.all { it in 0..255 } && when {
+                octets[0] == 10 -> true
+                octets[0] == 172 && octets[1] in 16..31 -> true
+                octets[0] == 192 && octets[1] == 168 -> true
+                octets[0] == 169 && octets[1] == 254 -> true
+                octets[0] == 100 && octets[1] in 64..127 -> true
+                else -> false
+            }
+        }
+    if (!trustedHost) return null
+    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
 }

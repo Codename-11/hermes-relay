@@ -3512,10 +3512,11 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Transcript for [sessionId], preferring the profile-scoped dashboard path on
-     * gateway connections (so non-default-profile sessions resolve against their
-     * own DB). The shared api_server transcript is used only when no scoped
-     * dashboard surface exists; a failed scoped read is never cross-profile truth.
+     * Transcript for [sessionId], preferring the profile-scoped Dashboard path
+     * whenever it exists. Dashboard history is authenticated HTTP state and does
+     * not depend on the Gateway WebSocket being connected; a ticket/upgrade
+     * failure must not hide an otherwise readable conversation. The shared
+     * api_server transcript is used only when no scoped Dashboard surface exists.
      */
     private suspend fun loadSessionHistory(
         sessionId: String,
@@ -3523,9 +3524,15 @@ class ChatViewModel : ViewModel() {
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
         profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
-        if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode, profileName)
+        if (profileMessageLoader != null) {
+            return loadGatewaySessionHistory(
+                sessionId,
+                requireProfileScope = true,
+                mode = mode,
+                profileName = profileName,
+            )
         }
+        if (requireProfileScope) return loadGatewaySessionHistory(sessionId, true, mode, profileName)
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
@@ -4380,7 +4387,10 @@ class ChatViewModel : ViewModel() {
         val sessionProfileName = targetProfileName
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
-        _isLoadingSessions.value = false
+        // The old profile's rows are cleared below. Keep the drawer in its
+        // loading state until HermesRuntimeBinder starts and settles the exact-
+        // profile replacement fetch.
+        _isLoadingSessions.value = true
         activateModelOptionsProfile(contextKey)
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
@@ -4585,12 +4595,15 @@ class ChatViewModel : ViewModel() {
         val generation = sessionRefreshGeneration.incrementAndGet()
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        // Set this before dispatching the fetch coroutine. Otherwise Compose can
+        // render the newly-cleared list as "No sessions" for a frame (or longer
+        // while profile selection settles) before the coroutine marks it busy.
+        if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
         sessionRefreshJob?.cancel()
         sessionRefreshJob = viewModelScope.launch {
             // Treat refreshes over an existing list as quiet background syncs.
             // The drawer keeps rendering the current rows instead of flashing
             // through a loading state whenever it opens or a turn completes.
-            _isLoadingSessions.value = handler.sessions.value.isEmpty()
             try {
                 // On the gateway, scope the drawer to the ACTIVE PROFILE via the
                 // dashboard `/api/sessions?profile=` surface (it opens that
@@ -4600,11 +4613,10 @@ class ChatViewModel : ViewModel() {
                 // api_server `/api/sessions` (one shared DB, no profile concept)
                 // is the fallback for connections without a Manage/dashboard
                 // session.
-                val scoped = if (streamingEndpoint == "gateway") {
-                    profileSessionLister?.invoke(profileName)
-                } else {
-                    null
-                }
+                // Dashboard sessions are authenticated HTTP state. Prefer them
+                // whenever configured, even while the independent Gateway
+                // ticket/socket path is reconnecting or unavailable.
+                val scoped = profileSessionLister?.invoke(profileName)
                 val result = scoped ?: apiClient?.listSessionsResult()
                 result?.fold(
                     onSuccess = { sessions ->

@@ -18,6 +18,8 @@ import com.hermesandroid.relay.auth.SecureStoreCache
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.buildRawTokenStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -34,6 +36,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -50,6 +54,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import okio.BufferedSink
 
 // Status/session/provider snapshots are @Serializable so the Manage tab's
@@ -322,6 +327,8 @@ class DashboardApiClient(
         coerceInputValues = true
     },
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val sessionReadTimeoutMillis: Long = SESSION_READ_TIMEOUT_MILLIS,
+    private val sessionEnrichmentBudgetMillis: Long = SESSION_ENRICHMENT_BUDGET_MILLIS,
 ) {
     private val baseUrl: String = baseUrl.trim().trimEnd('/')
     private val sessionPrScanLock = Any()
@@ -1030,6 +1037,8 @@ class DashboardApiClient(
         archived: String? = null,
     ): Result<List<SessionItem>> =
         withContext(Dispatchers.IO) {
+            val readDeadlineNanos = System.nanoTime() +
+                TimeUnit.MILLISECONDS.toNanos(sessionReadTimeoutMillis.coerceAtLeast(1L))
             val sessions = linkedMapOf<String, SessionItem>()
             for (page in sessionListPages(limit)) {
                 val query = buildList {
@@ -1046,7 +1055,21 @@ class DashboardApiClient(
                     val archivedMode = archived?.trim().orEmpty()
                     if (archivedMode.isNotBlank()) add("archived=${pathSegment(archivedMode)}")
                 }.joinToString(prefix = "?", separator = "&")
-                val pageResult = getJson("/api/sessions$query").mapCatching { root ->
+                val remainingReadMillis = TimeUnit.NANOSECONDS.toMillis(
+                    readDeadlineNanos - System.nanoTime(),
+                )
+                if (remainingReadMillis <= 0L) {
+                    return@withContext Result.failure(
+                        IOException("Dashboard session list exceeded its bounded read window"),
+                    )
+                }
+                val pageResult = getJson(
+                    "/api/sessions$query",
+                    // One budget covers the complete 200-row operation. A slow
+                    // first page cannot silently turn the nominal 8s bound into
+                    // 16s when the second page is needed.
+                    callTimeoutMillis = remainingReadMillis,
+                ).mapCatching { root ->
                     val parsed = json.decodeFromJsonElement(SessionListResponse.serializer(), root)
                     parsed.sessions ?: parsed.items ?: parsed.data ?: emptyList()
                 }
@@ -1055,13 +1078,20 @@ class DashboardApiClient(
                 pageSessions.forEach { sessions.putIfAbsent(it.id, it) }
                 if (pageSessions.size < page.limit) break
             }
-            Result.success(
+            val listed = sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT))
+            // Repository/PR decoration is useful drawer metadata, but it is not
+            // authoritative session data. Keep it off the critical path when an
+            // older host or an unavailable GitHub helper stalls: return the exact
+            // profile-scoped rows within a small budget and retry decoration on a
+            // later refresh. Cancellation also cancels the active OkHttp call.
+            val enriched = withTimeoutOrNull(sessionEnrichmentBudgetMillis) {
                 enrichSessionWorkState(
-                    sessions.values.take(limit.coerceIn(1, SESSION_LIST_WINDOW_LIMIT)),
+                    listed,
                     fixedProfile = profile?.trim()?.takeIf { it.isNotBlank() }
                         ?: DEFAULT_SESSION_PROFILE_SCOPE,
-                ),
-            )
+                )
+            } ?: listed
+            Result.success(enriched)
         }
 
     /**
@@ -1227,7 +1257,10 @@ class DashboardApiClient(
                 add("order=${page.order}")
                 if (name.isNotBlank()) add("profile=${pathSegment(name)}")
             }.joinToString(prefix = "?", separator = "&")
-            getJson("/api/sessions/${pathSegment(sessionId)}/messages$query").mapCatching { root ->
+            getJson(
+                "/api/sessions/${pathSegment(sessionId)}/messages$query",
+                callTimeoutMillis = sessionReadTimeoutMillis,
+            ).mapCatching { root ->
                 val parsed = json.decodeFromJsonElement(MessageListResponse.serializer(), root)
                 SessionMessagePage(
                     messages = parsed.messages ?: parsed.data ?: parsed.items ?: emptyList(),
@@ -1471,7 +1504,11 @@ class DashboardApiClient(
             .post(ByteArray(0).toRequestBody(null))
             .build()
 
-        executeJson(request, "Dashboard websocket ticket").mapCatching { root ->
+        executeJson(
+            request,
+            "Dashboard websocket ticket",
+            callTimeoutMillis = sessionReadTimeoutMillis,
+        ).mapCatching { root ->
             val ticket = root.stringField("ticket")
                 ?: root.stringField("ws_ticket")
                 ?: throw IOException("Dashboard websocket ticket response missing ticket")
@@ -1501,39 +1538,69 @@ class DashboardApiClient(
         okHttpClient.connectionPool.evictAll()
     }
 
-    private suspend fun getJson(path: String): Result<JsonObject> = withContext(Dispatchers.IO) {
+    private suspend fun getJson(
+        path: String,
+        callTimeoutMillis: Long? = null,
+    ): Result<JsonObject> = withContext(Dispatchers.IO) {
         val httpUrl = resolveUrl(path) ?: return@withContext Result.failure(invalidUrlException())
         val request = Request.Builder()
             .url(httpUrl)
             .get()
             .build()
-        executeJson(request, path)
+        executeJson(request, path, callTimeoutMillis)
     }
 
-    private fun executeJson(request: Request, operation: String): Result<JsonObject> {
-        return try {
-            okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return Result.failure(apiFailure(response, operation))
-                }
-                Result.success(response.readJsonObject(json))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    private suspend fun executeJson(
+        request: Request,
+        operation: String,
+        callTimeoutMillis: Long? = null,
+    ): Result<JsonObject> = executeCancellable(request, operation, callTimeoutMillis) { response ->
+        response.readJsonObject(json)
     }
 
-    private fun executeJsonElement(request: Request, operation: String): Result<JsonElement> {
-        return try {
-            okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return Result.failure(apiFailure(response, operation))
-                }
-                Result.success(response.readJsonElement(json))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
+    private suspend fun executeJsonElement(
+        request: Request,
+        operation: String,
+    ): Result<JsonElement> = executeCancellable(request, operation) { response ->
+        response.readJsonElement(json)
+    }
+
+    /** Bridge OkHttp cancellation to the owning coroutine so superseded profile reads do not linger. */
+    private suspend fun <T> executeCancellable(
+        request: Request,
+        operation: String,
+        callTimeoutMillis: Long? = null,
+        decode: (Response) -> T,
+    ): Result<T> = suspendCancellableCoroutine { continuation ->
+        val call = okHttpClient.newCall(request)
+        callTimeoutMillis?.takeIf { it > 0L }?.let {
+            call.timeout().timeout(it, TimeUnit.MILLISECONDS)
         }
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runCatching {
+                    if (continuation.isActive) continuation.resume(Result.failure(e))
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result = response.use {
+                    try {
+                        if (!it.isSuccessful) {
+                            Result.failure(apiFailure(it, operation))
+                        } else {
+                            Result.success(decode(it))
+                        }
+                    } catch (error: Exception) {
+                        Result.failure(error)
+                    }
+                }
+                runCatching {
+                    if (continuation.isActive) continuation.resume(result)
+                }
+            }
+        })
     }
 
     private suspend fun download(
@@ -1570,6 +1637,8 @@ class DashboardApiClient(
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private const val DEFAULT_SESSION_PROFILE_SCOPE = "__dashboard_default__"
+        private const val SESSION_READ_TIMEOUT_MILLIS = 8_000L
+        private const val SESSION_ENRICHMENT_BUDGET_MILLIS = 1_500L
         internal const val ACTIVE_SESSION_PR_MISS_TTL_MILLIS = 60_000L
         // Mirrors current upstream `_MANAGED_FILE_MAX_BYTES`; enforcing it
         // client-side avoids uploading a body the Dashboard will reject.
@@ -2105,61 +2174,6 @@ class DashboardCookieJar(
 }
 
 /**
- * Copy only Hermes' authenticated dashboard session cookies to another host
- * that belongs to the same saved Connection. Dashboard cookies are host-only
- * by design, while a Connection may reach one server through LAN and
- * Tailscale hostnames/IPs. The encrypted store remains the source of truth and
- * explicit sign-out clears every mirrored host together.
- *
- * PKCE, SSO-attempt, and unrelated application cookies are intentionally not
- * copied. Secure cookies also remain Secure; this helper never downgrades them
- * for an HTTP route.
- */
-fun mirrorDashboardSessionCookies(
-    store: DashboardCookieStore,
-    targetUrl: String,
-    trustedHosts: Set<String>,
-    clockMillis: () -> Long = { System.currentTimeMillis() },
-): Int {
-    val targetHost = targetUrl.toHttpUrlOrNull()?.host?.lowercase() ?: return 0
-    val allowedHosts = trustedHosts.mapTo(mutableSetOf()) { it.lowercase() }
-    if (targetHost !in allowedHosts) return 0
-
-    val now = clockMillis()
-    val all = store.load()
-    val live = all.filterNot { it.isExpired(now) }
-    val existingTargetKeys = live.asSequence()
-        .filter { it.domain.equals(targetHost, ignoreCase = true) }
-        .map { "${it.name.lowercase()}|$targetHost|${it.path}" }
-        .toSet()
-    val mirrored = live.asSequence()
-        .filter { it.isDashboardSessionCookie() }
-        .filter { it.domain.lowercase() in allowedHosts }
-        .filterNot { it.domain.equals(targetHost, ignoreCase = true) }
-        .groupBy { "${it.name.lowercase()}|${it.path}" }
-        .values
-        .mapNotNull { candidates -> candidates.maxByOrNull { it.expiresAt } }
-        .map { it.copy(domain = targetHost, hostOnly = true) }
-        .filterNot { it.key in existingTargetKeys }
-        .toList()
-
-    if (mirrored.isNotEmpty() || live.size != all.size) {
-        store.save(live + mirrored)
-    }
-    return mirrored.size
-}
-
-private fun StoredDashboardCookie.isDashboardSessionCookie(): Boolean {
-    val bareName = name
-        .removePrefix("__Host-")
-        .removePrefix("__Secure-")
-    return bareName == "hermes_session" ||
-        bareName == "hermes_session_at" ||
-        bareName == "hermes_session_rt" ||
-        bareName == "hermes_session_provider"
-}
-
-/**
  * Cookie jar that resolves the backing per-connection store at request time.
  *
  * Long-lived OkHttpClients (e.g. the standard voice client, remembered once
@@ -2293,10 +2307,18 @@ private fun Response.readJsonElement(json: Json): JsonElement {
     return json.parseToJsonElement(raw)
 }
 
+internal class DashboardHttpException(
+    val statusCode: Int,
+    message: String,
+) : IOException(message)
+
 private fun apiFailure(response: Response, operation: String): IOException {
     val bodyDetail = runCatching { response.body.string() }.getOrDefault("")
     val detail = bodyDetail.take(240).ifBlank { response.message }
-    return IOException("$operation failed - HTTP ${response.code}: $detail")
+    return DashboardHttpException(
+        statusCode = response.code,
+        message = "$operation failed - HTTP ${response.code}: $detail",
+    )
 }
 
 private fun JsonObject?.stringField(name: String): String? =

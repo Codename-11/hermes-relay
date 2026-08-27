@@ -6,8 +6,15 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
+import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -20,8 +27,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.InterruptedIOException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.system.measureTimeMillis
 
 /**
  * Unit tests for [EndpointResolver] — ADR 24 "Multi-endpoint pairing +
@@ -216,6 +227,230 @@ class EndpointResolverTest {
         )
     }
 
+    @Test
+    fun samePriority_fastSiblingWinsWithoutWaitingForSlowFirstCandidate() = runTest {
+        val slow = MockWebServer().apply {
+            enqueue(MockResponse().setHeadersDelay(3, TimeUnit.SECONDS).setResponseCode(200))
+            start()
+        }
+        try {
+            val slowFirst = candidate("slow-first", priority = 0, server = slow)
+            val fastSecond = candidate("fast-second", priority = 0, server = reachableServer)
+            val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            lateinit var winner: EndpointCandidate
+
+            val elapsed = measureTimeMillis {
+                winner = resolver.resolve(listOf(slowFirst, fastSecond))!!
+            }
+
+            assertEquals("fast-second", winner.role)
+            assertTrue(
+                "completion order must win; input order must not add the slow sibling delay (elapsed=${elapsed}ms)",
+                elapsed < 1_500L,
+            )
+        } finally {
+            slow.shutdown()
+        }
+    }
+
+    @Test
+    fun concurrentResolve_sharesOnePhysicalProbe() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        }
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        val winners = listOf(
+            async { resolver.resolve(listOf(lan), EndpointSurface.Api) },
+            async { resolver.resolve(listOf(lan), EndpointSurface.Api) },
+        ).awaitAll()
+
+        assertEquals(listOf(lan, lan), winners)
+        assertEquals(
+            "concurrent lifecycle callers must share the same route probe",
+            1,
+            reachableServer.requestCount,
+        )
+    }
+
+    @Test
+    fun cancellingFirstWaiter_doesNotCancelSharedProbeForSecondWaiter() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        }
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val lan = candidate("lan", priority = 0, server = reachableServer)
+
+        val first = async(start = CoroutineStart.UNDISPATCHED) {
+            resolver.resolve(listOf(lan), EndpointSurface.Api)
+        }
+        assertNotNull(reachableServer.takeRequest(5, TimeUnit.SECONDS))
+        first.cancel()
+        val second = resolver.resolve(listOf(lan), EndpointSurface.Api)
+
+        assertEquals(lan, second)
+        assertEquals(1, reachableServer.requestCount)
+    }
+
+    @Test
+    fun clearCache_cancelsActiveProbe_withoutPublishingUnreachableState() = runTest {
+        val firstRequestStarted = CountDownLatch(1)
+        val releaseFirstRequest = CountDownLatch(1)
+        val firstRequestFinished = CountDownLatch(1)
+        val requestSequence = AtomicInteger(0)
+        val blockingClient = fastClient.newBuilder()
+            .addInterceptor { chain ->
+                if (requestSequence.incrementAndGet() == 1) {
+                    firstRequestStarted.countDown()
+                    try {
+                        releaseFirstRequest.await(5, TimeUnit.SECONDS)
+                    } finally {
+                        firstRequestFinished.countDown()
+                    }
+                    throw InterruptedIOException("invalidated test probe")
+                }
+                chain.proceed(chain.request())
+            }
+            .build()
+        val resolver = EndpointResolver(blockingClient, clock = { clockMillis.get() })
+        val lan = candidate("cancelled-probe-test", priority = 0, server = reachableServer)
+        val key = EndpointResolver.cacheKey(lan, EndpointSurface.Api)
+
+        val staleResolve = async(start = CoroutineStart.UNDISPATCHED) {
+            resolver.resolve(listOf(lan), EndpointSurface.Api)
+        }
+        assertTrue(
+            "the first physical probe must be active before invalidation",
+            firstRequestStarted.await(5, TimeUnit.SECONDS),
+        )
+
+        resolver.clearCache()
+
+        assertNull("cancellation is not an unreachable verdict", resolver.probeOutcomes.value[key])
+        assertTrue("an invalidated probe must not populate the cache", resolver.cacheSnapshot().isEmpty())
+        assertTrue(
+            "an invalidated probe must not emit a failure diagnostic",
+            DiagnosticsLog.entries.value.none {
+                it.category == DiagnosticCategory.Endpoint &&
+                    it.endpointRole == lan.role &&
+                    it.severity != DiagnosticSeverity.Info
+            },
+        )
+
+        val freshWinner = resolver.resolve(listOf(lan), EndpointSurface.Api)
+        assertEquals("a fresh probe after invalidation can succeed", lan, freshWinner)
+
+        releaseFirstRequest.countDown()
+        assertTrue(firstRequestFinished.await(5, TimeUnit.SECONDS))
+        staleResolve.join()
+
+        val finalOutcome = resolver.probeOutcomes.value[key]
+        assertNotNull(finalOutcome)
+        assertTrue("the stale failure must not overwrite the fresh success", finalOutcome!!.reachable)
+        assertTrue(
+            "the stale failure must not emit a delayed failure diagnostic",
+            DiagnosticsLog.entries.value.none {
+                it.category == DiagnosticCategory.Endpoint &&
+                    it.endpointRole == lan.role &&
+                    it.severity != DiagnosticSeverity.Info
+            },
+        )
+        assertEquals(true, resolver.cacheSnapshot()[key]?.second)
+    }
+
+    @Test
+    fun clearCache_completesSamePriorityRace_withoutPublishingStaleFailures() = runTest {
+        val staleRequestsStarted = CountDownLatch(2)
+        val releaseStaleRequests = CountDownLatch(1)
+        val staleRequestsFinished = CountDownLatch(2)
+        val requestSequence = AtomicInteger(0)
+        val blockingClient = fastClient.newBuilder()
+            .addInterceptor { chain ->
+                if (requestSequence.incrementAndGet() <= 2) {
+                    staleRequestsStarted.countDown()
+                    try {
+                        releaseStaleRequests.await(5, TimeUnit.SECONDS)
+                    } finally {
+                        staleRequestsFinished.countDown()
+                    }
+                    throw InterruptedIOException("invalidated test probe")
+                }
+                chain.proceed(chain.request())
+            }
+            .build()
+        val resolver = EndpointResolver(blockingClient, clock = { clockMillis.get() })
+        val first = candidate("cancelled-race-first", priority = 0, server = reachableServer)
+        val second = candidate("cancelled-race-second", priority = 0, server = secondReachableServer)
+        val testedRoles = setOf(first.role, second.role)
+        val testedKeys = setOf(
+            EndpointResolver.cacheKey(first, EndpointSurface.Api),
+            EndpointResolver.cacheKey(second, EndpointSurface.Api),
+        )
+
+        try {
+            val staleResolve = async(start = CoroutineStart.UNDISPATCHED) {
+                resolver.resolve(listOf(first, second), EndpointSurface.Api)
+            }
+            assertTrue(
+                "both shared probes must be active before invalidation",
+                staleRequestsStarted.await(5, TimeUnit.SECONDS),
+            )
+
+            resolver.clearCache()
+            releaseStaleRequests.countDown()
+            assertTrue(staleRequestsFinished.await(5, TimeUnit.SECONDS))
+
+            assertNull(
+                "invalidated candidates are non-winners, not failures",
+                withContext(Dispatchers.Default.limitedParallelism(1)) {
+                    withTimeout(1_000L) { staleResolve.await() }
+                },
+            )
+            assertTrue(testedKeys.none { it in resolver.probeOutcomes.value })
+            assertTrue(resolver.cacheSnapshot().isEmpty())
+
+            val freshWinner = withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(2_000L) {
+                    resolver.resolve(listOf(first, second), EndpointSurface.Api)
+                }
+            }
+            assertNotNull("a fresh same-priority race can succeed", freshWinner)
+            assertTrue(freshWinner == first || freshWinner == second)
+            assertTrue(
+                "invalidated failures must not emit diagnostics",
+                DiagnosticsLog.entries.value.none {
+                    it.category == DiagnosticCategory.Endpoint &&
+                        it.endpointRole in testedRoles &&
+                        it.severity != DiagnosticSeverity.Info
+                },
+            )
+        } finally {
+            releaseStaleRequests.countDown()
+        }
+        assertTrue(
+            "stale failures must not overwrite fresh race outcomes",
+            resolver.probeOutcomes.value
+                .filterKeys { it in testedKeys }
+                .values
+                .all { it.reachable },
+        )
+        assertTrue(
+            "stale failures must not emit delayed diagnostics",
+            DiagnosticsLog.entries.value.none {
+                it.category == DiagnosticCategory.Endpoint &&
+                    it.endpointRole in testedRoles &&
+                    it.severity != DiagnosticSeverity.Info
+            },
+        )
+    }
+
     // ---------------------------------------------------------------
     // Test 6 — cached-reachable result is re-probed after TTL
     // ---------------------------------------------------------------
@@ -364,6 +599,81 @@ class EndpointResolverTest {
         val outcome = resolver.probeOutcomes.value[EndpointResolver.cacheKey(lan)]
         assertNotNull(outcome)
         assertTrue(!outcome!!.reachable)
+    }
+
+    @Test
+    fun probeSurfaces_recordsIndependentDashboardApiAndRelayOutcomesConcurrently() = runTest {
+        val relayServer = MockWebServer().apply { start() }
+        val probesStarted = CountDownLatch(3)
+        val releaseProbes = CountDownLatch(1)
+        fun surfaceDispatcher(statusCode: Int): Dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                probesStarted.countDown()
+                releaseProbes.await(5, TimeUnit.SECONDS)
+                return MockResponse().setResponseCode(statusCode)
+            }
+        }
+        reachableServer.dispatcher = surfaceDispatcher(statusCode = 200)
+        secondReachableServer.dispatcher = surfaceDispatcher(statusCode = 500)
+        relayServer.dispatcher = surfaceDispatcher(statusCode = 503)
+        val candidate = EndpointCandidate(
+            role = "split-surface-test",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+            api = ApiEndpoint(secondReachableServer.hostName, secondReachableServer.port, tls = false),
+            relay = RelayEndpoint(
+                url = "ws://${relayServer.hostName}:${relayServer.port}",
+                transportHint = "ws",
+            ),
+        )
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+
+        try {
+            val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                withContext(Dispatchers.Default) { resolver.probeSurfaces(candidate) }
+            }
+            assertTrue(
+                "Dashboard, API, and Relay probes must all start before any completes",
+                probesStarted.await(5, TimeUnit.SECONDS),
+            )
+            releaseProbes.countDown()
+
+            val outcomes = withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(2_000L) { pending.await() }
+            }
+
+            assertEquals(
+                setOf(EndpointSurface.Dashboard, EndpointSurface.Api, EndpointSurface.Relay),
+                outcomes.keys,
+            )
+            assertTrue(outcomes.getValue(EndpointSurface.Dashboard).reachable)
+            assertTrue(!outcomes.getValue(EndpointSurface.Api).reachable)
+            assertEquals("HTTP 500 from /health", outcomes.getValue(EndpointSurface.Api).detail)
+            assertTrue(!outcomes.getValue(EndpointSurface.Relay).reachable)
+            assertEquals("HTTP 503 from /health", outcomes.getValue(EndpointSurface.Relay).detail)
+
+            EndpointSurface.entries
+                .filter { it != EndpointSurface.Standard }
+                .forEach { surface ->
+                    assertEquals(
+                        outcomes[surface],
+                        resolver.outcomeFor(candidate, surface),
+                    )
+                }
+            assertTrue(
+                "surface keys must remain independent on one route",
+                EndpointSurface.entries
+                    .filter { it != EndpointSurface.Standard }
+                    .map { EndpointResolver.outcomeKey(candidate, it) }
+                    .toSet()
+                    .size == 3,
+            )
+            assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+            assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+            assertEquals("/health", relayServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        } finally {
+            releaseProbes.countDown()
+            relayServer.shutdown()
+        }
     }
 
     @Test

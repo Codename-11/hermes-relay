@@ -149,15 +149,15 @@ class ConnectionStore private constructor(
                 // between the two names — `{"id": ..., "label": ..., ...}` —
                 // so no per-record migration is needed.
                 if (newJson == null && oldJson != null) {
+                    val restored = decodeConnections(oldJson)
                     dataStore.edit { p ->
-                        p[KEY_CONNECTIONS] = oldJson
+                        p[KEY_CONNECTIONS] = encodeConnections(restored)
                         p.remove(KEY_LEGACY_PROFILES)
                         if (activeNew == null && activeOld != null) {
                             p[KEY_ACTIVE_CONNECTION_ID] = activeOld
                             p.remove(KEY_LEGACY_ACTIVE_PROFILE_ID)
                         }
                     }
-                    val restored = decodeConnections(oldJson)
                     val validStartupId = startupId?.takeIf { id -> restored.any { it.id == id } }
                     _connections.value = restored
                     _startupConnectionId.value = validStartupId
@@ -168,6 +168,12 @@ class ConnectionStore private constructor(
                     )
                 } else {
                     val restored = decodeConnections(newJson)
+                    if (newJson != null) {
+                        val normalizedJson = encodeConnections(restored)
+                        if (normalizedJson != newJson) {
+                            dataStore.edit { p -> p[KEY_CONNECTIONS] = normalizedJson }
+                        }
+                    }
                     val validStartupId = startupId?.takeIf { id -> restored.any { it.id == id } }
                     _connections.value = restored
                     _startupConnectionId.value = validStartupId
@@ -571,7 +577,17 @@ class ConnectionStore private constructor(
 internal fun Connection.withDashboardDefaults(): Connection {
     val derivedDashboardUrl = Connection.deriveDefaultDashboardUrl(apiServerUrl)
     val effectiveDashboardUrl = dashboardUrl?.takeIf { it.isNotBlank() } ?: derivedDashboardUrl
-    val storedOrDefaultRoutes = routeCandidates.ifEmpty {
+    val legacyAuthenticatedRoute = routeCandidates.firstOrNull {
+        it.role.equals(LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true)
+    }
+    val migratedAuthenticatedOrigin = authenticatedDashboardOrigin
+        ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+        ?: legacyAuthenticatedRoute?.dashboard?.url
+            ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+    val routesWithoutLegacyAuthentication = routeCandidates.filterNot {
+        it.role.equals(LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true)
+    }
+    val storedOrDefaultRoutes = routesWithoutLegacyAuthentication.ifEmpty {
         Connection.buildRouteCandidates(
             apiServerUrl = apiServerUrl,
             relayUrl = relayUrl,
@@ -582,16 +598,18 @@ internal fun Connection.withDashboardDefaults(): Connection {
         dashboardUrl = effectiveDashboardUrl,
         candidates = storedOrDefaultRoutes,
     )
-    val normalizedPreferredRouteRole = preferredRouteRole?.takeIf { preferred ->
-        normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) }
-    }
+    val normalizedPreferredRouteRole = preferredRouteRole
+        ?.takeUnless { it.equals(LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true) }
+        ?.takeIf { preferred -> normalizedRoutes.any { it.role.equals(preferred, ignoreCase = true) } }
     return if (
         dashboardUrl != effectiveDashboardUrl ||
+        authenticatedDashboardOrigin != migratedAuthenticatedOrigin ||
         normalizedRoutes != routeCandidates ||
         normalizedPreferredRouteRole != preferredRouteRole
     ) {
         copy(
             dashboardUrl = effectiveDashboardUrl,
+            authenticatedDashboardOrigin = migratedAuthenticatedOrigin,
             routeCandidates = normalizedRoutes,
             preferredRouteRole = normalizedPreferredRouteRole,
         )
@@ -599,3 +617,5 @@ internal fun Connection.withDashboardDefaults(): Connection {
         this
     }
 }
+
+internal const val LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE = "authenticated_dashboard"

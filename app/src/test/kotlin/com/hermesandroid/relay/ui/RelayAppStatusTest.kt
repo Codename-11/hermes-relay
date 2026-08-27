@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui
 
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.VoicePresentationMode
@@ -16,6 +17,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayAppStatusTest {
+
+    @Test
+    fun `footer model omits provider and context window suffix`() {
+        assertEquals("gpt-5.6-sol", compactFooterModelLabel("openai/gpt-5.6-sol-900k"))
+        assertEquals("claude-opus", compactFooterModelLabel("claude-opus-1M"))
+    }
 
     @Test
     fun `pet roaming supports chat terminal and curated status chrome routes`() {
@@ -211,8 +218,102 @@ class RelayAppStatusTest {
         assertNull(route?.api)
     }
 
+    @Test
+    fun `transient add draft is ready without a persisted fake connection`() {
+        assertTrue(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "draft-id",
+                authorizedHandoffId = null,
+                activeConnectionId = "saved-id",
+                connectionIds = setOf("saved-id"),
+                draftConnectionId = "draft-id",
+            ),
+        )
+    }
+
+    @Test
+    fun `gateway footer calls the authenticated Dashboard origin HTTP`() {
+        val connection = connection(
+            dashboardUrl = "http://192.168.1.20:9119",
+            authenticatedDashboardOrigin = "https://hermes.example.com",
+        )
+        val status = connected(ChatTransportPath.Gateway)
+        val route = resolveFooterRouteCandidate(
+            runtimeStatus = status,
+            activeEndpoint = EndpointCandidate(
+                role = "lan",
+                dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+            ),
+            connection = connection,
+            effectiveDashboardUrl = connection.resolvedDashboardUrl,
+        )
+
+        assertEquals("HTTP", resolveFooterRouteLabel(status, route, fallbackLabel = "Hermes"))
+    }
+
+    @Test
+    fun `gateway footer preserves meaningful LAN and Tailscale labels`() {
+        assertEquals(
+            "LAN",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.Gateway),
+                route = EndpointCandidate(
+                    role = "lan",
+                    dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+        assertEquals(
+            "Tailscale",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.Gateway),
+                route = EndpointCandidate(
+                    role = "tailscale",
+                    dashboard = DashboardEndpoint("https://host.tailnet.ts.net"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    @Test
+    fun `offline footer omits stale route identity`() {
+        assertEquals(
+            "",
+            resolveFooterRouteLabel(
+                runtimeStatus = ChatRuntimeStatus.Unavailable,
+                route = EndpointCandidate(
+                    role = "lan",
+                    dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    @Test
+    fun `API fallback footer keeps its actual route label`() {
+        assertEquals(
+            "Tailscale",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.ApiSse),
+                route = EndpointCandidate(
+                    role = "tailscale",
+                    api = ApiEndpoint("100.75.1.2", 8642, tls = true),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    private fun connected(path: ChatTransportPath) =
+        ChatRuntimeStatus.Connected(transport = path, fallback = path == ChatTransportPath.ApiSse)
+
     private fun connection(
         dashboardUrl: String? = null,
+        authenticatedDashboardOrigin: String? = null,
         apiServerUrl: String = "",
         relayUrl: String = "",
     ) = Connection(
@@ -222,5 +323,6 @@ class RelayAppStatusTest {
         relayUrl = relayUrl,
         tokenStoreKey = "hermes_auth_connection",
         dashboardUrl = dashboardUrl,
+        authenticatedDashboardOrigin = authenticatedDashboardOrigin,
     )
 }

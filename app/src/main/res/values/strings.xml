@@ -533,7 +533,7 @@
     <string name="endpoints_manual_until_disconnect">Manual — until disconnect</string>
     <string name="endpoints_preferred">Preferred</string>
     <string name="endpoints_automatic">Automatic</string>
-    <string name="endpoints_current_route">Current route: %1$s (%2$s)</string>
+    <string name="endpoints_current_route">Selected candidate: %1$s · %2$s</string>
     <string name="endpoints_cancel_manual_switch">Cancel manual switch — back to %1$s</string>
     <string name="endpoints_stop_preferring">Stop preferring — back to automatic</string>
     <string name="endpoints_checking">Checking…</string>
@@ -568,6 +568,13 @@
     <string name="endpoints_save">Save</string>
     <string name="endpoints_close">Close</string>
     <string name="endpoints_actions">Endpoint actions</string>
+    <string name="dashboard_address_editor_title">Dashboard address</string>
+    <string name="dashboard_address_editor_body">Set the address this phone should use for Dashboard, Gateway chat, sessions, voice, and sign-in. Use your canonical HTTPS domain for self-hosted OIDC.</string>
+    <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
+    <string name="dashboard_address_placeholder">https://hermes.example.com</string>
+    <string name="dashboard_address_required">Enter your Hermes Dashboard address</string>
+    <string name="dashboard_address_preview">Will use: %1$s</string>
+    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
 
     <!-- BridgeMasterToggle -->
     <string name="bmt_agent_control">Agent Control</string>
@@ -973,6 +980,26 @@
     <string name="conn_dashboard_only_route">Dashboard only</string>
     <string name="conn_no_routes">No routes configured</string>
     <string name="active_section_primary_dashboard">Primary Dashboard</string>
+    <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
+    <string name="current_surface_paths_title">Current paths</string>
+    <string name="api_fallback_title">API fallback</string>
+    <string name="active_section_in_use">In use</string>
+    <string name="active_section_available_fallback">Available fallback</string>
+    <string name="dashboard_gateway_configured">Configured address</string>
+    <string name="dashboard_gateway_secure_origin">Secure sign-in address</string>
+    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
+    <string name="network_routes_title">Network routes</string>
+    <string name="network_routes_summary">Optional LAN, Tailscale, public, API, and Relay paths. These do not replace the signed-in Dashboard origin.</string>
+    <string name="network_routes_empty">No additional network routes</string>
+    <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
+    <string name="active_section_using_now">Using now</string>
+    <string name="active_section_fallbacks">Fallbacks</string>
+    <string name="active_section_configured_not_probed">Network routes are configured; Routes shows their latest reachability.</string>
+    <string name="active_section_relay_ownership">Relay owns extension tools only; standard Hermes stays independent.</string>
+    <string name="active_section_no_sign_in_required">No sign-in required</string>
+    <string name="active_section_unavailable">Unavailable</string>
+    <string name="detail_inactive_badge">Not active</string>
+    <string name="detail_overview_clarity_summary">What works now, the path this phone is using, and what can take over if it becomes unavailable.</string>
     <string name="active_section_dashboard_reachable_signed_in">Reachable · Signed in</string>
     <string name="active_section_dashboard_reachable">Reachable</string>
     <string name="active_section_dashboard_not_checked">Not checked yet</string>
@@ -1027,9 +1054,16 @@
     <string name="active_section_session_activity">Session activity</string>
     <string name="active_section_last_checked_just_now">Last checked just now</string>
     <string name="active_section_protected">Protected</string>
+    <string name="active_section_mixed_protection">Mixed protection</string>
     <string name="active_section_not_encrypted">Not encrypted</string>
+    <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_no_security_issues">No security issues detected</string>
+    <string name="active_section_mixed_protection_summary">Active surfaces use different protection</string>
     <string name="active_section_unencrypted_transport">This connection uses an unencrypted transport</string>
+    <string name="active_section_no_active_surfaces">No configured surface is currently in use</string>
+    <string name="active_section_in_use_mechanism">In use · %1$s</string>
+    <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
+    <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="active_section_actions">Actions</string>
     <string name="active_section_revoke_relay">Revoke Relay pairing</string>
 
@@ -2083,6 +2117,12 @@
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">Complete sign-in in the secure dashboard page.</string>
+    <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
+    <string name="dashboard_oauth_origin_confirm_title">Use this sign-in address?</string>
+    <string name="dashboard_oauth_origin_confirm_body">The identity provider returned to a different Hermes Dashboard address. Review it before Android uses it for Dashboard and Gateway.</string>
+    <string name="dashboard_oauth_origin_identity_missing">This Hermes version does not expose an installation ID, so Android cannot automatically prove that both addresses reach the same installation.</string>
+    <string name="dashboard_oauth_origin_install_mismatch">The sign-in address belongs to a different Hermes installation and was not saved.</string>
+    <string name="dashboard_oauth_origin_use_button">Use address</string>
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
@@ -2090,15 +2130,16 @@
     <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
+    <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_native_signin_transport_retry">The secure connection was interrupted. Tap the sign-in button to try again.</string>
     <string name="dashboard_native_signin_callback_rejected">The provider did not approve this sign-in. If you cancelled, no action is needed; otherwise start a fresh sign-in attempt.</string>
-    <string name="dashboard_native_signin_code_rejected">Google sign-in finished, but hosted Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
-    <string name="dashboard_native_signin_gateway_rejected">Hosted Hermes refused the session exchange. Check that the hosted agent is current, then start sign-in again.</string>
-    <string name="dashboard_native_signin_rate_limited">Hosted Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
-    <string name="dashboard_native_signin_gateway_unavailable">Google sign-in finished, but the hosted Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
-    <string name="dashboard_native_signin_response_unsupported">Hosted Hermes returned a sign-in response this app could not use. Check for Hermes Relay and hosted agent updates.</string>
+    <string name="dashboard_native_signin_code_rejected">Browser sign-in finished, but Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hermes refused the session exchange. Check that the Dashboard is current, then start sign-in again.</string>
+    <string name="dashboard_native_signin_rate_limited">Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Browser sign-in finished, but the Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hermes returned a sign-in response this app could not use. Check for app and Dashboard updates.</string>
     <string name="dashboard_native_signin_attempt_inactive">This sign-in attempt was cancelled or replaced. Close the old browser tab and start again.</string>
-    <string name="dashboard_native_signin_storage_failed">Google sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
+    <string name="dashboard_native_signin_storage_failed">Browser sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -2594,6 +2635,7 @@
     <string name="active_section_no_routes_answered_probe">No routes answered the probe</string>
     <string name="active_section_not_advertised">Not advertised</string>
     <string name="active_section_not_checked">Not checked</string>
+    <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_not_configured">Not configured</string>
     <string name="active_section_offline">Offline</string>
     <string name="active_section_open_tailscale">Open Tailscale</string>
@@ -3201,7 +3243,7 @@
     <string name="transport_badge_insecure_lan_only">Plain (LAN only)</string>
     <string name="transport_badge_encrypted_tls">Encrypted &#183; TLS</string>
     <string name="transport_badge_encrypted_tailscale">Encrypted &#183; Tailscale</string>
-    <string name="transport_badge_mixed_routes">Mixed routes</string>
+    <string name="transport_badge_mixed_routes">Mixed protection</string>
     <string name="transport_badge_not_encrypted">Not encrypted</string>
     <string name="transport_badge_checking">Checking&#8230;</string>
     <string name="transport_badge_glyph_tls">Encrypted (TLS)</string>
@@ -3670,13 +3712,15 @@
     <string name="relay_app_reconnecting">Reconnecting…</string>
     <string name="relay_app_rename_failed">Rename failed</string>
     <string name="relay_app_revoke_only_active">Revoke</string>
-    <string name="security_sheet_explain_mixed">Mixed security — some connections use TLS, some don\u0027t</string>
+    <string name="security_sheet_explain_mixed">Active surfaces use different protection. Unavailable fallbacks are not included in this verdict.</string>
     <string name="security_sheet_explain_overlay">Overlay connection uses Wi-Fi peer-to-peer</string>
     <string name="security_sheet_explain_plain">No encryption — plain HTTP connection</string>
     <string name="security_sheet_explain_tls">Encrypted — TLS connection</string>
     <string name="security_sheet_learn_more">Learn about connection security →</string>
     <string name="security_sheet_no_route">No route configured</string>
     <string name="security_sheet_title">Connection security</string>
+    <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>
+    <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="subagent_lane_a11y">%1$s %2$s</string>
     <string name="subagent_lane_label_fallback">Agent</string>
     <string name="subagent_lane_running_count">%d running</string>

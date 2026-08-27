@@ -66,4 +66,41 @@ class ConnectionWizardDispatchPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun restoredWizardDropsStepsWhoseSecretOrProbeDraftWasNotSaved() {
+        assertEquals(
+            WizardStep.DashboardManual,
+            restorableWizardStep(
+                saved = WizardStep.DashboardFound,
+                method = PairMethod.Standard,
+                relayScoped = false,
+                hasPayload = false,
+                verifyAttempt = 0,
+                hasDashboardProbe = false,
+            ),
+        )
+        assertEquals(
+            WizardStep.Method,
+            restorableWizardStep(
+                saved = WizardStep.Confirm,
+                method = PairMethod.Scan,
+                relayScoped = false,
+                hasPayload = false,
+                verifyAttempt = 0,
+                hasDashboardProbe = false,
+            ),
+        )
+        assertEquals(
+            WizardStep.ManualEntry,
+            restorableWizardStep(
+                saved = WizardStep.Verify,
+                method = PairMethod.EnterCode,
+                relayScoped = true,
+                hasPayload = false,
+                verifyAttempt = 0,
+                hasDashboardProbe = false,
+            ),
+        )
+    }
 }

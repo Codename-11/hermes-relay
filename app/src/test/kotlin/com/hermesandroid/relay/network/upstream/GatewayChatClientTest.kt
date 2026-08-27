@@ -59,6 +59,9 @@ class GatewayClientHarness(
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
+    val transientTicketFailures = AtomicInteger(0)
+    var ticketResponseDelayMs = 0L
+    var closeBeforeReadyCode: Int? = null
     var resumeFails = false
 
     /** Authoritative profile owner echoed by session results; null follows request. */
@@ -235,6 +238,10 @@ class GatewayClientHarness(
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
             serverSockets.add(webSocket)
             allServerSockets.add(webSocket)
+            closeBeforeReadyCode?.let { code ->
+                webSocket.close(code, if (code == 4401) "sign in required" else "origin rejected")
+                return
+            }
             webSocket.send(eventFrame("gateway.ready", null, null))
         }
 
@@ -598,11 +605,17 @@ class GatewayClientHarness(
                         ticketMints.incrementAndGet()
                         if (failTicketMint) {
                             MockResponse().setResponseCode(401).setBody("""{"error":"no session"}""")
+                        } else if (transientTicketFailures.getAndUpdate { remaining ->
+                                (remaining - 1).coerceAtLeast(0)
+                            } > 0
+                        ) {
+                            MockResponse().setResponseCode(502).setBody("Bad Gateway")
                         } else {
                             MockResponse()
                                 .setResponseCode(200)
                                 .setHeader("Content-Type", "application/json")
                                 .setBody("""{"ticket":"tkt-${ticketMints.get()}","ttl_seconds":30}""")
+                                .setBodyDelay(ticketResponseDelayMs, TimeUnit.MILLISECONDS)
                         }
                     }
                     path.startsWith("/api/ws") -> MockResponse().withWebSocketUpgrade(wsListener)
@@ -710,6 +723,8 @@ class GatewayChatClientTest {
     private lateinit var scope: CoroutineScope
     private lateinit var client: GatewayChatClient
     private var unsupportedMarked = false
+    private var signInRequiredMarked = false
+    private var unreachableMarked = false
 
     private class Recorder {
         val starts = AtomicInteger(0)
@@ -760,14 +775,18 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        ticketTimeoutMs: Long = 8_000L,
     ) = GatewayChatClient(
         initialDashboardClient = DashboardApiClient(
             baseUrl = harness.server.url("/").toString().trimEnd('/'),
             okHttpClient = OkHttpClient(),
+            sessionReadTimeoutMillis = ticketTimeoutMs,
         ),
         okHttpClient = OkHttpClient(),
         callbackDispatcher = { it() },
         onGatewayUnsupported = { unsupportedMarked = true },
+        onGatewaySignInRequired = { signInRequiredMarked = true },
+        onGatewayUnreachable = { unreachableMarked = true },
         scope = scope,
         // Keep the mid-turn reconnect window short so `failed rejoin`
         // surfaces its error well within the test's await budget.
@@ -797,10 +816,11 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        ticketTimeoutMs: Long = 8_000L,
     ) {
         client.shutdown()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs)
+        client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs, ticketTimeoutMs)
     }
 
     private fun waitUntil(timeoutMs: Long = 2_000L, condition: () -> Boolean) {
@@ -816,6 +836,8 @@ class GatewayChatClientTest {
         harness = GatewayClientHarness()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         unsupportedMarked = false
+        signInRequiredMarked = false
+        unreachableMarked = false
         client = buildClient()
     }
 
@@ -1854,6 +1876,76 @@ class GatewayChatClientTest {
         assertTrue(r.preflightFailures.isNotEmpty())
         assertTrue(r.errors.isEmpty())
         assertTrue(r.textDeltas.isEmpty())
+        assertEquals("auth failure must not repeat an identical ticket request", 1, harness.ticketMints.get())
+        assertTrue(signInRequiredMarked)
+        assertFalse(unreachableMarked)
+    }
+
+    @Test
+    fun `transient ticket server failure retries immediately with a fresh ticket`() {
+        harness.transientTicketFailures.set(1)
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertEquals(2, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(r.errors.isEmpty())
+    }
+
+    @Test
+    fun `ticket timeout is bounded once and marks gateway unreachable`() {
+        harness.ticketResponseDelayMs = 500L
+        rebuildClient(ticketTimeoutMs = 75L)
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("timeout", ignoreCase = true))
+        assertTrue(unreachableMarked)
+        assertFalse(signInRequiredMarked)
+    }
+
+    @Test
+    fun `pre-ready auth close settles promptly without a second ticket`() {
+        harness.closeBeforeReadyCode = 4401
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("authentication", ignoreCase = true))
+        assertTrue(signInRequiredMarked)
+    }
+
+    @Test
+    fun `pre-ready origin guard close settles promptly without a second ticket`() {
+        harness.closeBeforeReadyCode = 4403
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("origin", ignoreCase = true))
+        assertTrue(unreachableMarked)
+        assertFalse(signInRequiredMarked)
     }
 
     @Test

@@ -12,16 +12,24 @@ import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -129,6 +137,10 @@ class EndpointResolver(
     )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
+    private val inFlightProbes = ConcurrentHashMap<String, Deferred<Boolean>>()
+    private val probeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val probeStateLock = Any()
+    private var probeGeneration = 0L
 
     private val _probeOutcomes = MutableStateFlow<Map<String, RouteProbeOutcome>>(emptyMap())
 
@@ -139,6 +151,12 @@ class EndpointResolver(
      * records what the network last said.
      */
     val probeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> = _probeOutcomes.asStateFlow()
+
+    /** Last independently observed verdict for one configured route surface. */
+    fun outcomeFor(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): RouteProbeOutcome? = probeOutcomes.value[outcomeKey(candidate, surface)]
 
     private fun recordOutcome(
         candidate: EndpointCandidate,
@@ -177,40 +195,47 @@ class EndpointResolver(
         const val CACHE_TTL_MS = 60_000L
 
         /**
-         * Failed probe-result cache TTL. Keep this intentionally short:
+         * Failed probe-result cache TTL. Keep this bounded but long enough
+         * that ordinary screen/profile lifecycle work cannot repeatedly pay
+         * the full probe timeout:
          * Android may report a new cellular/VPN network before Tailscale has
          * finished routing, so a single early ConnectException must not keep a
-         * viable fallback route suppressed through the voice resume window.
+         * viable fallback route suppressed for long. Network-change and
+         * explicit-probe paths invalidate the cache immediately.
          */
-        const val NEGATIVE_CACHE_TTL_MS = 2_000L
+        const val NEGATIVE_CACHE_TTL_MS = 15_000L
 
         /** Shared timeout wording so HEAD-timeout and socket-timeout read the same. */
         private const val PROBE_TIMEOUT_DETAIL = "No answer (timed out)"
 
         /**
-         * Stable cache key for one candidate surface:
-         * `"<surface>|<role>|<surface host>:<port>"`.
+         * Stable outcome/cache key for one candidate surface:
+         * `"<surface>|<role>|<normalized service base>"`.
          * Roles are preserved case-verbatim (HMAC canonicalization contract)
          * but hostnames are lowercased — two roles pointing at the same
          * host:port share reachability state.
          */
-        internal fun cacheKey(
+        fun outcomeKey(
             candidate: EndpointCandidate,
             surface: EndpointSurface = EndpointSurface.Standard,
         ): String {
-            val authority = when (surface) {
+            val serviceIdentity = when (surface) {
                 EndpointSurface.Standard ->
                     candidate.routeAuthority() ?: candidate.primaryRouteUrl().orEmpty().lowercase()
                 EndpointSurface.Dashboard ->
-                    routeAuthority(candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl ?: candidate.dashboard?.url).orEmpty()
+                    routeIdentity(candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl ?: candidate.dashboard?.url)
                 EndpointSurface.Api ->
-                    routeAuthority(candidate.pluginProxyRoutesOrNull()?.apiBaseUrl ?: candidate.api?.url).orEmpty()
+                    routeIdentity(candidate.pluginProxyRoutesOrNull()?.apiBaseUrl ?: candidate.api?.url)
                 EndpointSurface.Relay ->
-                    candidate.pluginProxyRoutesOrNull()?.authority
-                        ?: routeAuthority(candidate.relay?.url).orEmpty()
+                    routeIdentity(candidate.pluginProxyRoutesOrNull()?.relayHttpUrl ?: candidate.relay?.url)
             }
-            return "${surface.name.lowercase()}|${candidate.role}|$authority"
+            return "${surface.name.lowercase()}|${candidate.role}|$serviceIdentity"
         }
+
+        internal fun cacheKey(
+            candidate: EndpointCandidate,
+            surface: EndpointSurface = EndpointSurface.Standard,
+        ): String = outcomeKey(candidate, surface)
 
         private fun routeAuthority(rawUrl: String?): String? {
             val candidate = rawUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
@@ -222,6 +247,21 @@ class EndpointResolver(
                 else -> candidate
             }
             return httpUrl.toHttpUrlOrNull()?.let { url -> "${url.host}:${url.port}" }
+        }
+
+        private fun routeIdentity(rawUrl: String?): String {
+            val candidate = rawUrl?.trim()?.takeIf { it.isNotBlank() } ?: return ""
+            val httpCandidate = when {
+                candidate.startsWith("ws://", ignoreCase = true) ->
+                    "http://${candidate.substringAfter("://")}"
+                candidate.startsWith("wss://", ignoreCase = true) ->
+                    "https://${candidate.substringAfter("://")}"
+                else -> candidate
+            }
+            return httpCandidate.toHttpUrlOrNull()?.let { url ->
+                val path = url.encodedPath.trimEnd('/').takeIf { it.isNotEmpty() }.orEmpty()
+                "${url.scheme}://${url.host}:${url.port}$path"
+            } ?: candidate.lowercase().trimEnd('/')
         }
     }
 
@@ -288,6 +328,51 @@ class EndpointResolver(
     }
 
     /**
+     * Probe every independently configured route surface in parallel.
+     *
+     * Dashboard/Gateway, optional API fallback, and Relay do not vouch for one
+     * another even when they share a hostname. Unconfigured surfaces are
+     * omitted. Invalidated probes publish no result, preserving the prior
+     * outcome until a fresh physical probe completes.
+     */
+    suspend fun probeSurfaces(
+        candidate: EndpointCandidate,
+    ): Map<EndpointSurface, RouteProbeOutcome> = coroutineScope {
+        val configuredSurfaces = listOf(
+            EndpointSurface.Dashboard,
+            EndpointSurface.Api,
+            EndpointSurface.Relay,
+        ).filter { probeTarget(candidate, it) != null }
+
+        configuredSurfaces
+            .map { surface ->
+                async {
+                    isReachable(candidate, surface)
+                    surface to currentCachedOutcomeFor(candidate, surface)
+                }
+            }
+            .mapNotNull { deferred ->
+                val (surface, outcome) = deferred.await()
+                outcome?.let { surface to it }
+            }
+            .toMap()
+    }
+
+    /** Return only an outcome still backed by this generation's probe cache. */
+    private fun currentCachedOutcomeFor(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+    ): RouteProbeOutcome? = synchronized(probeStateLock) {
+        val key = cacheKey(candidate, surface)
+        val cached = probeCache[key]
+        if (cached != null && cached.expiresAt > clock()) {
+            probeOutcomes.value[key]
+        } else {
+            null
+        }
+    }
+
+    /**
      * Race all candidates in [group] (same priority tier) in parallel. First
      * candidate that reports reachable — whether from cache or a fresh probe
      * — wins. Null when the entire group is unreachable.
@@ -316,20 +401,23 @@ class EndpointResolver(
         }
 
         return coroutineScope {
-            val deferred = group.map { candidate ->
-                async(Dispatchers.IO) {
-                    if (isReachable(candidate, surface)) candidate else null
+            val completions = Channel<EndpointCandidate?>(group.size)
+            val waiters = group.map { candidate ->
+                launch(Dispatchers.IO) {
+                    completions.send(if (isReachable(candidate, surface)) candidate else null)
                 }
             }
-            // Collect results in arrival order: iterate through awaitAll +
-            // pick the first non-null. awaitAll preserves input order, which
-            // means a slow-but-reachable priority-0 candidate would block a
-            // fast-and-reachable sibling. But HEAD /health against a healthy
-            // API route replies in <100ms and the timeout caps stragglers at 2s,
-            // so this is acceptable in practice. A true "first to arrive"
-            // would need kotlinx.coroutines Channel plumbing that's not
-            // worth the weight here.
-            deferred.awaitAll().firstOrNull { it != null }
+            repeat(group.size) {
+                val completed = completions.receive()
+                if (completed != null) {
+                    // Cancelling these waiters does not cancel the shared
+                    // physical probes below; their outcomes still populate
+                    // the cache for the next resolution.
+                    waiters.forEach { it.cancel() }
+                    return@coroutineScope completed
+                }
+            }
+            null
         }
     }
 
@@ -350,10 +438,33 @@ class EndpointResolver(
             return cached.reachable
         }
 
-        val reachable = probe(candidate, surface)
-        val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
-        probeCache[key] = CacheEntry(expiresAt = now + ttl, reachable = reachable)
-        return reachable
+        // Resolution is triggered from several independent lifecycle paths
+        // (connection hydration, profile restoration, network callbacks, and
+        // explicit probes). Share one physical request per route/surface so a
+        // slow optional endpoint cannot accumulate duplicate 4-second probes.
+        val shared = synchronized(probeStateLock) {
+            inFlightProbes[key] ?: run {
+                val generation = probeGeneration
+                probeScope.async(start = CoroutineStart.LAZY) {
+                    probe(candidate, surface, generation)
+                }.also { deferred ->
+                    inFlightProbes[key] = deferred
+                    deferred.invokeOnCompletion { inFlightProbes.remove(key, deferred) }
+                    deferred.start()
+                }
+            }
+        }
+        return try {
+            shared.await()
+        } catch (_: CancellationException) {
+            // clearCache() owns cancellation of the shared physical probe. A
+            // still-active waiter treats that invalidated result as unknown so
+            // same-priority races can publish their non-winning completion.
+            // Genuine caller cancellation still propagates from ensureActive.
+            currentCoroutineContext().ensureActive()
+            Log.d(TAG, "probe invalidated for $key")
+            false
+        }
     }
 
     /**
@@ -367,6 +478,7 @@ class EndpointResolver(
     private suspend fun probe(
         candidate: EndpointCandidate,
         surface: EndpointSurface,
+        generation: Long,
     ): Boolean {
         val startedAtMs = clock()
         val operation = when (surface) {
@@ -378,19 +490,25 @@ class EndpointResolver(
         val target = probeTarget(candidate, surface)
         val url = target?.requestUrl?.toHttpUrlOrNull()
             ?: run {
-                Log.w(TAG, "probe: invalid url for role=${candidate.role}")
-                DiagnosticsLog.record(
-                    category = DiagnosticCategory.Endpoint,
-                    severity = DiagnosticSeverity.Error,
-                    title = context?.getString(R.string.endpoint_diag_probe_invalid) ?: "Endpoint probe invalid",
-                    detail = "No valid Dashboard, API, or Relay URL",
-                    operation = operation,
-                    endpointRole = candidate.role,
-                    configuredUrl = candidate.primaryRouteUrl(),
-                    suggestion = "Edit or re-pair this route so it contains a valid service URL.",
-                )
-                recordOutcome(candidate, surface, reachable = false, detail = "Invalid route URL")
-                return false
+                return completeProbe(
+                    candidate = candidate,
+                    surface = surface,
+                    generation = generation,
+                    reachable = false,
+                    detail = "Invalid route URL",
+                ) {
+                    Log.w(TAG, "probe: invalid url for role=${candidate.role}")
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Endpoint,
+                        severity = DiagnosticSeverity.Error,
+                        title = context?.getString(R.string.endpoint_diag_probe_invalid) ?: "Endpoint probe invalid",
+                        detail = "No valid Dashboard, API, or Relay URL",
+                        operation = operation,
+                        endpointRole = candidate.role,
+                        configuredUrl = candidate.primaryRouteUrl(),
+                        suggestion = "Edit or re-pair this route so it contains a valid service URL.",
+                    )
+                }
             }
         val fastClient = (clientForCandidate?.invoke(candidate) ?: httpClient).newBuilder()
             .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -416,31 +534,61 @@ class EndpointResolver(
                         } else {
                             context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed"
                         }
+                        completeProbe(
+                            candidate = candidate,
+                            surface = surface,
+                            generation = generation,
+                            reachable = ok,
+                            detail = if (ok) null else "HTTP ${resp.code} from ${target.path}",
+                        ) {
+                            DiagnosticsLog.record(
+                                category = DiagnosticCategory.Endpoint,
+                                severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
+                                title = probeTitle,
+                                detail = if (ok) null else "HTTP ${resp.code}",
+                                operation = operation,
+                                endpointRole = candidate.role,
+                                configuredUrl = target.baseUrl,
+                                requestUrl = target.requestUrl,
+                                elapsedMs = clock() - startedAtMs,
+                                suggestion = if (ok) {
+                                    null
+                                } else {
+                                    NetworkDiagnosticGuidance.forHttpStatus(resp.code, surface.diagnosticTarget())
+                                },
+                            )
+                        }
+                    }
+                } ?: run {
+                    completeProbe(
+                        candidate = candidate,
+                        surface = surface,
+                        generation = generation,
+                        reachable = false,
+                        detail = PROBE_TIMEOUT_DETAIL,
+                    ) {
                         DiagnosticsLog.record(
                             category = DiagnosticCategory.Endpoint,
-                            severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
-                            title = probeTitle,
-                            detail = if (ok) null else "HTTP ${resp.code}",
+                            severity = DiagnosticSeverity.Warning,
+                            title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
+                            detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
                             operation = operation,
                             endpointRole = candidate.role,
                             configuredUrl = target.baseUrl,
                             requestUrl = target.requestUrl,
                             elapsedMs = clock() - startedAtMs,
-                            suggestion = if (ok) {
-                                null
-                            } else {
-                                NetworkDiagnosticGuidance.forHttpStatus(resp.code, surface.diagnosticTarget())
-                            },
+                            suggestion = "Check network routing or firewall rules between this device and ${surface.diagnosticTarget()}.",
                         )
-                        recordOutcome(
-                            candidate,
-                            surface,
-                            reachable = ok,
-                            detail = if (ok) null else "HTTP ${resp.code} from ${target.path}",
-                        )
-                        ok
                     }
-                } ?: run {
+                }
+            } catch (_: TimeoutCancellationException) {
+                completeProbe(
+                    candidate = candidate,
+                    surface = surface,
+                    generation = generation,
+                    reachable = false,
+                    detail = PROBE_TIMEOUT_DETAIL,
+                ) {
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Endpoint,
                         severity = DiagnosticSeverity.Warning,
@@ -453,43 +601,59 @@ class EndpointResolver(
                         elapsedMs = clock() - startedAtMs,
                         suggestion = "Check network routing or firewall rules between this device and ${surface.diagnosticTarget()}.",
                     )
-                    recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
-                    false
                 }
-            } catch (_: TimeoutCancellationException) {
-                DiagnosticsLog.record(
-                    category = DiagnosticCategory.Endpoint,
-                    severity = DiagnosticSeverity.Warning,
-                    title = context?.getString(R.string.endpoint_diag_probe_timeout) ?: "Endpoint probe timeout",
-                    detail = "No ${target.path} response in ${PROBE_TIMEOUT_MS}ms",
-                    operation = operation,
-                    endpointRole = candidate.role,
-                    configuredUrl = target.baseUrl,
-                    requestUrl = target.requestUrl,
-                    elapsedMs = clock() - startedAtMs,
-                    suggestion = "Check network routing or firewall rules between this device and ${surface.diagnosticTarget()}.",
-                )
-                recordOutcome(candidate, surface, reachable = false, detail = PROBE_TIMEOUT_DETAIL)
-                false
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.d(TAG, "probe failed role=${candidate.role} " +
-                    "route=${target.baseUrl}: ${e.javaClass.simpleName}")
-                DiagnosticsLog.record(
-                    category = DiagnosticCategory.Endpoint,
-                    severity = DiagnosticSeverity.Warning,
-                    title = context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed",
+                completeProbe(
+                    candidate = candidate,
+                    surface = surface,
+                    generation = generation,
+                    reachable = false,
                     detail = humanProbeFailure(e),
-                    operation = operation,
-                    endpointRole = candidate.role,
-                    configuredUrl = target.baseUrl,
-                    requestUrl = target.requestUrl,
-                    elapsedMs = clock() - startedAtMs,
-                    suggestion = NetworkDiagnosticGuidance.forThrowable(e, surface.diagnosticTarget()),
-                )
-                recordOutcome(candidate, surface, reachable = false, detail = humanProbeFailure(e))
-                false
+                ) {
+                    Log.d(TAG, "probe failed role=${candidate.role} " +
+                        "route=${target.baseUrl}: ${e.javaClass.simpleName}")
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Endpoint,
+                        severity = DiagnosticSeverity.Warning,
+                        title = context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed",
+                        detail = humanProbeFailure(e),
+                        operation = operation,
+                        endpointRole = candidate.role,
+                        configuredUrl = target.baseUrl,
+                        requestUrl = target.requestUrl,
+                        elapsedMs = clock() - startedAtMs,
+                        suggestion = NetworkDiagnosticGuidance.forThrowable(e, surface.diagnosticTarget()),
+                    )
+                }
             }
         }
+    }
+
+    /** Commit one physical probe only if it still belongs to the active cache generation. */
+    private suspend fun completeProbe(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface,
+        generation: Long,
+        reachable: Boolean,
+        detail: String?,
+        recordDiagnostic: () -> Unit,
+    ): Boolean {
+        currentCoroutineContext().ensureActive()
+        synchronized(probeStateLock) {
+            if (generation != probeGeneration) {
+                throw CancellationException("Endpoint probe invalidated")
+            }
+            recordDiagnostic()
+            recordOutcome(candidate, surface, reachable, detail)
+            val ttl = if (reachable) CACHE_TTL_MS else NEGATIVE_CACHE_TTL_MS
+            probeCache[cacheKey(candidate, surface)] = CacheEntry(
+                expiresAt = clock() + ttl,
+                reachable = reachable,
+            )
+        }
+        return reachable
     }
 
     /** Choose the standard Dashboard/Gateway surface first when advertised. */
@@ -602,17 +766,19 @@ class EndpointResolver(
         candidate: EndpointCandidate,
         surface: EndpointSurface = EndpointSurface.Standard,
     ) {
-        val key = cacheKey(candidate, surface)
-        probeCache[key] = CacheEntry(
-            expiresAt = clock() + NEGATIVE_CACHE_TTL_MS,
-            reachable = false,
-        )
-        recordOutcome(
-            candidate,
-            surface,
-            reachable = false,
-            detail = "Network changed — assumed offline",
-        )
+        synchronized(probeStateLock) {
+            val key = cacheKey(candidate, surface)
+            probeCache[key] = CacheEntry(
+                expiresAt = clock() + NEGATIVE_CACHE_TTL_MS,
+                reachable = false,
+            )
+            recordOutcome(
+                candidate,
+                surface,
+                reachable = false,
+                detail = "Network changed — assumed offline",
+            )
+        }
     }
 
     /**
@@ -623,7 +789,17 @@ class EndpointResolver(
      * just-died route must not outlive the handoff.
      */
     internal fun clearCache() {
-        probeCache.clear()
+        val staleProbes = synchronized(probeStateLock) {
+            probeGeneration += 1L
+            probeCache.clear()
+            inFlightProbes.values.toList().also { inFlightProbes.clear() }
+        }
+        // An explicit re-probe must not join a request that began before the
+        // invalidation signal. Cancellation is resolver-owned (not waiter-
+        // owned), so ordinary lifecycle cancellation still leaves shared
+        // probes alive for other callers. The generation check prevents a
+        // late InterruptedIOException/response from publishing stale state.
+        staleProbes.forEach { it.cancel() }
     }
 
     /** Test-only: snapshot the current cache for assertion purposes. */

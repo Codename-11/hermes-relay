@@ -199,28 +199,66 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Dashboard/Gateway redirect authentication is provider-compatible. Nous Portal,
-which relies on a challenge that rejects embedded Android WebViews, uses the
-upstream brokered `native_pkce` flow in a system Custom Tab when the dashboard
-advertises it. As in Hermes Desktop, the gateway selects its single
-native-eligible provider rather than Android sending a UI provider identifier.
+Dashboard/Gateway redirect authentication is provider-compatible and
+capability-driven. When `/api/status.auth_flows` advertises `native_pkce`, every
+interactive provider, including password-capable providers, uses the upstream
+brokered system-browser flow so browser password managers/passkeys remain
+available; provider display/configuration names never select the protocol. Android passes
+the selected provider when upstream requires it, while retaining the hosted
+Nous compatibility behavior where the gateway selects its single
+native-eligible provider.
 The app owns an ephemeral five-minute loopback callback and stores the resulting
 bearer session only for that connection and exact dashboard origin. Callback,
 code-exchange, hosted-gateway, transport, response-shape, and secure-storage
-failures surface as distinct secret-free recovery guidance.
+failures surface as distinct secret-free recovery guidance. Client-local native
+failures automatically continue through the upstream cookie/WebView fallback;
+explicit provider denial, server rejection, and rate limiting remain visible
+instead of starting a second authorization attempt.
 Unreadable secure stores may be cleared and rebuilt, with any Keystore fallback,
 self-heal, or temporary in-memory degradation recorded in Diagnostics without
 credential values, cookie contents, endpoint URLs, or storage identifiers.
-Self-hosted OIDC remains on the dashboard cookie flow: Android opens
-`/auth/login` in a full-screen embedded browser destination, lets the provider
-return through the public `/auth/callback`, imports only same-origin cookies,
-and verifies them through `/api/auth/me`. HTTPS is required on public routes;
+Older gateways that do not advertise `native_pkce`, plus client-local native
+fallback, use the dashboard cookie flow: Android opens `/auth/login` in a
+full-screen embedded browser destination, lets the provider return through its
+configured `/auth/callback`, imports only same-origin cookies, and verifies them
+through `/api/auth/me`. When the selected LAN, private, or
+Tailscale route advertises a different canonical callback, Android first
+probes the redirect without cookies, starts the real transaction on that
+canonical base, and retains it as the connection's authenticated
+Dashboard/Gateway origin rather than as a network-route candidate
+only after the user reviews the move and matching non-empty upstream
+`install_id` values prove both addresses reach the same installation. A
+mismatch is rejected; older gateways missing either ID require explicit
+confirmation. Different public origins require HTTPS. Different cleartext
+origins are accepted only between literal loopback/private-overlay hosts with
+an HTTPS identity-provider hop. Secure
+cookies are never copied back to cleartext LAN, while API and Relay routes stay
+unchanged. The short-lived auth WebView permits third-party cookies for
+compatible federated identity-provider pages. HTTPS is required on public routes;
 explicit private-LAN and Tailscale-IP dashboards may use their existing HTTP
 transport. When such a private route advertises a canonical HTTPS Nous callback,
 Android starts the browser on that canonical origin so Hermes' temporary PKCE
 cookie and the provider callback remain same-origin, then exchanges the
 one-time code through the active private route. The verified session is shared
-by Manage, Gateway tickets, and standard voice.
+by Manage, Gateway tickets, and standard voice. Dashboard authentication and
+Gateway transport readiness remain separate: an authenticated session stays
+signed in when ticket minting is temporarily unavailable, while Gateway
+reconnect continues independently. When a multi-provider Dashboard masks an
+expired native bearer as a provider-unavailable ticket response, Android makes
+one bounded native refresh and ticket retry; other requests are never replayed.
+Dashboard ticket 5xx responses also receive one immediate fresh-ticket retry
+for restart recovery; authentication rejection, rate limiting, and local HTTP
+timeouts remain single-attempt failures.
+Cookie sessions remain scoped to the exact browser host that issued them.
+Android never copies a basic or OAuth cookie between LAN, Tailscale, public, or
+derived Dashboard hosts; a different legacy cookie host requires sign-in there.
+
+The Routes surface presents the Dashboard/Gateway origin separately from LAN,
+Tailscale, direct API, Relay, and other network candidates. Editing the origin
+revalidates it and clears origin-bound cookies or bearer credentials when its
+base changes. A single HTTPS hostname can still use a local path through split
+DNS; the hostname must remain identical so OIDC cookies and callbacks stay
+same-origin.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
@@ -479,7 +517,7 @@ Bottom navigation bar with 4 tabs:
 - **Bot Mode workspace** — the session drawer exposes one entry into a separate full-screen messenger surface; it does not add Bot or group rows to the ordinary session taxonomy. Android refreshes every saved Dashboard/Gateway with bounded concurrency, preserves last-good rows as visibly offline, and collapses duplicate routes by upstream `install_id` before assigning source-qualified handles. Every Bot carries an immutable `(connectionId, profile)` owner; labels, installation metadata, and the currently resolved URL are presentation/routing data rather than identity. All gateways and one-gateway filters never mutate the foreground connection.
 - **Canonical Bot Chat** — each individual row resolves the exact hidden session titled `Bot Chat` on its owning Gateway. Lookup failure is not absence, so Android creates and materializes the lazy row with `session.title` only after an authoritative empty exact-title result. The dedicated Bot Chat destination retains that route's pooled Gateway client, loads history through the same connection/profile Dashboard, sends only through Gateway, and returns directly to Bot Mode without rebinding Standard Chat or the global connection. `/new` or `/reset` compacts the canonical conversation instead of forking it. The route pool mints a fresh WebSocket ticket per dial, includes the immutable profile in the WebSocket URL, isolates credentials by exact trusted connection origin, and tears down only the removed connection's clients.
 - **Bot group projection** — Android merges the bounded `ui_meta["hermes-bots-groups"]` v3 projection across gateways by durable room identity and newest revision. Rooms and recent messages are visibly read-only; Android does not create, rename, disband, join, send, coordinate member turns, or become a second room-log authority. Binary room images are ignored at this metadata boundary.
-- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
+- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. A profile switch marks the replacement list loading before clearing the previous profile's rows and keeps that state until the exact-profile fetch settles, so an empty-state claim never flashes before server truth arrives. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
 - **Authoritative session activity** — one composite registry keyed by connection, normalized profile, and durable session id drives the drawer, filters, grouping, animation, accessibility, and the visible composer. Exact pending approval/clarify/sudo/secret/MCP requests produce **Needs input**; the Gateway's process-wide `session.active_list` supplies **Starting**, **Working**, and **Idle**; exact terminal or `session.info {running:false}` can settle the matching generation. Because active-list rows normally have no profile metadata, Android assigns a row only through exact foreground/detached ownership already held by that client, or explicit profile metadata if a future upstream sends it. A bounded REST directory never proves global uniqueness. Unresolved rows create no status. Resolved rows from a partial snapshot may update their exact owners, but disappearance settles a scope only when the successful process-wide snapshot was completely and unambiguously resolved for it. Restart/checkpoint recovery is **Checking**; a failed or unsupported live refresh is **Unavailable**, never inferred Idle. REST `is_active` remains recency metadata only. `process.list` may add a separate **Background work** indicator and never keeps the parent conversation Working. Old socket generations, bare session ids from another profile, and delayed snapshots cannot revive newer settled state.
 - **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible turn without sending `session.interrupt`; each running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Explicit Stop still interrupts. SSE fallback stays single-stream and cancels on navigation.
 - **Queued Gateway follow-ups** — every local queued item is immutably scoped to its originating connection, profile, stored session, transport, and run generation; only that run's completion can make it eligible, and switching sessions shows only that session's queue. Restored text queues retain the same scope, while unavailable/deleted destinations and non-restorable attachment queues fail visibly instead of following the current composer. Drained messages add `queued: true` to `prompt.submit`; ordinary sends omit the field. Authoritative submit rejections (`4004`, `4018`, `4028`, `4029`, `4030`, `4090`, `5008`, `5070`, and `5071`) preserve the server message and never fall through to API-server SSE.

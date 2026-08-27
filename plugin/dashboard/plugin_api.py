@@ -27,17 +27,24 @@ Error translation
 from __future__ import annotations
 
 import importlib
+import asyncio
+import hashlib
+import hmac
 import json
 import os
+import re
 import sys
 import time
 import types
 from pathlib import Path as FsPath
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+import aiohttp
+from fastapi import APIRouter, Body, HTTPException, Path, Query, Request, Response, WebSocket
+from fastapi.responses import JSONResponse
+from starlette.websockets import WebSocketDisconnect
 
 # ── Plugin-package bootstrap ──────────────────────────────────────────────
 # hermes-agent's web server loads this file standalone via
@@ -82,6 +89,75 @@ def _plugin_module(name: str) -> types.ModuleType:
 RELAY_PORT: int = int(os.environ.get("HERMES_RELAY_PORT", "8767"))
 _RELAY_BASE: str = f"http://127.0.0.1:{RELAY_PORT}"
 _TIMEOUT: float = 5.0
+
+# The transport ingress is deliberately more constrained than the dashboard's
+# management API.  It is an authenticated facade over selected client-facing
+# Relay routes, not a generic loopback reverse proxy.
+_TRANSPORT_REQUEST_LIMIT = 32 * 1024 * 1024
+_TRANSPORT_RESPONSE_LIMIT = 64 * 1024 * 1024
+_TRANSPORT_WS_LIMIT = 4 * 1024 * 1024
+_TRANSPORT_TIMEOUT = httpx.Timeout(120.0, connect=5.0, read=60.0, write=60.0)
+_TRANSPORT_SESSION_HEADER = "X-Hermes-Relay-Session"
+_DASHBOARD_PROXY_SECRET_HEADER = "X-Hermes-Dashboard-Proxy-Secret"
+_PROXY_PEER_HEADER = "X-Hermes-Proxy-Peer"
+_PROXY_PROTO_HEADER = "X-Hermes-Proxy-Proto"
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+_OPAQUE_MEDIA_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,64}$")
+_SESSION_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+_DASHBOARD_PROXY_CONTEXT = b"hermes-relay/dashboard-ingress/v1"
+
+_HTTP_ROUTE_SPECS: tuple[tuple[str, str], ...] = (
+    ("GET", "/health"),
+    ("POST", "/media/upload"),
+    ("GET", "/media/by-path"),
+    ("GET", "/media/{token}"),
+    ("POST", "/clipboard/inbox"),
+    ("GET", "/chat/image-activity"),
+    ("GET", "/context/injected"),
+    ("GET", "/phone/threads"),
+    ("GET", "/relay/info"),
+    ("GET", "/relay/update-check"),
+    ("POST", "/relay/model-capabilities"),
+    ("GET", "/usage/providers"),
+    ("GET", "/sessions"),
+    ("PATCH", "/sessions/{token_prefix}"),
+    ("DELETE", "/sessions/{token_prefix}"),
+    ("GET", "/api/profiles/{name}/config"),
+    ("GET", "/api/profiles/{name}/avatar"),
+    ("GET", "/api/profiles/{name}/skills"),
+    ("GET", "/api/profiles/{name}/soul"),
+    ("PUT", "/api/profiles/{name}/soul"),
+    ("GET", "/api/profiles/{name}/memory"),
+    ("PUT", "/api/profiles/{name}/memory/{filename}"),
+    ("POST", "/voice/transcribe"),
+    ("POST", "/voice/synthesize"),
+    ("GET", "/voice/config"),
+    ("GET", "/voice/output/config"),
+    ("PATCH", "/voice/output/config"),
+    ("GET", "/voice/output/providers/{provider_id}/options"),
+    ("POST", "/voice/output/providers/{provider_id}/validate"),
+    ("POST", "/voice/output/session"),
+    ("GET", "/voice/realtime/config"),
+    ("PATCH", "/voice/realtime/config"),
+    ("GET", "/voice/realtime/providers/{provider_id}/options"),
+    ("POST", "/voice/realtime/providers/{provider_id}/validate"),
+    ("POST", "/voice/realtime/session"),
+    ("GET", "/voice/realtime-agent/config"),
+    ("PATCH", "/voice/realtime-agent/config"),
+    ("GET", "/voice/realtime-agent/providers/{provider_id}/options"),
+    ("POST", "/voice/realtime-agent/providers/{provider_id}/validate"),
+    ("POST", "/voice/realtime-agent/session"),
+)
+
+_RESPONSE_HEADERS = frozenset({
+    "accept-ranges", "cache-control", "content-disposition", "content-language",
+    "content-range", "content-type", "etag", "expires", "last-modified",
+    "retry-after", "vary", "www-authenticate",
+})
+_REQUEST_HEADERS = frozenset({
+    "accept", "accept-encoding", "content-encoding", "content-type", "if-match",
+    "if-modified-since", "if-none-match", "if-range", "range", "user-agent",
+})
 
 # Per-host state file for the "public URL" the operator pinned into the
 # Remote Access tab. Lives alongside the other ``~/.hermes/`` state so a
@@ -143,6 +219,354 @@ def _validate_public_url(url: str) -> str:
 router = APIRouter()
 router.include_router(_plugin_module("dashboard.mobile_plugin_api").router)
 router.include_router(_plugin_module("dashboard.git_api").router)
+
+
+def _dashboard_proxy_secret() -> str:
+    """Return a purpose-separated credential shared with the loopback Relay.
+
+    An operator may supply an explicit process-shared value.  The normal path
+    derives a distinct credential from Relay's existing private host secret,
+    so no additional secret needs to be copied into Android or the Dashboard.
+    """
+    configured = os.environ.get("HERMES_RELAY_DASHBOARD_PROXY_SECRET", "").strip()
+    if configured:
+        return hashlib.sha256(_DASHBOARD_PROXY_CONTEXT + configured.encode()).hexdigest()
+    qr_sign = _plugin_module("relay.qr_sign")
+    root_secret = qr_sign.load_or_create_secret()
+    return hmac.new(root_secret, _DASHBOARD_PROXY_CONTEXT, hashlib.sha256).hexdigest()
+
+
+def _outer_proto(scope_scheme: str) -> str:
+    return "wss" if scope_scheme.lower() in {"https", "wss"} else "ws"
+
+
+def _transport_peer(request: Request | WebSocket) -> str:
+    client = request.client
+    if client is None:
+        return "unknown"
+    peer = str(client.host or "").strip()
+    return peer[:128] or "unknown"
+
+
+def _relay_transport_path(template: str, request: Request | WebSocket) -> str:
+    media_token = request.path_params.get("token")
+    if media_token is not None and not _OPAQUE_MEDIA_TOKEN_RE.fullmatch(str(media_token)):
+        raise HTTPException(status_code=404, detail="relay route not found")
+    token_prefix = request.path_params.get("token_prefix")
+    if token_prefix is not None and not _SESSION_PREFIX_RE.fullmatch(str(token_prefix)):
+        raise HTTPException(status_code=404, detail="relay route not found")
+    values = {
+        name: quote(str(value), safe="")
+        for name, value in request.path_params.items()
+    }
+    return template.format_map(values)
+
+
+def _transport_session(request: Request | WebSocket, *, required: bool = True) -> str:
+    token = request.headers.get(_TRANSPORT_SESSION_HEADER, "").strip()
+    if not token and required:
+        raise HTTPException(status_code=401, detail="relay session header required")
+    if len(token) > 8192 or "\r" in token or "\n" in token:
+        raise HTTPException(status_code=400, detail="invalid relay session header")
+    return token
+
+
+def _transport_request_headers(request: Request | WebSocket, token: str) -> dict[str, str]:
+    headers = {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() in _REQUEST_HEADERS
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    headers.update({
+        _DASHBOARD_PROXY_SECRET_HEADER: _dashboard_proxy_secret(),
+        _PROXY_PEER_HEADER: _transport_peer(request),
+        _PROXY_PROTO_HEADER: _outer_proto(request.url.scheme),
+    })
+    return headers
+
+
+async def _proxy_transport_http(request: Request, relay_template: str) -> Response:
+    relay_path = _relay_transport_path(relay_template, request)
+    token = _transport_session(request, required=relay_path != "/health")
+    content_length = request.headers.get("content-length", "")
+    if content_length:
+        try:
+            if int(content_length) > _TRANSPORT_REQUEST_LIMIT:
+                raise HTTPException(status_code=413, detail="relay request exceeds size limit")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid content length") from exc
+    body = await request.body()
+    if len(body) > _TRANSPORT_REQUEST_LIMIT:
+        raise HTTPException(status_code=413, detail="relay request exceeds size limit")
+
+    try:
+        async with httpx.AsyncClient(timeout=_TRANSPORT_TIMEOUT) as client:
+            async with client.stream(
+                request.method,
+                f"{_RELAY_BASE}{relay_path}",
+                params=request.query_params,
+                headers=_transport_request_headers(request, token),
+                content=body,
+                follow_redirects=False,
+            ) as upstream:
+                response_length = upstream.headers.get("content-length", "")
+                if response_length:
+                    try:
+                        if int(response_length) > _TRANSPORT_RESPONSE_LIMIT:
+                            raise HTTPException(
+                                status_code=502,
+                                detail="relay response exceeds size limit",
+                            )
+                    except ValueError:
+                        pass
+                response_body = bytearray()
+                async for chunk in upstream.aiter_bytes():
+                    response_body.extend(chunk)
+                    if len(response_body) > _TRANSPORT_RESPONSE_LIMIT:
+                        raise HTTPException(
+                            status_code=502,
+                            detail="relay response exceeds size limit",
+                        )
+                status_code = upstream.status_code
+                response_headers = dict(upstream.headers)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="relay transport timed out") from exc
+    except httpx.HTTPError as exc:
+        raise _relay_unreachable(exc) from exc
+
+    headers = {
+        name: value
+        for name, value in response_headers.items()
+        if name.lower() in _RESPONSE_HEADERS
+    }
+    if relay_path == "/health" and 200 <= status_code < 300:
+        try:
+            health = json.loads(response_body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            health = {"relay_status": "available"}
+        if not isinstance(health, dict):
+            health = {"relay_status": "available"}
+        health["dashboard_ingress"] = {
+            "available": True,
+            "path": "/api/plugins/hermes-relay/transport",
+            "capabilities": ["relay_http", "relay_websocket"],
+        }
+        return JSONResponse(content=health, status_code=status_code, headers=headers)
+    return Response(content=bytes(response_body), status_code=status_code, headers=headers)
+
+
+def _dashboard_ws_guards() -> tuple[Any, Any] | None:
+    """Feature-detect the Dashboard's private WS guards without importing it.
+
+    The current upstream plugin contract mounts routers but does not inject an
+    auth dependency for WebSockets.  Using the host's already-loaded helpers
+    keeps ticket consumption and Host/Origin/IP policy identical to `/api/ws`.
+    If upstream moves either helper, this ingress fails closed.
+    """
+    candidates = [sys.modules.get("hermes_cli.web_server")]
+    candidates.extend(
+        module for name, module in tuple(sys.modules.items())
+        if name.endswith(".web_server") and module not in candidates
+    )
+    for module in candidates:
+        allowed = getattr(module, "_ws_request_is_allowed", None)
+        authed = getattr(module, "_ws_auth_ok", None)
+        if callable(allowed) and callable(authed):
+            return allowed, authed
+    return None
+
+
+def _dashboard_plugin_is_enabled() -> bool:
+    """Mirror the host runtime gate for WebSockets, which skip HTTP middleware."""
+    module = sys.modules.get("hermes_cli.web_server")
+    get_plugins = getattr(module, "_get_dashboard_plugins", None)
+    if not callable(get_plugins):
+        return False
+    try:
+        plugin = next(
+            (item for item in get_plugins() if item.get("name") == "hermes-relay"),
+            None,
+        )
+        if not isinstance(plugin, dict):
+            return False
+        plugins_cmd = importlib.import_module("hermes_cli.plugins_cmd")
+        enabled = plugins_cmd._get_enabled_set()
+        disabled = plugins_cmd._get_disabled_set()
+        source = plugin.get("source")
+        if source == "bundled":
+            return "hermes-relay" not in disabled
+        if source == "user":
+            return "hermes-relay" in enabled and "hermes-relay" not in disabled
+        return False
+    except Exception:
+        return False
+
+
+async def _admit_transport_websocket(websocket: WebSocket) -> str | None:
+    if not _dashboard_plugin_is_enabled():
+        await websocket.close(code=1008, reason="Relay plugin is disabled")
+        return None
+    guards = _dashboard_ws_guards()
+    if guards is None:
+        await websocket.close(code=1011, reason="Dashboard WebSocket auth unavailable")
+        return None
+    request_allowed, auth_ok = guards
+    try:
+        if not request_allowed(websocket) or not auth_ok(websocket):
+            await websocket.close(code=1008, reason="Dashboard WebSocket access denied")
+            return None
+    except Exception:
+        await websocket.close(code=1011, reason="Dashboard WebSocket auth unavailable")
+        return None
+    selected = getattr(websocket, "_hermes_ws_subprotocol", None)
+    offered = {
+        value.strip()
+        for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if value.strip()
+    }
+    return selected if selected in offered else ""
+
+
+async def _proxy_transport_websocket(
+    websocket: WebSocket,
+    relay_path: str,
+    *,
+    require_session_header: bool,
+) -> None:
+    selected_protocol = await _admit_transport_websocket(websocket)
+    if websocket.application_state.name == "DISCONNECTED":
+        return
+    try:
+        token = _transport_session(websocket, required=require_session_header)
+    except HTTPException:
+        await websocket.close(code=1008, reason="Relay session header required")
+        return
+    headers = _transport_request_headers(websocket, token)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=None, connect=5, sock_read=90)
+        ) as client:
+            async with client.ws_connect(
+                f"ws://127.0.0.1:{RELAY_PORT}{relay_path}",
+                headers=headers,
+                heartbeat=30,
+                max_msg_size=_TRANSPORT_WS_LIMIT,
+            ) as upstream:
+                await websocket.accept(subprotocol=selected_protocol or None)
+
+                async def downstream_to_upstream() -> None:
+                    try:
+                        while True:
+                            message = await websocket.receive()
+                            message_type = message["type"]
+                            if message_type == "websocket.disconnect":
+                                await upstream.close(code=int(message.get("code") or 1000))
+                                return
+                            text_data = message.get("text")
+                            bytes_data = message.get("bytes")
+                            if text_data is not None:
+                                if len(text_data.encode("utf-8")) > _TRANSPORT_WS_LIMIT:
+                                    await upstream.close(code=1009)
+                                    return
+                                await upstream.send_str(text_data)
+                            elif bytes_data is not None:
+                                if len(bytes_data) > _TRANSPORT_WS_LIMIT:
+                                    await upstream.close(code=1009)
+                                    return
+                                await upstream.send_bytes(bytes_data)
+                    except WebSocketDisconnect as exc:
+                        await upstream.close(code=exc.code or 1000)
+
+                async def upstream_to_downstream() -> None:
+                    async for message in upstream:
+                        if message.type == aiohttp.WSMsgType.TEXT:
+                            await websocket.send_text(message.data)
+                        elif message.type == aiohttp.WSMsgType.BINARY:
+                            await websocket.send_bytes(message.data)
+                        elif message.type in {
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                            aiohttp.WSMsgType.CLOSED,
+                        }:
+                            await websocket.close(
+                                code=int(upstream.close_code or 1000),
+                                reason=str(message.extra or ""),
+                            )
+                            return
+                        elif message.type == aiohttp.WSMsgType.ERROR:
+                            await websocket.close(code=1011, reason="Relay WebSocket failed")
+                            return
+
+                async def plugin_enabled_watch() -> None:
+                    while _dashboard_plugin_is_enabled():
+                        await asyncio.sleep(2)
+                    await upstream.close(code=1008, message=b"Relay plugin disabled")
+                    await websocket.close(code=1008, reason="Relay plugin is disabled")
+
+                tasks = {
+                    asyncio.create_task(downstream_to_upstream()),
+                    asyncio.create_task(upstream_to_downstream()),
+                    asyncio.create_task(plugin_enabled_watch()),
+                }
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*done, *pending, return_exceptions=True)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        if websocket.application_state.name != "DISCONNECTED":
+            await websocket.close(code=1011, reason="Relay WebSocket unavailable")
+
+
+@router.websocket("/transport/ws")
+async def transport_websocket(websocket: WebSocket) -> None:
+    # Relay itself still owns first-frame pairing/session authentication.
+    await _proxy_transport_websocket(websocket, "/ws", require_session_header=False)
+
+
+async def _voice_transport_websocket(websocket: WebSocket, relay_template: str) -> None:
+    session_id = str(websocket.path_params.get("session_id", ""))
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        await websocket.close(code=1008, reason="Invalid Relay voice session")
+        return
+    await _proxy_transport_websocket(
+        websocket,
+        _relay_transport_path(relay_template, websocket),
+        require_session_header=True,
+    )
+
+
+@router.websocket("/transport/voice/output/{session_id}")
+async def transport_voice_output(websocket: WebSocket) -> None:
+    await _voice_transport_websocket(websocket, "/voice/output/{session_id}")
+
+
+@router.websocket("/transport/voice/realtime/{session_id}")
+async def transport_voice_realtime(websocket: WebSocket) -> None:
+    await _voice_transport_websocket(websocket, "/voice/realtime/{session_id}")
+
+
+@router.websocket("/transport/voice/realtime-agent/{session_id}")
+async def transport_voice_realtime_agent(websocket: WebSocket) -> None:
+    await _voice_transport_websocket(websocket, "/voice/realtime-agent/{session_id}")
+
+
+def _make_transport_endpoint(relay_template: str) -> Any:
+    async def endpoint(request: Request) -> Response:
+        return await _proxy_transport_http(request, relay_template)
+
+    return endpoint
+
+
+for _transport_method, _transport_path in _HTTP_ROUTE_SPECS:
+    router.add_api_route(
+        f"/transport{_transport_path}",
+        _make_transport_endpoint(_transport_path),
+        methods=[_transport_method],
+        name=f"relay_transport_{_transport_method.lower()}_{_transport_path}",
+        include_in_schema=False,
+    )
 
 
 def _relay_unreachable(err: Exception) -> HTTPException:
@@ -435,6 +859,13 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
     inserts it from host-local config unless the request explicitly
     overrides ``api_key``.
     """
+    if "api_enabled" not in body:
+        try:
+            body["api_enabled"] = bool(_plugin_module("pair").read_server_config().get("enabled"))
+        except Exception:
+            # Old/partial installs retain the legacy Relay-side default.
+            pass
+
     mode_raw = body.pop("mode", None)
     public_url_raw = body.pop("public_url", None)
     prefer_raw = body.pop("prefer", None)

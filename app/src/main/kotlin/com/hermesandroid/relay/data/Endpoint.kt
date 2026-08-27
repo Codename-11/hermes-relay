@@ -25,7 +25,7 @@ import java.net.URI
  *
  * **Semantics (locked by ADR 24):**
  *  - [role] is an open string. Known values `lan` / `tailscale` / `public`
- *    get styled labels; anything else renders generically (`Custom VPN (<role>)`).
+ *    get styled labels; anything else renders generically (`Custom route (<role>)`).
  *    No enum, no normalization — the raw role string must round-trip exactly
  *    so HMAC canonicalization holds.
  *  - [priority] is strict, `0 = highest`. Reachability never promotes a lower
@@ -145,18 +145,19 @@ data class BrokerEndpoint(
  *
  * Unknown roles (`"wireguard"`, `"zerotier"`, `"netbird-eu"`, operator-defined
  * labels) return false so the UI can fall back to [displayLabel]'s generic
- * "Custom VPN" treatment.
+ * "Custom route" treatment.
  */
 fun EndpointCandidate.isKnownRole(): Boolean {
     return when (role.lowercase()) {
-        "lan", "tailscale", "public", "plugin_proxy", "plugin-proxy", "outbound_broker", "https" -> true
+        "lan", "tailscale", "public", "plugin_proxy", "plugin-proxy", "outbound_broker", "https",
+        "dashboard", "authenticated_dashboard" -> true
         else -> false
     }
 }
 
 /**
  * Human-readable label for the UI. Known roles get fixed-case styled labels;
- * unknown roles render as `"Custom VPN (<role>)"` with the raw role preserved
+ * unknown roles render as `"Custom route (<role>)"` with the raw role preserved
  * so an operator can see exactly what they labeled it.
  *
  * The raw [role] on the [EndpointCandidate] is NOT modified — it stays in its
@@ -172,11 +173,26 @@ fun EndpointCandidate.displayLabel(): String {
             "Public"
         }
         "https" -> "HTTPS"
+        "dashboard", "authenticated_dashboard" -> if (
+            primaryRouteUrl()?.startsWith("https://", ignoreCase = true) == true
+        ) {
+            "HTTPS Dashboard"
+        } else {
+            "Dashboard"
+        }
         "plugin_proxy", "plugin-proxy" -> "Hermes Secure Link"
         "outbound_broker", "broker", "relay_broker" -> "Hermes Reach · Experimental"
-        else -> "Custom VPN ($role)"
+        else -> displayName?.trim()?.takeIf { it.isNotBlank() } ?: "Custom route ($role)"
     }
 }
+
+/**
+ * True for a route created only to keep Dashboard/Gateway authentication on
+ * its canonical origin. It is a service address, not another selectable
+ * whole-connection or VPN route.
+ */
+fun EndpointCandidate.isDashboardOnlyRoute(): Boolean =
+    api == null && relay == null && proxy == null && broker == null && dashboard != null
 
 /** Dashboard-first URL identity for routing, diagnostics, and UI labels. */
 fun EndpointCandidate.primaryRouteUrl(): String? =

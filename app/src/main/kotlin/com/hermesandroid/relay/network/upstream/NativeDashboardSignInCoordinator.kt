@@ -110,22 +110,14 @@ internal fun dashboardRedirectAuthMode(authFlows: List<String>): DashboardRedire
     }
 
 /**
- * Nous Portal uses Cloudflare Turnstile and does not support embedded Android
- * WebViews. Keep self-hosted OIDC on the dashboard cookie flow, but use the
- * gateway's brokered system-browser flow for Nous when it is advertised.
+ * Match upstream Desktop's capability-driven redirect policy. Provider names
+ * are presentation/configuration data; `auth_flows` is the protocol contract
+ * that tells a native client whether the system-browser broker is available.
  */
 internal fun androidDashboardRedirectAuthMode(
-    providerName: String,
+    @Suppress("UNUSED_PARAMETER") providerName: String,
     authFlows: List<String>,
-): DashboardRedirectAuthMode =
-    if (
-        providerName.equals("nous", ignoreCase = true) &&
-        dashboardRedirectAuthMode(authFlows) == DashboardRedirectAuthMode.NativePkce
-    ) {
-        DashboardRedirectAuthMode.NativePkce
-    } else {
-        DashboardRedirectAuthMode.WebView
-    }
+): DashboardRedirectAuthMode = dashboardRedirectAuthMode(authFlows)
 
 /**
  * Owns one native dashboard sign-in attempt.

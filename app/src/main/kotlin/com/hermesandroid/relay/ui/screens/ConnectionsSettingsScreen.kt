@@ -70,12 +70,17 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.capabilities
+import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.isDashboardOnlyRoute
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
+import com.hermesandroid.relay.viewmodel.RelayRowState
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
@@ -436,12 +441,13 @@ private fun ConnectionListCard(
             }
 
             // ── Subtitle: hostname + status ──────────────────────────────
-            val hostname = connection.primaryHost.ifBlank { connection.label }
             val dashboardStatus = connection.dashboardLastStatus
             val dashboardSignInRequired =
                 dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
             val connectionStatus = when {
                 dashboardSignInRequired -> stringResource(R.string.conn_dashboard_sign_in)
+                dashboardStatus?.reachable == true && dashboardStatus.authenticated == true ->
+                    stringResource(R.string.conn_dashboard_signed_in)
                 dashboardStatus?.reachable == true -> stringResource(R.string.conn_dashboard_available)
                 dashboardStatus != null && !dashboardStatus.reachable -> stringResource(R.string.conn_dashboard_offline)
                 connection.resolvedDashboardUrl.isNotBlank() -> stringResource(R.string.conn_dashboard_unchecked)
@@ -451,7 +457,8 @@ private fun ConnectionListCard(
                 text = if (isSwitching) {
                     stringResource(R.string.conn_connecting_to, connection.label)
                 } else {
-                    "Dashboard · $hostname"
+                    "${stringResource(R.string.dashboard_gateway_title)} · " +
+                        connection.resolvedDashboardUrl.ifBlank { stringResource(R.string.active_section_missing) }
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -459,11 +466,14 @@ private fun ConnectionListCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (isActive) {
-                    stringResource(R.string.conn_last_used_now)
-                } else {
-                    connection.lastUsedAt?.let { formatUsedRelative(context, it) } ?: connectionStatus
-                },
+                text = listOfNotNull(
+                    connectionStatus,
+                    if (isActive) {
+                        stringResource(R.string.conn_last_used_now)
+                    } else {
+                        connection.lastUsedAt?.let { formatUsedRelative(context, it) }
+                    },
+                ).distinct().joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -482,32 +492,22 @@ private fun ConnectionListCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Lan,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .padding(end = 2.dp),
+                    modifier = Modifier.size(18.dp),
                 )
                 Text(
-                    text = when {
-                        connection.routeCandidates.isNotEmpty() -> connection.routeCandidates
-                            .sortedBy { it.priority }
-                            .joinToString(" · ") { route ->
-                                route.role.replaceFirstChar { it.titlecase() }
-                            }
-                        connection.resolvedDashboardUrl.isNotBlank() -> stringResource(R.string.conn_dashboard_only_route)
-                        else -> stringResource(R.string.conn_no_routes)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
+                    text = stringResource(R.string.network_routes_title),
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 8.dp),
                 )
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -555,6 +555,24 @@ private fun ConnectionSurfaceSummary(
     val gatewayAvailability: GatewayAvailability? = if (activeConnectionViewModel != null) {
         val availability by activeConnectionViewModel.gatewayAvailability.collectAsState()
         availability
+    } else {
+        null
+    }
+    val activeEndpoint: EndpointCandidate? = if (activeConnectionViewModel != null) {
+        val endpoint by activeConnectionViewModel.activeEndpoint.collectAsState()
+        endpoint
+    } else {
+        null
+    }
+    val effectiveDashboardUrl: String = if (activeConnectionViewModel != null) {
+        val url by activeConnectionViewModel.effectiveDashboardUrl.collectAsState()
+        url
+    } else {
+        connection.resolvedDashboardUrl
+    }
+    val relayRowState: RelayRowState? = if (activeConnectionViewModel != null) {
+        val state by activeConnectionViewModel.relayRowState.collectAsState()
+        state
     } else {
         null
     }
@@ -681,6 +699,242 @@ private fun ConnectionSurfaceSummary(
             if (standardVoiceAvailability == StandardVoiceAvailability.SignInRequired) onOpenDashboard else null,
         )
         ConnectionStatusChip(Icons.Filled.CellTower, stringResource(R.string.conn_relay_label), relayText, relayTone, Modifier.weight(1f))
+    }
+
+    val clarity = resolveConnectionClarityPresentation(
+        connection = activeConnection ?: connection,
+        active = isActive,
+        activeEndpoint = activeEndpoint,
+        effectiveDashboardUrl = effectiveDashboardUrl,
+        chatRuntimeStatus = chatRuntimeStatus,
+        relayConfigured = relayConfigured,
+        relayRowState = relayRowState,
+    )
+    ConnectionClaritySummary(clarity = clarity, compact = true)
+}
+
+internal enum class DashboardAuthPresentation {
+    SignedIn,
+    SignInRequired,
+    NoSignInRequired,
+    Available,
+    Unreachable,
+    Unchecked,
+    Missing,
+}
+
+internal enum class CurrentHermesSurface { Gateway, ApiFallback, Connecting, Unavailable, Inactive }
+
+internal data class ConnectionClarityPresentation(
+    val dashboardOrigin: String?,
+    val dashboardAuth: DashboardAuthPresentation,
+    val dashboardAuthProvider: String?,
+    val currentSurface: CurrentHermesSurface,
+    val currentPath: String?,
+    val configuredFallbacks: List<String>,
+    val relayConfigured: Boolean,
+    val relayState: RelayUiState?,
+    val relayPath: String?,
+)
+
+/** Pure mapping shared by the list card and Overview so neither invents route state. */
+internal fun resolveConnectionClarityPresentation(
+    connection: Connection,
+    active: Boolean,
+    activeEndpoint: EndpointCandidate?,
+    effectiveDashboardUrl: String,
+    chatRuntimeStatus: ChatRuntimeStatus?,
+    relayConfigured: Boolean,
+    relayRowState: RelayRowState?,
+): ConnectionClarityPresentation {
+    val dashboardOrigin = effectiveDashboardUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }
+    val dashboardStatus = connection.dashboardLastStatus
+    val dashboardAuth = when {
+        dashboardOrigin == null -> DashboardAuthPresentation.Missing
+        dashboardStatus == null -> DashboardAuthPresentation.Unchecked
+        !dashboardStatus.reachable -> DashboardAuthPresentation.Unreachable
+        dashboardStatus.authenticated == true -> DashboardAuthPresentation.SignedIn
+        dashboardStatus.authRequired == true -> DashboardAuthPresentation.SignInRequired
+        dashboardStatus.authRequired == false -> DashboardAuthPresentation.NoSignInRequired
+        else -> DashboardAuthPresentation.Available
+    }
+    val currentSurface = when {
+        !active -> CurrentHermesSurface.Inactive
+        chatRuntimeStatus is ChatRuntimeStatus.Connected &&
+            chatRuntimeStatus.transport == ChatTransportPath.Gateway -> CurrentHermesSurface.Gateway
+        chatRuntimeStatus is ChatRuntimeStatus.Connected &&
+            chatRuntimeStatus.transport == ChatTransportPath.ApiSse -> CurrentHermesSurface.ApiFallback
+        chatRuntimeStatus == ChatRuntimeStatus.Connecting -> CurrentHermesSurface.Connecting
+        else -> CurrentHermesSurface.Unavailable
+    }
+    val canonicalDashboardOwnsGateway = currentSurface == CurrentHermesSurface.Gateway &&
+        !connection.authenticatedDashboardOrigin.isNullOrBlank()
+    val activePath = when (currentSurface) {
+        CurrentHermesSurface.Gateway -> if (canonicalDashboardOwnsGateway) {
+            if (dashboardOrigin?.startsWith("https://", ignoreCase = true) == true) {
+                "HTTPS Dashboard"
+            } else {
+                "Dashboard"
+            }
+        } else {
+            activeEndpoint?.displayLabel()
+                ?: if (dashboardOrigin?.startsWith("https://", ignoreCase = true) == true) {
+                    "HTTPS Dashboard"
+                } else {
+                    "Dashboard"
+                }
+        }
+        CurrentHermesSurface.ApiFallback -> activeEndpoint?.displayLabel()
+        CurrentHermesSurface.Connecting,
+        CurrentHermesSurface.Unavailable,
+        CurrentHermesSurface.Inactive -> null
+    }
+    val fallbackLabels = connection.routeCandidates
+        .asSequence()
+        .filterNot { it.isDashboardOnlyRoute() || it.role.equals("authenticated_dashboard", ignoreCase = true) }
+        .filterNot { candidate ->
+            currentSurface in setOf(CurrentHermesSurface.Gateway, CurrentHermesSurface.ApiFallback) &&
+                !canonicalDashboardOwnsGateway &&
+                activeEndpoint?.role?.equals(candidate.role, ignoreCase = true) == true
+        }
+        .sortedBy { it.priority }
+        .map { it.displayLabel() }
+        .distinct()
+        .toList()
+    return ConnectionClarityPresentation(
+        dashboardOrigin = dashboardOrigin,
+        dashboardAuth = dashboardAuth,
+        dashboardAuthProvider = dashboardStatus?.authProvider?.let(::dashboardAuthProviderLabel),
+        currentSurface = currentSurface,
+        currentPath = activePath,
+        configuredFallbacks = fallbackLabels,
+        relayConfigured = relayConfigured,
+        relayState = relayRowState?.phase,
+        relayPath = relayRowState?.activeEndpointRole?.let(::routeRoleLabel),
+    )
+}
+
+internal fun dashboardAuthProviderLabel(provider: String): String = when (provider.trim().lowercase()) {
+    "self-hosted", "self_hosted", "oidc" -> "Self-hosted OIDC"
+    "basic", "password" -> "Password"
+    "nous" -> "Nous"
+    else -> provider.trim().replaceFirstChar { it.uppercase() }
+}
+
+private fun routeRoleLabel(role: String): String = when (role.trim().lowercase()) {
+    "lan" -> "LAN"
+    "tailscale" -> "Tailscale"
+    "public", "https" -> "HTTPS"
+    "plugin_proxy", "plugin-proxy" -> "Hermes Secure Link"
+    else -> role.trim()
+}
+
+@Composable
+internal fun ConnectionClaritySummary(
+    clarity: ConnectionClarityPresentation,
+    compact: Boolean,
+) {
+    val authText = when (clarity.dashboardAuth) {
+        DashboardAuthPresentation.SignedIn -> listOfNotNull(
+            stringResource(R.string.active_section_signed_in),
+            clarity.dashboardAuthProvider,
+        ).joinToString(" · ")
+        DashboardAuthPresentation.SignInRequired -> stringResource(R.string.active_section_sign_in_required)
+        DashboardAuthPresentation.NoSignInRequired -> stringResource(R.string.active_section_no_sign_in_required)
+        DashboardAuthPresentation.Available -> stringResource(R.string.active_section_available)
+        DashboardAuthPresentation.Unreachable -> stringResource(R.string.active_section_unreachable)
+        DashboardAuthPresentation.Unchecked -> stringResource(R.string.active_section_unchecked)
+        DashboardAuthPresentation.Missing -> stringResource(R.string.active_section_missing)
+    }
+    val surfaceText = when (clarity.currentSurface) {
+        CurrentHermesSurface.Gateway -> stringResource(R.string.chat_failure_route_gateway)
+        CurrentHermesSurface.ApiFallback -> stringResource(R.string.chat_failure_route_api)
+        CurrentHermesSurface.Connecting -> stringResource(R.string.active_section_checking)
+        CurrentHermesSurface.Unavailable -> stringResource(R.string.active_section_unavailable)
+        CurrentHermesSurface.Inactive -> stringResource(R.string.detail_inactive_badge)
+    }
+    val relayText = when {
+        !clarity.relayConfigured -> stringResource(R.string.relay_state_optional)
+        clarity.relayState == null -> stringResource(R.string.active_section_configured)
+        clarity.relayState == RelayUiState.Connected -> stringResource(R.string.relay_state_ready)
+        clarity.relayState == RelayUiState.Connecting -> stringResource(R.string.relay_state_reconnecting)
+        clarity.relayState == RelayUiState.Expired -> stringResource(R.string.relay_state_needs_repair)
+        else -> stringResource(R.string.relay_state_unavailable)
+    }
+    val configuredLabel = stringResource(R.string.active_section_configured)
+    val fallbackValues = clarity.configuredFallbacks.map { "$it · $configuredLabel" }
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+        shape = appearanceRoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = if (compact) 8.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
+        ) {
+            ConnectionClarityRow(
+                label = stringResource(R.string.dashboard_gateway_title),
+                value = clarity.dashboardOrigin ?: stringResource(R.string.active_section_missing),
+                detail = authText,
+            )
+            ConnectionClarityRow(
+                label = stringResource(R.string.active_section_using_now),
+                value = listOfNotNull(surfaceText, clarity.currentPath).joinToString(" · "),
+            )
+            ConnectionClarityRow(
+                label = stringResource(R.string.active_section_fallbacks),
+                value = fallbackValues.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+                    ?: stringResource(R.string.active_section_no_fallback_routes),
+                detail = if (clarity.configuredFallbacks.isNotEmpty()) {
+                    stringResource(R.string.active_section_configured_not_probed)
+                } else {
+                    null
+                },
+            )
+            ConnectionClarityRow(
+                label = stringResource(R.string.active_section_relay_connected_features),
+                value = listOfNotNull(relayText, clarity.relayPath).joinToString(" · "),
+                detail = stringResource(R.string.active_section_relay_ownership),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionClarityRow(
+    label: String,
+    value: String,
+    detail: String? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.42f),
+        )
+        Column(modifier = Modifier.weight(0.58f)) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            detail?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

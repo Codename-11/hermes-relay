@@ -68,6 +68,43 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun resolvedDashboardUrl_prefersAuthenticatedOriginWithoutReplacingConfiguredRoute() {
+        val connection = sampleConnection(
+            dashboardUrl = "http://192.168.1.20:9119",
+        ).copy(authenticatedDashboardOrigin = "https://hermes.example.com")
+
+        assertEquals("https://hermes.example.com", connection.resolvedDashboardUrl)
+        assertEquals("http://192.168.1.20:9119", connection.configuredDashboardUrl)
+        assertEquals("http://192.168.1.20:9119", connection.dashboardUrl)
+    }
+
+    @Test
+    fun privateHttpAuthenticatedOrigin_survivesResolutionAndReload() {
+        listOf(
+            "http://100.75.1.2:9119",
+            "http://127.0.0.1:9119",
+            "http://[::1]:9119",
+        ).forEach { origin ->
+            val stored = sampleConnection(dashboardUrl = "http://192.168.1.20:9119")
+                .copy(authenticatedDashboardOrigin = origin)
+
+            assertEquals(origin, stored.resolvedDashboardUrl)
+            assertEquals(origin, stored.withDashboardDefaults().authenticatedDashboardOrigin)
+            assertEquals(
+                origin,
+                json.decodeFromString<Connection>(
+                    json.encodeToString(Connection.serializer(), stored),
+                ).withDashboardDefaults().resolvedDashboardUrl,
+            )
+        }
+        assertNull(
+            sampleConnection().copy(
+                authenticatedDashboardOrigin = "http://public.example.test:9119",
+            ).withDashboardDefaults().authenticatedDashboardOrigin,
+        )
+    }
+
+    @Test
     fun resolvedDashboardUrl_derivesWhenMissing() {
         val connection = sampleConnection(dashboardUrl = null)
 
@@ -178,6 +215,57 @@ class ConnectionDashboardFieldsTest {
             "https://hermes.example.com:443",
             reloaded.routeCandidates.single().dashboard?.url,
         )
+    }
+
+    @Test
+    fun legacyAuthenticatedDashboardRoute_migratesToIndependentOrigin() {
+        val lan = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            api = ApiEndpoint("192.168.1.20", 8642),
+            relay = RelayEndpoint("ws://192.168.1.20:8767"),
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+        )
+        val legacyAuthenticationRoute = EndpointCandidate(
+            role = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+            priority = 0,
+            dashboard = DashboardEndpoint("https://hermes.example.com/"),
+        )
+        val stored = sampleConnection(dashboardUrl = "https://hermes.example.com").copy(
+            routeCandidates = listOf(lan, legacyAuthenticationRoute),
+            preferredRouteRole = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+        )
+
+        val migrated = stored.withDashboardDefaults()
+
+        assertEquals("https://hermes.example.com", migrated.authenticatedDashboardOrigin)
+        assertEquals(listOf(lan), migrated.routeCandidates)
+        assertNull(migrated.preferredRouteRole)
+        assertEquals(migrated, migrated.withDashboardDefaults())
+    }
+
+    @Test
+    fun migration_preservesUnrelatedPreferredRouteAndRejectsCleartextOrigin() {
+        val lan = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+        )
+        val unsafeLegacyAuthenticationRoute = EndpointCandidate(
+            role = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+            priority = 0,
+            dashboard = DashboardEndpoint("http://hermes.example.com"),
+        )
+        val stored = sampleConnection(dashboardUrl = "http://192.168.1.20:9119").copy(
+            routeCandidates = listOf(lan, unsafeLegacyAuthenticationRoute),
+            preferredRouteRole = "lan",
+        )
+
+        val migrated = stored.withDashboardDefaults()
+
+        assertNull(migrated.authenticatedDashboardOrigin)
+        assertEquals(listOf(lan), migrated.routeCandidates)
+        assertEquals("lan", migrated.preferredRouteRole)
     }
 
     @Test

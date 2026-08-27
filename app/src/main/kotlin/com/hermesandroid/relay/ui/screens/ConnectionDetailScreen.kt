@@ -14,8 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
@@ -46,7 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,12 +56,17 @@ import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
 import com.hermesandroid.relay.ui.components.ActiveCardRoutesSection
 import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
+import com.hermesandroid.relay.ui.components.DashboardAddressEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
 import com.hermesandroid.relay.ui.components.SessionInfoSheet
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatTransportReadiness
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.resolveChatRuntimeStatus
 
 /**
  * Tabbed detail for a single Hermes connection — the level-2 screen the
@@ -124,6 +126,7 @@ fun ConnectionDetailScreen(
     var showRelayInfoSheet by remember { mutableStateOf(false) }
     var showInsecureAckDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var showDashboardEditor by remember { mutableStateOf(false) }
     var showRevokeConfirm by remember { mutableStateOf(false) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -291,9 +294,7 @@ fun ConnectionDetailScreen(
                         connectionViewModel = connectionViewModel,
                         connection = connection,
                         liveState = relayUiState,
-                        onEditDashboard = {
-                            selectedTab = tabs.indexOf(DetailTab.Advanced)
-                        },
+                        onEditDashboard = { showDashboardEditor = true },
                     )
 
                     DetailTab.Advanced -> ActiveCardAdvancedSection(
@@ -342,6 +343,15 @@ fun ConnectionDetailScreen(
                 showInsecureAckDialog = false
             },
             onCancel = { showInsecureAckDialog = false },
+        )
+    }
+    if (showDashboardEditor) {
+        DashboardAddressEditorDialog(
+            initialUrl = connection.resolvedDashboardUrl,
+            onSave = { dashboardUrl, onResult ->
+                connectionViewModel.updateDashboardAddress(dashboardUrl, onResult)
+            },
+            onDismiss = { showDashboardEditor = false },
         )
     }
     if (showRenameDialog) {
@@ -424,70 +434,45 @@ private fun ActiveOverview(
     onOpenRelayInfo: () -> Unit,
     onOpenSessionInfo: () -> Unit,
 ) {
-    val hostname = connection.primaryHost.ifBlank { connection.label }
-    val dashboardReady = connection.dashboardLastStatus?.reachable == true
-
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Dashboard,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.detail_dashboard_primary),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = connection.resolvedDashboardUrl.ifBlank { hostname },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            HorizontalDivider()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Text(
-                    text = if (dashboardReady) {
-                        stringResource(R.string.detail_core_ready)
-                    } else {
-                        stringResource(R.string.detail_core_configured)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-    }
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
+    val chatRuntimeStatus: ChatRuntimeStatus = resolveChatRuntimeStatus(
+        gateway = when (gatewayAvailability) {
+            GatewayAvailability.Ready -> ChatTransportReadiness.Ready
+            GatewayAvailability.Unknown -> ChatTransportReadiness.Connecting
+            GatewayAvailability.SignInRequired,
+            GatewayAvailability.Unreachable,
+            GatewayAvailability.Unsupported -> ChatTransportReadiness.Unavailable
+        },
+        apiSse = when {
+            connection.apiServerUrl.isBlank() -> ChatTransportReadiness.NotConfigured
+            apiReachable -> ChatTransportReadiness.Ready
+            apiHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
+            apiHealth == ConnectionViewModel.HealthStatus.Unreachable -> ChatTransportReadiness.Unavailable
+            else -> ChatTransportReadiness.Connecting
+        },
+    )
+    val clarity = resolveConnectionClarityPresentation(
+        connection = connection,
+        active = true,
+        activeEndpoint = activeEndpoint,
+        effectiveDashboardUrl = effectiveDashboardUrl,
+        chatRuntimeStatus = chatRuntimeStatus,
+        relayConfigured = relayConfigured,
+        relayRowState = relayRowState,
+    )
 
     Text(
-        text = stringResource(R.string.detail_overview_summary),
+        text = stringResource(R.string.detail_overview_clarity_summary),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    ConnectionClaritySummary(clarity = clarity, compact = false)
 
     ActiveCardFeaturesSection(
         connectionViewModel = connectionViewModel,

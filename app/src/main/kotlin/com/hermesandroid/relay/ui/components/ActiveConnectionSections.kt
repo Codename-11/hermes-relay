@@ -82,10 +82,12 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.EndpointCandidate
-import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.SurfaceSecurityKind
+import com.hermesandroid.relay.data.SurfaceUseState
 import com.hermesandroid.relay.data.hasSecureProxy
-import com.hermesandroid.relay.data.primaryRouteUrl
+import com.hermesandroid.relay.data.isDashboardOnlyRoute
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -94,6 +96,7 @@ import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
@@ -1468,19 +1471,12 @@ fun ActiveCardSecurityPosture(
 ) {
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
-    val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
     var showSecurityDetails by remember { mutableStateOf(false) }
 
     val dashboardStatus = activeConnection?.dashboardLastStatus
-    val dashboardUrl = activeConnection?.resolvedDashboardUrl.orEmpty()
-    val dashboardTransport = when {
-        dashboardUrl.startsWith("https://", ignoreCase = true) -> "HTTPS"
-        dashboardUrl.startsWith("http://", ignoreCase = true) -> "HTTP"
-        else -> stringResource(R.string.active_section_not_configured)
-    }
     val pairedLabel = when (authState) {
         is AuthState.Paired -> stringResource(R.string.relay_state_ready)
         AuthState.Pairing -> stringResource(R.string.relay_state_reconnecting)
@@ -1496,10 +1492,12 @@ fun ActiveCardSecurityPosture(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
-                val postureColor = if (connectionSecurity.isEncrypted) {
-                    com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-                } else {
-                    MaterialTheme.colorScheme.error
+                val postureColor = when (connectionSecurity.level) {
+                    ConnectionSecurityLevel.Tls,
+                    ConnectionSecurityLevel.Overlay -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                    ConnectionSecurityLevel.Mixed -> Color(0xFFF9A825)
+                    ConnectionSecurityLevel.Plain -> MaterialTheme.colorScheme.error
+                    ConnectionSecurityLevel.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Row(
                     modifier = Modifier
@@ -1517,19 +1515,23 @@ fun ActiveCardSecurityPosture(
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = if (connectionSecurity.isEncrypted) {
-                                stringResource(R.string.active_section_protected)
-                            } else {
-                                stringResource(R.string.active_section_not_encrypted)
+                            text = when (connectionSecurity.level) {
+                                ConnectionSecurityLevel.Tls,
+                                ConnectionSecurityLevel.Overlay -> stringResource(R.string.active_section_protected)
+                                ConnectionSecurityLevel.Mixed -> stringResource(R.string.active_section_mixed_protection)
+                                ConnectionSecurityLevel.Plain -> stringResource(R.string.active_section_not_encrypted)
+                                ConnectionSecurityLevel.Unknown -> stringResource(R.string.active_section_protection_unavailable)
                             },
                             style = MaterialTheme.typography.titleMedium,
                             color = postureColor,
                         )
                         Text(
-                            text = if (connectionSecurity.isEncrypted) {
-                                stringResource(R.string.active_section_no_security_issues)
-                            } else {
-                                stringResource(R.string.active_section_unencrypted_transport)
+                            text = when (connectionSecurity.level) {
+                                ConnectionSecurityLevel.Tls,
+                                ConnectionSecurityLevel.Overlay -> stringResource(R.string.active_section_no_security_issues)
+                                ConnectionSecurityLevel.Mixed -> stringResource(R.string.active_section_mixed_protection_summary)
+                                ConnectionSecurityLevel.Plain -> stringResource(R.string.active_section_unencrypted_transport)
+                                ConnectionSecurityLevel.Unknown -> stringResource(R.string.active_section_no_active_surfaces)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1537,27 +1539,34 @@ fun ActiveCardSecurityPosture(
                     }
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                if (dashboardUrl.isNotBlank()) {
+                connectionSecurity.surfaces.forEachIndexed { index, surface ->
                     SecurityFactRow(
-                        icon = Icons.Filled.Dashboard,
-                        label = stringResource(R.string.active_section_dashboard_session),
-                        value = when {
-                            dashboardStatus?.authenticated == true -> stringResource(R.string.active_section_signed_in)
-                            dashboardStatus?.authRequired == true -> stringResource(R.string.active_section_sign_in_required)
-                            dashboardStatus?.reachable == true -> stringResource(R.string.active_section_available)
-                            else -> stringResource(R.string.active_section_not_checked)
+                        icon = when (surface.label) {
+                            "Dashboard & Gateway" -> Icons.Filled.Dashboard
+                            "API fallback" -> Icons.Filled.Chat
+                            else -> Icons.Filled.Link
                         },
-                        positive = dashboardStatus?.authenticated == true,
+                        label = surface.label,
+                        value = when (surface.useState) {
+                            SurfaceUseState.InUse -> stringResource(
+                                R.string.active_section_in_use_mechanism,
+                                surface.mechanism,
+                            )
+                            SurfaceUseState.Available -> stringResource(
+                                R.string.active_section_available_fallback_mechanism,
+                                surface.mechanism,
+                            )
+                            SurfaceUseState.Unavailable -> stringResource(
+                                R.string.active_section_unavailable_mechanism,
+                                surface.mechanism,
+                            )
+                        },
+                        positive = surface.useState == SurfaceUseState.InUse &&
+                            surface.kind != SurfaceSecurityKind.Plain,
                     )
-                    HorizontalDivider()
+                    if (index < connectionSecurity.surfaces.lastIndex) HorizontalDivider()
                 }
-                SecurityFactRow(
-                    icon = Icons.Filled.Shield,
-                    label = stringResource(R.string.active_section_transport),
-                    value = if (isTailscaleDetected) "$dashboardTransport · Tailscale" else dashboardTransport,
-                    positive = dashboardTransport == "HTTPS" || isTailscaleDetected,
-                )
-                HorizontalDivider()
+                if (connectionSecurity.surfaces.isNotEmpty()) HorizontalDivider()
                 SecurityFactRow(
                     icon = Icons.Filled.VpnKey,
                     label = stringResource(R.string.active_section_credential_storage),
@@ -1739,6 +1748,11 @@ fun ActiveCardRoutesSection(
     val routeProbeStatus: ConnectionViewModel.RouteProbeStatus =
         connectionViewModel.routeProbeStatus.collectAsState().value
     val routeProbeOutcomes by connectionViewModel.routeProbeOutcomes.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val apiUrl by connectionViewModel.effectiveApiServerUrl.collectAsState()
+    val relayRowState by connectionViewModel.relayRowState.collectAsState()
+    val relayUrl by connectionViewModel.effectiveRelayUrl.collectAsState()
+    val gatewayAvailabilityForRoutes by connectionViewModel.gatewayAvailability.collectAsState()
 
     var preferredRole by remember(connection.id) {
         mutableStateOf(connectionViewModel.getPreferredEndpointRole())
@@ -1747,6 +1761,8 @@ fun ActiveCardRoutesSection(
     val manualSwitchActive = manualOverrideRole != null &&
         !manualOverrideRole.equals(preferredRole, ignoreCase = true)
     var routeEditorOpen by remember(connection.id) { mutableStateOf(false) }
+    var dashboardRechecking by remember(connection.id) { mutableStateOf(false) }
+    var dashboardRecheckError by remember(connection.id) { mutableStateOf<String?>(null) }
     var routeEditorOriginal by remember(connection.id) {
         mutableStateOf<EndpointCandidate?>(null)
     }
@@ -1762,35 +1778,33 @@ fun ActiveCardRoutesSection(
         context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
     }
     val isRouteProbing = routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Probing
-    val dashboardOnly = endpoints.isEmpty() && connection.resolvedDashboardUrl.isNotBlank()
-    val dashboardReachable = connection.dashboardLastStatus?.reachable == true
-    val probeCameUpEmpty = !dashboardOnly && activeEndpoint == null &&
-        routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
-        routeProbeStatus.winner == null
-
-    // Pre-resolve strings for route status labels
-    val checkingRoutesText = stringResource(R.string.active_section_checking_routes)
-    val noRouteReachableText = stringResource(R.string.active_section_no_route_reachable)
-    val resolvingText = stringResource(R.string.active_section_resolving)
-    val usingSavedUrlText = stringResource(R.string.active_section_using_saved_url)
-
-    val activeRouteLabel = when {
-        activeEndpoint != null -> activeEndpoint!!.displayLabel()
-        dashboardOnly -> stringResource(R.string.active_section_primary_dashboard)
-        isRouteProbing -> checkingRoutesText
-        probeCameUpEmpty -> noRouteReachableText
-        else -> resolvingText
+    val dashboardUrl = connection.authenticatedDashboardOrigin
+        ?.takeIf { it.isNotBlank() }
+        ?: connection.resolvedDashboardUrl
+    val networkEndpoints = endpoints.filterNot { candidate ->
+        candidate.isDashboardOnlyRoute() ||
+            candidate.role.equals("authenticated_dashboard", ignoreCase = true)
     }
-    val activeRouteHost = activeEndpoint?.primaryRouteUrl()
-        ?: if (dashboardOnly) connection.resolvedDashboardUrl
-        else usingSavedUrlText.format(connection.apiServerUrl.ifBlank { connection.relayUrl })
+    val activeNetworkEndpoint = activeEndpoint?.takeUnless { candidate ->
+        candidate.isDashboardOnlyRoute() ||
+            candidate.role.equals("authenticated_dashboard", ignoreCase = true)
+    }
+    val dashboardReachable = connection.dashboardLastStatus?.reachable == true
+    val networkProbeOutcomes = networkEndpoints.mapNotNull { candidate ->
+        routeProbeOutcomes[
+            connectionViewModel.routeOutcomeKey(candidate, EndpointSurface.Dashboard)
+        ] ?: routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+    }
+    val allNetworkRoutesDefinitivelyFailed = networkProbeOutcomes.size == networkEndpoints.size &&
+        networkProbeOutcomes.isNotEmpty() &&
+        networkProbeOutcomes.none { it.reachable || it.isSupersededProbeFailure() }
+    val probeCameUpEmpty = networkEndpoints.isNotEmpty() && activeNetworkEndpoint == null &&
+        routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Done &&
+        routeProbeStatus.winner == null &&
+        allNetworkRoutesDefinitivelyFailed
 
     // Pre-resolve other UI strings
-    val chooseHowPhoneReachesText = stringResource(
-        R.string.active_section_choose_how_phone_reaches_named,
-        connection.label,
-    )
-    val currentRouteText = stringResource(R.string.active_section_current_route)
+    val chooseHowPhoneReachesText = stringResource(R.string.current_surface_paths_title)
     val noRoutesAnsweredProbeText = stringResource(R.string.active_section_no_routes_answered_probe)
     val tailscaleRouteNotActiveText = stringResource(R.string.active_section_tailscale_route_not_active)
     val connectPhoneInTailscaleText = stringResource(R.string.active_section_connect_phone_in_tailscale)
@@ -1812,11 +1826,7 @@ fun ActiveCardRoutesSection(
         )
 
         Surface(
-            color = if (dashboardOnly) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
-            },
+            color = MaterialTheme.colorScheme.surfaceVariant,
             shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -1828,130 +1838,149 @@ fun ActiveCardRoutesSection(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (dashboardOnly) {
-                        Icon(
-                            imageVector = Icons.Filled.Dashboard,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Filled.Dashboard,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
                     Text(
-                        text = if (dashboardOnly) {
-                            stringResource(R.string.active_section_primary_dashboard)
+                        text = if (connection.authenticatedDashboardOrigin.isNullOrBlank()) {
+                            stringResource(R.string.dashboard_gateway_configured)
                         } else {
-                            currentRouteText.format(activeRouteLabel)
+                            stringResource(R.string.dashboard_gateway_secure_origin)
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (probeCameUpEmpty) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
                     )
-                    if (isRouteProbing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    }
-                    if (dashboardOnly) {
-                        Surface(
-                            color = if (dashboardReachable) {
-                                com.hermesandroid.relay.ui.theme.RelayRefresh.Green.copy(alpha = 0.18f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            shape = appearanceRoundedCornerShape(6.dp),
-                        ) {
-                            Text(
-                                text = if (dashboardReachable) {
-                                    stringResource(R.string.active_section_reachable_badge)
-                                } else {
-                                    stringResource(R.string.active_section_unchecked_badge)
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (dashboardReachable) {
-                                    com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            )
-                        }
-                    }
                 }
                 Text(
-                    text = activeRouteHost,
+                    text = dashboardUrl,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (dashboardOnly) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = if (dashboardReachable) {
+                            com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
                     Text(
-                        text = stringResource(R.string.active_section_dashboard_home_lan),
+                        text = when {
+                            dashboardReachable && connection.dashboardLastStatus?.authenticated == true ->
+                                stringResource(R.string.active_section_dashboard_reachable_signed_in)
+                            dashboardReachable -> stringResource(R.string.active_section_dashboard_reachable)
+                            connection.dashboardLastStatus == null -> stringResource(R.string.active_section_dashboard_not_checked)
+                            else -> stringResource(R.string.active_section_dashboard_unreachable)
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            tint = if (dashboardReachable) {
-                                com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            text = when {
-                                dashboardReachable && connection.dashboardLastStatus?.authenticated == true ->
-                                    stringResource(R.string.active_section_signed_in)
-                                dashboardReachable -> stringResource(R.string.active_section_dashboard_reachable)
-                                connection.dashboardLastStatus == null -> stringResource(R.string.active_section_dashboard_not_checked)
-                                else -> stringResource(R.string.active_section_dashboard_unreachable)
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { connectionViewModel.probeNow() },
-                            enabled = !isRouteProbing,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                            Text(if (isRouteProbing) checkingText else recheckText)
-                        }
-                        OutlinedButton(
-                            onClick = onEditDashboard,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                            Text(stringResource(R.string.active_section_edit))
-                        }
-                    }
                 }
-                if (probeCameUpEmpty) {
+                Text(
+                    text = stringResource(R.string.dashboard_gateway_oidc_explainer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                dashboardRecheckError?.let { error ->
                     Text(
-                        text = noRoutesAnsweredProbeText,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = error,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            dashboardRechecking = true
+                            dashboardRecheckError = null
+                            connectionViewModel.recheckDashboard { error ->
+                                dashboardRechecking = false
+                                dashboardRecheckError = error
+                            }
+                        },
+                        enabled = !dashboardRechecking,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text(if (dashboardRechecking) checkingText else recheckText)
+                    }
+                    OutlinedButton(
+                        onClick = onEditDashboard,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text(stringResource(R.string.active_section_edit))
+                    }
+                }
             }
         }
+
+        CurrentSurfacePathRow(
+            label = stringResource(R.string.api_fallback_title),
+            path = apiUrl.ifBlank { stringResource(R.string.active_section_not_configured) },
+            status = when (apiHealth) {
+                ConnectionViewModel.HealthStatus.Reachable -> if (
+                    gatewayAvailabilityForRoutes == GatewayAvailability.Ready
+                ) {
+                    stringResource(R.string.active_section_available_fallback)
+                } else {
+                    stringResource(R.string.active_section_in_use)
+                }
+                ConnectionViewModel.HealthStatus.Probing -> stringResource(R.string.active_section_checking)
+                ConnectionViewModel.HealthStatus.Unreachable -> stringResource(R.string.active_section_unreachable)
+                ConnectionViewModel.HealthStatus.Unknown -> if (apiUrl.isBlank()) {
+                    stringResource(R.string.relay_state_optional)
+                } else {
+                    stringResource(R.string.active_section_not_checked)
+                }
+            },
+            available = apiHealth == ConnectionViewModel.HealthStatus.Reachable,
+        )
+
+        CurrentSurfacePathRow(
+            label = stringResource(R.string.active_section_relay_tools),
+            path = relayRowState.activeEndpointRole
+                ?.let(::displayRouteRole)
+                ?.let { role -> "$role · $relayUrl" }
+                ?: relayUrl.ifBlank { stringResource(R.string.active_section_not_configured) },
+            status = when (relayRowState.phase) {
+                RelayUiState.Connected -> stringResource(R.string.active_section_in_use)
+                RelayUiState.Connecting -> stringResource(R.string.active_section_checking)
+                RelayUiState.Stale,
+                RelayUiState.Disconnected -> stringResource(R.string.relay_state_unavailable)
+                RelayUiState.Expired -> stringResource(R.string.relay_state_needs_repair)
+                RelayUiState.NotConfigured -> stringResource(R.string.relay_state_optional)
+            },
+            available = relayRowState.phase == RelayUiState.Connected,
+        )
+
+        Text(
+            text = stringResource(R.string.network_routes_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            text = stringResource(R.string.network_routes_summary),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         if (showTailscaleUnavailableHint) {
             Surface(
@@ -2035,7 +2064,15 @@ fun ActiveCardRoutesSection(
             }
         }
 
-        if (!dashboardOnly) {
+        if (probeCameUpEmpty) {
+            Text(
+                text = noRoutesAnsweredProbeText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        if (networkEndpoints.isNotEmpty()) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -2059,12 +2096,7 @@ fun ActiveCardRoutesSection(
             }
         }
 
-        if (dashboardOnly) {
-            Text(
-                text = stringResource(R.string.active_section_fallback_routes),
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(top = 6.dp),
-            )
+        if (networkEndpoints.isEmpty()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = appearanceRoundedCornerShape(12.dp),
@@ -2082,11 +2114,11 @@ fun ActiveCardRoutesSection(
                         modifier = Modifier.size(36.dp),
                     )
                     Text(
-                        text = stringResource(R.string.active_section_no_fallback_routes),
+                        text = stringResource(R.string.network_routes_empty),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = stringResource(R.string.active_section_no_fallback_routes_desc),
+                        text = stringResource(R.string.network_routes_empty_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2098,44 +2130,22 @@ fun ActiveCardRoutesSection(
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text(stringResource(R.string.active_section_add_api_fallback))
+                        Text(stringResource(R.string.endpoints_add_route))
                     }
-                }
-            }
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = appearanceRoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.active_section_route_selection),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = stringResource(R.string.active_section_automatic),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Icon(
-                        imageVector = Icons.Filled.ExpandMore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 8.dp).size(18.dp),
-                    )
                 }
             }
         } else {
             EndpointsCard(
-                endpoints = endpoints,
-                activeEndpoint = activeEndpoint,
+                endpoints = networkEndpoints,
+                activeEndpoint = activeNetworkEndpoint,
                 isProbing = isRouteProbing,
                 outcomeFor = { candidate ->
-                    routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+                    routeProbeOutcomes[
+                        connectionViewModel.routeOutcomeKey(candidate, EndpointSurface.Dashboard)
+                    ] ?: routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+                },
+                surfaceOutcomeFor = { candidate, surface ->
+                    routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate, surface)]
                 },
                 dashboardAuthenticated = connection.dashboardLastStatus?.authenticated,
                 dashboardSignInRequired = connection.dashboardLastStatus?.authRequired == true &&
@@ -2180,6 +2190,54 @@ fun ActiveCardRoutesSection(
                     )
                 },
                 onDismiss = { routeEditorOpen = false },
+            )
+        }
+    }
+}
+
+private fun displayRouteRole(role: String): String = when (role.lowercase()) {
+    "lan" -> "LAN"
+    "tailscale" -> "Tailscale"
+    "public" -> "Public"
+    else -> role
+}
+
+@Composable
+private fun CurrentSurfacePathRow(
+    label: String,
+    path: String,
+    status: String,
+    available: Boolean,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = appearanceRoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = path,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = status,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (available) {
+                    com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
     }
