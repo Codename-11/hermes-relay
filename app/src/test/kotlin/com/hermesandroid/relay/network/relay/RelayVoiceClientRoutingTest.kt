@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -302,6 +303,7 @@ class RelayVoiceClientRoutingTest {
         val ingress = dashboardIngressUrl(lanServer)
         val openedRequests = Collections.synchronizedList(mutableListOf<Request>())
         val ticketMints = AtomicInteger(0)
+        val failureCallbackElapsedMs = AtomicLong(Long.MAX_VALUE)
         lanServer.dispatcher = sessionOnlyDispatcher(
             path = "/api/plugins/hermes-relay/transport/voice/output/session",
             body = """
@@ -326,6 +328,7 @@ class RelayVoiceClientRoutingTest {
             dashboardHttpClientProvider = { httpClient },
             dashboardIngressWebSocketRequestProvider = { url ->
                 val mint = ticketMints.incrementAndGet()
+                if (mint == 2) Thread.sleep(400L)
                 Request.Builder().url("$url?ticket=voice-ticket-$mint").build()
             },
             webSocketFactory = { request, listener ->
@@ -338,7 +341,13 @@ class RelayVoiceClientRoutingTest {
                 }
                 openedRequests.add(request)
                 listener.onOpen(socket, mockk(relaxed = true))
-                if (index == 0) listener.onFailure(socket, IOException("retry ingress"), null)
+                if (index == 0) {
+                    val callbackStartedAt = System.nanoTime()
+                    listener.onFailure(socket, IOException("retry ingress"), null)
+                    failureCallbackElapsedMs.set(
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - callbackStartedAt),
+                    )
+                }
                 socket
             },
         )
@@ -350,6 +359,10 @@ class RelayVoiceClientRoutingTest {
         assertEquals(listOf("voice-ticket-1", "voice-ticket-2"), openedRequests.map {
             it.url.queryParameter("ticket")
         })
+        assertTrue(
+            "callback-triggered reconnect admission must not wait for the slow ticket mint",
+            failureCallbackElapsedMs.get() < 150L,
+        )
         assertTrue(openedRequests.all { it.header(RELAY_SESSION_HEADER) == "relay-session" })
     }
 
@@ -561,6 +574,59 @@ class RelayVoiceClientRoutingTest {
             it.url.queryParameter("ticket")
         })
         assertTrue(openedRequests.all { it.header(RELAY_SESSION_HEADER) == "relay-session" })
+    }
+
+    @Test
+    fun dashboardIngressRealtimeDemoMintsTicketBeforeAddingRelaySessionHeader() = runTest {
+        val ingress = dashboardIngressUrl(lanServer)
+        val openedRequests = Collections.synchronizedList(mutableListOf<Request>())
+        val ticketMints = AtomicInteger(0)
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/api/plugins/hermes-relay/transport/voice/realtime/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-demo-ingress-ticket-test",
+                  "websocket_path": "/voice/realtime/session-test",
+                  "provider": "stub",
+                  "model": "local-tone",
+                  "voice": "sine",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { ingress },
+            sessionTokenProvider = { "relay-session" },
+            dashboardHttpClientProvider = { httpClient },
+            dashboardIngressWebSocketRequestProvider = { url ->
+                val mint = ticketMints.incrementAndGet()
+                Request.Builder().url("$url?ticket=realtime-demo-ticket-$mint").build()
+            },
+            webSocketFactory = { request, listener ->
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    if (message.contains("response.create")) {
+                        listener.onMessage(socket, """{"type":"voice.response.done"}""")
+                    }
+                }
+                openedRequests.add(request)
+                listener.onOpen(socket, mockk(relaxed = true))
+                socket
+            },
+        )
+
+        val result = client.runRealtimeDemo(
+            prompt = "Ticket this realtime demo dial",
+            inputPcm = ByteArray(0),
+        ) { }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        assertEquals(1, ticketMints.get())
+        assertEquals("realtime-demo-ticket-1", openedRequests.single().url.queryParameter("ticket"))
+        assertEquals("relay-session", openedRequests.single().header(RELAY_SESSION_HEADER))
     }
 
     @Test
