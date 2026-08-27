@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path'
 
 import { initializePairedHostAccessPolicy } from './lib/hostAccessPolicy.js'
 import type { EndpointCandidate } from './endpoint.js'
+import { isDashboardRelayIngressUrl } from './pairingQr.js'
 
 export interface StoredRouteCandidate {
   role: string
@@ -161,6 +162,7 @@ const writeFile = async (file: StoredFile): Promise<void> => {
 }
 
 export const getSession = async (url: string): Promise<RemoteSessionRecord | null> => {
+  if (isDashboardRelayIngressUrl(url)) return null
   try {
     const file = await readFile()
     const raw = file.sessions[url] ?? Object.values(file.sessions).find(record =>

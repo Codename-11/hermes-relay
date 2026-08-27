@@ -421,8 +421,12 @@ const DASHBOARD_RELAY_INGRESS_PATH = '/api/plugins/hermes-relay/transport'
  * without becoming a selectable transport candidate.
  */
 export function isDashboardRelayIngressCandidate(candidate: EndpointCandidate): boolean {
+  return isDashboardRelayIngressUrl(candidate.relay.url)
+}
+
+export function isDashboardRelayIngressUrl(raw: string): boolean {
   try {
-    const parsed = new URL(candidate.relay.url)
+    const parsed = new URL(raw)
     const path = parsed.pathname.replace(/\/+$/, '')
     const marker = path.indexOf(DASHBOARD_RELAY_INGRESS_PATH)
     if (marker < 0) return false
@@ -430,6 +434,15 @@ export function isDashboardRelayIngressCandidate(candidate: EndpointCandidate): 
     return markerEndsAt === path.length || path[markerEndsAt] === '/'
   } catch {
     return false
+  }
+}
+
+export function assertDesktopCompatibleRelayUrl(raw: string): void {
+  if (isDashboardRelayIngressUrl(raw)) {
+    throw new Error(
+      'Desktop cannot use Dashboard Relay ingress until Dashboard WebSocket ticket support is available; ' +
+        'select a direct Relay fallback',
+    )
   }
 }
 

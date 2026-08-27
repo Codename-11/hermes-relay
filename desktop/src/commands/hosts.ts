@@ -19,7 +19,7 @@ import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec, unknownSubcommand } from '../lib/usage.js'
 import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { candidateDisplayLabel, displayLabel, inferEndpointRole } from '../endpoint.js'
-import { probeCandidate, secureFirstCandidates } from '../pairingQr.js'
+import { assertDesktopCompatibleRelayUrl, probeCandidate, secureFirstCandidates } from '../pairingQr.js'
 import { describeTransportSecurity } from '../transportSecurity.js'
 
 const HOSTS_USAGE: UsageSpec = {
@@ -187,6 +187,12 @@ async function selectHost(args: ParsedArgs): Promise<number> {
   if (!url) {
     process.stderr.write('error: `hosts select` requires a relay URL\n')
     return 2
+  }
+  try {
+    assertDesktopCompatibleRelayUrl(url)
+  } catch (error) {
+    process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
   }
   if (!(await getSession(url))) {
     process.stderr.write(`error: ${url} is not paired on this PC\n`)
