@@ -4,9 +4,40 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.data.RelayEndpoint
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EffectiveRelayRouteTest {
+    @Test
+    fun `dashboard ingress uses only the matching authenticated origin`() {
+        val ingress = "wss://hermes.example/api/plugins/hermes-relay/transport/ws"
+
+        assertEquals(
+            "https://hermes.example",
+            dashboardOriginForRelayIngress("https://hermes.example", ingress),
+        )
+        assertNull(
+            dashboardOriginForRelayIngress("https://other.example", ingress),
+        )
+        assertNull(
+            dashboardOriginForRelayIngress(
+                "https://hermes.example",
+                "wss://hermes.example:8767/ws",
+            ),
+        )
+    }
+
+    @Test
+    fun `dashboard ingress request carries exactly one fresh ticket`() {
+        val request = dashboardRelayWebSocketRequest(
+            "wss://hermes.example/api/plugins/hermes-relay/transport/ws?ticket=stale",
+            "fresh-ticket",
+        )
+
+        assertEquals("fresh-ticket", request?.url?.queryParameter("ticket"))
+        assertEquals(1, request?.url?.queryParameterValues("ticket")?.size)
+    }
+
     @Test
     fun `relay-specific winner overrides unrelated standard route`() {
         val relayWinner = EndpointCandidate(

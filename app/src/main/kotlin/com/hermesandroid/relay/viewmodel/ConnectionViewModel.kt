@@ -47,6 +47,7 @@ import com.hermesandroid.relay.data.PetTemperament
 import com.hermesandroid.relay.data.ChatInputPreferencesRepository
 import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.data.Connection
@@ -128,6 +129,7 @@ import com.hermesandroid.relay.viewmodel.connection.BotModeController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.util.UUID
@@ -170,6 +172,47 @@ internal data class RelayUiInputs(
     val url: String,
     val configured: Boolean,
 )
+
+/** Exact Dashboard origin that may authorize a namespaced Relay ingress URL. */
+internal fun dashboardOriginForRelayIngress(
+    dashboardUrl: String?,
+    relayUrl: String?,
+): String? {
+    val dashboard = runCatching { URI(dashboardUrl?.trim().orEmpty()) }.getOrNull()
+        ?: return null
+    val relay = runCatching { URI(relayUrl?.trim().orEmpty()) }.getOrNull()
+        ?: return null
+    if (!isDashboardRelayIngressUrl(relayUrl)) return null
+    val dashboardScheme = dashboard.scheme?.lowercase() ?: return null
+    val relayDashboardScheme = when (relay.scheme?.lowercase()) {
+        "wss", "https" -> "https"
+        "ws", "http" -> "http"
+        else -> return null
+    }
+    fun effectivePort(uri: URI, scheme: String): Int = when {
+        uri.port >= 0 -> uri.port
+        scheme == "https" -> 443
+        else -> 80
+    }
+    if (
+        dashboardScheme != relayDashboardScheme ||
+        !dashboard.host.equals(relay.host, ignoreCase = true) ||
+        effectivePort(dashboard, dashboardScheme) != effectivePort(relay, relayDashboardScheme)
+    ) {
+        return null
+    }
+    return dashboardUrl?.trim()?.trimEnd('/')
+}
+
+internal fun dashboardRelayWebSocketRequest(relayUrl: String, ticket: String): Request? {
+    val base = runCatching { Request.Builder().url(relayUrl).build() }.getOrNull()
+        ?: return null
+    val authorizedUrl = base.url.newBuilder()
+        .removeAllQueryParameters("ticket")
+        .addQueryParameter("ticket", ticket)
+        .build()
+    return base.newBuilder().url(authorizedUrl).build()
+}
 
 data class HostResourcePressureStatus(
     val memoryPressure: String? = null,
@@ -851,6 +894,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // PairingPreferences keys the endpoint list on. Nullable wrapper
         // because AuthManager.getOrCreateDeviceId() is suspending.
         deviceIdProvider = { runCatching { authManager.getOrCreateDeviceId() }.getOrNull() },
+        dashboardRelayRequestProvider = { relayUrl ->
+            dashboardRelayRequest(relayUrl)
+        },
     )
 
     // Data management — ConnectionStore flows through so exportSettings()
@@ -913,6 +959,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // fetch (no current paired token → the fetch can't authenticate).
             (authManager.authState.value as? AuthState.Paired)?.token
         },
+        dashboardHttpClientProvider = ::dashboardHttpClientForRelayIngress,
     )
 
     // Pairing-management collaborator — owns the paired-devices list
@@ -1052,6 +1099,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Currently-active endpoint, for the Endpoints card. */
     val activeEndpoint = connectionManager.activeEndpoint
+    val activeRelayEndpoint = connectionManager.activeRelayEndpoint
 
     private suspend fun activeRouteCandidatesSnapshot(): List<EndpointCandidate> {
         val activeId = connectionStore.activeConnectionId.value ?: return emptyList()
@@ -1441,6 +1489,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dashboardHttpClientForActive(dashboardUrl: String): okhttp3.OkHttpClient =
         upstreamTransport.dashboardHttpClientForActive(dashboardUrl)
+
+    /** Dashboard outer-auth transport for the namespaced Relay ingress only. */
+    fun dashboardHttpClientForRelayIngress(relayUrl: String): okhttp3.OkHttpClient? {
+        val dashboardUrl = dashboardOriginForRelayIngress(activeDashboardUrl(), relayUrl)
+            ?: return null
+        return upstreamTransport.dashboardHttpClientForActive(dashboardUrl)
+    }
+
+    /** Mint a new single-use Dashboard ticket for every Relay ingress dial. */
+    private suspend fun dashboardRelayRequest(relayUrl: String): Request? {
+        val dashboardUrl = dashboardOriginForRelayIngress(activeDashboardUrl(), relayUrl)
+            ?: return null
+        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+        return try {
+            val ticket = client.requestWsTicket().getOrNull()?.ticket ?: return null
+            dashboardRelayWebSocketRequest(relayUrl, ticket)
+        } finally {
+            client.shutdown()
+        }
+    }
 
     /** Authenticated Dashboard config for dashboard-primary feature catalogs. */
     suspend fun loadActiveDashboardConfig(): Result<JsonObject>? {
@@ -5239,12 +5307,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         preserveStandardConfig: Boolean = false,
     ) {
         pendingConnectionDraft?.pairingPayload = payload
-        android.util.Log.i(
-            "ConnectionVM",
-            "applyPairingPayload: serverUrl=${payload.serverUrl} keyPresent=${payload.key.isNotBlank()} " +
-                "relayBlock=${payload.relay != null} relayUrl=${payload.relay?.url} " +
-                "code=${payload.relay?.code} ttlSeconds=$ttlSeconds"
-        )
         // SYNCHRONOUS RESET — must happen before this function returns so any
         // wizard / verify watcher that observes authState immediately after
         // sees Unpaired, not a stale Paired(token) from a prior install.
@@ -6317,6 +6379,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         (authManager.authState.value as? AuthState.Paired)?.token
                     },
                     apiBearerTokenProvider = { authManager.getApiKey() },
+                    dashboardHttpClientProvider = ::dashboardHttpClientForRelayIngress,
                 ).getVoiceConfig()
             } else {
                 standardVoiceResult

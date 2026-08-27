@@ -25,6 +25,7 @@ import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceState
@@ -89,7 +90,10 @@ internal class HermesRuntimeBinder(
                 .build(),
             relayUrlProvider = { connection.effectiveRelayUrl.value },
             relayRouteChangesProvider = {
-                connection.activeEndpoint.mapNotNull { it?.relay?.url }
+                connection.activeRelayEndpoint.mapNotNull { endpoint ->
+                    endpoint?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
+                        ?: endpoint?.relay?.url
+                }
             },
             routeProbeRequester = connection::probeNow,
             profileNameProvider = {
@@ -99,6 +103,7 @@ internal class HermesRuntimeBinder(
                 (connection.authState.value as? AuthState.Paired)?.token
             },
             apiBearerTokenProvider = connection::getApiKey,
+            dashboardHttpClientProvider = connection::dashboardHttpClientForRelayIngress,
         )
         val standardVoiceClient = StandardHermesVoiceClient(
             context = application,
