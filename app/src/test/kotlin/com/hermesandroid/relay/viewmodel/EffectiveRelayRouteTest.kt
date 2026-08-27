@@ -16,6 +16,13 @@ class EffectiveRelayRouteTest {
             "https://hermes.example",
             dashboardOriginForRelayIngress("https://hermes.example", ingress),
         )
+        assertEquals(
+            "https://hermes.example/base",
+            dashboardOriginForRelayIngress(
+                "https://hermes.example/base",
+                "wss://hermes.example/base/api/plugins/hermes-relay/transport/ws",
+            ),
+        )
         assertNull(
             dashboardOriginForRelayIngress("https://other.example", ingress),
         )
