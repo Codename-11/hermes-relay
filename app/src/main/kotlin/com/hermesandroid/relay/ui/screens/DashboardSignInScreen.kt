@@ -597,8 +597,9 @@ fun DashboardSignInScreen(
 
 internal fun dashboardAuthenticationReady(
     session: DashboardAuthSession,
+    @Suppress("UNUSED_PARAMETER")
     gatewayTicketAvailable: Boolean?,
-): Boolean = session.authenticated && gatewayTicketAvailable == true
+): Boolean = session.authenticated
 
 internal data class PendingDashboardOriginPromotion(
     val origin: String,

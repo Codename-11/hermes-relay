@@ -223,13 +223,13 @@ class DashboardWebViewAuthPolicyTest {
     }
 
     @Test
-    fun authenticationCompletionRequiresAuthenticatedSessionAndGatewayTicket() {
+    fun authenticatedSessionRemainsSignedInWhileGatewayTicketIsUnavailable() {
         val authenticated = DashboardAuthSession(authenticated = true)
         val anonymous = DashboardAuthSession(authenticated = false)
 
         assertTrue(dashboardAuthenticationReady(authenticated, true))
-        assertFalse(dashboardAuthenticationReady(authenticated, false))
-        assertFalse(dashboardAuthenticationReady(authenticated, null))
+        assertTrue(dashboardAuthenticationReady(authenticated, false))
+        assertTrue(dashboardAuthenticationReady(authenticated, null))
         assertFalse(dashboardAuthenticationReady(anonymous, true))
     }
 

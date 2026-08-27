@@ -240,7 +240,10 @@ transport. When such a private route advertises a canonical HTTPS Nous callback,
 Android starts the browser on that canonical origin so Hermes' temporary PKCE
 cookie and the provider callback remain same-origin, then exchanges the
 one-time code through the active private route. The verified session is shared
-by Manage, Gateway tickets, and standard voice.
+by Manage, Gateway tickets, and standard voice. Dashboard authentication and
+Gateway transport readiness remain separate: an authenticated session stays
+signed in when ticket minting is temporarily unavailable, while Gateway
+reconnect continues independently.
 Cookie sessions remain scoped to the exact browser host that issued them.
 Android never copies a basic or OAuth cookie between LAN, Tailscale, public, or
 derived Dashboard hosts; a different legacy cookie host requires sign-in there.
