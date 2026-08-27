@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-26 — Bounded public issue triage contract
+
+New GitHub issues may receive one clearly identified Hermes-Relay automated
+triage response grounded in the live report, current code and documentation,
+related open/closed issues, and verified public release state. The lane may add
+existing type/area labels, request focused sanitized diagnostics, and flag a
+thread for maintainer review.
+
+The automated path is intentionally not an issue-lifecycle owner: it cannot
+close, assign, milestone, prioritize, promise a fix/release/timeline, or continue
+replying after the first response. Replies identify themselves as automated and
+explicitly hand the remaining decision to a maintainer. Contributor guidance and
+agent instructions carry the same boundary.
+
 ## 2026-08-24 — Single dev integration authority
 
 `origin/dev` is the sole integration authority. Primary local `dev` checkouts are
