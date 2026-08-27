@@ -330,6 +330,52 @@ class NativeDashboardAuthTest {
     }
 
     @Test
+    fun bearerAuth_refreshesOnceWhenTicketMintMasksExpiryAsProviderUnavailable() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "expired-access",
+                refreshToken = "current-refresh",
+                expiresAt = 3000,
+                provider = "self-hosted",
+            ),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setBody("""{"detail":"Auth provider 'nous' unreachable"}"""),
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"access_token":"new-access","refresh_token":"new-refresh","expires_at":4000,"provider":"self-hosted","user_id":"u"}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"ticket":"ticket","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val result = kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+
+        assertEquals("ticket", result.ticket)
+        val failedTicket = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", failedTicket.path)
+        assertEquals("Bearer expired-access", failedTicket.getHeader("Authorization"))
+        val refresh = server.takeRequest()
+        assertEquals("/auth/native/refresh", refresh.path)
+        val recoveredTicket = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", recoveredTicket.path)
+        assertEquals("Bearer new-access", recoveredTicket.getHeader("Authorization"))
+        assertEquals("new-access", store.load()?.accessToken)
+    }
+
+    @Test
     fun hostileSetupOrigin_neverReceivesActiveConnectionBearer() {
         store.save(
             NativeDashboardTokens(

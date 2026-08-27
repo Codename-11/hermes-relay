@@ -481,8 +481,11 @@ internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? 
 
 /**
  * Adds the native bearer to dashboard REST calls and rotates it before expiry
- * or after one 401. Refresh requests use a separate bare client, so neither a
- * stale bearer nor the authenticator can recurse into token rotation.
+ * or after one 401. Ticket mint also gets one bounded refresh on 503 because a
+ * multi-provider Dashboard can report an expired token as provider-unreachable
+ * before the owning provider gets to reject it. Refresh requests use a separate
+ * bare client, so neither a stale bearer nor the authenticator can recurse into
+ * token rotation.
  */
 class DashboardBearerAuth(
     baseUrl: String,
@@ -498,7 +501,31 @@ class DashboardBearerAuth(
                 .bearerAuthorization(it.accessToken, "Dashboard credential")
                 .build()
         } ?: chain.request()
-        return chain.proceed(request)
+        val response = chain.proceed(request)
+        if (
+            response.code != 503 ||
+            !request.url.encodedPath.endsWith("/api/auth/ws-ticket")
+        ) {
+            return response
+        }
+        val previous = request.header("Authorization") ?: return response
+        val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
+            ?: return response
+        val refreshed = usableTokens(
+            forceRefresh = true,
+            failedAccessToken = failedAccessToken,
+        ) ?: return response
+        val accessToken = normalizeCredentialForHeader(
+            refreshed.accessToken,
+            "Dashboard credential",
+        )
+        if (accessToken == failedAccessToken) return response
+        response.close()
+        return chain.proceed(
+            request.newBuilder()
+                .bearerAuthorization(accessToken, "Dashboard credential")
+                .build(),
+        )
     }
 
     override fun authenticate(route: Route?, response: Response): Request? {

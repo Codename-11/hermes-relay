@@ -243,7 +243,9 @@ one-time code through the active private route. The verified session is shared
 by Manage, Gateway tickets, and standard voice. Dashboard authentication and
 Gateway transport readiness remain separate: an authenticated session stays
 signed in when ticket minting is temporarily unavailable, while Gateway
-reconnect continues independently.
+reconnect continues independently. When a multi-provider Dashboard masks an
+expired native bearer as a provider-unavailable ticket response, Android makes
+one bounded native refresh and ticket retry; other requests are never replayed.
 Cookie sessions remain scoped to the exact browser host that issued them.
 Android never copies a basic or OAuth cookie between LAN, Tailscale, public, or
 derived Dashboard hosts; a different legacy cookie host requires sign-in there.
