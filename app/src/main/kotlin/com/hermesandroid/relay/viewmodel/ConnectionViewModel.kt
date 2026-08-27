@@ -53,8 +53,10 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionStore
+import com.hermesandroid.relay.data.LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
+import com.hermesandroid.relay.data.normalizeCredentialFreeAuthenticatedDashboardOrigin
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.BotChatTarget
 import com.hermesandroid.relay.data.BotModeState
@@ -83,14 +85,15 @@ import com.hermesandroid.relay.network.upstream.DashboardChatDisplaySettings
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
-import com.hermesandroid.relay.network.upstream.mirrorDashboardSessionCookies
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.sameDashboardBase
 import com.hermesandroid.relay.network.upstream.multiplexServedProfiles
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.shared.EndpointResolver
+import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.network.shared.buildPluginProxyClient
 import com.hermesandroid.relay.network.shared.buildHermesReachClient
 import com.hermesandroid.relay.network.shared.hermesReachRouteOrNull
@@ -125,11 +128,15 @@ import com.hermesandroid.relay.viewmodel.connection.BotModeController
 import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -286,6 +293,22 @@ internal fun recordDashboardGatewayFailure(
 internal fun hasConfiguredHermesConnection(connection: Connection?): Boolean =
     connection?.capabilities?.anySurfaceConfigured == true
 
+internal fun resolveEffectiveRelayUrl(
+    savedRelayUrl: String,
+    savedApiUrl: String,
+    activeRelayEndpoint: EndpointCandidate?,
+    relayConfigured: Boolean,
+): String {
+    if (!relayConfigured) return ""
+    activeRelayEndpoint?.pluginProxyRoutesOrNull()?.relayWebSocketUrl?.let { return it }
+    activeRelayEndpoint?.relay?.url?.trim()?.takeIf(String::isNotBlank)?.let { return it }
+    return if (RelayUrlDeriver.isAutoManagedRelayUrl(savedRelayUrl, savedApiUrl)) {
+        RelayUrlDeriver.deriveFromApiUrl(savedApiUrl) ?: savedRelayUrl
+    } else {
+        savedRelayUrl
+    }
+}
+
 internal fun reusablePlaceholderForAdd(
     preAllocatedId: String?,
     connections: List<Connection>,
@@ -312,6 +335,9 @@ internal fun resolveEffectiveDashboardUrl(
     endpoint: EndpointCandidate?,
 ): String {
     if (connection == null) return ""
+    connection.authenticatedDashboardOrigin
+        ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+        ?.let { return it }
     endpoint?.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { return it }
     endpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
@@ -325,39 +351,117 @@ internal fun resolveEffectiveDashboardUrl(
     return connection.resolvedDashboardUrl
 }
 
-internal const val AUTHENTICATED_DASHBOARD_ROUTE_ROLE = "authenticated_dashboard"
-
-/** Accept only an absolute credential-free HTTPS Dashboard base. */
+/** Accept HTTPS, plus explicit cleartext loopback/private-overlay Dashboard bases. */
 internal fun normalizeAuthenticatedDashboardOrigin(raw: String): String? {
-    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
-    if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+    return normalizeCredentialFreeAuthenticatedDashboardOrigin(raw)
+}
+
+internal fun normalizeDashboardAddressForEdit(raw: String): String? {
+    val normalized = Connection.normalizeDashboardUrlInput(raw)
+    val parsed = runCatching { URI(normalized) }.getOrNull() ?: return null
+    if (parsed.scheme?.lowercase() !in setOf("http", "https")) return null
     if (parsed.host.isNullOrBlank() || parsed.userInfo != null) return null
     if (parsed.query != null || parsed.fragment != null) return null
-    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
+    val clean = normalized.trimEnd('/').takeIf { it.isNotBlank() } ?: return null
+    val httpUrl = clean.toHttpUrlOrNull() ?: return null
+    if (httpUrl.username.isNotEmpty() || httpUrl.password.isNotEmpty()) return null
+    return clean
+}
+
+internal fun withExplicitDashboardAddress(
+    connection: Connection,
+    normalizedAddress: String,
+): Connection {
+    return connection.copy(
+        dashboardUrl = normalizedAddress,
+        // The explicit address now owns Dashboard/Gateway routing. When it is
+        // the same canonical base this merely removes a redundant override;
+        // the caller preserves valid host-scoped credentials.
+        authenticatedDashboardOrigin = null,
+        routeCandidates = Connection.reconcileDashboardRoutes(
+            dashboardUrl = normalizedAddress,
+            candidates = connection.routeCandidates,
+        ),
+    )
+}
+
+/** The exact Dashboard origin that currently owns cookie/bearer credentials. */
+internal fun dashboardCredentialOrigin(connection: Connection): String =
+    connection.authenticatedDashboardOrigin ?: connection.resolvedDashboardUrl
+
+/** Credentials never survive a change to their exact Dashboard owner. */
+internal fun dashboardCredentialsMustBeRetired(
+    previous: Connection,
+    next: Connection,
+): Boolean = !sameDashboardBase(
+    dashboardCredentialOrigin(previous),
+    dashboardCredentialOrigin(next),
+)
+
+internal enum class DashboardInstallIdentityDecision { Match, Mismatch, Missing }
+
+internal fun dashboardInstallIdentityDecision(
+    enteredInstallId: String?,
+    candidateInstallId: String?,
+): DashboardInstallIdentityDecision {
+    val entered = enteredInstallId?.trim()?.takeIf { it.isNotEmpty() }
+    val candidate = candidateInstallId?.trim()?.takeIf { it.isNotEmpty() }
+    if (entered == null || candidate == null) return DashboardInstallIdentityDecision.Missing
+    return if (entered == candidate) {
+        DashboardInstallIdentityDecision.Match
+    } else {
+        DashboardInstallIdentityDecision.Mismatch
+    }
 }
 
 /**
- * Persist a verified public Dashboard as a dedicated route. Existing API and
- * Relay candidates remain byte-for-byte owned by their original routes.
+ * Persist a verified public Dashboard/Gateway origin independently from the
+ * network route pool. Existing candidates and route preference remain owned
+ * by API/Relay routing.
  */
 internal fun withAuthenticatedDashboardOrigin(
     connection: Connection,
     normalizedOrigin: String,
 ): Connection {
-    val candidate = EndpointCandidate(
-        role = AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
-        priority = 0,
-        dashboard = DashboardEndpoint(normalizedOrigin),
-        security = "https",
-        recommended = true,
-        displayName = "Authenticated Dashboard",
-    )
     return connection.copy(
-        dashboardUrl = normalizedOrigin,
+        authenticatedDashboardOrigin = normalizedOrigin,
         routeCandidates = connection.routeCandidates
-            .filterNot { it.role.equals(AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true) } + candidate,
-        preferredRouteRole = AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+            .filterNot {
+                it.role.equals(
+                    LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+                    ignoreCase = true,
+                )
+            },
+        preferredRouteRole = connection.preferredRouteRole?.takeUnless {
+            it.equals(
+                LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+                ignoreCase = true,
+            )
+        },
     )
+}
+
+/** Persist an authenticated origin atomically from the caller's perspective. */
+internal suspend fun persistAuthenticatedDashboardOriginWithRollback(
+    previous: Connection,
+    normalizedOrigin: String,
+    persist: suspend (Connection) -> Unit,
+    activated: suspend () -> Boolean,
+): Boolean {
+    val promoted = withAuthenticatedDashboardOrigin(previous, normalizedOrigin)
+    var persisted = false
+    val success = try {
+        persist(promoted)
+        persisted = true
+        activated()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        if (persisted) persist(previous)
+        throw cancelled
+    } catch (_: Exception) {
+        false
+    }
+    if (!success && persisted) persist(previous)
+    return success
 }
 
 /**
@@ -1019,11 +1123,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
 
     private fun effectiveRelayUrlSnapshot(): String =
-        connectionManager.activeEndpoint.value?.relay?.url
-            ?: autoRelayUrlSnapshot()
+        resolveEffectiveRelayUrl(
+            savedRelayUrl = _relayUrl.value,
+            savedApiUrl = _apiServerUrl.value,
+            activeRelayEndpoint = connectionManager.activeRelayEndpoint.value,
+            relayConfigured = activeRelayConfiguredSnapshot(),
+        )
 
     private fun effectiveRelayWebSocketUrlSnapshot(): String =
-        connectionManager.activeRelayEndpoint.value?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
+        if (!activeRelayConfiguredSnapshot()) "" else
+            connectionManager.activeRelayEndpoint.value?.pluginProxyRoutesOrNull()?.relayWebSocketUrl
             ?: connectionManager.activeRelayEndpoint.value?.relay?.url
             ?: autoRelayUrlSnapshot()
 
@@ -1233,57 +1342,68 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
 
     /**
-     * Promote the exact HTTPS Dashboard origin that completed cookie/OIDC
-     * authentication. This is intentionally Dashboard-only: API fallback and
-     * Relay routes retain their existing endpoints and credentials.
+     * Promote the exact reviewed Dashboard origin that completed cookie/OIDC
+     * authentication. Public origins require HTTPS; literal private-overlay
+     * HTTP origins retain upstream's local/VPN allowance. This is intentionally
+     * Dashboard-only: API fallback and Relay routes retain their ownership.
      *
-     * Persistence is rolled back unless the resolver can select this exact
-     * route, preventing the sign-in UI from declaring success while subsequent
-     * Manage/Gateway/session requests still target a private origin.
+     * Persistence is rolled back unless the effective Dashboard/Gateway URL
+     * observes this exact origin and install identity validation succeeds,
+     * preventing a provider-controlled callback from rebinding the connection
+     * to a different Hermes installation.
      */
-    suspend fun promoteAuthenticatedDashboardOrigin(origin: String): Boolean {
+    suspend fun promoteAuthenticatedDashboardOrigin(
+        origin: String,
+        allowMissingInstallIdentity: Boolean = false,
+    ): Boolean {
         val normalized = normalizeAuthenticatedDashboardOrigin(origin) ?: return false
         val activeId = connectionStore.activeConnectionId.value ?: return false
         val previous = connectionStore.connections.value
             .firstOrNull { it.id == activeId }
             ?: return false
-        val verificationClient = upstreamTransport.dashboardClientFor(activeId, normalized)
+        val enteredDashboardUrl = activeDashboardUrl() ?: previous.resolvedDashboardUrl
+        val enteredClient = upstreamTransport.dashboardClientForActive(enteredDashboardUrl)
+        val enteredInstallId = try {
+            withTimeoutOrNull(8_000L) {
+                enteredClient.getStatus().getOrNull()?.installId
+            }
+        } finally {
+            enteredClient.shutdown()
+        }
+        val verificationClient = upstreamTransport.dashboardCookieClientForActive(normalized)
+        var candidateInstallId: String? = null
         val verifiedHermes = try {
             withTimeoutOrNull(8_000L) {
                 val status = verificationClient.getStatus().getOrNull() ?: return@withTimeoutOrNull false
+                candidateInstallId = status.installId
                 !status.authRequired || verificationClient.currentSession().getOrNull()?.authenticated == true
             } == true
         } finally {
             verificationClient.shutdown()
         }
         if (!verifiedHermes) return false
-        val previousOverride = connectionManager.getManualRoleOverride()
-        val promoted = withAuthenticatedDashboardOrigin(previous, normalized)
-
-        return try {
-            connectionStore.updateConnection(promoted)
-            if (connectionStore.activeConnectionId.value != activeId) return false
-            connectionManager.setManualRoleOverride(AUTHENTICATED_DASHBOARD_ROUTE_ROLE)
-            val winner = connectionManager.refreshActiveEndpoint(clearProbeCache = true)
-            val selected = winner?.role.equals(
-                AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
-                ignoreCase = true,
-            )
-            val effective = withTimeoutOrNull(2_000L) {
-                effectiveDashboardUrl.first {
-                    it.trimEnd('/').equals(normalized, ignoreCase = true)
-                }
-            }
-            selected && effective != null && connectionStore.activeConnectionId.value == activeId
-        } catch (_: Exception) {
-            false
-        }.also { success ->
-            if (!success && connectionStore.activeConnectionId.value == activeId) {
-                connectionStore.updateConnection(previous)
-                connectionManager.setManualRoleOverride(previousOverride)
-                connectionManager.refreshActiveEndpoint(clearProbeCache = true)
-            }
+        when (dashboardInstallIdentityDecision(enteredInstallId, candidateInstallId)) {
+            DashboardInstallIdentityDecision.Match -> Unit
+            DashboardInstallIdentityDecision.Mismatch -> return false
+            DashboardInstallIdentityDecision.Missing -> if (!allowMissingInstallIdentity) return false
         }
+        return persistAuthenticatedDashboardOriginWithRollback(
+            previous = previous,
+            normalizedOrigin = normalized,
+            persist = connectionStore::updateConnection,
+            activated = {
+                if (connectionStore.activeConnectionId.value != activeId) {
+                    false
+                } else {
+                    val effective = withTimeoutOrNull(2_000L) {
+                        effectiveDashboardUrl.first {
+                            it.trimEnd('/').equals(normalized, ignoreCase = true)
+                        }
+                    }
+                    effective != null && connectionStore.activeConnectionId.value == activeId
+                }
+            },
+        )
     }
 
     /**
@@ -1309,6 +1429,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     /** Trusted active-connection clients used by the shared dashboard sign-in route. */
     fun dashboardClientForActive(dashboardUrl: String): DashboardApiClient =
         upstreamTransport.dashboardClientForActive(dashboardUrl)
+
+    fun dashboardCookieClientForActive(dashboardUrl: String): DashboardApiClient =
+        upstreamTransport.dashboardCookieClientForActive(dashboardUrl)
+
+    fun retireNativeDashboardAuthentication(connectionId: String) =
+        upstreamTransport.retireNativeDashboardAuthentication(connectionId)
 
     fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? =
         upstreamTransport.nativeDashboardAuthClientForActive(dashboardUrl)
@@ -1407,23 +1533,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private var pendingApiClientRebuild = false
 
     /**
-     * Runtime route for relay HTTP calls and WSS-adjacent helpers. Relay
-     * control still requires the paired relay session token; this only
-     * chooses which reachable host carries those authenticated requests.
-     */
-    val effectiveRelayUrl: StateFlow<String> = combine(
-        _relayUrl,
-        _apiServerUrl,
-        connectionManager.activeEndpoint,
-    ) { savedRelayUrl, savedApiUrl, endpoint ->
-        endpoint?.relay?.url ?: if (RelayUrlDeriver.isAutoManagedRelayUrl(savedRelayUrl, savedApiUrl)) {
-            RelayUrlDeriver.deriveFromApiUrl(savedApiUrl) ?: savedRelayUrl
-        } else {
-            savedRelayUrl
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_RELAY_URL)
-
-    /**
      * True only when Relay is an intentional part of the active connection:
      * a paired session exists, the connection has previously paired Relay,
      * or the saved Relay URL is a manual override. Auto-derived same-host
@@ -1436,6 +1545,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ) { connection, auth ->
         isRelayConfiguredFor(connection, auth)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** Runtime Relay route. Blank until Relay is explicitly configured or paired. */
+    val effectiveRelayUrl: StateFlow<String> = combine(
+        _relayUrl,
+        _apiServerUrl,
+        connectionManager.activeRelayEndpoint,
+        relayConfigured,
+    ) { savedRelayUrl, savedApiUrl, endpoint, configured ->
+        resolveEffectiveRelayUrl(savedRelayUrl, savedApiUrl, endpoint, configured)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * Runtime dashboard route. A selected endpoint's Dashboard/Gateway URL
@@ -1503,7 +1622,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * persisted URL. Dashboard session cookies are host-scoped, so a sign-in
      * performed on the LAN host does not authenticate the Tailscale host —
      * every dashboard-riding surface (Manage, standard voice) uses this to
-     * say *which* route rejected the saved shared session.
+     * say *which* route needs its own sign-in; cookies are never mirrored.
      */
     val dashboardRouteMovedHint: StateFlow<String?> = combine(
         effectiveDashboardUrl,
@@ -1997,17 +2116,46 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         effectiveDashboardUrl,
         effectiveRelayUrl,
         relayConfigured,
-        activeEndpoint,
-    ) { api, dashboard, relay, relayCfg, endpoint ->
-        arrayOf(api, dashboard, relay, relayCfg, endpoint)
-    }.combine(isTailscaleDetected) { values, tailscale ->
+        combine(
+            activeEndpoint,
+            connectionManager.activeApiEndpoint,
+            connectionManager.activeRelayEndpoint,
+        ) { dashboardEndpoint, apiEndpoint, relayEndpoint ->
+            arrayOf(dashboardEndpoint, apiEndpoint, relayEndpoint)
+        },
+    ) { api, dashboard, relay, relayCfg, endpoints ->
+        arrayOf(api, dashboard, relay, relayCfg, endpoints)
+    }.combine(
+        combine(
+            activeConnection,
+            apiServerHealth,
+            relayRowState,
+            gatewayAvailability,
+            isTailscaleDetected,
+        ) { connection, apiHealth, relayRow, gateway, tailscale ->
+            arrayOf(connection, apiHealth, relayRow, gateway, tailscale)
+        }
+    ) { values, runtime ->
+        val connection = runtime[0] as Connection?
+        val apiHealth = runtime[1] as HealthStatus
+        val relayRow = runtime[2] as RelayRowState
+        val gateway = runtime[3] as GatewayAvailability
+        val tailscale = runtime[4] as Boolean
         computeConnectionSecurity(
             apiUrl = values[0] as String,
             dashboardUrl = values[1] as String,
             relayUrl = values[2] as String,
             relayConfigured = values[3] as Boolean,
-            activeEndpoint = values[4] as EndpointCandidate?,
+            activeEndpoint = (values[4] as Array<*>)[0] as EndpointCandidate?,
             isTailscaleDetected = tailscale,
+            dashboardInUse = gateway == GatewayAvailability.Ready ||
+                gateway == GatewayAvailability.SignInRequired ||
+                connection?.dashboardLastStatus?.reachable == true,
+            apiInUse = apiHealth == HealthStatus.Reachable && gateway != GatewayAvailability.Ready,
+            apiAvailable = apiHealth == HealthStatus.Reachable,
+            relayInUse = relayRow.phase == RelayUiState.Connected,
+            apiEndpoint = (values[4] as Array<*>)[1] as EndpointCandidate?,
+            relayEndpoint = (values[4] as Array<*>)[2] as EndpointCandidate?,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionSecurity.UNKNOWN)
 
@@ -2842,7 +2990,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             multiplexer = multiplexer,
             scope = viewModelScope,
             connectionId = connectionId,
-            tokenStoreKey = connection?.tokenStoreKey,
+            tokenStoreKey = connection?.tokenStoreKey
+                ?: Connection.buildTokenStoreKey(connectionId),
         )
     }
 
@@ -3306,25 +3455,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // v1 constraints.
 
     /**
-     * Pre-create a placeholder [Connection] and switch to it BEFORE the
-     * Pair wizard runs, so [applyPairingPayload]'s token write (which
-     * targets the currently-active [authManager]) lands in the new
-     * connection's EncryptedSharedPrefs instead of the outgoing one's.
-     *
-     * This replaces the earlier "pair then create" flow that left the
-     * fresh connection in an unpaired state because the token had been
-     * written to the wrong store. See [addConnectionFromPairing]'s KDoc
-     * for the historical limitation; this method is the structural fix.
-     *
-     * The placeholder starts with empty URLs — [applyPairingPayload]
-     * will overwrite them via [updateApiServerUrl] / [updateRelayUrl]
-     * on the newly-active Connection once the QR is scanned. Label is
-     * [PLACEHOLDER_LABEL] until the pair completes; on auth.ok the
-     * pair-success watcher (same `viewModelScope.launch` block that
-     * calls `markPaired`) detects the placeholder label and renames
-     * to the API-host-derived default. Callers that abandon the
-     * wizard must invoke [discardPlaceholderConnection] to remove
-     * the empty record.
+     * Start an Add-connection draft with an id-scoped auth owner. The draft is
+     * neither persisted nor made active, so Connections never exposes a fake
+     * empty card and the outgoing connection cannot receive its credentials.
+     * [commitConnectionDraft] persists/activates the finished snapshot once;
+     * [discardPlaceholderConnection] securely drops an abandoned draft.
      */
     /**
      * Serializes concurrent `Add connection` flows. Without this, a fast
@@ -3339,13 +3474,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     private val addConnectionMutex = Mutex()
 
+    private data class PendingConnectionDraft(
+        val id: String,
+        val previousConnectionId: String?,
+        var pairingPayload: com.hermesandroid.relay.ui.components.HermesPairingPayload? = null,
+    )
+
+    private var pendingConnectionDraft: PendingConnectionDraft? = null
+    private val _connectionDraftId = MutableStateFlow<String?>(null)
+    val connectionDraftId: StateFlow<String?> = _connectionDraftId.asStateFlow()
+
     /**
-     * @param preAllocatedId when non-null, use this id for the placeholder
+     * @param preAllocatedId when non-null, use this id for the transient draft
      *   instead of generating a fresh UUID. Lets the caller navigate to
      *   [ui.screens.PairScreen] synchronously with a known id and run the
-     *   DataStore-heavy placeholder creation + switch in the background —
-     *   the Pair wizard's reactive state picks up the active connection
-     *   by the time the user has framed a QR.
+     *   auth-owner setup in the background while the wizard opens.
      *
      *   When a connection with this id already exists (re-entry from a
      *   double-tap racing the first call), this call becomes a no-op
@@ -3363,6 +3506,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // placeholder under the caller-supplied id so navigation and
         // persistence converge on the same handle.
         if (preAllocatedId != null) {
+            if (pendingConnectionDraft?.id == preAllocatedId) {
+                return@withLock preAllocatedId
+            }
             val existing = connectionStore.connections.value.firstOrNull { it.id == preAllocatedId }
             if (existing != null) {
                 android.util.Log.i(
@@ -3375,19 +3521,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@withLock existing.id
             }
 
-            val placeholder = Connection(
+            pendingConnectionDraft = PendingConnectionDraft(
                 id = preAllocatedId,
-                label = PLACEHOLDER_LABEL,
-                apiServerUrl = "",
-                relayUrl = "",
-                tokenStoreKey = Connection.buildTokenStoreKey(preAllocatedId),
-                pairedAt = null,
-                lastActiveSessionId = null,
-                transportHint = null,
-                expiresAt = null,
+                previousConnectionId = connectionStore.activeConnectionId.value,
             )
-            connectionStore.addConnection(placeholder)
-            switchConnection(preAllocatedId).join()
+            _connectionDraftId.value = preAllocatedId
+            installAuthManager(createAuthManagerForConnectionId(preAllocatedId))
             return@withLock preAllocatedId
         }
 
@@ -3517,6 +3656,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * the "real connection" case.
      */
     suspend fun discardPlaceholderConnection(connectionId: String) {
+        val draft = pendingConnectionDraft
+        if (draft?.id == connectionId) {
+            authManager.clearSession()
+            runCatching { authManager.clearApiKey() }
+            AuthManager.importStoredSecrets(
+                getApplication(),
+                Connection.buildTokenStoreKey(connectionId),
+                com.hermesandroid.relay.auth.ConnectionAuthSecrets(),
+            )
+            pendingConnectionDraft = null
+            _connectionDraftId.value = null
+            val previous = draft.previousConnectionId?.let { previousId ->
+                connectionStore.connections.value.firstOrNull { it.id == previousId }
+            }
+            if (previous != null) restorePersistedActiveConnectionContext(previous)
+            return
+        }
         val existing = connectionStore.connections.value.firstOrNull { it.id == connectionId }
             ?: return
         if (existing.pairedAt != null) return
@@ -3969,7 +4125,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             var lastConnectedRole: String? = null
             combine(
                 relayConnectionState,
-                connectionManager.activeEndpoint,
+                connectionManager.activeRelayEndpoint,
             ) { state, endpoint -> state to endpoint?.role }
                 .distinctUntilChanged()
                 .collect { (state, role) ->
@@ -4101,6 +4257,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 .distinctUntilChanged()
                 .collect { (connId, paired) ->
                     if (connId == null || paired == null) return@collect
+                    // A transient Add-connection AuthManager is intentionally
+                    // not owned by the still-active persisted connection.
+                    // commitConnectionDraft snapshots its paired metadata.
+                    if (pendingConnectionDraft != null) return@collect
                     val current = connectionStore.connections.value
                         .firstOrNull { it.id == connId } ?: return@collect
                     if (current.pairedAt != null) return@collect
@@ -4648,6 +4808,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 )
                 val apiRouteBefore = effectiveApiServerUrlSnapshot()
                 connectionManager.refreshActiveEndpoint()
+                launch { probeActiveRouteSurfaces() }
                 if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
                     rebuildApiClient()
                 }
@@ -4785,15 +4946,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 _relayServerHealth.value = HealthStatus.Unknown
             }
 
-            // Fire both probes in parallel — neither blocks the other.
-            val apiProbe = launch { probeApiHealth() }
+            // Dashboard/Gateway, optional API, and optional Relay are separate
+            // surfaces. Probe them as siblings so an API timeout cannot delay
+            // authentication/session readiness and Relay never gates Chat.
+            val dashboardProbe = launch { probeStandardVoice() }
+            val apiProbe = launch { probeApiHealth(includeDashboardProbe = false) }
             val relayProbe = if (shouldProbeRelay) {
                 launch { probeRelayHealth() }
             } else {
                 null
             }
+            val routeSurfaceProbe = launch { probeActiveRouteSurfaces() }
+            dashboardProbe.join()
             apiProbe.join()
             relayProbe?.join()
+            routeSurfaceProbe.join()
 
             // Also kick a stale-WSS reconnect — if we hold a paired session
             // but the WSS is down (the most common post-resume state), bring
@@ -4807,7 +4974,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * and the tri-state flow. Safe to call from anywhere; no-ops cleanly
      * when the client isn't configured.
      */
-    private suspend fun probeApiHealth() {
+    private suspend fun probeApiHealth(includeDashboardProbe: Boolean = true) {
         if (isDemoMode.value) {
             // Demo mode is offline — report Unknown without touching the network.
             _apiServerHealth.value = HealthStatus.Unknown
@@ -4818,7 +4985,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         if (client == null) {
             _apiServerHealth.value = HealthStatus.Unknown
             _apiServerReachable.value = false
-            probeStandardVoice()
+            if (includeDashboardProbe) probeStandardVoice()
             return
         }
         val ok = client.checkHealth()
@@ -4826,7 +4993,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         _apiServerHealth.value = if (ok) HealthStatus.Reachable else HealthStatus.Unreachable
         // Standard voice lives on the dashboard surface, not the API server,
         // so its probe runs regardless of API health.
-        probeStandardVoice()
+        if (includeDashboardProbe) probeStandardVoice()
     }
 
     /**
@@ -4848,13 +5015,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _serverChatDisplaySettings.value = null
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
-        }
-        withContext(Dispatchers.IO) {
-            mirrorDashboardSessionCookies(
-                store = dashboardCookieStoreFor(connectionId),
-                targetUrl = dashboardUrl.orEmpty(),
-                trustedHosts = trustedDashboardHosts(connectionId),
-            )
         }
         val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
         try {
@@ -4920,28 +5080,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             updateGatewayAvailability(GatewayAvailability.Unreachable)
         } finally {
             client.shutdown()
-        }
-    }
-
-    private fun trustedDashboardHosts(connectionId: String): Set<String> {
-        val connection = connectionStore.connections.value
-            .firstOrNull { it.id == connectionId }
-            ?: return emptySet()
-        val urls = buildList {
-            connection.dashboardUrl?.let(::add)
-            Connection.deriveDefaultDashboardUrl(connection.apiServerUrl)
-                ?.takeIf { it.isNotBlank() }
-                ?.let(::add)
-            connection.routeCandidates.forEach { candidate ->
-                candidate.dashboard?.url?.let(::add)
-                candidate.api?.url
-                    ?.let(Connection::deriveDefaultDashboardUrl)
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(::add)
-            }
-        }
-        return urls.mapNotNullTo(mutableSetOf()) { url ->
-            runCatching { URI(url).host?.lowercase() }.getOrNull()
         }
     }
 
@@ -5100,6 +5238,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         ttlSeconds: Long,
         preserveStandardConfig: Boolean = false,
     ) {
+        pendingConnectionDraft?.pairingPayload = payload
         android.util.Log.i(
             "ConnectionVM",
             "applyPairingPayload: serverUrl=${payload.serverUrl} keyPresent=${payload.key.isNotBlank()} " +
@@ -5261,6 +5400,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // lands from that handshake sees populated URLs when the
             // pair-success watcher reconciles.
             val activeId = connectionStore.activeConnectionId.value
+                .takeIf { pendingConnectionDraft == null }
             if (activeId != null) {
                 val current = connectionStore.connections.value
                     .firstOrNull { it.id == activeId }
@@ -5302,6 +5442,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                                     apiServerUrl = payload.serverUrl,
                                     relayUrl = newRelayUrl,
                                     dashboardUrl = newDashboardUrl,
+                                    authenticatedDashboardOrigin = current.authenticatedDashboardOrigin
+                                        ?.takeIf {
+                                            it.trimEnd('/').equals(
+                                                newDashboardUrl?.trimEnd('/'),
+                                                ignoreCase = true,
+                                            )
+                                        },
                                     routeCandidates = newRouteCandidates,
                                     preferredRouteRole = current.preferredRouteRole
                                         ?.takeIf { preferred ->
@@ -5529,10 +5676,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         discoveredHostname = discoveredHostname,
                     )
                 }
-                connectionStore.updateConnection(
-                    current.copy(
+                val next = current.copy(
                         label = nextLabel,
                         dashboardUrl = normalized,
+                        authenticatedDashboardOrigin = current.authenticatedDashboardOrigin
+                            ?.takeIf {
+                                it.trimEnd('/').equals(normalized.trimEnd('/'), ignoreCase = true)
+                            },
                         routeCandidates = Connection.reconcileDashboardRoutes(
                             dashboardUrl = normalized,
                             candidates = current.routeCandidates.ifEmpty {
@@ -5549,11 +5699,184 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                                 )
                             },
                         ),
-                    ),
-                )
+                    )
+                connectionStore.updateConnection(next)
+                if (dashboardCredentialsMustBeRetired(current, next)) {
+                    upstreamTransport.clearDashboardAuthentication(activeId)
+                }
                 probeStandardVoice()
             }.also(onComplete)
         }
+    }
+
+    /**
+     * Validate and probe an explicit Dashboard/Gateway address before saving
+     * it. Moving to a different origin clears connection-scoped Dashboard
+     * cookies and native bearer tokens so credentials cannot bleed across
+     * self-hosted deployments.
+     */
+    fun updateDashboardAddress(
+        url: String,
+        onResult: (String?) -> Unit,
+    ) {
+        val normalized = normalizeDashboardAddressForEdit(url)
+        if (normalized == null) {
+            onResult("Enter an http:// or https:// Hermes Dashboard address")
+            return
+        }
+        viewModelScope.launch {
+            val activeId = connectionStore.activeConnectionId.value
+            val current = connectionStore.connections.value.firstOrNull { it.id == activeId }
+            if (activeId == null || current == null) {
+                onResult("No active connection")
+                return@launch
+            }
+            val probe = probeDashboardAddress(normalized)
+            val failure = probe.exceptionOrNull()
+            if (failure != null) {
+                onResult(failure.message ?: "Hermes was not found at this address")
+                return@launch
+            }
+            val originChanged = !sameDashboardBase(current.resolvedDashboardUrl, normalized)
+            val next = withExplicitDashboardAddress(current, normalized)
+            connectionStore.updateConnection(next)
+            if (originChanged) {
+                withContext(Dispatchers.IO) {
+                    upstreamTransport.clearDashboardAuthentication(activeId)
+                }
+            }
+            val (status, session) = probe.getOrThrow()
+            persistDashboardProbeStatus(activeId, status, session)
+            probeStandardVoice()
+            onResult(null)
+        }
+    }
+
+    /** Persist and activate a successfully configured Add-connection draft exactly once. */
+    suspend fun commitConnectionDraft(connectionId: String): Boolean = addConnectionMutex.withLock {
+        val draft = pendingConnectionDraft?.takeIf { it.id == connectionId } ?: return@withLock true
+        val payload = draft.pairingPayload
+        val apiUrl = payload?.serverUrl?.trim().orEmpty().ifBlank { _apiServerUrl.value.trim() }
+        val relayUrl = payload?.relay?.url?.trim().orEmpty().ifBlank { _relayUrl.value.trim() }
+        val dashboardUrl = payload?.dashboardUrl?.trim()?.trimEnd('/')
+            ?: Connection.deriveDefaultDashboardUrl(apiUrl)
+        val routes = Connection.reconcileDashboardRoutes(
+            dashboardUrl = dashboardUrl,
+            candidates = payload?.endpoints.orEmpty().ifEmpty {
+                Connection.buildRouteCandidates(apiUrl, relayUrl)
+            },
+        )
+        val paired = authManager.authState.value as? AuthState.Paired
+        val pairedSession = authManager.currentPairedSession.value
+        val connection = Connection(
+            id = connectionId,
+            label = apiUrl.takeIf(String::isNotBlank)
+                ?.let(Connection::extractDefaultLabel)
+                ?: dashboardUrl?.let(Connection::extractDefaultLabel)
+                ?: "Hermes",
+            apiServerUrl = apiUrl,
+            relayUrl = relayUrl,
+            tokenStoreKey = Connection.buildTokenStoreKey(connectionId),
+            dashboardUrl = dashboardUrl,
+            routeCandidates = routes,
+            pairedAt = paired?.let { System.currentTimeMillis() },
+            transportHint = pairedSession?.transportHint,
+            expiresAt = pairedSession?.expiresAt?.let { it * 1000L },
+        )
+        connectionStore.addConnection(connection)
+        switchConnection(connectionId).join()
+        pendingConnectionDraft = null
+        _connectionDraftId.value = null
+        true
+    }
+
+    /** Re-check only the active Dashboard/Gateway surface and its auth state. */
+    fun recheckDashboard(onResult: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            val dashboardUrl = activeDashboardUrl()
+            if (dashboardUrl.isNullOrBlank()) {
+                onResult("No Dashboard address is configured")
+                return@launch
+            }
+            val result = probeDashboardAddress(dashboardUrl)
+            if (result.isFailure) {
+                persistDashboardProbeFailure(
+                    connectionId = connectionStore.activeConnectionId.value,
+                    message = result.exceptionOrNull()?.message ?: "Dashboard is unreachable",
+                )
+                probeStandardVoice()
+                onResult(result.exceptionOrNull()?.message ?: "Dashboard is unreachable")
+                return@launch
+            }
+            val connectionId = connectionStore.activeConnectionId.value
+            val (status, session) = result.getOrThrow()
+            if (connectionId != null) persistDashboardProbeStatus(connectionId, status, session)
+            probeStandardVoice()
+            onResult(null)
+        }
+    }
+
+    private suspend fun probeDashboardAddress(
+        dashboardUrl: String,
+    ): Result<Pair<DashboardStatus, DashboardAuthSession?>> {
+        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+        return try {
+            withTimeoutOrNull(8_000L) {
+                val status = client.getStatus().getOrElse { throw it }
+                val session = if (status.authRequired) {
+                    client.currentSession().getOrNull()
+                } else {
+                    null
+                }
+                Result.success(status to session)
+            } ?: Result.failure(java.net.SocketTimeoutException("Dashboard check timed out"))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
+        } finally {
+            client.shutdown()
+        }
+    }
+
+    private suspend fun persistDashboardProbeStatus(
+        connectionId: String,
+        status: DashboardStatus,
+        session: DashboardAuthSession?,
+    ) {
+        connectionStore.setDashboardStatus(
+            connectionId,
+            com.hermesandroid.relay.data.DashboardConnectionStatus(
+                checkedAtMillis = System.currentTimeMillis(),
+                reachable = true,
+                authRequired = status.authRequired,
+                authProviders = status.authProviders,
+                authenticated = if (status.authRequired) session?.authenticated else true,
+                authProvider = session?.provider,
+                message = status.message,
+                gatewayMode = status.gatewayMode,
+                servedProfiles = status.multiplexServedProfiles(),
+                profiles = status.profiles,
+            ),
+        )
+    }
+
+    private suspend fun persistDashboardProbeFailure(
+        connectionId: String?,
+        message: String,
+    ) {
+        if (connectionId == null) return
+        val previous = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.dashboardLastStatus
+        connectionStore.setDashboardStatus(
+            connectionId,
+            (previous ?: com.hermesandroid.relay.data.DashboardConnectionStatus()).copy(
+                checkedAtMillis = System.currentTimeMillis(),
+                reachable = false,
+                message = message,
+            ),
+        )
     }
 
     fun recordDashboardStatus(
@@ -6364,6 +6687,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             url = url,
         )
         connectionManager.connect(url)
+        viewModelScope.launch { probeActiveRouteSurfaces() }
     }
 
     fun disconnectRelay() {
@@ -6563,7 +6887,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             relayRoutes = fromPairing,
         )
         if (recovered.isNotEmpty()) return recovered
-        val dashboardUrl = current.resolvedDashboardUrl.takeIf { it.isNotBlank() }
+        val dashboardUrl = current.configuredDashboardUrl.takeIf { it.isNotBlank() }
             ?: return emptyList()
         return listOfNotNull(
             Connection.endpointCandidateFromDashboardUrl(
@@ -6660,9 +6984,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val routeProbeOutcomes: StateFlow<Map<String, RouteProbeOutcome>> =
         endpointResolver.probeOutcomes
 
-    /** Key into [routeProbeOutcomes] for one route row. */
-    fun routeOutcomeKey(candidate: EndpointCandidate): String =
-        EndpointResolver.cacheKey(candidate)
+    /** Key into [routeProbeOutcomes] for one route surface. */
+    fun routeOutcomeKey(
+        candidate: EndpointCandidate,
+        surface: EndpointSurface = EndpointSurface.Standard,
+    ): String = EndpointResolver.outcomeKey(candidate, surface)
+
+    /** Probe configured surfaces per route without changing the selected route. */
+    private suspend fun probeActiveRouteSurfaces() {
+        val current = activeConnectionSnapshot() ?: return
+        val candidates = seedRouteCandidates(current)
+        coroutineScope {
+            candidates.map { candidate ->
+                async { endpointResolver.probeSurfaces(candidate) }
+            }.awaitAll()
+        }
+    }
 
     // Set when probeNow() is requested while a probe is already in flight
     // (e.g. "Use now" tapped mid-Re-check) — the override the caller just
@@ -6687,8 +7024,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 if (effectiveApiServerUrlSnapshot() != apiRouteBefore) {
                     rebuildApiClient()
                 }
-                probeApiHealth()
-                probeRelayHealth()
+                val dashboardProbe = launch { probeStandardVoice() }
+                val apiProbe = launch { probeApiHealth(includeDashboardProbe = false) }
+                val relayProbe = launch { probeRelayHealth() }
+                val routeSurfaceProbe = launch { probeActiveRouteSurfaces() }
+                dashboardProbe.join()
+                apiProbe.join()
+                relayProbe.join()
+                routeSurfaceProbe.join()
                 _routeProbeStatus.value = RouteProbeStatus.Done(
                     winner = winner,
                     atMillis = System.currentTimeMillis(),
@@ -6863,6 +7206,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         routeCandidates: List<EndpointCandidate>? = null,
         preferredRouteRole: String? = null,
     ) {
+        // Add-connection setup owns a transient auth/config draft. Until the
+        // wizard completes, never mirror its URLs into the still-active saved
+        // connection; [commitConnectionDraft] persists the finished snapshot.
+        if (pendingConnectionDraft != null) return
         val activeId = connectionStore.activeConnectionId.value ?: return
         val current = connectionStore.connections.value.firstOrNull { it.id == activeId } ?: return
         val nextDashboardUrl = when {
@@ -6891,24 +7238,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 } -> null
             else -> current.preferredRouteRole
         }
+        val nextAuthenticatedDashboardOrigin = current.authenticatedDashboardOrigin
+            ?.takeIf {
+                dashboardUrlOverride == null ||
+                    (nextDashboardUrl != null && sameDashboardBase(it, nextDashboardUrl))
+            }
         if (
             current.apiServerUrl == apiServerUrl &&
             current.relayUrl == relayUrl &&
             current.dashboardUrl == nextDashboardUrl &&
+            current.authenticatedDashboardOrigin == nextAuthenticatedDashboardOrigin &&
             current.routeCandidates == nextRouteCandidates &&
             current.preferredRouteRole == nextPreferredRouteRole
         ) {
             return
         }
-        connectionStore.updateConnection(
-            current.copy(
+        val next = current.copy(
                 apiServerUrl = apiServerUrl,
                 relayUrl = relayUrl,
                 dashboardUrl = nextDashboardUrl,
+                authenticatedDashboardOrigin = nextAuthenticatedDashboardOrigin,
                 routeCandidates = nextRouteCandidates,
                 preferredRouteRole = nextPreferredRouteRole,
-            ),
-        )
+            )
+        connectionStore.updateConnection(next)
+        if (dashboardCredentialsMustBeRetired(current, next)) {
+            upstreamTransport.clearDashboardAuthentication(activeId)
+        }
     }
 
     // Backward compat wrappers

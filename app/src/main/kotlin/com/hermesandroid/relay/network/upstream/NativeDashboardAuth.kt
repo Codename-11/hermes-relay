@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.data.normalizeCredentialFreeAuthenticatedDashboardOrigin
+
 import android.content.Context
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.SecureStoreCache
@@ -163,25 +165,19 @@ class NativeDashboardAuthClient(
     }
 
     /**
-     * A private-route dashboard may be configured with a canonical HTTPS
-     * callback origin for its provider. Starting the browser on the private
-     * origin would scope Hermes' temporary PKCE cookie to the wrong host, so
-     * discover the provider's declared callback and start native auth there.
-     * Token exchange still uses [baseUrl], keeping the resulting bearer bound
-     * to the active connection route.
+     * Discover the callback-owning Dashboard origin for every interactive
+     * redirect provider. Provider names do not imply topology; upstream may
+     * advertise a canonical origin that differs from a LAN/Tailscale entry.
+     * Token exchange still uses [baseUrl], keeping the bearer scoped to this
+     * connection while the shared gateway process consumes its one-time code.
      */
     private fun resolveAuthorizationBaseUrl(provider: String?): String {
         val configured = baseUrl.toHttpUrlOrNull() ?: return baseUrl
-        if (
-            !provider.equals("nous", ignoreCase = true) ||
-            configured.scheme != "http" ||
-            !isPrivateNetworkLiteral(configured.host)
-        ) {
-            return baseUrl
-        }
+        val selectedProvider = provider?.takeIf { it.isNotBlank() } ?: return baseUrl
+        if (isLoopbackDashboardHost(configured.host)) return baseUrl
         val loginUrl = configured.newBuilder()
             .addPathSegments("auth/login")
-            .addQueryParameter("provider", provider)
+            .addQueryParameter("provider", selectedProvider)
             .addQueryParameter("next", "/")
             .build()
         val discoveryClient = client.newBuilder()
@@ -193,8 +189,7 @@ class NativeDashboardAuthClient(
         ).execute().use { response ->
             if (response.code !in 300..399) null else response.header("Location")
         }
-        return canonicalDashboardBaseFromNousRedirect(location)
-            ?: throw IOException("Dashboard did not advertise a secure Nous callback origin")
+        return canonicalDashboardBaseFromProviderRedirect(baseUrl, location)
     }
 
     fun exchangeCallback(
@@ -412,6 +407,63 @@ private fun isPrivateNetworkLiteral(host: String): Boolean {
         (first == 100 && second in 64..127)
 }
 
+private fun isLoopbackDashboardHost(host: String): Boolean =
+    host.equals("localhost", ignoreCase = true) ||
+        host == "127.0.0.1" ||
+        host == "::1"
+
+/**
+ * Extract a callback-owning Dashboard base from an auth-provider redirect.
+ * Different HTTPS origins are accepted after an HTTPS provider hop. HTTP is
+ * retained for upstream-supported local/overlay callbacks only when both the
+ * selected and callback hosts are private literals/loopback and no HTTPS-to-
+ * HTTP downgrade occurs. Arbitrary public cleartext origins are rejected.
+ */
+internal fun canonicalDashboardBaseFromProviderRedirect(
+    configuredBase: String,
+    location: String?,
+): String {
+    val configured = configuredBase.trim().trimEnd('/').toHttpUrlOrNull()
+        ?: return configuredBase
+    val fallback = configured.toString().trimEnd('/')
+    val providerUrl = location?.toHttpUrlOrNull() ?: return fallback
+    val callback = providerUrl.queryParameter("redirect_uri")
+        ?.toHttpUrlOrNull()
+        ?: return fallback
+    if (
+        providerUrl.username.isNotEmpty() || providerUrl.password.isNotEmpty() ||
+        callback.username.isNotEmpty() || callback.password.isNotEmpty() ||
+        callback.query != null || callback.fragment != null
+    ) {
+        return fallback
+    }
+    val callbackSuffix = "/auth/callback"
+    if (!callback.encodedPath.endsWith(callbackSuffix)) return fallback
+    val callbackBase = callback.newBuilder()
+        .encodedPath(callback.encodedPath.removeSuffix(callbackSuffix).ifBlank { "/" })
+        .query(null)
+        .fragment(null)
+        .build()
+    if (
+        configured.scheme == callbackBase.scheme &&
+        configured.host.equals(callbackBase.host, ignoreCase = true) &&
+        configured.port == callbackBase.port &&
+        configured.encodedPath.trimEnd('/') == callbackBase.encodedPath.trimEnd('/')
+    ) {
+        return fallback
+    }
+    if (providerUrl.scheme != "https") return fallback
+    val trustedDifferentOrigin = callbackBase.scheme == "https" || (
+        configured.scheme == "http" &&
+            callbackBase.scheme == "http" &&
+            normalizeCredentialFreeAuthenticatedDashboardOrigin(fallback) != null &&
+            normalizeCredentialFreeAuthenticatedDashboardOrigin(
+                callbackBase.toString().trimEnd('/'),
+            ) != null
+        )
+    return if (trustedDifferentOrigin) callbackBase.toString().trimEnd('/') else fallback
+}
+
 internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? {
     val providerUrl = location?.toHttpUrlOrNull() ?: return null
     if (
@@ -420,22 +472,11 @@ internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? 
     ) {
         return null
     }
-    val callback = providerUrl.queryParameter("redirect_uri")
-        ?.toHttpUrlOrNull()
-        ?: return null
-    if (callback.scheme != "https") return null
-    val callbackSuffix = "/auth/callback"
-    if (!callback.encodedPath.endsWith(callbackSuffix)) return null
-    val basePath = callback.encodedPath
-        .removeSuffix(callbackSuffix)
-        .ifBlank { "/" }
-    return callback.newBuilder()
-        .encodedPath(basePath)
-        .query(null)
-        .fragment(null)
-        .build()
-        .toString()
-        .trimEnd('/')
+    val resolved = canonicalDashboardBaseFromProviderRedirect(
+        configuredBase = "http://192.168.0.1:9119",
+        location = location,
+    )
+    return resolved.takeUnless { it == "http://192.168.0.1:9119" }
 }
 
 /**

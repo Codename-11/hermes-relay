@@ -387,78 +387,56 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun mirrorDashboardSessionCookies_reusesEncryptedSessionOnTrustedRoute() {
+    fun dashboardCookieJar_doesNotCopyBasicSessionAcrossHttpHosts() {
         val store = InMemoryDashboardCookieStore()
         store.save(
             listOf(
-                storedCookie("hermes_session_at", "access", "192.168.1.20"),
-                storedCookie("hermes_session_rt", "refresh", "192.168.1.20"),
-                storedCookie("hermes_session_provider", "basic", "192.168.1.20"),
+                storedCookie("hermes_session", "basic-session", "192.168.1.20"),
             ),
         )
 
-        val mirrored = mirrorDashboardSessionCookies(
-            store = store,
-            targetUrl = "http://100.64.0.20:9119",
-            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-        )
-        val cookies = DashboardCookieJar(store).loadForRequest(
+        val jar = DashboardCookieJar(store)
+        val foreignHostCookies = jar.loadForRequest(
             "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
         )
-
-        assertEquals(3, mirrored)
-        assertEquals(
-            listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
-            cookies.map { it.name },
+        val exactHostCookies = jar.loadForRequest(
+            "http://192.168.1.20:9119/api/auth/me".toHttpUrl(),
         )
+
+        assertTrue(foreignHostCookies.isEmpty())
+        assertEquals(listOf("hermes_session"), exactHostCookies.map { it.name })
+        assertEquals(setOf("192.168.1.20"), store.load().mapTo(mutableSetOf()) { it.domain })
     }
 
     @Test
-    fun mirrorDashboardSessionCookies_doesNotCopyPkceOrToUnknownHost() {
+    fun dashboardCookieJar_keepsHostPrefixedSecureCookieOnExactHttpsOrigin() {
         val store = InMemoryDashboardCookieStore()
         store.save(
             listOf(
-                storedCookie("hermes_session_at", "access", "192.168.1.20"),
-                storedCookie("hermes_session_pkce", "verifier", "192.168.1.20"),
+                storedCookie(
+                    name = "__Host-hermes_session_at",
+                    value = "secure-session",
+                    domain = "hermes.example.test",
+                    secure = true,
+                ),
             ),
         )
 
-        assertEquals(
-            0,
-            mirrorDashboardSessionCookies(
-                store = store,
-                targetUrl = "http://attacker.example:9119",
-                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-            ),
+        val jar = DashboardCookieJar(store)
+        val exactOrigin = jar.loadForRequest(
+            "https://hermes.example.test/api/auth/me".toHttpUrl(),
         )
-        assertEquals(
-            1,
-            mirrorDashboardSessionCookies(
-                store = store,
-                targetUrl = "http://100.64.0.20:9119",
-                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-            ),
+        val otherHttpsHost = jar.loadForRequest(
+            "https://tailscale.example.test/api/auth/me".toHttpUrl(),
         )
-        val mirroredNames = DashboardCookieJar(store).loadForRequest(
-            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
-        ).map { it.name }
-
-        assertEquals(listOf("hermes_session_at"), mirroredNames)
-    }
-
-    @Test
-    fun mirrorDashboardSessionCookies_explicitSignOutClearsEveryRoute() {
-        val store = InMemoryDashboardCookieStore()
-        store.save(listOf(storedCookie("hermes_session", "session", "192.168.1.20")))
-        mirrorDashboardSessionCookies(
-            store = store,
-            targetUrl = "http://100.64.0.20:9119",
-            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        val cleartextSameHost = jar.loadForRequest(
+            "http://hermes.example.test/api/auth/me".toHttpUrl(),
         )
 
-        store.clear()
-
-        assertTrue(store.load().isEmpty())
+        assertEquals(listOf("__Host-hermes_session_at"), exactOrigin.map { it.name })
+        assertTrue(otherHttpsHost.isEmpty())
+        assertTrue(cleartextSameHost.isEmpty())
+        assertEquals("hermes.example.test", store.load().single().domain)
     }
 
     @Test
@@ -522,13 +500,14 @@ class DashboardApiClientTest {
         name: String,
         value: String,
         domain: String,
+        secure: Boolean = false,
     ) = StoredDashboardCookie(
         name = name,
         value = value,
         expiresAt = Long.MAX_VALUE,
         domain = domain,
         path = "/",
-        secure = false,
+        secure = secure,
         httpOnly = true,
         hostOnly = true,
         persistent = true,

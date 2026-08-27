@@ -127,6 +127,38 @@ class NativeDashboardAuthTest {
         )
     }
 
+    @Test
+    fun canonicalProviderCallback_supportsSelfHostedPublicAndPrivateOriginsSafely() {
+        val selfHostedPublic = "https://id.example.test/authorize" +
+            "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback"
+        val privateOverlay = "https://id.example.test/authorize" +
+            "?redirect_uri=http%3A%2F%2F100.71.8.99%3A9119%2Fauth%2Fcallback"
+        val publicCleartext = "https://id.example.test/authorize" +
+            "?redirect_uri=http%3A%2F%2Fpublic.example.test%2Fauth%2Fcallback"
+
+        assertEquals(
+            "https://hermes.example.test",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                selfHostedPublic,
+            ),
+        )
+        assertEquals(
+            "http://100.71.8.99:9119",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                privateOverlay,
+            ),
+        )
+        assertEquals(
+            "http://192.168.1.20:9119",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                publicCleartext,
+            ),
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun beginAuthorization_rejectsHostnameLoopback() {
         NativeDashboardAuthClient(server.url("/").toString(), store)

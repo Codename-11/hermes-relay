@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import android.webkit.CookieManager
 import android.webkit.WebView
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieJar
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
@@ -102,7 +103,7 @@ class DashboardWebViewAuthPolicyTest {
     }
 
     @Test
-    fun foreignCallback_requiresHttpsProviderAndCallback() {
+    fun foreignCallback_allowsPrivateHttpButRejectsInsecureProviderOrPublicCleartext() {
         val selected = "http://172.16.24.250:9119"
 
         assertEquals(
@@ -114,11 +115,19 @@ class DashboardWebViewAuthPolicyTest {
             ),
         )
         assertEquals(
+            "http://100.71.8.56:9119",
+            canonicalDashboardWebViewAuthBase(
+                selected,
+                "https://login.example.test/authorize" +
+                    "?redirect_uri=http%3A%2F%2F100.71.8.56%3A9119%2Fauth%2Fcallback",
+            ),
+        )
+        assertEquals(
             selected,
             canonicalDashboardWebViewAuthBase(
                 selected,
                 "https://login.example.test/authorize" +
-                    "?redirect_uri=http%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+                    "?redirect_uri=http%3A%2F%2Fpublic.example.test%2Fauth%2Fcallback",
             ),
         )
     }
@@ -175,6 +184,11 @@ class DashboardWebViewAuthPolicyTest {
                     """{"authenticated":true,"username":"operator","provider":"self-hosted"}""",
                 ),
         )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ticket":"cookie-ticket","ttl_seconds":30}"""),
+        )
         val store = InMemoryDashboardCookieStore()
         val callbackUrl = server.url("/auth/callback?code=public-code").toString()
         assertEquals(
@@ -193,12 +207,46 @@ class DashboardWebViewAuthPolicyTest {
         )
 
         val session = client.currentSession().getOrThrow()
+        val ticket = client.requestWsTicket().getOrThrow()
 
         assertTrue(session.authenticated)
-        val request = server.takeRequest()
-        assertEquals("/api/auth/me", request.path)
-        assertEquals("hermes_session=authenticated", request.getHeader("Cookie"))
+        assertEquals("cookie-ticket", ticket.ticket)
+        val sessionRequest = server.takeRequest()
+        assertEquals("/api/auth/me", sessionRequest.path)
+        assertEquals("hermes_session=authenticated", sessionRequest.getHeader("Cookie"))
+        assertEquals(null, sessionRequest.getHeader("Authorization"))
+        val ticketRequest = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", ticketRequest.path)
+        assertEquals("hermes_session=authenticated", ticketRequest.getHeader("Cookie"))
+        assertEquals(null, ticketRequest.getHeader("Authorization"))
         client.shutdown()
+    }
+
+    @Test
+    fun authenticationCompletionRequiresAuthenticatedSessionAndGatewayTicket() {
+        val authenticated = DashboardAuthSession(authenticated = true)
+        val anonymous = DashboardAuthSession(authenticated = false)
+
+        assertTrue(dashboardAuthenticationReady(authenticated, true))
+        assertFalse(dashboardAuthenticationReady(authenticated, false))
+        assertFalse(dashboardAuthenticationReady(authenticated, null))
+        assertFalse(dashboardAuthenticationReady(anonymous, true))
+    }
+
+    @Test
+    fun foreignCallbackOriginAlwaysRequiresExplicitReview() {
+        assertFalse(
+            dashboardOriginRequiresConfirmation(
+                "http://192.168.1.20:9119",
+                "http://192.168.1.20:9119/",
+            ),
+        )
+        assertTrue(
+            dashboardOriginRequiresConfirmation(
+                "http://192.168.1.20:9119",
+                "https://hermes.example.test",
+            ),
+        )
     }
 
     @Test

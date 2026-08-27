@@ -2302,69 +2302,86 @@ socket.
 
 ## ADR 40 — Android dashboard redirect auth is provider-compatible
 
-**Status:** Amended (2026-07-28).
+**Status:** Amended (2026-08-26).
 
-**Context.** Upstream advertises `native_pkce` in `/api/status.auth_flows` for
-its desktop client. The corresponding `/auth/native/*` broker is explicitly a
-desktop system-browser flow: it redirects to a loopback listener owned by the
-desktop process and returns bearer tokens rather than dashboard cookies.
-Android incorrectly treated that server-wide capability as a platform-neutral
-mode selector, so redirect providers such as self-hosted OIDC were sent through
-the desktop loopback contract.
+**Context.** Upstream exposes the supported client authentication contract in
+public `/api/status.auth_flows`. Current upstream specifies `native_pkce` as the
+preferred system-browser flow whenever advertised, regardless of the redirect
+provider's display/configuration name, and retains embedded cookie sign-in for
+older gateways or client-local native failures. Android instead restricted
+native PKCE to a literal `nous` provider name, so capable self-hosted redirect
+providers were incorrectly forced into WebView.
 
-**Decision.** Android redirect-provider sign-in uses the upstream dashboard
-cookie flow by default:
+**Decision.** Android selects redirect authentication only from advertised
+capability. When `auth_flows` contains `native_pkce`, every interactive
+provider, including password-capable providers, uses the `/auth/native/*`
+broker in a system Custom Tab with an
+ephemeral loopback callback, S256 verifier, state validation, encrypted bearer
+storage, and exact-origin attachment. Android passes a provider selector when
+the gateway requires one; hosted Nous retains upstream's compatibility behavior
+where the gateway chooses its single native-eligible provider.
+
+Missing `native_pkce` uses the dashboard cookie flow. A client-local native
+failure (transport/listener, secure storage, or unsupported native response)
+automatically continues through that same compatibility flow. Explicit
+provider denial, server rejection, and rate limiting remain visible and do not
+start a second authorization attempt. The cookie flow will:
 
 - open `/auth/login?provider=...&next=...` in a full-screen embedded sign-in
   destination with a normal app bar rather than a modal WebView;
 - preflight that route without cookies or redirect-following and, when the
-  provider authorization URL declares a different canonical HTTPS Dashboard
+  provider authorization URL declares a different canonical Dashboard
   `/auth/callback`, begin the real browser transaction on that canonical base;
 - allow the provider to return through the dashboard's public
-  `/auth/callback`;
+  `/auth/callback` when that is the provider's configured callback;
 - import only cookies observed on the configured dashboard origin;
 - verify the imported session through `/api/auth/me`;
 - persist the successfully authenticated canonical base as a Dashboard-only
-  preferred route before resuming Gateway, Manage, session, or voice calls;
+  preferred route only after explicit review and same-installation validation
+  through non-empty `/api/status.install_id` values; mismatches are rejected,
+  while an older gateway missing either ID requires explicit confirmation;
 - reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
   navigation instead of following or importing it.
 
-Android does not select `/auth/native/authorize` merely because it appears in
-`auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
-is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
-Android WebViews, so Android uses the gateway-brokered native PKCE route for
-that provider when advertised and opens it in a system Custom Tab. As in the
-official Desktop client, Android does not hardcode the UI provider identifier
-into the hosted native authorization request; the gateway selects its single
-native-eligible provider. The callback retains upstream's five-minute window,
-and failures are classified without recording codes, state, tokens, provider
-responses, or other authentication material. The
-ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
-store, and exact-origin attachment remain app-owned. Public cleartext
-dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
-dashboard routes retain the same HTTP allowance as their existing cookie
-sessions. If the provider redirect from a private route declares a canonical
-HTTPS dashboard callback, Android begins browser authorization on that
-canonical origin so the temporary PKCE cookie and callback remain same-origin.
+Failures are classified without recording codes, state, tokens, provider
+responses, or other authentication material. Public cleartext dashboards are
+rejected; explicitly configured RFC 1918 and Tailscale-IP dashboard routes
+retain the same HTTP allowance as their existing cookie sessions. If the
+provider redirect from a private route declares a canonical HTTPS dashboard
+callback, Android begins cookie fallback on that canonical origin so the
+temporary PKCE cookie and callback remain same-origin.
 After the cookie session verifies, that HTTPS base becomes the connection's
-preferred Dashboard-only route. Android never downgrades its Secure cookies to
+authenticated Dashboard/Gateway origin, stored separately from network-route
+candidates. Android never downgrades its Secure cookies to
 the private HTTP route, and the connection's API and Relay routes retain their
 existing ownership. The auth WebView permits third-party cookies only for its
 short lifetime so compatible federated provider pages can preserve their own
 browser state.
+Dashboard cookies retain browser-origin ownership. Android never mirrors basic,
+OAuth, `__Host-`, or other session cookies between saved/derived LAN,
+Tailscale, or public Dashboard hosts, even when they belong to one Connection.
+A legacy cookie-only host change requires sign-in at the new exact host.
+Different callback origins over HTTP are accepted only when both selected and
+callback hosts are literal loopback/private-overlay addresses, both remain
+HTTP, and the identity-provider hop is HTTPS. Same-origin HTTP callbacks retain
+upstream's local/VPN behavior. A second public sign-in URL is never a universal
+onboarding field: Android starts from one Dashboard address and discovers this
+topology from upstream only when redirect authentication requires it.
 
 **Consequences.**
 
-- Self-hosted OIDC uses the same public callback registered for the dashboard.
+- Provider names no longer override the upstream `auth_flows` capability.
+- Self-hosted OIDC uses native PKCE when advertised and otherwise uses its
+  registered dashboard callback through the cookie compatibility flow.
 - A private discovery route cannot strand a successful public cookie session
   by returning subsequent Dashboard traffic to a different origin.
+- Routes presents the authenticated Dashboard/Gateway origin independently from
+  LAN, Tailscale, API, Relay, and other network paths; internal auth roles are
+  not user-visible route types.
 - Android Manage, Chat, Voice, and onboarding continue to share one verified
   dashboard cookie session.
-- A server-wide desktop capability can no longer switch Android into a
-  loopback callback flow.
-- Android retains a full-screen embedded WebView for compatible dashboard
-  cookie providers, while providers that prohibit embedding use the explicit
-  brokered native route.
+- Android retains a full-screen embedded WebView only as an advertised or
+  client-local compatibility fallback.
 
 ---
 

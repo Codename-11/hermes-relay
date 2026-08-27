@@ -7,6 +7,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
 import com.hermesandroid.relay.network.upstream.EncryptedNativeDashboardTokenStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -89,15 +90,26 @@ class UpstreamTransportController(
         (DashboardCookieStore, DashboardBearerAuth?) -> okhttp3.OkHttpClient = { cookieStore, bearerAuth ->
             DashboardApiClient.defaultClient(cookieStore, bearerAuth)
         },
+    private val dashboardTokenStoreFactory: (String) -> NativeDashboardTokenStore = { tokenStoreKey ->
+        EncryptedNativeDashboardTokenStore(context, tokenStoreKey)
+    },
+    private val dashboardCookieStoreFactory: (String, String?) -> DashboardCookieStore =
+        { connectionId, tokenStoreKey ->
+            EncryptedDashboardCookieStore(
+                context = context,
+                connectionId = connectionId,
+                tokenStoreKey = tokenStoreKey,
+            )
+        },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
 
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
-        ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+        ConcurrentHashMap<String, DashboardCookieStore>()
     private val dashboardTokenStores =
-        ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
+        ConcurrentHashMap<String, NativeDashboardTokenStore>()
     private var dashboardHttpClientCache:
         Triple<String, String, okhttp3.OkHttpClient>? = null
     private data class RouteGatewayEntry(
@@ -131,11 +143,7 @@ class UpstreamTransportController(
      */
     fun dashboardCookieStoreFor(connectionId: String): DashboardCookieStore =
         dashboardCookieStores.getOrPut(connectionId) {
-            EncryptedDashboardCookieStore(
-                context = context,
-                connectionId = connectionId,
-                tokenStoreKey = tokenStoreKeyProvider(connectionId),
-            )
+            dashboardCookieStoreFactory(connectionId, tokenStoreKeyProvider(connectionId))
         }
 
     /**
@@ -148,11 +156,11 @@ class UpstreamTransportController(
         return dashboardCookieStoreFor(connectionId)
     }
 
-    private fun dashboardTokenStoreFor(connectionId: String): EncryptedNativeDashboardTokenStore {
+    private fun dashboardTokenStoreFor(connectionId: String): NativeDashboardTokenStore {
         val key = tokenStoreKeyProvider(connectionId)
             ?: com.hermesandroid.relay.data.Connection.buildTokenStoreKey(connectionId)
         return dashboardTokenStores.getOrPut(connectionId) {
-            EncryptedNativeDashboardTokenStore(context, key)
+            dashboardTokenStoreFactory(key)
         }
     }
 
@@ -201,6 +209,21 @@ class UpstreamTransportController(
             activeConnectionIdProvider()?.let {
                 bearerAuthForTrustedDashboard(it, dashboardUrl)
             },
+        )
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = pinnedClientProvider(dashboardUrl, base) ?: base,
+        )
+    }
+
+    /**
+     * Cookie-only client for proving a newly imported WebView session. A saved
+     * native bearer must not override the cookie provider during that proof.
+     */
+    fun dashboardCookieClientForActive(dashboardUrl: String): DashboardApiClient {
+        val base = dashboardHttpClientFactory(
+            activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            null,
         )
         return DashboardApiClient(
             baseUrl = dashboardUrl,
@@ -261,6 +284,16 @@ class UpstreamTransportController(
     @Synchronized
     fun clearDashboardAuthentication(connectionId: String) {
         dashboardCookieStoreFor(connectionId).clear()
+        retireNativeDashboardAuthentication(connectionId)
+    }
+
+    /**
+     * Transfers credential ownership to a verified cookie flow. This retires
+     * only native PKCE tokens and clients that may have captured their bearer;
+     * newly imported Dashboard cookies remain intact.
+     */
+    @Synchronized
+    fun retireNativeDashboardAuthentication(connectionId: String) {
         clearNativeDashboardTokens(dashboardTokenStoreFor(connectionId))
         dashboardHttpClientCache
             ?.takeIf { it.first == connectionId }
@@ -350,6 +383,12 @@ class UpstreamTransportController(
         val client = GatewayChatClient(
             initialDashboardClient = dashboardClientFor(connectionId, dashboardUrl),
             onGatewayUnsupported = { markGatewayUnsupported() },
+            onGatewaySignInRequired = {
+                updateGatewayAvailability(GatewayAvailability.SignInRequired)
+            },
+            onGatewayUnreachable = {
+                updateGatewayAvailability(GatewayAvailability.Unreachable)
+            },
         )
         // Carry the current keep-alive preference onto the fresh client so a
         // connection/route switch doesn't lose the no-background-close flag.

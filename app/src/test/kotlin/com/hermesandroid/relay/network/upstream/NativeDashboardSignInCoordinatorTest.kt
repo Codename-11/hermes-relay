@@ -176,21 +176,21 @@ class NativeDashboardSignInCoordinatorTest {
     }
 
     @Test
-    fun androidRedirectMode_usesBrowserForNous_andCookieFlowForSelfHostedOidc() {
+    fun androidRedirectMode_usesAdvertisedCapability_forEveryProviderName() {
         val flows = listOf("cookie", "native_pkce")
 
-        assertEquals(
-            DashboardRedirectAuthMode.NativePkce,
-            androidDashboardRedirectAuthMode("nous", flows),
-        )
-        assertEquals(
-            DashboardRedirectAuthMode.WebView,
-            androidDashboardRedirectAuthMode("oidc", flows),
-        )
-        assertEquals(
-            DashboardRedirectAuthMode.WebView,
-            androidDashboardRedirectAuthMode("nous", listOf("cookie")),
-        )
+        listOf("nous", "self-hosted", "oidc", "google", "basic").forEach { provider ->
+            assertEquals(
+                provider,
+                DashboardRedirectAuthMode.NativePkce,
+                androidDashboardRedirectAuthMode(provider, flows),
+            )
+            assertEquals(
+                provider,
+                DashboardRedirectAuthMode.WebView,
+                androidDashboardRedirectAuthMode(provider, listOf("cookie")),
+            )
+        }
     }
 
     @Test

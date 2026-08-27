@@ -1,9 +1,15 @@
 package com.hermesandroid.relay.viewmodel.connection
 
 import android.content.Context
+import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
+import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardTokenStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardTokens
+import com.hermesandroid.relay.network.upstream.StoredDashboardCookie
 import io.mockk.mockk
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,5 +61,73 @@ class UpstreamTransportControllerAuthClientTest {
             Thread.yield()
         }
         assertTrue("replaced dashboard client was not disposed", first.dispatcher.executorService.isShutdown)
+    }
+
+    @Test
+    fun cookieFlowRetiresNativeBearerWithoutClearingImportedCookies() {
+        val cookieStore = InMemoryDashboardCookieStore().apply {
+            save(
+                listOf(
+                    StoredDashboardCookie(
+                        name = "hermes_session",
+                        value = "cookie-session",
+                        domain = "hermes.example.test",
+                        path = "/",
+                        secure = true,
+                        httpOnly = true,
+                        hostOnly = true,
+                        persistent = false,
+                        expiresAt = Long.MAX_VALUE,
+                    ),
+                ),
+            )
+        }
+        val tokenStore = MemoryNativeDashboardTokenStore().apply {
+            save(
+                NativeDashboardTokens(
+                    accessToken = "stale-nous-access",
+                    refreshToken = "stale-nous-refresh",
+                    provider = "nous",
+                ),
+            )
+        }
+        val bearerArguments = mutableListOf<DashboardBearerAuth?>()
+        var observedCookieStore: com.hermesandroid.relay.network.upstream.DashboardCookieStore? = null
+        val controller = UpstreamTransportController(
+            context = mockk<Context>(relaxed = true),
+            activeConnectionIdProvider = { "connection-a" },
+            dashboardUrlProvider = { "https://hermes.example.test" },
+            gatewayKeepAliveProvider = { false },
+            dashboardHttpClientFactory = { observedStore, bearer ->
+                observedCookieStore = observedStore
+                bearerArguments += bearer
+                okhttp3.OkHttpClient()
+            },
+            dashboardTokenStoreFactory = { tokenStore },
+            dashboardCookieStoreFactory = { _, _ -> cookieStore },
+        )
+
+        controller.dashboardCookieClientForActive("https://hermes.example.test").shutdown()
+        controller.retireNativeDashboardAuthentication("connection-a")
+
+        assertNull(bearerArguments.single())
+        assertSame(cookieStore, observedCookieStore)
+        assertNull(tokenStore.load())
+        assertEquals("cookie-session", cookieStore.load().single().value)
+    }
+}
+
+private class MemoryNativeDashboardTokenStore : NativeDashboardTokenStore {
+    override val coordinationKey: String = "cookie-ownership-test"
+    private var tokens: NativeDashboardTokens? = null
+
+    override fun load(): NativeDashboardTokens? = tokens
+
+    override fun save(tokens: NativeDashboardTokens) {
+        this.tokens = tokens
+    }
+
+    override fun clear() {
+        tokens = null
     }
 }

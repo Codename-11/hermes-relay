@@ -2174,61 +2174,6 @@ class DashboardCookieJar(
 }
 
 /**
- * Copy only Hermes' authenticated dashboard session cookies to another host
- * that belongs to the same saved Connection. Dashboard cookies are host-only
- * by design, while a Connection may reach one server through LAN and
- * Tailscale hostnames/IPs. The encrypted store remains the source of truth and
- * explicit sign-out clears every mirrored host together.
- *
- * PKCE, SSO-attempt, and unrelated application cookies are intentionally not
- * copied. Secure cookies also remain Secure; this helper never downgrades them
- * for an HTTP route.
- */
-fun mirrorDashboardSessionCookies(
-    store: DashboardCookieStore,
-    targetUrl: String,
-    trustedHosts: Set<String>,
-    clockMillis: () -> Long = { System.currentTimeMillis() },
-): Int {
-    val targetHost = targetUrl.toHttpUrlOrNull()?.host?.lowercase() ?: return 0
-    val allowedHosts = trustedHosts.mapTo(mutableSetOf()) { it.lowercase() }
-    if (targetHost !in allowedHosts) return 0
-
-    val now = clockMillis()
-    val all = store.load()
-    val live = all.filterNot { it.isExpired(now) }
-    val existingTargetKeys = live.asSequence()
-        .filter { it.domain.equals(targetHost, ignoreCase = true) }
-        .map { "${it.name.lowercase()}|$targetHost|${it.path}" }
-        .toSet()
-    val mirrored = live.asSequence()
-        .filter { it.isDashboardSessionCookie() }
-        .filter { it.domain.lowercase() in allowedHosts }
-        .filterNot { it.domain.equals(targetHost, ignoreCase = true) }
-        .groupBy { "${it.name.lowercase()}|${it.path}" }
-        .values
-        .mapNotNull { candidates -> candidates.maxByOrNull { it.expiresAt } }
-        .map { it.copy(domain = targetHost, hostOnly = true) }
-        .filterNot { it.key in existingTargetKeys }
-        .toList()
-
-    if (mirrored.isNotEmpty() || live.size != all.size) {
-        store.save(live + mirrored)
-    }
-    return mirrored.size
-}
-
-private fun StoredDashboardCookie.isDashboardSessionCookie(): Boolean {
-    val bareName = name
-        .removePrefix("__Host-")
-        .removePrefix("__Secure-")
-    return bareName == "hermes_session" ||
-        bareName == "hermes_session_at" ||
-        bareName == "hermes_session_rt" ||
-        bareName == "hermes_session_provider"
-}
-
-/**
  * Cookie jar that resolves the backing per-connection store at request time.
  *
  * Long-lived OkHttpClients (e.g. the standard voice client, remembered once
@@ -2362,10 +2307,18 @@ private fun Response.readJsonElement(json: Json): JsonElement {
     return json.parseToJsonElement(raw)
 }
 
+internal class DashboardHttpException(
+    val statusCode: Int,
+    message: String,
+) : IOException(message)
+
 private fun apiFailure(response: Response, operation: String): IOException {
     val bodyDetail = runCatching { response.body.string() }.getOrDefault("")
     val detail = bodyDetail.take(240).ifBlank { response.message }
-    return IOException("$operation failed - HTTP ${response.code}: $detail")
+    return DashboardHttpException(
+        statusCode = response.code,
+        message = "$operation failed - HTTP ${response.code}: $detail",
+    )
 }
 
 private fun JsonObject?.stringField(name: String): String? =

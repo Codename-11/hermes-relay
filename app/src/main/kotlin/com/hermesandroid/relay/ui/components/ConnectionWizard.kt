@@ -77,6 +77,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -123,10 +124,11 @@ import kotlinx.coroutines.withTimeout
 
 /**
  * Shared connection wizard used by both onboarding (first run) and
- * Settings → Connections. Hermes setup is the default path:
- * save the API URL/key, derive the dashboard URL, and verify sessions.
- * Relay pairing remains available for power tools such as Terminal,
- * Bridge, Relay sessions, channel grants, and relay-backed media routes.
+ * Settings → Connections. Hermes setup starts with the one Dashboard address
+ * the phone can open, probes public `/api/status`, and lets advertised
+ * capabilities select authentication. A separate public sign-in URL is never
+ * universally required. API fallback, Relay pairing, and extra LAN/Tailscale
+ * routes remain explicit advanced paths.
  *
  * Steps:
  *
@@ -211,13 +213,20 @@ fun ConnectionWizard(
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
     val currentDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val wizardDraftIdentity = activeConnection?.id ?: "new-dashboard-connection"
     val accessibleMotion = rememberAccessibleMotionState()
     val animateWizardTransitions = shouldAnimateWizardTransitions(accessibleMotion)
 
-    var step by remember { mutableStateOf(WizardStep.Nearby) }
-    var chosenMethod by remember { mutableStateOf(PairMethod.Standard) }
+    var step by rememberSaveable(wizardDraftIdentity, stateSaver = WizardStepSaver) {
+        mutableStateOf(WizardStep.Nearby)
+    }
+    var chosenMethod by rememberSaveable(wizardDraftIdentity, stateSaver = PairMethodSaver) {
+        mutableStateOf(PairMethod.Standard)
+    }
     var pendingPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
-    var ttlSeconds by remember { mutableStateOf(PairingPreferencesDefault) }
+    var ttlSeconds by rememberSaveable(wizardDraftIdentity) {
+        mutableStateOf(PairingPreferencesDefault)
+    }
     var showQrScanner by remember { mutableStateOf(false) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
@@ -227,14 +236,21 @@ fun ConnectionWizard(
     var nearbyBusy by remember { mutableStateOf(false) }
     var nearbyResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
     var nearbyMessage by remember { mutableStateOf<String?>(null) }
-    var dashboardAddress by remember(currentDashboardUrl) { mutableStateOf(currentDashboardUrl) }
+    var dashboardAddress by rememberSaveable(wizardDraftIdentity, currentDashboardUrl) {
+        mutableStateOf(currentDashboardUrl)
+    }
     var dashboardProbeBusy by remember { mutableStateOf(false) }
     var dashboardProbeError by remember { mutableStateOf<String?>(null) }
     var dashboardProbeResult by remember {
         mutableStateOf<ConnectionViewModel.DashboardSetupResult?>(null)
     }
-    var dashboardSuggestedHostname by remember { mutableStateOf<String?>(null) }
-    var dashboardEntryIntent by rememberSaveable { mutableStateOf(DashboardEntryIntent.Server) }
+    var dashboardSuggestedHostname by rememberSaveable(wizardDraftIdentity) {
+        mutableStateOf<String?>(null)
+    }
+    var dashboardEntryIntent by rememberSaveable(
+        wizardDraftIdentity,
+        stateSaver = DashboardEntryIntentSaver,
+    ) { mutableStateOf(DashboardEntryIntent.Server) }
     var pendingDashboardDraft by remember { mutableStateOf<DashboardConnectionDraft?>(null) }
     val relayScopedFlow = autoStart == "relay"
     val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Method
@@ -259,9 +275,15 @@ fun ConnectionWizard(
     val wizardScope = rememberCoroutineScope()
 
     // Standard API/dashboard fields. Pre-fill from the active connection.
-    var standardApiUrl by remember(currentApiUrl) { mutableStateOf(currentApiUrl) }
+    var standardApiUrl by rememberSaveable(wizardDraftIdentity, currentApiUrl) {
+        mutableStateOf(currentApiUrl)
+    }
     var standardApiKey by remember { mutableStateOf("") }
-    var standardDashboardUrl by remember(currentApiUrl, currentDashboardUrl) {
+    var standardDashboardUrl by rememberSaveable(
+        wizardDraftIdentity,
+        currentApiUrl,
+        currentDashboardUrl,
+    ) {
         val derived = Connection.deriveDefaultDashboardUrl(currentApiUrl)
         mutableStateOf(
             currentDashboardUrl
@@ -269,14 +291,32 @@ fun ConnectionWizard(
                 .orEmpty(),
         )
     }
-    var standardTailscaleApiUrl by remember { mutableStateOf("") }
+    var standardTailscaleApiUrl by rememberSaveable(wizardDraftIdentity) { mutableStateOf("") }
     var standardApiKeyVisible by remember { mutableStateOf(false) }
 
     // Manual-path field state. Pre-fill from whatever the VM already knows
     // so re-pair from Settings keeps the previously-configured URLs.
-    var manualApiUrl by remember(currentApiUrl) { mutableStateOf(currentApiUrl) }
-    var manualRelayUrl by remember(currentRelayUrl) { mutableStateOf(currentRelayUrl) }
+    var manualApiUrl by rememberSaveable(wizardDraftIdentity, currentApiUrl) {
+        mutableStateOf(currentApiUrl)
+    }
+    var manualRelayUrl by rememberSaveable(wizardDraftIdentity, currentRelayUrl) {
+        mutableStateOf(currentRelayUrl)
+    }
     var manualCode by remember { mutableStateOf("") }
+
+    // Restore only non-secret draft state. Steps that depend on a QR payload,
+    // API key, pairing code, or in-flight verification return to the nearest
+    // safe entry surface after Activity/process recreation.
+    LaunchedEffect(wizardDraftIdentity) {
+        step = restorableWizardStep(
+            saved = step,
+            method = chosenMethod,
+            relayScoped = relayScopedFlow,
+            hasPayload = pendingPayload != null,
+            verifyAttempt = verifyAttempt,
+            hasDashboardProbe = dashboardProbeResult != null,
+        )
+    }
 
     // Camera permission gate. We don't keep the launcher result around — the
     // showQrScanner flag is the persistent state.
@@ -1122,7 +1162,7 @@ private fun DuplicateConnectionDialog(
 private val PairingPreferencesDefault: Long =
     com.hermesandroid.relay.data.PairingPreferences.DEFAULT_TTL_SECONDS
 
-private enum class WizardStep {
+internal enum class WizardStep {
     Nearby,
     DashboardManual,
     DashboardFound,
@@ -1144,9 +1184,47 @@ private enum class WizardStep {
         }
 }
 
-private enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
+internal enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
 
 private enum class DashboardEntryIntent { Cloud, Server }
+
+private val WizardStepSaver = Saver<WizardStep, String>(
+    save = { it.name },
+    restore = { saved -> WizardStep.entries.firstOrNull { it.name == saved } },
+)
+
+private val PairMethodSaver = Saver<PairMethod, String>(
+    save = { it.name },
+    restore = { saved -> PairMethod.entries.firstOrNull { it.name == saved } },
+)
+
+private val DashboardEntryIntentSaver = Saver<DashboardEntryIntent, String>(
+    save = { it.name },
+    restore = { saved -> DashboardEntryIntent.entries.firstOrNull { it.name == saved } },
+)
+
+/** Never restore a step whose required credential or probe state was intentionally not saved. */
+internal fun restorableWizardStep(
+    saved: WizardStep,
+    method: PairMethod,
+    relayScoped: Boolean,
+    hasPayload: Boolean,
+    verifyAttempt: Int,
+    hasDashboardProbe: Boolean,
+): WizardStep = when {
+    saved == WizardStep.DashboardFound && !hasDashboardProbe -> WizardStep.DashboardManual
+    saved == WizardStep.Confirm && !hasPayload -> {
+        if (relayScoped) WizardStep.RelayChoice else WizardStep.Method
+    }
+    saved == WizardStep.Verify && verifyAttempt == 0 -> when (method) {
+        PairMethod.Standard -> WizardStep.StandardEntry
+        PairMethod.EnterCode -> WizardStep.ManualEntry
+        PairMethod.Scan, PairMethod.ShowCode -> {
+            if (relayScoped) WizardStep.RelayChoice else WizardStep.Method
+        }
+    }
+    else -> saved
+}
 
 internal enum class SetupQrDispatch { Dashboard, StandardApi, Relay }
 

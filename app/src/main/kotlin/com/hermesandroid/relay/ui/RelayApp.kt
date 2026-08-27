@@ -244,7 +244,8 @@ internal fun resolvePairSetupReady(
     authorizedHandoffId: String?,
     activeConnectionId: String?,
     connectionIds: Set<String>,
-): Boolean = connectionId == null || storeHydrated && activeConnectionId != null &&
+    draftConnectionId: String? = null,
+): Boolean = connectionId == null || connectionId == draftConnectionId || storeHydrated && activeConnectionId != null &&
     activeConnectionId in connectionIds &&
     (activeConnectionId == connectionId || activeConnectionId == authorizedHandoffId)
 
@@ -313,6 +314,40 @@ internal fun resolveFooterRouteCandidate(
             ?: connection?.routeCandidates?.firstOrNull { it.api != null }
     }
 }
+
+/**
+ * Compact, surface-aware label for the persistent chat footer.
+ *
+ * Endpoint roles are operator and wire metadata, so an internal role such as
+ * `authenticated_dashboard` must never leak into this constrained surface.
+ * Gateway labels describe how the Dashboard is reached; API fallback keeps
+ * the route's ordinary transport label.
+ */
+internal fun resolveFooterRouteLabel(
+    runtimeStatus: ChatRuntimeStatus,
+    route: EndpointCandidate?,
+    fallbackLabel: String,
+): String {
+    val connected = runtimeStatus as? ChatRuntimeStatus.Connected ?: return ""
+    if (route == null) return fallbackLabel
+    if (connected.transport == ChatTransportPath.ApiSse) return route.displayLabel()
+
+    return when (route.role.trim().lowercase()) {
+        "lan" -> "LAN"
+        "tailscale" -> "Tailscale"
+        else -> if (
+            route.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
+        ) {
+            "HTTP"
+        } else {
+            route.displayLabel()
+        }
+    }
+}
+
+/** Keep the footer's model identity compact; context-window suffixes belong in model details. */
+internal fun compactFooterModelLabel(model: String): String =
+    model.substringAfterLast('/').replace(Regex("-\\d+[kKmM]$"), "")
 
 /**
  * Conversation voice remains part of chat, so its persistent connection
@@ -479,10 +514,8 @@ sealed class Screen(
     //
     // Multi-connection: accepts an optional `connectionId` query arg —
     // the ConnectionsSettings "Re-pair" button targets a specific
-    // connection. The "Add connection" path pre-creates a placeholder
-    // via `ConnectionViewModel.beginAddConnection()` and routes here
-    // with that id, so the wizard's standard connect / applyPairingPayload lands in the
-    // new connection's auth store instead of the outgoing one's.
+    // connection. The "Add connection" path creates a transient id-scoped
+    // auth draft; it is persisted and activated only after setup succeeds.
     data object Pair : Screen(
         "pair?connectionId={connectionId}&autoStart={autoStart}",
         "Connect",
@@ -1967,19 +2000,20 @@ fun RelayApp() {
                         connection = activeConnection,
                         effectiveDashboardUrl = effectiveDashboardUrl,
                     )
-                    val routeLabel = footerRoute?.displayLabel()
-                        ?: activeConnection?.label
-                        ?: stringResource(R.string.status_no_route)
+                    val routeLabel = resolveFooterRouteLabel(
+                        runtimeStatus = appChatRuntimeStatus,
+                        route = footerRoute,
+                        fallbackLabel = activeConnection?.label
+                            ?: stringResource(R.string.status_no_route),
+                    )
                     val transportStatus = resolveChatTransportStatus(
                         streamingEndpoint = streamingEndpoint,
                         gatewayAvailability = gatewayAvailability,
                         serverCapabilities = serverCapabilities,
                     )
-                    val transportRouteLabel = if (transportStatus.tier == ChatTransportTier.Offline) {
-                        ""
-                    } else {
-                        routeLabel
-                    }
+                    val transportRouteLabel = if (
+                        transportStatus.tier == ChatTransportTier.Offline
+                    ) "" else routeLabel
                     val profileLabel = AgentDisplay.profileDisplayName(effectiveDisplayProfile)
                         ?: stringResource(R.string.status_profile_default)
                     val displayProfile = effectiveDisplayProfile
@@ -1987,12 +2021,7 @@ fun RelayApp() {
                         ?: AgentDisplay.displayModelName(displayProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
                         ?: stringResource(R.string.status_model_pending)
-                    val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
-                        if (unattendedEnabled && timedScreenControlActive) stringResource(R.string.status_safety_unattended)
-                        else stringResource(R.string.status_safety_on)
-                    } else {
-                        stringResource(R.string.status_profile_format, profileLabel)
-                    }
+                    val footerModelLabel = compactFooterModelLabel(modelLabel)
                     val openConnections = {
                         navController.navigate(Screen.ConnectionsSettings.route) {
                             launchSingleTop = true
@@ -2006,7 +2035,7 @@ fun RelayApp() {
                             )
                         },
                         routeLabel = transportRouteLabel,
-                        trailing = "$modelLabel / $safetyLabel",
+                        trailing = "$footerModelLabel / $profileLabel",
                         // Tap the persistent status/route readout to open
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
@@ -3122,6 +3151,7 @@ fun RelayApp() {
                         ?.getString(Screen.Pair.ARG_AUTO_START)
                     val pairConnections by connectionViewModel.connections.collectAsState()
                     val pairActiveId by connectionViewModel.activeConnectionId.collectAsState()
+                    val pairDraftId by connectionViewModel.connectionDraftId.collectAsState()
                     val pairStoreHydrated by connectionViewModel.connectionStore.isHydrated.collectAsState()
                     // Duplicate Renew authorizes one explicit route handoff
                     // before switching away from the placeholder. Persist the
@@ -3137,6 +3167,7 @@ fun RelayApp() {
                         authorizedHandoffId = authorizedPairHandoffId,
                         activeConnectionId = pairActiveId,
                         connectionIds = pairConnections.mapTo(mutableSetOf()) { it.id },
+                        draftConnectionId = pairDraftId,
                     )
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
@@ -3166,16 +3197,14 @@ fun RelayApp() {
                         // flight that enterDemo would leave un-discarded.
                         onTryDemo = if (connectionIdArg == null) enterDemo else null,
                         onComplete = {
-                            // Both "add new" and "re-pair in place" now
-                            // route to this screen with connectionIdArg
-                            // set — add-new goes through
-                            // ConnectionViewModel.beginAddConnection()
-                            // which pre-creates the placeholder + switches
-                            // to it before navigating here, so
-                            // applyPairingPayload lands on the correct
-                            // auth store. Nothing extra to do on success
-                            // beyond popping the backstack.
-                            navController.popBackStack()
+                            if (connectionIdArg != null && pairDraftId == connectionIdArg) {
+                                connectionSwitchScope.launch {
+                                    connectionViewModel.commitConnectionDraft(connectionIdArg)
+                                    navController.popBackStack()
+                                }
+                            } else {
+                                navController.popBackStack()
+                            }
                         },
                         onManageSignIn = {
                             navController.navigate(

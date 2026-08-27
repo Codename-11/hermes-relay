@@ -70,8 +70,8 @@ fun PairScreen(
     onConnectionTargetChanged: (String) -> Unit = {},
     /**
      * Optional offline "Try the demo" entry, forwarded to [ConnectionWizard].
-     * Wired by [RelayApp] only for the bare Connect entry (no placeholder
-     * connection in flight); null on add-connection / re-pair flows.
+     * Wired by [RelayApp] only for the bare Connect entry (no connection draft
+     * in flight); null on add-connection / re-pair flows.
      */
     onTryDemo: (() -> Unit)? = null,
 ) {
@@ -88,12 +88,10 @@ fun PairScreen(
         }
     }
 
-    // Route system back / predictive back through the same discard path
+    // Route system back / predictive back through the same draft-discard path
     // the TopAppBar arrow uses. Without this, the NavController just pops
     // the backstack and [RelayApp]'s wired `discardPlaceholderConnection`
-    // in the Pair route's `onCancel` never fires — leaving the placeholder
-    // orphaned in the connection list. Matches the defensive sweep in
-    // [ConnectionViewModel.init] but fires at the right moment.
+    // in the Pair route's `onCancel` never fires.
     BackHandler(enabled = true) { onCancel() }
 
     Scaffold(

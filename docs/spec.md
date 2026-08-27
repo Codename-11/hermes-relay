@@ -199,26 +199,39 @@ Phone control — mirrors upstream relay protocol.
 
 ### 3.3 Auth Flow
 
-Dashboard/Gateway redirect authentication is provider-compatible. Nous Portal,
-which relies on a challenge that rejects embedded Android WebViews, uses the
-upstream brokered `native_pkce` flow in a system Custom Tab when the dashboard
-advertises it. As in Hermes Desktop, the gateway selects its single
-native-eligible provider rather than Android sending a UI provider identifier.
+Dashboard/Gateway redirect authentication is provider-compatible and
+capability-driven. When `/api/status.auth_flows` advertises `native_pkce`, every
+interactive provider, including password-capable providers, uses the upstream
+brokered system-browser flow so browser password managers/passkeys remain
+available; provider display/configuration names never select the protocol. Android passes
+the selected provider when upstream requires it, while retaining the hosted
+Nous compatibility behavior where the gateway selects its single
+native-eligible provider.
 The app owns an ephemeral five-minute loopback callback and stores the resulting
 bearer session only for that connection and exact dashboard origin. Callback,
 code-exchange, hosted-gateway, transport, response-shape, and secure-storage
-failures surface as distinct secret-free recovery guidance.
+failures surface as distinct secret-free recovery guidance. Client-local native
+failures automatically continue through the upstream cookie/WebView fallback;
+explicit provider denial, server rejection, and rate limiting remain visible
+instead of starting a second authorization attempt.
 Unreadable secure stores may be cleared and rebuilt, with any Keystore fallback,
 self-heal, or temporary in-memory degradation recorded in Diagnostics without
 credential values, cookie contents, endpoint URLs, or storage identifiers.
-Self-hosted OIDC remains on the dashboard cookie flow: Android opens
-`/auth/login` in a full-screen embedded browser destination, lets the provider
-return through the public `/auth/callback`, imports only same-origin cookies,
-and verifies them through `/api/auth/me`. When the selected LAN, private, or
-Tailscale route advertises a different canonical HTTPS callback, Android first
+Older gateways that do not advertise `native_pkce`, plus client-local native
+fallback, use the dashboard cookie flow: Android opens `/auth/login` in a
+full-screen embedded browser destination, lets the provider return through its
+configured `/auth/callback`, imports only same-origin cookies, and verifies them
+through `/api/auth/me`. When the selected LAN, private, or
+Tailscale route advertises a different canonical callback, Android first
 probes the redirect without cookies, starts the real transaction on that
-canonical base, and promotes it as the authenticated Dashboard-only route
-before Gateway tickets, Manage, sessions, or standard voice continue. Secure
+canonical base, and retains it as the connection's authenticated
+Dashboard/Gateway origin rather than as a network-route candidate
+only after the user reviews the move and matching non-empty upstream
+`install_id` values prove both addresses reach the same installation. A
+mismatch is rejected; older gateways missing either ID require explicit
+confirmation. Different public origins require HTTPS. Different cleartext
+origins are accepted only between literal loopback/private-overlay hosts with
+an HTTPS identity-provider hop. Secure
 cookies are never copied back to cleartext LAN, while API and Relay routes stay
 unchanged. The short-lived auth WebView permits third-party cookies for
 compatible federated identity-provider pages. HTTPS is required on public routes;
@@ -228,6 +241,16 @@ Android starts the browser on that canonical origin so Hermes' temporary PKCE
 cookie and the provider callback remain same-origin, then exchanges the
 one-time code through the active private route. The verified session is shared
 by Manage, Gateway tickets, and standard voice.
+Cookie sessions remain scoped to the exact browser host that issued them.
+Android never copies a basic or OAuth cookie between LAN, Tailscale, public, or
+derived Dashboard hosts; a different legacy cookie host requires sign-in there.
+
+The Routes surface presents the Dashboard/Gateway origin separately from LAN,
+Tailscale, direct API, Relay, and other network candidates. Editing the origin
+revalidates it and clears origin-bound cookies or bearer credentials when its
+base changes. A single HTTPS hostname can still use a local path through split
+DNS; the hostname must remain identical so OIDC cookies and callbacks stay
+same-origin.
 
 Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 

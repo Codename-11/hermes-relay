@@ -3512,10 +3512,11 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Transcript for [sessionId], preferring the profile-scoped dashboard path on
-     * gateway connections (so non-default-profile sessions resolve against their
-     * own DB). The shared api_server transcript is used only when no scoped
-     * dashboard surface exists; a failed scoped read is never cross-profile truth.
+     * Transcript for [sessionId], preferring the profile-scoped Dashboard path
+     * whenever it exists. Dashboard history is authenticated HTTP state and does
+     * not depend on the Gateway WebSocket being connected; a ticket/upgrade
+     * failure must not hide an otherwise readable conversation. The shared
+     * api_server transcript is used only when no scoped Dashboard surface exists.
      */
     private suspend fun loadSessionHistory(
         sessionId: String,
@@ -3523,9 +3524,15 @@ class ChatViewModel : ViewModel() {
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
         profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
-        if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode, profileName)
+        if (profileMessageLoader != null) {
+            return loadGatewaySessionHistory(
+                sessionId,
+                requireProfileScope = true,
+                mode = mode,
+                profileName = profileName,
+            )
         }
+        if (requireProfileScope) return loadGatewaySessionHistory(sessionId, true, mode, profileName)
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
@@ -4600,11 +4607,10 @@ class ChatViewModel : ViewModel() {
                 // api_server `/api/sessions` (one shared DB, no profile concept)
                 // is the fallback for connections without a Manage/dashboard
                 // session.
-                val scoped = if (streamingEndpoint == "gateway") {
-                    profileSessionLister?.invoke(profileName)
-                } else {
-                    null
-                }
+                // Dashboard sessions are authenticated HTTP state. Prefer them
+                // whenever configured, even while the independent Gateway
+                // ticket/socket path is reconnecting or unavailable.
+                val scoped = profileSessionLister?.invoke(profileName)
                 val result = scoped ?: apiClient?.listSessionsResult()
                 result?.fold(
                     onSuccess = { sessions ->
