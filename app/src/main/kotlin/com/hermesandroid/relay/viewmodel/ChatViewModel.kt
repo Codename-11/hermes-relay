@@ -583,6 +583,8 @@ class ChatViewModel : ViewModel() {
     private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
+    private var sessionRefreshOwner: Pair<String?, String?>? = null
+    private var sessionRefreshPending = false
     private var imageActivityJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
     private val sessionRefreshGeneration = AtomicInteger(0)
@@ -4213,7 +4215,10 @@ class ChatViewModel : ViewModel() {
                 activeStreamDeltas = null
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
+                sessionRefreshOwner = null
+                sessionRefreshPending = false
                 _isLoadingSessions.value = false
+                _sessionListUnavailable.value = false
                 conversationBindingController.reset()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
@@ -4387,10 +4392,13 @@ class ChatViewModel : ViewModel() {
         val sessionProfileName = targetProfileName
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
+        sessionRefreshOwner = null
+        sessionRefreshPending = false
         // The old profile's rows are cleared below. Keep the drawer in its
         // loading state until HermesRuntimeBinder starts and settles the exact-
         // profile replacement fetch.
         _isLoadingSessions.value = true
+        _sessionListUnavailable.value = false
         activateModelOptionsProfile(contextKey)
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
@@ -4586,70 +4594,105 @@ class ChatViewModel : ViewModel() {
     // --- Session management ---
 
     private val _isLoadingSessions = MutableStateFlow(false)
+    private val _sessionListUnavailable = MutableStateFlow(false)
 
     /** True while the drawer's session list is being fetched (drives the spinner). */
     val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
+    val sessionListUnavailable: StateFlow<Boolean> = _sessionListUnavailable.asStateFlow()
 
     fun refreshSessions() {
         val handler = chatHandler ?: return
-        val generation = sessionRefreshGeneration.incrementAndGet()
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        val owner = contextKey to profileName
+        if (sessionRefreshJob?.isActive == true && sessionRefreshOwner == owner) {
+            // Preserve one trailing refresh. A sessions.changed event or drawer
+            // reopen can arrive after the in-flight request took its snapshot.
+            sessionRefreshPending = true
+            return
+        }
+        val generation = sessionRefreshGeneration.incrementAndGet()
         // Set this before dispatching the fetch coroutine. Otherwise Compose can
         // render the newly-cleared list as "No sessions" for a frame (or longer
         // while profile selection settles) before the coroutine marks it busy.
         if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
+        _sessionListUnavailable.value = false
         sessionRefreshJob?.cancel()
+        sessionRefreshPending = false
+        sessionRefreshOwner = owner
         sessionRefreshJob = viewModelScope.launch {
             // Treat refreshes over an existing list as quiet background syncs.
             // The drawer keeps rendering the current rows instead of flashing
             // through a loading state whenever it opens or a turn completes.
+            fun isCurrentRefresh(): Boolean =
+                sessionRefreshGeneration.get() == generation &&
+                    activeProfileContextKey == contextKey &&
+                    currentSessionProfileName() == profileName
+
             try {
-                // On the gateway, scope the drawer to the ACTIVE PROFILE via the
-                // dashboard `/api/sessions?profile=` surface (it opens that
-                // profile's own state.db, exactly like the desktop sidebar). The
-                // gateway `session.list` RPC can't scope — it always reads the
-                // launch profile's DB — so it's deliberately not used here. The
-                // api_server `/api/sessions` (one shared DB, no profile concept)
-                // is the fallback for connections without a Manage/dashboard
-                // session.
-                // Dashboard sessions are authenticated HTTP state. Prefer them
-                // whenever configured, even while the independent Gateway
-                // ticket/socket path is reconnecting or unavailable.
-                val scoped = profileSessionLister?.invoke(profileName)
-                val result = scoped ?: apiClient?.listSessionsResult()
-                result?.fold(
-                    onSuccess = { sessions ->
-                        if (
-                            sessionRefreshGeneration.get() == generation &&
-                            activeProfileContextKey == contextKey &&
-                            currentSessionProfileName() == profileName
-                        ) {
-                            handler.updateSessions(sessions)
-                            updateCurrentProfileActivityDirectory(handler.sessions.value)
-                            requestSessionActivityRefresh()
+                do {
+                    sessionRefreshPending = false
+                    // On the gateway, scope the drawer to the ACTIVE PROFILE via the
+                    // dashboard `/api/sessions?profile=` surface (it opens that
+                    // profile's own state.db, exactly like the desktop sidebar). The
+                    // gateway `session.list` RPC can't scope — it always reads the
+                    // launch profile's DB — so it's deliberately not used here. The
+                    // api_server `/api/sessions` (one shared DB, no profile concept)
+                    // is the fallback for connections without a Manage/dashboard
+                    // session.
+                    // Dashboard sessions are authenticated HTTP state. Prefer them
+                    // whenever configured, even while the independent Gateway
+                    // ticket/socket path is reconnecting or unavailable.
+                    try {
+                        val scoped = profileSessionLister?.invoke(profileName)
+                        val result = scoped ?: apiClient?.listSessionsResult()
+                        if (result == null && isCurrentRefresh()) {
+                            _sessionListUnavailable.value = true
                         }
-                    },
-                    onFailure = { error ->
-                        if (
-                            sessionRefreshGeneration.get() != generation ||
-                            activeProfileContextKey != contextKey ||
-                            currentSessionProfileName() != profileName
-                        ) return@fold
-                        if (scoped != null) {
-                            // The shared API list belongs to the launch/default
-                            // database. Preserve the current profile's rows and
-                            // surface the scoped failure instead of leaking a
-                            // different profile into the drawer.
-                            emitError(error, context = "load_profile_sessions")
-                        } else {
-                            emitError(error, context = "load_sessions")
+                        result?.fold(
+                            onSuccess = { sessions ->
+                                if (isCurrentRefresh()) {
+                                    _sessionListUnavailable.value = false
+                                    handler.updateSessions(sessions)
+                                    updateCurrentProfileActivityDirectory(handler.sessions.value)
+                                    requestSessionActivityRefresh()
+                                }
+                            },
+                            onFailure = { error ->
+                                if (!isCurrentRefresh()) return@fold
+                                _sessionListUnavailable.value = true
+                                if (scoped != null) {
+                                    // The shared API list belongs to the launch/default
+                                    // database. Preserve the current profile's rows and
+                                    // surface the scoped failure instead of leaking a
+                                    // different profile into the drawer.
+                                    emitError(error, context = "load_profile_sessions")
+                                } else {
+                                    emitError(error, context = "load_sessions")
+                                }
+                            },
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (isCurrentRefresh()) {
+                            _sessionListUnavailable.value = true
+                            emitError(
+                                e,
+                                context = if (profileSessionLister != null) {
+                                    "load_profile_sessions"
+                                } else {
+                                    "load_sessions"
+                                },
+                            )
                         }
-                    },
-                )
+                    }
+                } while (sessionRefreshPending && isCurrentRefresh())
             } finally {
                 if (sessionRefreshGeneration.get() == generation) {
                     _isLoadingSessions.value = false
+                    sessionRefreshOwner = null
+                    sessionRefreshPending = false
                 }
             }
         }

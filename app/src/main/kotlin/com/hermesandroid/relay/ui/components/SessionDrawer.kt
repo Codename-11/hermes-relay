@@ -196,6 +196,12 @@ internal fun resolveSessionDrawerFilter(
     else -> filter
 }
 
+internal enum class SessionDrawerLoadPresentation {
+    Loading,
+    Unavailable,
+    Content,
+}
+
 @Composable
 fun SessionDrawerContent(
     sessions: List<ChatSession>,
@@ -204,6 +210,7 @@ fun SessionDrawerContent(
     scopeSubtitle: String? = null,
     activeProfileName: String = "default",
     isLoading: Boolean = false,
+    loadFailed: Boolean = false,
     isOpen: Boolean = true,
     activityStates: Map<String, SessionActivityState> = emptyMap(),
     animationEnabled: Boolean = true,
@@ -244,6 +251,7 @@ fun SessionDrawerContent(
     allProfilesSupported: Boolean = false,
     allProfileSessions: List<ProfileSessionRow> = emptyList(),
     allProfileSessionsLoading: Boolean = false,
+    allProfileSessionsLoadFailed: Boolean = false,
     profileColors: Map<String, String> = emptyMap(),
     onProfileColorChange: ((String, String?) -> Unit)? = null,
     onRefreshAllProfiles: (() -> Unit)? = null,
@@ -692,16 +700,23 @@ fun SessionDrawerContent(
 
         // Crossfade the loading→content transition so the list fades in rather
         // than the spinner snapping straight to rows.
+        val loadPresentation = when {
+            showAllProfiles && allProfileSessionsLoading && allProfileSessions.isEmpty() ->
+                SessionDrawerLoadPresentation.Loading
+            !showAllProfiles && isLoading && sessions.isEmpty() ->
+                SessionDrawerLoadPresentation.Loading
+            showAllProfiles && allProfileSessionsLoadFailed && sourceRows.isEmpty() ->
+                SessionDrawerLoadPresentation.Unavailable
+            !showAllProfiles && loadFailed && sourceRows.isEmpty() ->
+                SessionDrawerLoadPresentation.Unavailable
+            else -> SessionDrawerLoadPresentation.Content
+        }
         Crossfade(
-            targetState = if (showAllProfiles) {
-                allProfileSessionsLoading && allProfileSessions.isEmpty()
-            } else {
-                isLoading && sessions.isEmpty()
-            },
+            targetState = loadPresentation,
             animationSpec = tween(220),
             label = "drawerSessions",
-        ) { loading ->
-        if (loading) {
+        ) { presentation ->
+        if (presentation == SessionDrawerLoadPresentation.Loading) {
             // First load (or a profile switch) — show a quiet spinner instead of
             // flashing "No sessions yet" before the list arrives.
             Column(
@@ -720,6 +735,26 @@ fun SessionDrawerContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        } else if (presentation == SessionDrawerLoadPresentation.Unavailable) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.drawer_activity_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val refresh = if (showAllProfiles) onRefreshAllProfiles else onRefresh
+                refresh?.let {
+                    TextButton(onClick = it) {
+                        Text(stringResource(R.string.drawer_refresh_sessions))
+                    }
+                }
             }
         } else if (visibleRows.isEmpty()) {
             Column(

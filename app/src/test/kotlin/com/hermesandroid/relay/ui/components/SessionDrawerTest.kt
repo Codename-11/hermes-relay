@@ -37,6 +37,60 @@ class SessionDrawerTest {
     val compose = createComposeRule()
 
     @Test
+    fun `failed first load is unavailable and retryable not empty`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    isLoading = false,
+                    loadFailed = true,
+                    onRefresh = { refreshes += 1 },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("No sessions yet").assertDoesNotExist()
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun `failed all profiles load is unavailable and retryable not empty`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    allProfilesSupported = true,
+                    allProfileSessionsLoadFailed = true,
+                    onRefreshAllProfiles = { refreshes += 1 },
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All Profiles").performClick()
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("No sessions yet").assertDoesNotExist()
+        var refreshesBeforeRetry = 0
+        compose.runOnIdle { refreshesBeforeRetry = refreshes }
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(refreshesBeforeRetry + 1, refreshes)
+    }
+
+    @Test
     fun `unpinned action uses a distinct lighter outlined star`() {
         assertNotEquals(sessionPinIcon(pinned = true), sessionPinIcon(pinned = false))
         assertTrue(sessionPinIcon(pinned = true).name.contains("Star"))

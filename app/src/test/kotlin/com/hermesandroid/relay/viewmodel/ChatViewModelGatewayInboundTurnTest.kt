@@ -570,6 +570,7 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.refreshSessions()
 
         awaitCondition { listed && !viewModel.isLoadingSessions.value }
+        assertFalse(viewModel.sessionListUnavailable.value)
     }
 
     @Test
@@ -596,6 +597,60 @@ class ChatViewModelGatewayInboundTurnTest {
 
         assertTrue(handler.sessions.value.isEmpty())
         assertTrue(viewModel.isLoadingSessions.value)
+        assertFalse(viewModel.sessionListUnavailable.value)
+    }
+
+    @Test
+    fun failedSessionListIsUnavailableInsteadOfAuthoritativeEmpty() {
+        viewModel.setProfileSessionLister {
+            Result.failure(IllegalStateException("temporary dashboard failure"))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertTrue(handler.sessions.value.isEmpty())
+    }
+
+    @Test
+    fun repeatedDrawerRefreshCoalescesWithOneTrailingRequest() {
+        val calls = AtomicInteger(0)
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() == 1) {
+                releaseLoad.await()
+                Result.success(emptyList())
+            } else {
+                Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() == 1 }
+        assertEquals(1, calls.get())
+        releaseLoad.complete(Unit)
+        awaitCondition {
+            calls.get() == 2 && handler.sessions.value.singleOrNull()?.sessionId == "fresh"
+        }
+        assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun thrownSessionListFailureIsUnavailableInsteadOfAuthoritativeEmpty() {
+        viewModel.setProfileSessionLister {
+            throw IllegalStateException("temporary dashboard failure")
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertTrue(handler.sessions.value.isEmpty())
     }
 
     @Test

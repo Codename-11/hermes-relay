@@ -933,6 +933,7 @@ fun ChatScreen(
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
+    val sessionListUnavailable by chatViewModel.sessionListUnavailable.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -951,53 +952,69 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
+    var allProfileSessionsUnavailable by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     suspend fun refreshAllProfileSessions(showError: Boolean) {
         if (isProfileLocked || allProfileSessionsLoading) return
         allProfileSessionsLoading = true
-        val result = connectionViewModel.listAllProfileSessions()
-        result?.fold(
-            onSuccess = { items ->
-                allProfileSessions = items.mapNotNull { item ->
-                    val owner = item.profile?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    ProfileSessionRow(
-                        profile = owner,
-                        session = com.hermesandroid.relay.data.ChatSession(
-                            sessionId = item.id,
-                            title = item.title ?: item.preview,
-                            model = item.model,
-                            messageCount = item.messageCount ?: 0,
-                            inputTokens = item.inputTokens ?: 0,
-                            outputTokens = item.outputTokens ?: 0,
-                            actualCostUsd = item.actualCostUsd,
-                            estimatedCostUsd = item.estimatedCostUsd,
-                            recentlyActive = item.isActive,
-                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
-                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
-                            source = item.source,
-                            pinned = item.pinned,
-                            archived = item.archived,
-                            workingDirectory = item.cwd,
-                            gitBranch = item.gitBranch,
-                            gitRepoRoot = item.gitRepoRoot,
-                            pullRequestNumber = item.pullRequest?.number,
-                            pullRequestUrl = item.pullRequest?.url,
-                            pullRequestState = item.pullRequest?.state,
-                            pullRequestDraft = item.pullRequest?.draft == true,
-                        ),
+        allProfileSessionsUnavailable = false
+        try {
+            val result = connectionViewModel.listAllProfileSessions()
+            if (result == null) allProfileSessionsUnavailable = true
+            result?.fold(
+                onSuccess = { items ->
+                    allProfileSessionsUnavailable = false
+                    allProfileSessions = items.mapNotNull { item ->
+                        val owner = item.profile?.takeIf { it.isNotBlank() }
+                            ?: return@mapNotNull null
+                        ProfileSessionRow(
+                            profile = owner,
+                            session = com.hermesandroid.relay.data.ChatSession(
+                                sessionId = item.id,
+                                title = item.title ?: item.preview,
+                                model = item.model,
+                                messageCount = item.messageCount ?: 0,
+                                inputTokens = item.inputTokens ?: 0,
+                                outputTokens = item.outputTokens ?: 0,
+                                actualCostUsd = item.actualCostUsd,
+                                estimatedCostUsd = item.estimatedCostUsd,
+                                recentlyActive = item.isActive,
+                                startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
+                                lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
+                                source = item.source,
+                                pinned = item.pinned,
+                                archived = item.archived,
+                                workingDirectory = item.cwd,
+                                gitBranch = item.gitBranch,
+                                gitRepoRoot = item.gitRepoRoot,
+                                pullRequestNumber = item.pullRequest?.number,
+                                pullRequestUrl = item.pullRequest?.url,
+                                pullRequestState = item.pullRequest?.state,
+                                pullRequestDraft = item.pullRequest?.draft == true,
+                            ),
+                        )
+                    }
+                    chatViewModel.updateSessionActivityDirectory(
+                        rows = allProfileSessions.map { it.profile to it.session.sessionId },
                     )
-                }
-                chatViewModel.updateSessionActivityDirectory(
-                    rows = allProfileSessions.map { it.profile to it.session.sessionId },
-                )
-            },
-            onFailure = { error ->
-                if (showError) snackbarHostState.showSnackbar(
-                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
-                )
-            },
-        )
-        allProfileSessionsLoading = false
+                },
+                onFailure = { error ->
+                    allProfileSessionsUnavailable = true
+                    if (showError) snackbarHostState.showSnackbar(
+                        "Couldn't load all profiles: ${error.message ?: "unsupported"}",
+                    )
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            allProfileSessionsUnavailable = true
+            if (showError) snackbarHostState.showSnackbar(
+                "Couldn't load all profiles: ${e.message ?: "unsupported"}",
+            )
+        } finally {
+            allProfileSessionsLoading = false
+        }
     }
     val conversationBinding by chatViewModel.conversationBinding.collectAsState()
     val explicitBindingProfileName = conversationBinding.profileName
@@ -2460,6 +2477,7 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 activeProfileName = drawerProfileName ?: "default",
                 isLoading = isLoadingSessions,
+                loadFailed = sessionListUnavailable,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
@@ -2567,6 +2585,7 @@ fun ChatScreen(
                     !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
+                allProfileSessionsLoadFailed = allProfileSessionsUnavailable,
                 profileColors = profilePresentation.colors,
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
