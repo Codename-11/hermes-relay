@@ -150,7 +150,6 @@
     <string name="chat_editing_notice">Bearbeitung — setzt die Unterhaltung zurück</string>
     <string name="chat_mic_perm_needed">Mikrofonberechtigung erforderlich</string>
     <string name="chat_mic_perm_body">Tippe auf Einstellungen öffnen und erteile Mikrofonzugriff, um den Sprachmodus zu nutzen.</string>
-    <string name="chat_clean_view_hint">Halte den Chat gedrückt für eine aufgeräumte, fokussierte Ansicht</string>
     <string name="chat_manage_connections">Verbindungen verwalten</string>
     <string name="chat_no_clipboard_image">Kein Bild in der Zwischenablage</string>
     <string name="chat_copied_to_clipboard">In die Zwischenablage kopiert</string>
@@ -2627,9 +2626,6 @@
     <string name="power_gate_explanation_unavailable">Dieser Hermes-Server stellt die für diese Funktion benötigte Oberfläche nicht bereit.</string>
     <string name="power_gate_explanation_signin">Diese Standard-Dashboard-Funktion erfordert vor der Nutzung eine Dashboard-Anmeldung.</string>
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-    <string name="agent_text_placeholder">Nachricht</string>
-
     <!-- ExtraKeysToolbar -->
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">TAB</string>
@@ -3046,8 +3042,6 @@
 
     <!-- PowerFeatureGate -->
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-
     <!-- ExtraKeysToolbar -->
 
     <!-- ToolProgressCard -->
@@ -3129,11 +3123,6 @@
     <string name="chat_relay_sessions_title">Relay-Sitzungen</string>
     <string name="chat_rename_failed">Umbenennen fehlgeschlagen</string>
 
-
-    <!-- AgentTextFlow -->
-    <string name="agent_text_send_cd">Senden</string>
-    <string name="agent_text_exit_clean">Aufgeräumten Modus beenden</string>
-    <string name="agent_text_sphere_desc">Agent</string>
 
 
     <!-- UpdateBanner format strings (with version placeholders) -->

@@ -1,9 +1,10 @@
 # Sphere skin spec
 
-The agent sphere (the ASCII "orb" on the empty chat screen, ambient mode, and
-the voice overlay) is a **hot-swappable component**. Built-in skins ship with the
-app, an **Adaptive** skin recolors to match your theme, and you can side-load your
-own skins from a small JSON file. This document is the authoring reference.
+The agent sphere (the ASCII "orb" on the empty chat screen, behind the chat
+transcript, and in the voice overlay) is a **hot-swappable component**. Built-in
+skins ship with the app, an **Adaptive** skin recolors to match your theme, and
+you can side-load your own skins from a small JSON file. This document is the
+authoring reference.
 
 > **See also** [`pet-spec.md`](./pet-spec.md) — appearance is two-level: the
 > background visualization and floating pets are independent; skins apply only
