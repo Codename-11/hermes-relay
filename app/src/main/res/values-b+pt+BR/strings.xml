@@ -136,7 +136,6 @@
     <string name="chat_editing_notice">Editando — a conversa será retrocedida</string>
     <string name="chat_mic_perm_needed">Permissão do microfone necessária</string>
     <string name="chat_mic_perm_body">Toque em Abrir Configurações e permita o acesso ao microfone para usar o modo de voz.</string>
-    <string name="chat_clean_view_hint">Mantenha o chat pressionado para uma visualização limpa e focada</string>
     <string name="chat_manage_connections">Gerenciar conexões</string>
     <string name="chat_no_clipboard_image">Nenhuma imagem na área de transferência</string>
     <string name="chat_copied_to_clipboard">Copiado para a área de transferência</string>
@@ -2517,8 +2516,6 @@
     <string name="power_gate_explanation_expired">Sua sessão do relay não é mais aceita pelo servidor. Abra a conexão para reparar.</string>
     <string name="power_gate_explanation_unavailable">Este servidor Hermes não oferece a superfície necessária para este recurso.</string>
     <string name="power_gate_explanation_signin">Este recurso padrão do painel exige login no painel antes de ser usado.</string>
-    <!-- AgentTextFlow / CleanModeComposer -->
-    <string name="agent_text_placeholder">Mensagem</string>
     <!-- ExtraKeysToolbar -->
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">TAB</string>
@@ -2906,7 +2903,6 @@
     <!-- InsecureConnectionAckDialog -->
     <!-- SessionTtlPickerDialog -->
     <!-- PowerFeatureGate -->
-    <!-- AgentTextFlow / CleanModeComposer -->
     <!-- ExtraKeysToolbar -->
     <!-- ToolProgressCard -->
     <!-- AgentIconRow -->
@@ -2962,10 +2958,6 @@
     <string name="chat_relay_sessions_summary">Veja e revogue os dispositivos pareados com este relay.</string>
     <string name="chat_relay_sessions_title">Sessões do Relay</string>
     <string name="chat_rename_failed">Falha ao renomear</string>
-    <!-- AgentTextFlow -->
-    <string name="agent_text_send_cd">Enviar</string>
-    <string name="agent_text_exit_clean">Sair do modo limpo</string>
-    <string name="agent_text_sphere_desc">Agente</string>
     <!-- UpdateBanner format strings (with version placeholders) -->
     <string name="update_banner_available_fmt">Atualização disponível — v%1$s</string>
     <string name="update_banner_body_fmt">Você está na %1$s. Toque em Atualizar para baixar.</string>

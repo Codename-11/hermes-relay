@@ -154,7 +154,6 @@
     <string name="chat_editing_notice">Editing — will rewind the conversation</string>
     <string name="chat_mic_perm_needed">Microphone permission needed</string>
     <string name="chat_mic_perm_body">Tap Open Settings and grant Microphone access to use voice mode.</string>
-    <string name="chat_clean_view_hint">Hold the chat for a clean, focused view</string>
     <string name="chat_manage_connections">Manage connections</string>
     <string name="chat_no_clipboard_image">No image on the clipboard</string>
     <string name="chat_copied_to_clipboard">Copied to clipboard</string>
@@ -2984,9 +2983,6 @@
     <string name="power_gate_explanation_unavailable">This Hermes server does not expose the surface needed for this feature.</string>
     <string name="power_gate_explanation_signin">This standard dashboard feature needs dashboard sign-in before it can be used.</string>
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-    <string name="agent_text_placeholder">Message</string>
-
     <!-- ExtraKeysToolbar -->
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">TAB</string>
@@ -3409,8 +3405,6 @@
 
     <!-- PowerFeatureGate -->
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-
     <!-- ExtraKeysToolbar -->
 
     <!-- ToolProgressCard -->
@@ -3492,11 +3486,6 @@
     <string name="chat_relay_sessions_title">Relay sessions</string>
     <string name="chat_rename_failed">Rename failed</string>
 
-
-    <!-- AgentTextFlow -->
-    <string name="agent_text_send_cd">Send</string>
-    <string name="agent_text_exit_clean">Exit clean mode</string>
-    <string name="agent_text_sphere_desc">Agent</string>
 
 
     <!-- UpdateBanner format strings (with version placeholders) -->

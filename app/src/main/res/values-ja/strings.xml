@@ -150,7 +150,6 @@
     <string name="chat_editing_notice">編集中 — 会話を巻き戻します</string>
     <string name="chat_mic_perm_needed">マイクの許可が必要です</string>
     <string name="chat_mic_perm_body">[設定を開く] をタップし、音声モードを使用するためのマイクへのアクセスを許可します。</string>
-    <string name="chat_clean_view_hint">チャットを保留すると、すっきりとした集中的なビューが得られます</string>
     <string name="chat_manage_connections">接続を管理する</string>
     <string name="chat_no_clipboard_image">クリップボードに画像がありません</string>
     <string name="chat_copied_to_clipboard">クリップボードにコピーされました</string>
@@ -2636,9 +2635,6 @@
     <string name="power_gate_explanation_unavailable">この Hermes サーバーは、この機能に必要なサーフェスを公開しません。</string>
     <string name="power_gate_explanation_signin">この標準のダッシュボード機能を使用するには、ダッシュボードにサインインする必要があります。</string>
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-    <string name="agent_text_placeholder">メッセージ</string>
-
     <!-- ExtraKeysToolbar -->
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">タブ</string>
@@ -3054,8 +3050,6 @@
 
     <!-- PowerFeatureGate -->
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-
     <!-- ExtraKeysToolbar -->
 
     <!-- ToolProgressCard -->
@@ -3137,11 +3131,6 @@
     <string name="chat_relay_sessions_title">Relay セッション</string>
     <string name="chat_rename_failed">名前の変更に失敗しました</string>
 
-
-    <!-- AgentTextFlow -->
-    <string name="agent_text_send_cd">送信</string>
-    <string name="agent_text_exit_clean">クリーンモードを終了する</string>
-    <string name="agent_text_sphere_desc">エージェント</string>
 
 
     <!-- UpdateBanner format strings (with version placeholders) -->

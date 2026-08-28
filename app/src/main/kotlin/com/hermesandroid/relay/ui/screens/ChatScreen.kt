@@ -37,10 +37,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -202,7 +200,6 @@ import com.hermesandroid.relay.viewmodel.ChatFailureRoute
 import com.hermesandroid.relay.viewmodel.ChatFailureNotice
 import com.hermesandroid.relay.viewmodel.scopedChatFailure
 import com.hermesandroid.relay.ui.components.ConversationVoiceDock
-import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -1204,12 +1201,6 @@ fun ChatScreen(
             }
         }
     }
-    var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
-    // Clean-mode discoverability hint: a persistent pill shown ONLY on the
-    // empty / new-chat view (no messages) — it teaches the long-press entry
-    // without nagging mid-conversation. Derived directly from the message list
-    // at the pill below; no one-shot timer, no auto-dismiss.
-
     // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
     val rawSphereState by remember {
         derivedStateOf {
@@ -1445,7 +1436,6 @@ fun ChatScreen(
     PetInteractionLayer(
         owner = "chat-interaction-layer",
         active = shouldHideChatPet(
-            ambientMode = ambientMode,
             voiceMode = voiceUiState.voiceMode,
             drawerOpenOrMoving =
                 drawerState.currentValue != DrawerValue.Closed ||
@@ -3139,11 +3129,6 @@ fun ChatScreen(
                             }
                         }
                     }
-                    // Clean text-flow mode has no top-bar toggle — it's a quiet
-                    // gesture: long-press the conversation background to enter.
-                    // Exit is the in-mode dismiss control or system back (not
-                    // any-tap, since the mode carries its own composer). A
-                    // first-run hint teaches the entry.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
@@ -3221,11 +3206,6 @@ fun ChatScreen(
                     )
                 }
             }
-
-            // Clean text-flow mode is rendered as a full-screen overlay (a
-            // sibling of this Column, below) so it can own its own minimal
-            // composer and explicit-dismiss control. The Column always renders
-            // the normal chat underneath; the overlay covers it when active.
 
             // Message list or empty state
             if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
@@ -3463,28 +3443,12 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        // Quiet entry to clean mode: long-press the
-                        // conversation background. Bubbles keep their own
-                        // long-press (copy) — they consume the gesture first,
-                        // so only presses on empty space land here. Enters
-                        // regardless of animationEnabled — clean mode degrades
-                        // to static text when motion is suppressed, so the
-                        // conversation is never gated on animation.
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onLongPress = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    ambientMode = true
-                                },
-                            )
-                        }
                 ) {
                     // Ambient avatar behind messages
                     if (
                         LocalBackgroundVisualizationEnabled.current &&
                         (!supervised || supervisedVisibility.showAgentIdentity) &&
-                        animationBehindChat &&
-                        !ambientMode
+                        animationBehindChat
                     ) {
                         LocalAgentAvatar.current.Render(
                             state = AvatarRenderState(
@@ -4829,62 +4793,6 @@ fun ChatScreen(
             }
         }
 
-        // Clean-mode discoverability hint — a quiet, persistent pill teaching
-        // the long-press entry. Shown ONLY on the empty / new-chat view; it
-        // yields the bottom area whenever clean or voice mode owns it.
-        AnimatedVisibility(
-            visible = shouldShowCleanViewHint(
-                hasMessages = messages.isNotEmpty(),
-                ambientMode = ambientMode,
-                voiceMode = voiceUiState.voiceMode,
-            ),
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 96.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.chat_clean_view_hint),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-
-        // Clean text-flow mode — full-screen overlay covering the whole Box.
-        // Owns its own minimal composer + explicit dismiss; exit is never
-        // any-tap. Renders static text when motion is suppressed.
-        AnimatedVisibility(
-            visible = ambientMode,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            CleanChatMode(
-                messages = messages,
-                isStreaming = isStreaming,
-                sphereState = sphereState,
-                streamingIntensity = streamingIntensity,
-                toolCallBurst = toolCallBurst,
-                animationEnabled = animationEnabled,
-                enabled = chatReady,
-                onSend = { text ->
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    userScrolledAwayState.value = reduceUserScrolledAway(
-                        current = userScrolledAwayState.value,
-                        event = ChatFollowEvent.UserSend,
-                    )
-                    chatViewModel.sendMessage(text)
-                },
-                onExit = { ambientMode = false },
-            )
-        }
-
         // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
@@ -5593,15 +5501,8 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
     )
 }
 
-internal fun shouldShowCleanViewHint(
-    hasMessages: Boolean,
-    ambientMode: Boolean,
-    voiceMode: Boolean,
-): Boolean = !hasMessages && !ambientMode && !voiceMode
-
 /** Chat overlays that temporarily own input and must not compete with the root pet host. */
 internal fun shouldHideChatPet(
-    ambientMode: Boolean = false,
     voiceMode: Boolean = false,
     drawerOpenOrMoving: Boolean = false,
     commandPaletteVisible: Boolean = false,
@@ -5610,8 +5511,7 @@ internal fun shouldHideChatPet(
     contextSheetVisible: Boolean = false,
     backgroundProcessesVisible: Boolean = false,
     agentInfoVisible: Boolean = false,
-): Boolean = ambientMode ||
-    voiceMode ||
+): Boolean = voiceMode ||
     drawerOpenOrMoving ||
     commandPaletteVisible ||
     modelSheetVisible ||

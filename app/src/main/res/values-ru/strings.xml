@@ -144,7 +144,6 @@
     <string name="chat_editing_notice">Редактирование — перемотает беседу</string>
     <string name="chat_mic_perm_needed">Требуется разрешение на микрофон</string>
     <string name="chat_mic_perm_body">Нажмите Открыть настройки и предоставьте доступ к микрофону для использования голосового режима.</string>
-    <string name="chat_clean_view_hint">Удерживайте чат для чистого, сфокусированного представления</string>
     <string name="chat_manage_connections">Управление подключениями</string>
     <string name="chat_no_clipboard_image">Нет изображения в буфере обмена</string>
     <string name="chat_copied_to_clipboard">Скопировано в буфер обмена</string>
@@ -2620,7 +2619,6 @@
     <string name="power_gate_explanation_expired">Ваша сессия Relay больше не принимается сервером. Откройте соединение для восстановления.</string>
     <string name="power_gate_explanation_unavailable">Этот сервер Гермеса не предоставляет необходимую поверхность для этой функции.</string>
     <string name="power_gate_explanation_signin">Эта стандартная функция панели управления требует входа в панель управления перед использованием.</string>
-    <string name="agent_text_placeholder">Сообщение</string>
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">TAB</string>
     <string name="extra_keys_ctrl">CTRL</string>
@@ -3014,9 +3012,6 @@
     <string name="chat_relay_sessions_summary">Просмотр и отзыв устройств, сопряженных с этим Relay.</string>
     <string name="chat_relay_sessions_title">Сессии Relay</string>
     <string name="chat_rename_failed">Переименование не удалось</string>
-    <string name="agent_text_send_cd">Отправить</string>
-    <string name="agent_text_exit_clean">Выход из чистого режима</string>
-    <string name="agent_text_sphere_desc">Агент</string>
     <string name="update_banner_available_fmt">Доступно обновление \&amp;#8212; v%1$s</string>
     <string name="update_banner_body_fmt">Вы используете %1$s. Нажмите Обновить, чтобы скачать.</string>
     <string name="attach_viewer_cd_close">Закрыть</string>

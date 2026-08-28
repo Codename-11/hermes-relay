@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android self-hosted OIDC keeps sign-in on one trusted Dashboard origin.** Android follows upstream `native_pkce` capability for every interactive provider and falls back to exact-host cookies only when needed. Private and Tailscale routes can discover a provider-declared callback, verify the same installation, and ask before retaining a different authenticated Dashboard/Gateway origin; public origins require HTTPS while reviewed local or overlay HTTP remains compatible. Routes presents that origin separately from optional network paths and no longer exposes internal roles as a VPN. (#399)
 - **Android Dashboard connections and profile drawers no longer wait on unavailable optional routes.** Dashboard, API fallback, and Relay probes run independently; API/Relay never gate a normal Dashboard connection, Gateway auth/ticket failures are not blindly retried, and authenticated session history remains available without a live Gateway socket. Concurrent route probes are shared and generation-safe, healthy same-priority routes win immediately, superseded session reads cancel their HTTP calls, and optional PR decoration stays outside the session-list critical path.
 
+### Removed
+
+- **Android Chat no longer includes the hidden clean-focus presentation.** The long-press gesture, overlapping instructional pill, reduced composer, and alternate fading transcript were removed so Chat keeps one complete interaction model. Voice Focus remains available.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added

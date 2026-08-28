@@ -150,7 +150,6 @@
     <string name="chat_editing_notice">编辑中——将回退对话</string>
     <string name="chat_mic_perm_needed">需要麦克风权限</string>
     <string name="chat_mic_perm_body">点击“打开设置”并授予麦克风权限以使用语音模式。</string>
-    <string name="chat_clean_view_hint">长按聊天进入清爽专注视图</string>
     <string name="chat_manage_connections">管理连接</string>
     <string name="chat_no_clipboard_image">剪贴板中没有图片</string>
     <string name="chat_copied_to_clipboard">已复制到剪贴板</string>
@@ -2622,9 +2621,6 @@
     <string name="power_gate_explanation_unavailable">此 Hermes 服务器未暴露此功能所需的接口。</string>
     <string name="power_gate_explanation_signin">此标准仪表盘功能需要在登录后才能使用。</string>
 
-    <!-- AgentTextFlow / CleanModeComposer -->
-    <string name="agent_text_placeholder">消息</string>
-
     <!-- ExtraKeysToolbar -->
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">TAB</string>
@@ -3064,11 +3060,6 @@
     <string name="chat_reconnecting_toast">正在重新连接到 Relay…</string>
     <string name="chat_rename_failed">重命名失败</string>
     <string name="chat_only_active_revoke">现在只能撤销活动连接</string>
-
-    <!-- AgentTextFlow -->
-    <string name="agent_text_send_cd">发送</string>
-    <string name="agent_text_exit_clean">退出简洁模式</string>
-    <string name="agent_text_sphere_desc">代理</string>
 
 
     <!-- UpdateBanner (format strings with version placeholders) -->
