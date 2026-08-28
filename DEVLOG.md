@@ -7,12 +7,14 @@ maintainer is absent. The assignee is fixed in the write wrapper rather than
 chosen by webhook or model output, and represents follow-up ownership only—not
 acceptance, priority, implementation, or a release promise.
 
-A separate pull-request route now handles non-bot, non-draft `opened`,
-`reopened`, and `ready_for_review` events. It reads live PR metadata and trusted
-`dev` policy/template without executing contributor code, applies only bounded
-area/intake labels, and posts one App-authored intake reply. It cannot approve,
-request changes, merge, close, assign, request reviewers, push, edit PR text,
-rerun CI, select `review-candidate`, or claim correctness. The first production
+A separate pull-request route now handles external-contributor, non-bot,
+non-draft `opened`, `reopened`, and `ready_for_review` events. Owner-authored
+`Codename-11` PRs are dropped before model dispatch. Eligible PRs are read from
+live metadata plus trusted `dev` policy/template without executing contributor
+code; the route applies only bounded area/intake labels and posts one
+App-authored intake reply. It cannot approve, request changes, merge, close,
+assign, request reviewers, push, edit PR text, rerun CI, select
+`review-candidate`, or claim correctness. The external-contributor production
 canary retained its exact head/base/open state and proved marker idempotency.
 
 ## 2026-08-26 — Canonical pull request intake contract
