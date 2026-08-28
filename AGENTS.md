@@ -122,11 +122,13 @@ authoritative; read the complete live thread before acting on an issue.
 
 ## Automated public PR intake
 
-New non-draft pull requests may receive one clearly labeled **Hermes-Relay
-automated PR intake** reply from `hermes-relay-triage[bot]`. The intake compares
-the live PR metadata/body and changed-path list with trusted `origin/dev` policy
-and `.github/pull_request_template.md` without checking out or executing
-contributor code. It may add genuine area labels plus `documentation`, `ci`, or
+New external-contributor, non-draft pull requests may receive one clearly
+labeled **Hermes-Relay automated PR intake** reply from
+`hermes-relay-triage[bot]`. Owner-authored `Codename-11` PRs and bot PRs are
+dropped before model dispatch. For eligible PRs, the intake compares the live PR
+metadata/body and changed-path list with trusted `origin/dev` policy and
+`.github/pull_request_template.md` without checking out or executing contributor
+code. It may add genuine area labels plus `documentation`, `ci`, or
 `needs-maintainer-review` and point out missing intake evidence.
 
 The automated lane never approves, requests changes, merges, closes, assigns,
