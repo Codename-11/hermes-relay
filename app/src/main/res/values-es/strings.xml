@@ -127,7 +127,6 @@
     <string name="chat_editing_notice">Editando: rebobinará la conversación</string>
     <string name="chat_mic_perm_needed">Se necesita permiso para el micrófono</string>
     <string name="chat_mic_perm_body">Toque Abrir configuración y otorgue acceso al micrófono para usar el modo de voz.</string>
-    <string name="chat_clean_view_hint">Mantenga el chat para una vista clara y enfocada</string>
     <string name="chat_manage_connections">Administrar conexiones</string>
     <string name="chat_no_clipboard_image">No hay ninguna imagen en el portapapeles</string>
     <string name="chat_copied_to_clipboard">Copiado al portapapeles</string>
@@ -2405,7 +2404,6 @@
     <string name="power_gate_explanation_expired">El servidor ya no acepta su sesión relay. Abra la conexión para reparar.</string>
     <string name="power_gate_explanation_unavailable">Este servidor Hermes no expone la superficie necesaria para esta función.</string>
     <string name="power_gate_explanation_signin">Esta función estándar del panel necesita iniciar sesión en el panel antes de poder usarse.</string>
-    <string name="agent_text_placeholder">Mensaje</string>
     <string name="extra_keys_esc">ESC</string>
     <string name="extra_keys_tab">PESTAÑA</string>
     <string name="extra_keys_ctrl">CONTROL</string>
@@ -2793,9 +2791,6 @@
     <string name="chat_relay_sessions_summary">Ver y revocar dispositivos emparejados con este relay.</string>
     <string name="chat_relay_sessions_title">Sesiones Relay</string>
     <string name="chat_rename_failed">Error al cambiar el nombre</string>
-    <string name="agent_text_send_cd">Enviar</string>
-    <string name="agent_text_exit_clean">Salir del modo limpio</string>
-    <string name="agent_text_sphere_desc">Agente</string>
     <string name="update_banner_available_fmt">Actualización disponible: v%1$s</string>
     <string name="update_banner_body_fmt">Estás en %1$s. Toque Actualizar para descargar.</string>
     <string name="attach_viewer_cd_close">Cerrar</string>

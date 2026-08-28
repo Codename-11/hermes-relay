@@ -17,8 +17,8 @@ Sphere and phone-local pet controls live under **Settings → Appearance**.
 
 The background and floating-pet selections are saved independently. You can use
 the same installed pack in either role, choose different packs, or turn either
-one off. A background animation reacts on the central Chat, clean/ambient, and
-voice surfaces; it never roams, uses floating-pet placement, or inherits pet
+one off. A background animation reacts on the central Chat and voice surfaces;
+it never roams, uses floating-pet placement, or inherits pet
 temperament.
 
 ## Profile badge image
@@ -234,7 +234,7 @@ normal Hermes Relay screens.
   move actions remain available on screens that use the saved free-form edge home,
   so dragging is never required.
 - Chat temporarily hides the pet while the session drawer, a picker or info
-  sheet, clean mode, or voice mode owns the screen. Inline slash suggestions and
+  sheet, or voice mode owns the screen. Inline slash suggestions and
   recent-prompt chips stay visible, but are measured as blocked controls so a
   roaming pet routes around them.
 - On every other screen, opening a dialog or modal sheet temporarily hides the

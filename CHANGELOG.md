@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
+### Removed
+
+- **Android Chat no longer includes the hidden clean-focus presentation.** The long-press gesture, overlapping instructional pill, reduced composer, and alternate fading transcript were removed so Chat keeps one complete interaction model. Voice Focus remains available.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added
