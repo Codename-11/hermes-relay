@@ -288,6 +288,13 @@ internal fun resolveAppChatRuntimeStatus(
     return resolveChatRuntimeStatus(gateway = gateway, apiSse = api)
 }
 
+internal fun shouldSettleStartupUnreachable(
+    hasConfiguredChat: Boolean,
+    runtimeStatus: ChatRuntimeStatus,
+): Boolean =
+    hasConfiguredChat &&
+        runtimeStatus is ChatRuntimeStatus.Unavailable
+
 /** Route represented by the app footer's currently usable chat transport. */
 internal fun resolveFooterRouteCandidate(
     runtimeStatus: ChatRuntimeStatus,
@@ -1561,15 +1568,24 @@ fun RelayApp() {
         // first verdict was what flashed the disconnected chat UI at users
         // who were connected-just-waiting. The keyed effect restarts on
         // every health flip, cancelling a pending settle.
-        LaunchedEffect(appChatRuntimeStatus, startupGateReleased) {
+        LaunchedEffect(appChatRuntimeStatus, activeEndpoint, startupGateReleased) {
             if (startupGateReleased) return@LaunchedEffect
-            if (hasStartupConnection && appChatRuntimeStatus is ChatRuntimeStatus.Unavailable) {
+            if (shouldSettleStartupUnreachable(
+                    hasConfiguredChat = hasStartupConnection,
+                    runtimeStatus = appChatRuntimeStatus,
+                )
+            ) {
                 delay(3_000L)
                 startupUnreachableSettled = true
             } else {
                 startupUnreachableSettled = false
             }
         }
+        val startupUnreachableConfirmed = startupUnreachableSettled &&
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = hasStartupConnection,
+                runtimeStatus = appChatRuntimeStatus,
+            )
 
         // ---- Startup narration: real states the checklist verifies ----
         val startupEndpoint = activeEndpoint
@@ -1596,8 +1612,10 @@ fun RelayApp() {
                 when {
                     startupChatUp ->
                         StartupCheck(StartupCheckState.Done, "hermes online")
-                    appChatRuntimeStatus is ChatRuntimeStatus.Unavailable ->
+                    startupUnreachableConfirmed ->
                         StartupCheck(StartupCheckState.Failed, "hermes unreachable")
+                    appChatRuntimeStatus is ChatRuntimeStatus.Unavailable && startupEndpoint != null ->
+                        StartupCheck(StartupCheckState.Active, "gateway retrying")
                     appReady ->
                         StartupCheck(StartupCheckState.Active, "contacting hermes")
                     else -> StartupCheck(StartupCheckState.Pending, "hermes")
@@ -1649,7 +1667,7 @@ fun RelayApp() {
                 (chatReady && initialChatSettled && startupNarrationComplete) ||
                 // Error path: a settled unreachable reveals the normal UI,
                 // which owns offline presentation (status pill, retry).
-                startupUnreachableSettled ||
+                startupUnreachableConfirmed ||
                 startupGateTimedOut
             )
         LaunchedEffect(
@@ -1673,7 +1691,7 @@ fun RelayApp() {
                 if (
                     hasStartupConnection &&
                     !happyPathReady &&
-                    !startupUnreachableSettled &&
+                    !startupUnreachableConfirmed &&
                     startupGateTimedOut
                 ) {
                     DiagnosticsLog.record(

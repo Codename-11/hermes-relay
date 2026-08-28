@@ -3331,6 +3331,7 @@ fun ChatScreen(
                                             stringResource(R.string.chat_start_conversation)
                                         }
                                     ChatConnectState.Connecting -> stringResource(R.string.chat_connect_to_hermes_dots)
+                                    ChatConnectState.Unavailable -> stringResource(R.string.chat_disconnected_label)
                                     ChatConnectState.NeedsConnection -> stringResource(R.string.chat_needs_connection)
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -3398,6 +3399,22 @@ fun ChatScreen(
                                 }
 
                                 ChatConnectState.Connecting -> Unit
+
+                                ChatConnectState.Unavailable -> {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Button(
+                                        onClick = connectionViewModel::probeNow,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(stringResource(R.string.chat_retry))
+                                    }
+                                    TextButton(
+                                        onClick = onNavigateToConnections,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(stringResource(R.string.settings_connections))
+                                    }
+                                }
 
                                 ChatConnectState.Ready -> {
                                     Spacer(modifier = Modifier.height(20.dp))
@@ -5151,12 +5168,12 @@ private fun buildChatLoadingCommands(
         ),
         ChatLoadingCommand(
             state = when {
-                apiReachable -> ChatLoadingCommandState.Done
+                chatReady -> ChatLoadingCommandState.Done
                 hasConnection -> ChatLoadingCommandState.Active
                 else -> ChatLoadingCommandState.Pending
             },
             command = "/hermes ping",
-            detail = if (apiReachable) "online" else context.getString(R.string.chat_contacting_server),
+            detail = if (chatReady) "online" else context.getString(R.string.chat_contacting_server),
         ),
         ChatLoadingCommand(
             state = when {

@@ -725,6 +725,7 @@ class GatewayChatClientTest {
     private var unsupportedMarked = false
     private var signInRequiredMarked = false
     private var unreachableMarked = false
+    private var readyMarked = false
 
     private class Recorder {
         val starts = AtomicInteger(0)
@@ -787,6 +788,7 @@ class GatewayChatClientTest {
         onGatewayUnsupported = { unsupportedMarked = true },
         onGatewaySignInRequired = { signInRequiredMarked = true },
         onGatewayUnreachable = { unreachableMarked = true },
+        onGatewayReady = { readyMarked = true },
         scope = scope,
         // Keep the mid-turn reconnect window short so `failed rejoin`
         // surfaces its error well within the test's await budget.
@@ -838,6 +840,7 @@ class GatewayChatClientTest {
         unsupportedMarked = false
         signInRequiredMarked = false
         unreachableMarked = false
+        readyMarked = false
         client = buildClient()
     }
 
@@ -1895,6 +1898,8 @@ class GatewayChatClientTest {
         assertEquals(2, harness.ticketMints.get())
         assertTrue(r.preflightFailures.isEmpty())
         assertTrue(r.errors.isEmpty())
+        assertFalse("a recovered attempt must not publish unreachable", unreachableMarked)
+        assertTrue("gateway.ready must publish live readiness", readyMarked)
     }
 
     @Test

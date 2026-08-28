@@ -108,6 +108,8 @@ class GatewayChatClient(
     private val onGatewaySignInRequired: () -> Unit = {},
     /** A bounded ticket/connect failure makes this route unreachable for now. */
     private val onGatewayUnreachable: () -> Unit = {},
+    /** A completed gateway.ready handshake is authoritative live transport evidence. */
+    private val onGatewayReady: () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** Max wall-clock a single mid-turn reconnect keeps retrying before failing the turn. */
     private val midTurnRejoinWindowMs: Long = MAX_MIDTURN_REJOIN_MS,
@@ -2554,6 +2556,7 @@ class GatewayChatClient(
         // auth rejection, rate limiting, and local HTTP timeouts stay single-
         // attempt so reconnect never doubles an authoritative delay.
         var lastFailure = "gateway connect failed"
+        var terminalStage: GatewayConnectFailureStage? = null
         for (attempt in 0 until CONNECT_ATTEMPTS) {
             try {
                 connectOnce()
@@ -2561,20 +2564,22 @@ class GatewayChatClient(
                 return
             } catch (e: GatewayConnectAttemptException) {
                 lastFailure = e.message ?: lastFailure
+                terminalStage = e.stage
                 Log.w(
                     TAG,
                     "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed " +
                         "(stage=${e.stage.logName}, retryable=${e.retryable}): $lastFailure",
                 )
-                when (e.stage) {
-                    GatewayConnectFailureStage.TicketAuth,
-                    GatewayConnectFailureStage.UpgradeAuth -> onGatewaySignInRequired()
-                    GatewayConnectFailureStage.Ticket,
-                    GatewayConnectFailureStage.Upgrade -> onGatewayUnreachable()
-                    GatewayConnectFailureStage.Unsupported -> onGatewayUnsupported()
-                }
                 if (!e.retryable) break
             }
+        }
+        when (terminalStage) {
+            GatewayConnectFailureStage.TicketAuth,
+            GatewayConnectFailureStage.UpgradeAuth -> onGatewaySignInRequired()
+            GatewayConnectFailureStage.Ticket,
+            GatewayConnectFailureStage.Upgrade -> onGatewayUnreachable()
+            GatewayConnectFailureStage.Unsupported -> onGatewayUnsupported()
+            null -> Unit
         }
         connectCooldownUntil = System.currentTimeMillis() + CONNECT_FAILURE_COOLDOWN_MS
         _connectionState.value = GatewayConnectionState.Idle
@@ -2649,6 +2654,7 @@ class GatewayChatClient(
         val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
         Log.i(TAG, "Gateway connected (/api/ws ready) — ticket=${ticketMs}ms ws=${wsMs}ms")
         _connectionState.value = GatewayConnectionState.Ready
+        onGatewayReady()
     }
 
     /**

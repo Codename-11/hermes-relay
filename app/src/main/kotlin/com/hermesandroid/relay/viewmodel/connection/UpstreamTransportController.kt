@@ -11,6 +11,7 @@ import com.hermesandroid.relay.network.upstream.NativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.clearNativeDashboardTokens
@@ -24,6 +25,22 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+internal fun reconcileGatewayAvailability(
+    current: GatewayAvailability,
+    probed: GatewayAvailability,
+    liveState: GatewayConnectionState?,
+): GatewayAvailability = when {
+    liveState == GatewayConnectionState.Ready -> GatewayAvailability.Ready
+    current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready -> current
+    else -> probed
+}
+
+internal fun isCurrentGatewayClientCallback(
+    connectionId: String,
+    client: GatewayChatClient,
+    cached: Triple<String, String, GatewayChatClient>?,
+): Boolean = cached?.first == connectionId && cached.third === client
 
 /**
  * Owns the **upstream dashboard/gateway transport clients** and the
@@ -339,14 +356,28 @@ class UpstreamTransportController(
     /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
     fun updateGatewayAvailability(probed: GatewayAvailability) {
         val current = _gatewayAvailability.value
-        if (current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready) return
-        _gatewayAvailability.value = probed
+        val liveState = synchronized(this) {
+            gatewayClientCache?.third?.connectionState?.value
+        }
+        _gatewayAvailability.value = reconcileGatewayAvailability(current, probed, liveState)
     }
 
     // --- Gateway chat client -----------------------------------------------
 
     /** Cached gateway client, keyed by connection + resolved dashboard URL. */
     private var gatewayClientCache: Triple<String, String, GatewayChatClient>? = null
+
+    @Synchronized
+    private fun updateGatewayAvailabilityIfCurrent(
+        connectionId: String,
+        client: GatewayChatClient,
+        availability: GatewayAvailability,
+    ) {
+        val current = gatewayClientCache
+        if (isCurrentGatewayClientCallback(connectionId, client, current)) {
+            updateGatewayAvailability(availability)
+        }
+    }
 
     /**
      * Gateway chat client for the active connection — built lazily, rebuilt
@@ -380,14 +411,36 @@ class UpstreamTransportController(
             }
         }
         gatewayClientCache?.third?.shutdown()
-        val client = GatewayChatClient(
+        lateinit var client: GatewayChatClient
+        client = GatewayChatClient(
             initialDashboardClient = dashboardClientFor(connectionId, dashboardUrl),
-            onGatewayUnsupported = { markGatewayUnsupported() },
+            onGatewayUnsupported = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Unsupported,
+                )
+            },
             onGatewaySignInRequired = {
-                updateGatewayAvailability(GatewayAvailability.SignInRequired)
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.SignInRequired,
+                )
             },
             onGatewayUnreachable = {
-                updateGatewayAvailability(GatewayAvailability.Unreachable)
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Unreachable,
+                )
+            },
+            onGatewayReady = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Ready,
+                )
             },
         )
         // Carry the current keep-alive preference onto the fresh client so a

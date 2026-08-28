@@ -8,8 +8,10 @@ import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatConnectState
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.resolveChatConnectState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -192,6 +194,47 @@ class RelayAppStatusTest {
         )
 
         assertEquals(ChatRuntimeStatus.Connecting, status)
+    }
+
+    @Test
+    fun `configured chat settles unavailable only from transport verdict`() {
+        assertTrue(
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = true,
+                runtimeStatus = ChatRuntimeStatus.Unavailable,
+            ),
+        )
+        assertFalse(
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = true,
+                runtimeStatus = ChatRuntimeStatus.Connecting,
+            ),
+        )
+    }
+
+    @Test
+    fun `settled chat outage is unavailable instead of connecting forever`() {
+        val configured = connection(dashboardUrl = "https://host.ts.net:9119")
+        assertEquals(
+            ChatConnectState.Unavailable,
+            resolveChatConnectState(
+                hydrated = true,
+                connection = configured,
+                ready = false,
+                gatewayAvailability = GatewayAvailability.Unreachable,
+                apiHealth = ConnectionViewModel.HealthStatus.Unknown,
+            ),
+        )
+        assertEquals(
+            ChatConnectState.Connecting,
+            resolveChatConnectState(
+                hydrated = true,
+                connection = configured,
+                ready = false,
+                gatewayAvailability = GatewayAvailability.Unknown,
+                apiHealth = ConnectionViewModel.HealthStatus.Unknown,
+            ),
+        )
     }
 
     @Test

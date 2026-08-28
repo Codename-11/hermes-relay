@@ -2,6 +2,9 @@ package com.hermesandroid.relay.viewmodel.connection
 
 import android.content.Context
 import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardTokens
@@ -9,6 +12,7 @@ import com.hermesandroid.relay.network.upstream.StoredDashboardCookie
 import io.mockk.mockk
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -16,6 +20,29 @@ import org.junit.Test
 import java.util.concurrent.TimeUnit
 
 class UpstreamTransportControllerAuthClientTest {
+    @Test
+    fun liveGatewayReadyCannotBeDowngradedByLateDashboardProbe() {
+        assertEquals(
+            GatewayAvailability.Ready,
+            reconcileGatewayAvailability(
+                current = GatewayAvailability.Ready,
+                probed = GatewayAvailability.Unreachable,
+                liveState = GatewayConnectionState.Ready,
+            ),
+        )
+    }
+
+    @Test
+    fun retiredGatewayClientCallbackCannotChangeCurrentConnection() {
+        val current = mockk<GatewayChatClient>()
+        val retired = mockk<GatewayChatClient>()
+        val cached = Triple("connection-b", "https://dashboard-b.example", current)
+
+        assertFalse(isCurrentGatewayClientCallback("connection-a", retired, cached))
+        assertFalse(isCurrentGatewayClientCallback("connection-b", retired, cached))
+        assertTrue(isCurrentGatewayClientCallback("connection-b", current, cached))
+    }
+
     @Test
     fun dashboardCookieStoresRemainConnectionScoped() {
         val requestedKeys = mutableMapOf<String, String>()

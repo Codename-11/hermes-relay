@@ -304,8 +304,38 @@ enum class ChatConnectState {
     /** Chat client built and the API server is reachable. */
     Ready,
 
+    /** Configured chat transports have settled unavailable; show retry, not an endless loader. */
+    Unavailable,
+
     /** Hydration complete and no connection is configured — show the CTA. */
     NeedsConnection,
+}
+
+internal fun resolveChatConnectState(
+    hydrated: Boolean,
+    connection: Connection?,
+    ready: Boolean,
+    gatewayAvailability: GatewayAvailability,
+    apiHealth: ConnectionViewModel.HealthStatus,
+): ChatConnectState {
+    if (ready) return ChatConnectState.Ready
+    if (!hydrated) return ChatConnectState.Connecting
+    val active = connection ?: return ChatConnectState.NeedsConnection
+    val gatewayStillSettling = active.capabilities.dashboardGatewayConfigured &&
+        gatewayAvailability in setOf(
+            GatewayAvailability.Unknown,
+            GatewayAvailability.SignInRequired,
+        )
+    val apiStillSettling = active.capabilities.apiServerConfigured &&
+        apiHealth in setOf(
+            ConnectionViewModel.HealthStatus.Unknown,
+            ConnectionViewModel.HealthStatus.Probing,
+        )
+    return if (gatewayStillSettling || apiStillSettling) {
+        ChatConnectState.Connecting
+    } else {
+        ChatConnectState.Unavailable
+    }
 }
 
 /** Runtime chat readiness independent of which upstream transport is primary. */
@@ -400,6 +430,16 @@ internal fun resolveEffectiveDashboardUrl(
     }
     return connection.resolvedDashboardUrl
 }
+
+internal fun isCurrentDashboardProbe(
+    requestConnectionId: String,
+    requestDashboardUrl: String,
+    activeConnectionId: String?,
+    activeDashboardUrl: String?,
+): Boolean =
+    activeConnectionId == requestConnectionId &&
+        !activeDashboardUrl.isNullOrBlank() &&
+        sameDashboardBase(activeDashboardUrl, requestDashboardUrl)
 
 /** Accept HTTPS, plus explicit cleartext loopback/private-overlay Dashboard bases. */
 internal fun normalizeAuthenticatedDashboardOrigin(raw: String): String? {
@@ -1556,13 +1596,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         connectionStore.isHydrated,
         activeConnection,
         chatReady,
-    ) { hydrated, active, ready ->
-        when {
-            ready -> ChatConnectState.Ready
-            !hydrated -> ChatConnectState.Connecting
-            active != null -> ChatConnectState.Connecting
-            else -> ChatConnectState.NeedsConnection
-        }
+        upstreamTransport.gatewayAvailability,
+        _apiServerHealth,
+    ) { hydrated, active, ready, gateway, apiHealth ->
+        resolveChatConnectState(hydrated, active, ready, gateway, apiHealth)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ChatConnectState.Connecting)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
     // MutableStateFlow,
@@ -5094,12 +5131,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
         try {
             val status = client.getStatus().getOrNull()
+            if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
             if (status == null) {
                 recordDashboardGatewayFailure(
                     dashboardUrl = dashboardUrl,
                     detail = "Dashboard status probe returned no response.",
                 )
                 updateDashboardTopology(connectionId, null)
+                if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
                 _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
                 _standardAudioApiReachable.value = false
                 _hostResourcePressure.value = HostResourcePressureStatus()
@@ -5108,12 +5147,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
-            _hostResourcePressure.value = status.hostResourcePressure()
-            updateDashboardTopology(connectionId, status)
             val session = if (status.authRequired) client.currentSession().getOrNull() else null
+            if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
             val authed = !status.authRequired || session?.authenticated == true
+            val (chatDisplaySettings, audioRoutesPresent) = if (authed) {
+                coroutineScope {
+                    val display = async { loadChatDisplaySettings(client) }
+                    val audio = async { client.audioRoutesPresent() }
+                    display.await() to audio.await()
+                }
+            } else {
+                null to false
+            }
+            if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
+
+            updateDashboardTopology(connectionId, status)
+            if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
+            _hostResourcePressure.value = status.hostResourcePressure()
             recordDashboardStatusIfChanged(connectionId, status, session)
-            refreshChatDisplaySettings(client, authed)
+            _serverChatDisplaySettings.value = chatDisplaySettings
             // Gateway chat shares the voice probe's dashboard checks; it has
             // no audio-route requirement.
             updateGatewayAvailability(
@@ -5121,7 +5173,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
             val availability = when {
                 !authed -> StandardVoiceAvailability.SignInRequired
-                client.audioRoutesPresent() -> StandardVoiceAvailability.Ready
+                audioRoutesPresent -> StandardVoiceAvailability.Ready
                 else -> StandardVoiceAvailability.Unsupported
             }
             _standardVoiceAvailability.value = availability
@@ -5139,6 +5191,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
             // Defense-in-depth: this runs in a viewModelScope (Main) coroutine,
             // so an unexpected throw from any probe sub-call would crash the
             // app (see the currentSession() stale-connection crash). A probe
@@ -5156,6 +5209,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         } finally {
             client.shutdown()
         }
+    }
+
+    private fun ownsDashboardProbe(connectionId: String, dashboardUrl: String): Boolean {
+        return isCurrentDashboardProbe(
+            requestConnectionId = connectionId,
+            requestDashboardUrl = dashboardUrl,
+            activeConnectionId = connectionStore.activeConnectionId.value,
+            activeDashboardUrl = activeDashboardUrl(),
+        )
     }
 
     private var topologyConnectionId: String? = null
@@ -5190,19 +5252,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private suspend fun refreshChatDisplaySettings(
+    private suspend fun loadChatDisplaySettings(
         client: DashboardApiClient,
-        authenticated: Boolean,
-    ) {
-        if (!authenticated) {
-            _serverChatDisplaySettings.value = null
-            return
-        }
-        client.getChatDisplaySettings().fold(
-            onSuccess = { _serverChatDisplaySettings.value = it },
-            onFailure = { _serverChatDisplaySettings.value = null },
-        )
-    }
+    ): DashboardChatDisplaySettings? = client.getChatDisplaySettings().getOrNull()
 
     /**
      * [recordDashboardStatus] persists to the ConnectionStore; the voice probe

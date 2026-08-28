@@ -12,6 +12,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectiveDashboardRouteTest {
+    @Test
+    fun `late dashboard probe cannot publish across connection or route change`() {
+        assertTrue(
+            isCurrentDashboardProbe(
+                requestConnectionId = "a",
+                requestDashboardUrl = "https://hermes.example/base",
+                activeConnectionId = "a",
+                activeDashboardUrl = "https://hermes.example/base/",
+            ),
+        )
+        assertFalse(
+            isCurrentDashboardProbe(
+                requestConnectionId = "a",
+                requestDashboardUrl = "https://hermes.example/base",
+                activeConnectionId = "b",
+                activeDashboardUrl = "https://hermes.example/base",
+            ),
+        )
+        assertFalse(
+            isCurrentDashboardProbe(
+                requestConnectionId = "a",
+                requestDashboardUrl = "https://hermes.example/base",
+                activeConnectionId = "a",
+                activeDashboardUrl = "https://other.example/base",
+            ),
+        )
+    }
+
 
     @Test
     fun `discovered API route stays dormant when fallback is not configured`() {
