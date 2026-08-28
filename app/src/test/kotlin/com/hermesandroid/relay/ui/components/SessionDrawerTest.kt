@@ -62,6 +62,30 @@ class SessionDrawerTest {
     }
 
     @Test
+    fun `cached rows remain visible and disclose failed revalidation`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("cached", "Cached recent", null)),
+                    currentSessionId = null,
+                    loadFailed = true,
+                    onRefresh = { refreshes += 1 },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Cached recent").assertIsDisplayed()
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
     fun `failed all profiles load is unavailable and retryable not empty`() {
         var refreshes = 0
         compose.setContent {

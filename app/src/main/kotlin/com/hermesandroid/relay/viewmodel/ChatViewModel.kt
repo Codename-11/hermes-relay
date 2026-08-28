@@ -586,6 +586,7 @@ class ChatViewModel : ViewModel() {
     private var sessionRefreshOwner: Pair<String?, String?>? = null
     private var sessionRefreshPending = false
     private var sessionRefreshRetryJob: Job? = null
+    private val profileSessionCache = linkedMapOf<Pair<String?, String?>, List<SessionItem>>()
     private var imageActivityJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
     private val sessionRefreshGeneration = AtomicInteger(0)
@@ -638,7 +639,9 @@ class ChatViewModel : ViewModel() {
 
         private const val BACKGROUND_TASK_TITLE_LIMIT = 64
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
-        private const val SESSION_REFRESH_RETRY_DELAY_MS = 400L
+        private const val SESSION_REFRESH_RETRY_DELAY_MS = 2_000L
+        private const val PROFILE_SESSION_CACHE_CONTEXTS = 24
+        private const val PROFILE_SESSION_CACHE_ROWS = 50
         private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
         private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
         private const val MAX_CHECKPOINT_MOA_REFERENCES = 32
@@ -4398,10 +4401,12 @@ class ChatViewModel : ViewModel() {
         sessionRefreshRetryJob?.cancel()
         sessionRefreshOwner = null
         sessionRefreshPending = false
-        // The old profile's rows are cleared below. Keep the drawer in its
-        // loading state until HermesRuntimeBinder starts and settles the exact-
-        // profile replacement fetch.
-        _isLoadingSessions.value = true
+        // Restore this exact connection/profile's last confirmed recent rows
+        // immediately; an uncached profile remains loading until the
+        // authoritative replacement fetch settles.
+        val sessionOwner = contextKey to targetProfileName
+        val cachedSessions = profileSessionCache[sessionOwner]
+        _isLoadingSessions.value = cachedSessions == null
         _sessionListUnavailable.value = false
         activateModelOptionsProfile(contextKey)
         refreshRelayReasoningCapabilities()
@@ -4444,6 +4449,7 @@ class ChatViewModel : ViewModel() {
         handler.activeAgentName = currentAgentDisplayName()
         pendingGatewayTruncation = null
         handler.clearSessions()
+        cachedSessions?.let(handler::updateSessions)
         handler.setSessionId(sessionId)
         publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
@@ -4604,9 +4610,15 @@ class ChatViewModel : ViewModel() {
     val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
     val sessionListUnavailable: StateFlow<Boolean> = _sessionListUnavailable.asStateFlow()
 
-    fun refreshSessions() = refreshSessions(allowReadinessRetry = true)
+    fun refreshSessions() = refreshSessions(
+        allowReadinessRetry = true,
+        preserveFailurePresentation = false,
+    )
 
-    private fun refreshSessions(allowReadinessRetry: Boolean) {
+    private fun refreshSessions(
+        allowReadinessRetry: Boolean,
+        preserveFailurePresentation: Boolean,
+    ) {
         val handler = chatHandler ?: return
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
@@ -4621,8 +4633,10 @@ class ChatViewModel : ViewModel() {
         // Set this before dispatching the fetch coroutine. Otherwise Compose can
         // render the newly-cleared list as "No sessions" for a frame (or longer
         // while profile selection settles) before the coroutine marks it busy.
-        if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
-        _sessionListUnavailable.value = false
+        if (!preserveFailurePresentation) {
+            if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
+            _sessionListUnavailable.value = false
+        }
         sessionRefreshJob?.cancel()
         if (allowReadinessRetry) sessionRefreshRetryJob?.cancel()
         sessionRefreshPending = false
@@ -4662,6 +4676,9 @@ class ChatViewModel : ViewModel() {
                             onSuccess = { sessions ->
                                 if (isCurrentRefresh()) {
                                     _sessionListUnavailable.value = false
+                                    if (scoped != null || profileName.isNullOrBlank()) {
+                                        cacheProfileSessions(owner, sessions)
+                                    }
                                     handler.updateSessions(sessions)
                                     updateCurrentProfileActivityDirectory(handler.sessions.value)
                                     requestSessionActivityRefresh()
@@ -4711,12 +4728,36 @@ class ChatViewModel : ViewModel() {
                         delay(SESSION_REFRESH_RETRY_DELAY_MS)
                         sessionRefreshRetryJob = null
                         if (isCurrentRefresh() && _sessionListUnavailable.value) {
-                            refreshSessions(allowReadinessRetry = false)
+                            refreshSessions(
+                                allowReadinessRetry = false,
+                                preserveFailurePresentation = true,
+                            )
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun cacheProfileSessions(
+        owner: Pair<String?, String?>,
+        sessions: List<SessionItem>,
+    ) {
+        profileSessionCache.remove(owner)
+        profileSessionCache[owner] = sessions.take(PROFILE_SESSION_CACHE_ROWS)
+        while (profileSessionCache.size > PROFILE_SESSION_CACHE_CONTEXTS) {
+            profileSessionCache.remove(profileSessionCache.keys.first())
+        }
+    }
+
+    private fun invalidateCurrentProfileSessionCache() {
+        sessionRefreshGeneration.incrementAndGet()
+        sessionRefreshJob?.cancel()
+        sessionRefreshRetryJob?.cancel()
+        sessionRefreshOwner = null
+        sessionRefreshPending = false
+        _isLoadingSessions.value = false
+        profileSessionCache.remove(activeProfileContextKey to currentSessionProfileName())
     }
 
     private var titleReconcileJob: Job? = null
@@ -5090,6 +5131,7 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint != "gateway" && client == null) return
         val profileName = currentSessionProfileName()
         val contextKey = activeProfileContextKey
+        invalidateCurrentProfileSessionCache()
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
@@ -5155,6 +5197,7 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint != "gateway" && client == null) return
         val profileName = currentSessionProfileName()
         val contextKey = activeProfileContextKey
+        invalidateCurrentProfileSessionCache()
 
         val previousTitle = handler.sessions.value.find { it.sessionId == sessionId }?.title
         // Optimistic rename
@@ -5186,9 +5229,13 @@ class ChatViewModel : ViewModel() {
                         IllegalStateException("Profile-scoped session rename failed"),
                         context = "rename_profile_session",
                     )
+                } else {
+                    refreshSessions()
                 }
             } else {
-                client?.renameSession(sessionId, newTitle)
+                if (client?.renameSession(sessionId, newTitle) == true) {
+                    refreshSessions()
+                }
             }
         }
     }
@@ -5197,6 +5244,7 @@ class ChatViewModel : ViewModel() {
         if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Pin)) return
         val expectedContextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        invalidateCurrentProfileSessionCache()
         mutateSessionFlag(
             sessionId = sessionId,
             target = pinned,
@@ -5223,6 +5271,7 @@ class ChatViewModel : ViewModel() {
         }
         val expectedContextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        invalidateCurrentProfileSessionCache()
         mutateSessionFlag(
             sessionId = sessionId,
             target = archived,

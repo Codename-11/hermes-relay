@@ -779,6 +779,28 @@ fun SessionDrawerContent(
                 state = listState,
                 modifier = Modifier.testTag(SESSION_DRAWER_LIST_TAG),
             ) {
+                if (!showAllProfiles && loadFailed && sourceRows.isNotEmpty()) {
+                    item(key = "sessions-stale") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.drawer_activity_unavailable),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            onRefresh?.let { refresh ->
+                                TextButton(onClick = refresh) {
+                                    Text(stringResource(R.string.drawer_refresh_sessions))
+                                }
+                            }
+                        }
+                    }
+                }
                 groupedRows.forEach { group ->
                     val isProjectGroup = viewOptions.grouping == SessionDrawerGrouping.Project
                     val expanded = !isProjectGroup || group.key in expandedProjectGroups

@@ -696,6 +696,77 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun returningToProfileRestoresRecentSessionsBeforeRevalidation() {
+        var activeProfile = "alpha"
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { profileName ->
+            Result.success(
+                listOf(SessionItem(id = "$profileName-row", title = "$profileName session")),
+            )
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "alpha-row" }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "beta-row" }
+
+        activeProfile = "alpha"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+
+        assertEquals("alpha-row", handler.sessions.value.singleOrNull()?.sessionId)
+        assertFalse(viewModel.isLoadingSessions.value)
+    }
+
+    @Test
+    fun renameFencesOlderListAndRevalidatesAuthoritativeTitle() {
+        val calls = AtomicInteger(0)
+        val staleStarted = CompletableDeferred<Unit>()
+        val releaseStale = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { "alpha" }
+        viewModel.setProfileSessionLister {
+            when (calls.incrementAndGet()) {
+                1 -> Result.success(listOf(SessionItem(id = "row", title = "Old title")))
+                2 -> {
+                    staleStarted.complete(Unit)
+                    releaseStale.await()
+                    Result.success(listOf(SessionItem(id = "row", title = "Old title")))
+                }
+                else -> Result.success(listOf(SessionItem(id = "row", title = "New title")))
+            }
+        }
+        viewModel.profileSessionRenamer = { _, _, _, _ -> true }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.title == "Old title" }
+
+        viewModel.refreshSessions()
+        runBlocking { staleStarted.await() }
+        viewModel.renameSession("row", "New title")
+        releaseStale.complete(Unit)
+
+        awaitCondition {
+            calls.get() >= 3 && handler.sessions.value.singleOrNull()?.title == "New title"
+        }
+        assertEquals("New title", handler.sessions.value.singleOrNull()?.title)
+    }
+
+    @Test
     fun thrownSessionListFailureIsUnavailableInsteadOfAuthoritativeEmpty() {
         viewModel.setProfileSessionLister {
             throw IllegalStateException("temporary dashboard failure")

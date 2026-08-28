@@ -207,6 +207,50 @@ class ConnectionManagerRouteTest {
     }
 
     @Test
+    fun `failed Dashboard candidate is not probed again as Standard fallback`() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/status" -> MockResponse().setResponseCode(503)
+                "/health" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val dashboardRoute = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            dashboard = DashboardEndpoint(server.url("/").toString().trimEnd('/')),
+            api = ApiEndpoint(host = server.hostName, port = server.port, tls = false),
+        )
+        val manager = buildManager { listOf(dashboardRoute) }
+
+        val winner = runBlocking { manager.resolveBestEndpoint() }
+
+        assertNull("a failed Dashboard probe must not select the route", winner)
+        assertEquals(
+            "Standard fallback must not repeat the same Dashboard /api/status probe",
+            1,
+            server.requestCount,
+        )
+        assertEquals("/api/status", server.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun `API-only legacy candidate remains eligible for Standard fallback`() {
+        val legacyRoute = EndpointCandidate(
+            role = "legacy-api",
+            priority = 0,
+            api = ApiEndpoint(host = server.hostName, port = server.port, tls = false),
+        )
+        val manager = buildManager { listOf(legacyRoute) }
+
+        val winner = runBlocking { manager.resolveBestEndpoint() }
+
+        assertEquals("legacy-api", winner?.role)
+        assertEquals(1, server.requestCount)
+        assertEquals("/health", server.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
     fun `optional API timeout does not block healthy Dashboard refresh and is deduplicated`() {
         val slowApi = MockWebServer().apply {
             enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))

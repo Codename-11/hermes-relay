@@ -381,7 +381,7 @@ class ConnectionManager(
         // the synthesized list just collapses to the same URL anyway.
         scope.launch {
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+                ?: resolveLegacyStandardFallbackSafe()
             scheduleApiResolution()
             val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
             val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
@@ -594,10 +594,17 @@ class ConnectionManager(
      */
     suspend fun resolveBestEndpoint(): EndpointCandidate? =
         resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            ?: resolveLegacyStandardFallbackSafe()
+
+    private suspend fun resolveLegacyStandardFallbackSafe(): EndpointCandidate? =
+        resolveBestEndpointSafe(EndpointSurface.Standard) { candidate ->
+            candidate.dashboard?.url.isNullOrBlank() &&
+                candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl == null
+        }
 
     private suspend fun resolveBestEndpointSafe(
         surface: EndpointSurface,
+        candidateFilter: (EndpointCandidate) -> Boolean = { true },
     ): EndpointCandidate? {
         val resolver = endpointResolver ?: return null
         val ctx = context ?: return null
@@ -626,13 +633,14 @@ class ConnectionManager(
             } ?: emptyList()
         }
 
-        if (endpoints.isEmpty()) return null
+        val eligibleEndpoints = endpoints.filter(candidateFilter)
+        if (eligibleEndpoints.isEmpty()) return null
 
         // Manual override: if the user pinned a role in the Endpoints card,
         // try that one first; fall through to the strict-priority algorithm
         // if it isn't reachable.
         _manualRoleOverride.value?.let { preferredRole ->
-            val preferred = endpoints.firstOrNull {
+            val preferred = eligibleEndpoints.firstOrNull {
                 it.role.equals(preferredRole, ignoreCase = true)
             }
             if (preferred != null) {
@@ -644,7 +652,7 @@ class ConnectionManager(
             }
         }
 
-        return resolver.resolve(endpoints, surface)
+        return resolver.resolve(eligibleEndpoints, surface)
     }
 
     /**
@@ -713,7 +721,7 @@ class ConnectionManager(
         endpointResolver?.clearCache()
         val current = serverUrl
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            ?: resolveLegacyStandardFallbackSafe()
         scheduleApiResolution()
         val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
@@ -762,7 +770,7 @@ class ConnectionManager(
     suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
         if (clearProbeCache) endpointResolver?.clearCache()
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            ?: resolveLegacyStandardFallbackSafe()
         scheduleApiResolution()
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
@@ -855,7 +863,7 @@ class ConnectionManager(
             if (wipeCache) endpointResolver.clearCache()
             val current = serverUrl
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+                ?: resolveLegacyStandardFallbackSafe()
             scheduleApiResolution()
             if (resolved == null) {
                 // Hysteresis for the AUTOMATIC (network-callback) path. A
