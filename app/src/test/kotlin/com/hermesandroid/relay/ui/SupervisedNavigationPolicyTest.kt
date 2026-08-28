@@ -27,6 +27,51 @@ class SupervisedNavigationPolicyTest {
         assertTrue(isSupervisedRouteAllowed(Screen.AdvancedSettings.route, true))
     }
 
+    @Test fun `locked supervised mode blocks add connection before placeholder creation`() {
+        assertFalse(mayStartAddConnection(supervisedEnabled = true, parentAccessUnlocked = false))
+        assertFalse(
+            isSupervisedRouteAllowed(
+                Screen.Pair.route(connectionId = "new-placeholder"),
+                parentAccessUnlocked = false,
+            ),
+        )
+    }
+
+    @Test fun `parent access or ordinary mode permits add connection`() {
+        assertTrue(mayStartAddConnection(supervisedEnabled = true, parentAccessUnlocked = true))
+        assertTrue(mayStartAddConnection(supervisedEnabled = false, parentAccessUnlocked = false))
+    }
+
+    @Test fun `locked add action neither navigates nor prepares a placeholder`() {
+        var navigated = false
+        var prepared = false
+
+        val started = runAddConnectionAction(
+            supervisedEnabled = true,
+            parentAccessUnlocked = false,
+            navigateToPair = { navigated = true },
+            prepareConnection = { prepared = true },
+        )
+
+        assertFalse(started)
+        assertFalse(navigated)
+        assertFalse(prepared)
+    }
+
+    @Test fun `allowed add action navigates before preparing the connection`() {
+        val actions = mutableListOf<String>()
+
+        val started = runAddConnectionAction(
+            supervisedEnabled = true,
+            parentAccessUnlocked = true,
+            navigateToPair = { actions += "navigate" },
+            prepareConnection = { actions += "prepare" },
+        )
+
+        assertTrue(started)
+        assertTrue(actions == listOf("navigate", "prepare"))
+    }
+
     @Test fun `supervised redirect waits until the navigation graph has a route`() {
         assertFalse(shouldRedirectSupervisedRoute(true, false, null))
         assertTrue(isSupervisedRouteContentAllowed(true, false, null))

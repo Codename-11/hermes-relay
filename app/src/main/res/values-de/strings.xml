@@ -824,6 +824,7 @@
     <string name="conn_back">Zurück</string>
     <string name="conn_title">Verbindungen</string>
     <string name="conn_add_connection">Verbindung hinzufügen</string>
+    <string name="conn_add_requires_parent_access">Entsperre den Elternzugriff, bevor du eine Verbindung hinzufügst.</string>
     <string name="conn_no_connections">Noch keine Verbindungen</string>
     <string name="conn_no_connections_desc">Tippe auf Verbindung hinzufügen, um dich mit Hermes zu verbinden.</string>
     <string name="conn_active">Aktiv</string>

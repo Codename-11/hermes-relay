@@ -794,6 +794,7 @@
     <string name="conn_back">Назад</string>
     <string name="conn_title">Подключения</string>
     <string name="conn_add_connection">Добавить подключение</string>
+    <string name="conn_add_requires_parent_access">Разблокируйте родительский доступ, прежде чем добавлять подключение.</string>
     <string name="conn_no_connections">Еще нет подключений</string>
     <string name="conn_no_connections_desc">Нажмите Добавить подключение, чтобы подключиться к Гермесу.</string>
     <string name="conn_active">Активный</string>

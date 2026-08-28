@@ -3054,14 +3054,24 @@ fun RelayApp() {
                         onOpenConnection = { id ->
                             navController.navigate(Screen.ConnectionDetail.route(id))
                         },
+                        addConnectionEnabled = mayStartAddConnection(
+                            supervisedEnabled = supervisedPolicy.enabled,
+                            parentAccessUnlocked = parentAccessForCurrentRoute,
+                        ),
                         onAddConnection = {
                             val id = java.util.UUID.randomUUID().toString()
-                            // Draw step 1 immediately. Placeholder persistence
-                            // and the heavy connection-context switch continue
-                            // underneath the discovery UI instead of blocking
-                            // navigation on encrypted-store/client setup.
-                            navController.navigate(Screen.Pair.route(connectionId = id))
-                            prepareAddConnection(id, false)
+                            runAddConnectionAction(
+                                supervisedEnabled = supervisedPolicy.enabled,
+                                parentAccessUnlocked = parentAccessForCurrentRoute,
+                                navigateToPair = {
+                                    // Draw step 1 immediately. Placeholder persistence
+                                    // and the heavy connection-context switch continue
+                                    // underneath the discovery UI instead of blocking
+                                    // navigation on encrypted-store/client setup.
+                                    navController.navigate(Screen.Pair.route(connectionId = id))
+                                },
+                                prepareConnection = { prepareAddConnection(id, false) },
+                            )
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status

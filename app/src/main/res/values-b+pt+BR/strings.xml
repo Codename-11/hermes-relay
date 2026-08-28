@@ -781,6 +781,7 @@
     <string name="conn_back">Voltar</string>
     <string name="conn_title">Conexões</string>
     <string name="conn_add_connection">Adicionar conexão</string>
+    <string name="conn_add_requires_parent_access">Desbloqueie o acesso dos responsáveis antes de adicionar uma conexão.</string>
     <string name="conn_no_connections">Ainda não há conexões</string>
     <string name="conn_no_connections_desc">Toque em Adicionar conexão para se conectar ao Hermes.</string>
     <string name="conn_active">Ativa</string>

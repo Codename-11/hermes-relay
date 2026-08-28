@@ -822,6 +822,7 @@
     <string name="conn_back">戻る</string>
     <string name="conn_title">接続</string>
     <string name="conn_add_connection">接続の追加</string>
+    <string name="conn_add_requires_parent_access">接続を追加する前に、保護者アクセスのロックを解除してください。</string>
     <string name="conn_no_connections">まだ接続がありません</string>
     <string name="conn_no_connections_desc">[接続の追加] をタップして Hermes に接続します。</string>
     <string name="conn_active">アクティブ</string>

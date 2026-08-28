@@ -107,6 +107,7 @@ fun ConnectionsSettingsScreen(
     activeRelayUiState: RelayUiState,
     onOpenConnection: (id: String) -> Unit,
     onAddConnection: () -> Unit,
+    addConnectionEnabled: Boolean = true,
     onBack: () -> Unit,
     // `null` means no VM wired (test harness / @Preview); the active card's
     // live summary falls back to the static pairing metadata.
@@ -245,6 +246,7 @@ fun ConnectionsSettingsScreen(
                 item {
                     Button(
                         onClick = onAddConnection,
+                        enabled = addConnectionEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp),
@@ -253,6 +255,14 @@ fun ConnectionsSettingsScreen(
                         Text(
                             text = stringResource(R.string.conn_add_connection),
                             modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                    if (!addConnectionEnabled) {
+                        Text(
+                            text = stringResource(R.string.conn_add_requires_parent_access),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         )
                     }
                 }

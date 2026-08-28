@@ -872,6 +872,7 @@
     <string name="conn_back">Back</string>
     <string name="conn_title">Connections</string>
     <string name="conn_add_connection">Add connection</string>
+    <string name="conn_add_requires_parent_access">Unlock parent access before adding a connection.</string>
     <string name="conn_no_connections">No connections yet</string>
     <string name="conn_no_connections_desc">Tap Add connection to connect to Hermes.</string>
     <string name="conn_active">Active</string>

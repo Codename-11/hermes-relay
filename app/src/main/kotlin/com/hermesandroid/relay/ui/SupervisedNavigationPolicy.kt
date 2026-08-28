@@ -12,6 +12,33 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
         normalized == Screen.SupervisedAppearanceSettings.route
 }
 
+/**
+ * Creating a connection navigates to Pair and then activates an empty placeholder.
+ * In locked supervised mode Pair is forbidden, so starting that mutation would
+ * redirect to Chat and strand the placeholder before setup can be shown.
+ */
+internal fun mayStartAddConnection(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+): Boolean = !supervisedEnabled || parentAccessUnlocked
+
+/**
+ * Runs the complete Add Connection side-effect sequence behind the same policy
+ * decision used by the UI. Keeping the guard and both effects in one function
+ * makes it impossible for a locked click to navigate or prepare a placeholder.
+ */
+internal inline fun runAddConnectionAction(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+    navigateToPair: () -> Unit,
+    prepareConnection: () -> Unit,
+): Boolean {
+    if (!mayStartAddConnection(supervisedEnabled, parentAccessUnlocked)) return false
+    navigateToPair()
+    prepareConnection()
+    return true
+}
+
 /** Do not inspect or mutate a NavController until its first destination exists. */
 internal fun shouldRedirectSupervisedRoute(
     supervisedEnabled: Boolean,

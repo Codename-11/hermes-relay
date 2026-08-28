@@ -822,6 +822,7 @@
     <string name="conn_back">返回</string>
     <string name="conn_title">连接</string>
     <string name="conn_add_connection">添加连接</string>
+    <string name="conn_add_requires_parent_access">添加连接前，请先解锁家长访问权限。</string>
     <string name="conn_no_connections">暂无连接</string>
     <string name="conn_no_connections_desc">点击添加连接以连接到 Hermes。</string>
     <string name="conn_active">活跃</string>
