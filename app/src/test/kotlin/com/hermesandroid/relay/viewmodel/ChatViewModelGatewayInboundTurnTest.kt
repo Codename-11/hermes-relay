@@ -640,6 +640,62 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun failedProfileRefreshRetriesOnceAfterRouteReadinessSettles() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() == 1) {
+                Result.failure(IllegalStateException("dashboard route still settling"))
+            } else {
+                Result.success(listOf(SessionItem(id = "recent", title = "Recent session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            calls.get() == 2 &&
+                handler.sessions.value.singleOrNull()?.sessionId == "recent" &&
+                !viewModel.sessionListUnavailable.value
+        }
+        assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun supersededProfileRefreshCannotPublishIntoTheNewProfile() {
+        var activeProfile = "alpha"
+        val alphaStarted = CompletableDeferred<Unit>()
+        val releaseAlpha = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { profileName ->
+            if (profileName == "alpha") {
+                alphaStarted.complete(Unit)
+                releaseAlpha.await()
+                Result.success(listOf(SessionItem(id = "alpha-row", title = "Alpha")))
+            } else {
+                Result.success(listOf(SessionItem(id = "beta-row", title = "Beta")))
+            }
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        runBlocking { alphaStarted.await() }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        releaseAlpha.complete(Unit)
+
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "beta-row" }
+        assertTrue(handler.sessions.value.none { it.sessionId == "alpha-row" })
+    }
+
+    @Test
     fun thrownSessionListFailureIsUnavailableInsteadOfAuthoritativeEmpty() {
         viewModel.setProfileSessionLister {
             throw IllegalStateException("temporary dashboard failure")

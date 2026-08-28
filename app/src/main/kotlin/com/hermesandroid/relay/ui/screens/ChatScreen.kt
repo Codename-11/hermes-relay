@@ -2119,9 +2119,11 @@ fun ChatScreen(
         }
     }
 
-    // Refresh sessions when screen appears and API is ready
-    LaunchedEffect(chatReady) {
-        if (chatReady) {
+    // Match upstream Desktop's activeGatewayProfile refresh dependency: a
+    // profile switch must refresh its recent sessions even when chatReady stays
+    // true and the drawer was already open throughout the switch.
+    LaunchedEffect(chatReady, conversationBinding.contextKey) {
+        if (chatReady && conversationBinding.isBound) {
             chatViewModel.refreshSessions()
         }
     }

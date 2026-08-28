@@ -585,6 +585,7 @@ class ChatViewModel : ViewModel() {
     private var sessionRefreshJob: Job? = null
     private var sessionRefreshOwner: Pair<String?, String?>? = null
     private var sessionRefreshPending = false
+    private var sessionRefreshRetryJob: Job? = null
     private var imageActivityJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
     private val sessionRefreshGeneration = AtomicInteger(0)
@@ -637,6 +638,7 @@ class ChatViewModel : ViewModel() {
 
         private const val BACKGROUND_TASK_TITLE_LIMIT = 64
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
+        private const val SESSION_REFRESH_RETRY_DELAY_MS = 400L
         private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
         private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
         private const val MAX_CHECKPOINT_MOA_REFERENCES = 32
@@ -4215,6 +4217,7 @@ class ChatViewModel : ViewModel() {
                 activeStreamDeltas = null
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
+                sessionRefreshRetryJob?.cancel()
                 sessionRefreshOwner = null
                 sessionRefreshPending = false
                 _isLoadingSessions.value = false
@@ -4392,6 +4395,7 @@ class ChatViewModel : ViewModel() {
         val sessionProfileName = targetProfileName
         sessionRefreshGeneration.incrementAndGet()
         sessionRefreshJob?.cancel()
+        sessionRefreshRetryJob?.cancel()
         sessionRefreshOwner = null
         sessionRefreshPending = false
         // The old profile's rows are cleared below. Keep the drawer in its
@@ -4600,7 +4604,9 @@ class ChatViewModel : ViewModel() {
     val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
     val sessionListUnavailable: StateFlow<Boolean> = _sessionListUnavailable.asStateFlow()
 
-    fun refreshSessions() {
+    fun refreshSessions() = refreshSessions(allowReadinessRetry = true)
+
+    private fun refreshSessions(allowReadinessRetry: Boolean) {
         val handler = chatHandler ?: return
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
@@ -4618,6 +4624,7 @@ class ChatViewModel : ViewModel() {
         if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
         _sessionListUnavailable.value = false
         sessionRefreshJob?.cancel()
+        if (allowReadinessRetry) sessionRefreshRetryJob?.cancel()
         sessionRefreshPending = false
         sessionRefreshOwner = owner
         sessionRefreshJob = viewModelScope.launch {
@@ -4629,6 +4636,7 @@ class ChatViewModel : ViewModel() {
                     activeProfileContextKey == contextKey &&
                     currentSessionProfileName() == profileName
 
+            var retryUnavailable = false
             try {
                 do {
                     sessionRefreshPending = false
@@ -4648,6 +4656,7 @@ class ChatViewModel : ViewModel() {
                         val result = scoped ?: apiClient?.listSessionsResult()
                         if (result == null && isCurrentRefresh()) {
                             _sessionListUnavailable.value = true
+                            retryUnavailable = true
                         }
                         result?.fold(
                             onSuccess = { sessions ->
@@ -4661,6 +4670,7 @@ class ChatViewModel : ViewModel() {
                             onFailure = { error ->
                                 if (!isCurrentRefresh()) return@fold
                                 _sessionListUnavailable.value = true
+                                retryUnavailable = true
                                 if (scoped != null) {
                                     // The shared API list belongs to the launch/default
                                     // database. Preserve the current profile's rows and
@@ -4677,6 +4687,7 @@ class ChatViewModel : ViewModel() {
                     } catch (e: Throwable) {
                         if (isCurrentRefresh()) {
                             _sessionListUnavailable.value = true
+                            retryUnavailable = true
                             emitError(
                                 e,
                                 context = if (profileSessionLister != null) {
@@ -4693,6 +4704,16 @@ class ChatViewModel : ViewModel() {
                     _isLoadingSessions.value = false
                     sessionRefreshOwner = null
                     sessionRefreshPending = false
+                }
+                if (allowReadinessRetry && retryUnavailable && isCurrentRefresh()) {
+                    sessionRefreshRetryJob?.cancel()
+                    sessionRefreshRetryJob = viewModelScope.launch {
+                        delay(SESSION_REFRESH_RETRY_DELAY_MS)
+                        sessionRefreshRetryJob = null
+                        if (isCurrentRefresh() && _sessionListUnavailable.value) {
+                            refreshSessions(allowReadinessRetry = false)
+                        }
+                    }
                 }
             }
         }
