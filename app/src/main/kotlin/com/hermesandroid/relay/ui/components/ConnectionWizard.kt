@@ -72,6 +72,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -121,6 +122,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import java.net.URI
 
 /**
  * Shared Gateway wizard used by both onboarding (first run) and
@@ -228,6 +230,7 @@ fun ConnectionWizard(
         mutableStateOf(PairingPreferencesDefault)
     }
     var showQrScanner by remember { mutableStateOf(false) }
+    var qrScanGeneration by rememberSaveable(wizardDraftIdentity) { mutableStateOf(0) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
     var standardBusy by remember { mutableStateOf(false) }
@@ -338,6 +341,53 @@ fun ConnectionWizard(
         }
     }
 
+    val launchCleanQrScan: () -> Unit = {
+        // A scan is a new transaction. Never leave a prior QR confirmation,
+        // verification result, duplicate prompt, or secret behind it.
+        val reset = resetQrScanTransaction(
+            previous = QrScanTransactionState(
+                pendingPayload = pendingPayload,
+                pendingManualCode = pendingManualCode,
+                hasPendingStandardDraft = pendingStandardDraft != null,
+                hasPendingDashboardDraft = pendingDashboardDraft != null,
+                hasDuplicatePrompt = duplicatePrompt != null,
+                hasStandardSuccess = standardSuccess != null,
+                standardError = standardError,
+                hasDashboardProbeResult = dashboardProbeResult != null,
+                dashboardProbeError = dashboardProbeError,
+                dashboardSuggestedHostname = dashboardSuggestedHostname,
+                verifyError = verifyError,
+                verifyAttempt = verifyAttempt,
+                standardApiKey = standardApiKey,
+                manualCode = manualCode,
+                ttlSeconds = ttlSeconds,
+                step = step,
+                chosenMethod = chosenMethod,
+                generation = qrScanGeneration,
+            ),
+            pairingHome = pairingHome,
+        )
+        pendingPayload = reset.pendingPayload
+        pendingManualCode = reset.pendingManualCode
+        pendingStandardDraft = pendingStandardDraft.takeIf { reset.hasPendingStandardDraft }
+        pendingDashboardDraft = pendingDashboardDraft.takeIf { reset.hasPendingDashboardDraft }
+        duplicatePrompt = duplicatePrompt.takeIf { reset.hasDuplicatePrompt }
+        standardSuccess = standardSuccess.takeIf { reset.hasStandardSuccess }
+        standardError = reset.standardError
+        dashboardProbeResult = dashboardProbeResult.takeIf { reset.hasDashboardProbeResult }
+        dashboardProbeError = reset.dashboardProbeError
+        dashboardSuggestedHostname = reset.dashboardSuggestedHostname
+        verifyError = reset.verifyError
+        verifyAttempt = reset.verifyAttempt
+        standardApiKey = reset.standardApiKey
+        manualCode = reset.manualCode
+        ttlSeconds = reset.ttlSeconds
+        step = reset.step
+        chosenMethod = reset.chosenMethod
+        qrScanGeneration = reset.generation
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
     // Deep-link: when the caller passed autoStart="scan" (currently only the
     // "Add gateway" FAB does), fire the permission launcher on first
     // composition. Equivalent to the user tapping the Scan tile in the
@@ -387,8 +437,7 @@ fun ConnectionWizard(
         if (!setupReady) return@LaunchedEffect
         when (autoStart) {
             "scan" -> {
-                chosenMethod = PairMethod.Scan
-                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                launchCleanQrScan()
             }
             "relay" -> step = WizardStep.RelayChoice
             else -> launchNearbyScan()
@@ -626,8 +675,7 @@ fun ConnectionWizard(
                         step = WizardStep.DashboardManual
                     },
                     onPairRelayQr = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        launchCleanQrScan()
                     },
                     onPairRelayCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -686,8 +734,7 @@ fun ConnectionWizard(
                     connectionLabel = activeConnection?.label.orEmpty(),
                     dashboardUrl = currentDashboardUrl,
                     onPickScan = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        launchCleanQrScan()
                     },
                     onPickEnterCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -707,8 +754,7 @@ fun ConnectionWizard(
                         step = WizardStep.StandardEntry
                     },
                     onPickScan = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        launchCleanQrScan()
                     },
                     onPickEnterCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -927,27 +973,34 @@ fun ConnectionWizard(
     }
 
     if (showQrScanner) {
-        QrPairingScanner(
-            onPairingDetected = { payload ->
-                showQrScanner = false
-                pendingPayload = payload
-                if (payload.relay == null) {
-                    standardApiUrl = payload.serverUrl
-                    standardApiKey = payload.key
-                    standardDashboardUrl = payload.dashboardUrl.orEmpty()
-                    standardError = null
-                    standardSuccess = null
-                }
-                ttlSeconds = defaultTtlSeconds(
-                    qrTtlSeconds = payload.relay?.ttlSeconds,
-                    transportHint = payload.relay?.transportHint,
-                    isTailscaleDetected = isTailscaleDetected,
-                )
-                step = WizardStep.Confirm
-            },
-            onDismiss = { showQrScanner = false },
-            relayOnly = relayScopedFlow,
-        )
+        key(qrScanGeneration) {
+            QrPairingScanner(
+                onPairingDetected = { payload ->
+                    val fingerprint = pairingPayloadFingerprint(payload)
+                    android.util.Log.i("ConnectionWizard", "QR accepted: $fingerprint")
+                    showQrScanner = false
+                    pendingPayload = payload
+                    if (payload.relay == null) {
+                        standardApiUrl = payload.serverUrl
+                        standardApiKey = payload.key
+                        standardDashboardUrl = payload.dashboardUrl.orEmpty()
+                        standardError = null
+                        standardSuccess = null
+                    }
+                    ttlSeconds = defaultTtlSeconds(
+                        qrTtlSeconds = payload.relay?.ttlSeconds,
+                        transportHint = payload.relay?.transportHint,
+                        isTailscaleDetected = isTailscaleDetected,
+                    )
+                    step = WizardStep.Confirm
+                },
+                onDismiss = {
+                    showQrScanner = false
+                    step = pairingHome
+                },
+                relayOnly = relayScopedFlow,
+            )
+        }
     }
 
     // Pre-pair duplicate prompt. Renders over whichever wizard step is
@@ -1186,6 +1239,52 @@ internal enum class WizardStep {
 
 internal enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
 
+internal data class QrScanTransactionState(
+    val pendingPayload: HermesPairingPayload?,
+    val pendingManualCode: String?,
+    val hasPendingStandardDraft: Boolean,
+    val hasPendingDashboardDraft: Boolean,
+    val hasDuplicatePrompt: Boolean,
+    val hasStandardSuccess: Boolean,
+    val standardError: String?,
+    val hasDashboardProbeResult: Boolean,
+    val dashboardProbeError: String?,
+    val dashboardSuggestedHostname: String?,
+    val verifyError: String?,
+    val verifyAttempt: Int,
+    val standardApiKey: String,
+    val manualCode: String,
+    val ttlSeconds: Long,
+    val step: WizardStep,
+    val chosenMethod: PairMethod,
+    val generation: Int,
+)
+
+/** Invalidates every transient value that can make a new scan reuse an old confirmation. */
+internal fun resetQrScanTransaction(
+    previous: QrScanTransactionState,
+    pairingHome: WizardStep,
+): QrScanTransactionState = previous.copy(
+    pendingPayload = null,
+    pendingManualCode = null,
+    hasPendingStandardDraft = false,
+    hasPendingDashboardDraft = false,
+    hasDuplicatePrompt = false,
+    hasStandardSuccess = false,
+    standardError = null,
+    hasDashboardProbeResult = false,
+    dashboardProbeError = null,
+    dashboardSuggestedHostname = null,
+    verifyError = null,
+    verifyAttempt = 0,
+    standardApiKey = "",
+    manualCode = "",
+    ttlSeconds = PairingPreferencesDefault,
+    step = pairingHome,
+    chosenMethod = PairMethod.Scan,
+    generation = previous.generation + 1,
+)
+
 private enum class DashboardEntryIntent { Cloud, Server }
 
 private val WizardStepSaver = Saver<WizardStep, String>(
@@ -1233,6 +1332,31 @@ internal fun setupQrDispatch(payload: HermesPairingPayload): SetupQrDispatch = w
     payload.relay != null -> SetupQrDispatch.Relay
     !payload.hasApiServer && !payload.dashboardUrl.isNullOrBlank() -> SetupQrDispatch.Dashboard
     else -> SetupQrDispatch.StandardApi
+}
+
+/** Secret-free evidence that a newly accepted QR replaced the prior scan. */
+internal fun pairingPayloadFingerprint(payload: HermesPairingPayload): String {
+    fun port(url: String?): Int? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        return uri.port.takeIf { it > 0 } ?: when (uri.scheme?.lowercase()) {
+            "https", "wss" -> 443
+            "http", "ws" -> 80
+            else -> null
+        }
+    }
+    fun safeRole(role: String): String = when (role.lowercase()) {
+        "https", "tailscale", "lan" -> role.lowercase()
+        else -> "other"
+    }
+    val endpoints = payload.endpoints.orEmpty()
+    return buildString {
+        append("hermes=").append(payload.hermes)
+        append(" relay=").append(payload.relay != null)
+        append(" api=").append(payload.hasApiServer)
+        append(" roles=").append(endpoints.joinToString(",") { safeRole(it.role) })
+        append(" dashboardPorts=").append(endpoints.joinToString(",") { port(it.dashboard?.url).toString() })
+        append(" relayPorts=").append(endpoints.joinToString(",") { port(it.relay?.url).toString() })
+    }
 }
 
 /** Wizard motion follows the shared OS-animation and touch-exploration policy. */
