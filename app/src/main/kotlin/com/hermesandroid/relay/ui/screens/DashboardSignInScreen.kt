@@ -100,6 +100,7 @@ private const val NATIVE_DASHBOARD_AUTH_LOG_TAG = "HermesNativeAuth"
 fun DashboardSignInScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onAuthenticationReady: (suspend () -> Result<Unit>)? = null,
     onAuthenticated: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -127,6 +128,7 @@ fun DashboardSignInScreen(
     }
     var nativeSignInJob by remember(dashboardUrl, connectionId) { mutableStateOf<Job?>(null) }
     var authenticationComplete by remember { mutableStateOf(false) }
+    var finishingAuthentication by remember { mutableStateOf(false) }
 
     val cookieStoreFactory = remember(appContext, connectionId) {
         {
@@ -159,11 +161,29 @@ fun DashboardSignInScreen(
     }
 
     fun finishAuthentication() {
+        if (authenticationComplete || finishingAuthentication) return
+        finishingAuthentication = true
         scope.launch {
-            invalidateDashboardManageCache(appContext.cacheDir)
-            connectionViewModel.refreshStandardVoice()
-            connectionViewModel.refreshDashboardProfiles()
-            authenticationComplete = true
+            try {
+                invalidateDashboardManageCache(appContext.cacheDir)
+                connectionViewModel.refreshStandardVoice()
+                connectionViewModel.refreshDashboardProfiles()
+                val ready = onAuthenticationReady?.invoke() ?: Result.success(Unit)
+                ready.fold(
+                    onSuccess = {
+                        actionMessage = null
+                        actionIsError = false
+                        authenticationComplete = true
+                    },
+                    onFailure = { error ->
+                        actionMessage = error.message
+                            ?: resources.getString(R.string.cw_pairing_did_not_complete)
+                        actionIsError = true
+                    },
+                )
+            } finally {
+                finishingAuthentication = false
+            }
         }
     }
 
@@ -570,8 +590,16 @@ fun DashboardSignInScreen(
         ) {
             if (authenticationComplete) {
                 DashboardAuthenticationComplete(onContinue = onAuthenticated)
-            } else if (loading) {
-                CircularProgressIndicator()
+            } else if (loading || finishingAuthentication) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator()
+                    if (finishingAuthentication) {
+                        Text(stringResource(R.string.cw_negotiating_relay))
+                    }
+                }
             } else {
                 DashboardSignInForm(
                     dashboardUrl = dashboardUrl,

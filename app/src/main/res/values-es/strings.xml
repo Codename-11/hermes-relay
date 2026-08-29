@@ -3250,7 +3250,7 @@
     <string name="active_section_choose_how_phone_reaches_named">Cómo accede este teléfono a %1$s</string>
     <string name="active_section_dashboard_home_lan">Dashboard · Red LAN doméstica</string>
     <string name="active_section_scan_relay_qr">Escanear QR de Relay</string>
-    <string name="active_section_other_relay_methods">Otros métodos de vinculación</string>
+    <string name="active_section_direct_relay_endpoint">Endpoint directo de Relay</string>
     <string name="endpoints_tailscale_setup_hint">Tailscale debe estar conectado en ambos dispositivos y Hermes Dashboard debe ser accesible por el puerto 9119.</string>
     <string name="endpoints_setup_help">Ayuda para configurar Tailscale</string>
     <string name="voice_settings_provider_desc">Dónde se genera la voz. Las opciones disponibles vienen de este host Hermes y sus proveedores instalados.</string>

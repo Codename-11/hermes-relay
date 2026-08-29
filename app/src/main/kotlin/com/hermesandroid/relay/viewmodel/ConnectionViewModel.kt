@@ -488,6 +488,70 @@ internal data class PendingConnectionDraft(
     var label: String? = null,
 )
 
+/**
+ * One Dashboard-gated Relay pairing that must not consume its one-time code
+ * until the Dashboard session can mint ingress WebSocket tickets.
+ *
+ * This is intentionally an ordinary class rather than a data class: its
+ * default string representation cannot accidentally include the pairing code.
+ */
+internal class DeferredDashboardRelayPairing(
+    val connectionId: String,
+    val payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
+    val ttlSeconds: Long,
+    val preserveStandardConfig: Boolean,
+)
+
+/** A deferred secret may resume only in the exact connection context that staged it. */
+internal fun deferredDashboardRelayPairingOwnsActiveConnection(
+    deferredConnectionId: String,
+    activeConnectionId: String?,
+): Boolean = activeConnectionId != null && deferredConnectionId == activeConnectionId
+
+/** Existing gateways keep their standard routes; a transient first-setup row does not. */
+internal fun shouldPreserveStandardConfigForDeferredPairing(
+    pendingDraftId: String?,
+    ownerConnection: Connection?,
+): Boolean = pendingDraftId == null && ownerConnection != null &&
+    (ownerConnection.label != ConnectionViewModel.PLACEHOLDER_LABEL || ownerConnection.pairedAt != null)
+
+/** Materialize only non-secret QR topology so sign-in targets the staged gateway. */
+internal fun connectionWithDeferredDashboardRelayTopology(
+    current: Connection,
+    payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
+): Connection {
+    val dashboardUrl = payload.dashboardUrl
+        ?.trim()
+        ?.trimEnd('/')
+        ?.takeIf(String::isNotBlank)
+        ?: current.dashboardUrl
+    val relayUrl = payload.relay?.url?.trim().orEmpty().ifBlank { current.relayUrl }
+    val routes = Connection.reconcileDashboardRoutes(
+        dashboardUrl = dashboardUrl,
+        candidates = payload.endpoints.orEmpty().ifEmpty { current.routeCandidates },
+    )
+    val label = if (current.label == ConnectionViewModel.PLACEHOLDER_LABEL) {
+        dashboardUrl?.let(Connection::extractDefaultLabel) ?: current.label
+    } else {
+        current.label
+    }
+    return current.copy(
+        label = label,
+        relayUrl = relayUrl,
+        dashboardUrl = dashboardUrl,
+        authenticatedDashboardOrigin = current.authenticatedDashboardOrigin
+            ?.takeIf { authenticated ->
+                dashboardUrl?.let { configured ->
+                    authenticated.trimEnd('/').equals(configured, ignoreCase = true)
+                } == true
+            },
+        routeCandidates = routes,
+        preferredRouteRole = current.preferredRouteRole?.takeIf { preferred ->
+            routes.any { it.role.equals(preferred, ignoreCase = true) }
+        },
+    )
+}
+
 /** Keep Dashboard-only setup attached to the Add-gateway draft. */
 internal fun materializeDashboardConnectionDraft(
     draft: PendingConnectionDraft,
@@ -770,6 +834,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // while still surfacing a tap-to-retry affordance when the
         // reconnect genuinely fails (server down, bad network).
         private const val RELAY_RECONNECT_GRACE_MS = 5_000L
+        private const val DASHBOARD_RELAY_PAIR_RESUME_TIMEOUT_MS = 15_000L
+        private const val DASHBOARD_RELAY_PAIR_METADATA_TIMEOUT_MS = 2_000L
 
         // A brief switch-away (glance at another app) doesn't need the full
         // cache-clearing re-probe [revalidateOnResume] normally does — the
@@ -3673,6 +3739,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private var pendingConnectionDraft: PendingConnectionDraft? = null
     private val _connectionDraftId = MutableStateFlow<String?>(null)
     val connectionDraftId: StateFlow<String?> = _connectionDraftId.asStateFlow()
+    private val deferredDashboardRelayPairingMutex = Mutex()
+    private val deferredDashboardRelayResumeMutex = Mutex()
+    private val deferredDashboardRelayPairings =
+        mutableMapOf<String, DeferredDashboardRelayPairing>()
 
     /**
      * @param preAllocatedId when non-null, use this id for the transient draft
@@ -3857,6 +3927,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * the "real connection" case.
      */
     suspend fun discardPlaceholderConnection(connectionId: String) {
+        deferredDashboardRelayPairingMutex.withLock {
+            deferredDashboardRelayPairings.remove(connectionId)
+        }
         val draft = pendingConnectionDraft
         if (draft?.id == connectionId) {
             authManager.clearSession()
@@ -5437,6 +5510,182 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             HealthStatus.Unreachable
         }
         return result.map { Unit }
+    }
+
+    /**
+     * Hold an ingress pairing until Dashboard authentication is complete.
+     *
+     * Dashboard ingress cannot mint its WebSocket admission ticket before the
+     * Dashboard session exists. Applying the one-time Relay code here would
+     * consume or strand it on a guaranteed unauthenticated dial, so this method
+     * records only in memory. A pending Add-gateway draft also keeps the payload
+     * so [commitConnectionDraft] can materialize the exact Dashboard/Relay
+     * routes before the sign-in destination is opened.
+     */
+    suspend fun stageDashboardIngressPairingForSignIn(
+        payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
+        ttlSeconds: Long,
+    ) {
+        val relay = payload.relay
+            ?: throw IllegalArgumentException("Dashboard ingress pairing has no Relay block")
+        if (relay.code.isBlank()) {
+            throw IllegalArgumentException("Dashboard ingress pairing code is empty")
+        }
+        if (dashboardOriginForRelayIngress(payload.dashboardUrl, relay.url) == null) {
+            throw IllegalArgumentException("Relay route does not belong to the supplied Dashboard origin")
+        }
+
+        val staged = addConnectionMutex.withLock {
+            val draft = pendingConnectionDraft
+            val ownerId = connectionSetupOwnerId(
+                pendingDraftId = draft?.id,
+                activeConnectionId = connectionStore.activeConnectionId.value,
+            ) ?: throw IllegalStateException("No connection owns Dashboard ingress setup")
+            val ownerConnection = connectionStore.connections.value
+                .firstOrNull { it.id == ownerId }
+            if (draft == null && ownerConnection == null) {
+                throw IllegalStateException("Dashboard ingress setup owner is missing")
+            }
+            if (draft != null) {
+                // Preserve the complete non-secret route topology through the
+                // draft commit. The one-time code remains only in the deferred
+                // in-memory record below and is not handed to AuthManager yet.
+                draft.pairingPayload = payload
+            } else if (ownerConnection != null) {
+                val next = connectionWithDeferredDashboardRelayTopology(ownerConnection, payload)
+                connectionStore.updateConnection(next)
+                if (dashboardCredentialsMustBeRetired(ownerConnection, next)) {
+                    upstreamTransport.clearDashboardAuthentication(ownerId)
+                }
+            }
+            DeferredDashboardRelayPairing(
+                connectionId = ownerId,
+                payload = payload,
+                ttlSeconds = ttlSeconds,
+                preserveStandardConfig = shouldPreserveStandardConfigForDeferredPairing(
+                    pendingDraftId = draft?.id,
+                    ownerConnection = ownerConnection,
+                ),
+            )
+        }
+        deferredDashboardRelayPairingMutex.withLock {
+            deferredDashboardRelayPairings[staged.connectionId] = staged
+        }
+    }
+
+    /**
+     * Resume the exact active connection's deferred Relay pair after Dashboard
+     * authentication has proven that ingress tickets can be minted.
+     *
+     * [applyPairingPayload] synchronously installs the one-time code, then its
+     * normal connection path requests a fresh Dashboard WS ticket for the dial.
+     * The deferred record survives admission failures and timeouts so the sign-
+     * in screen can report the error and retry; only a fenced Paired result
+     * removes it.
+     */
+    suspend fun resumeDeferredDashboardRelayPairing(): Result<Unit> =
+        deferredDashboardRelayResumeMutex.withLock {
+            resumeDeferredDashboardRelayPairingLocked()
+        }
+
+    private suspend fun resumeDeferredDashboardRelayPairingLocked(): Result<Unit> {
+        val ownerId = connectionStore.activeConnectionId.value
+            ?: return Result.failure(IllegalStateException("No active connection owns deferred pairing"))
+        val (deferred, hasOtherDeferredOwner) = deferredDashboardRelayPairingMutex.withLock {
+            deferredDashboardRelayPairings[ownerId] to deferredDashboardRelayPairings.isNotEmpty()
+        }
+        if (deferred == null) {
+            return if (hasOtherDeferredOwner) {
+                Result.failure(IllegalStateException("Deferred pairing belongs to another connection"))
+            } else {
+                val active = connectionStore.connections.value.firstOrNull { it.id == ownerId }
+                if (
+                    active != null &&
+                    isDashboardRelayIngressUrl(active.relayUrl) &&
+                    authManager.authState.value !is AuthState.Paired
+                ) {
+                    Result.failure(
+                        IllegalStateException(
+                            "Relay pairing setup expired. Scan the gateway QR again.",
+                        ),
+                    )
+                } else {
+                    Result.success(Unit)
+                }
+            }
+        }
+        if (!deferredDashboardRelayPairingOwnsActiveConnection(
+                deferredConnectionId = deferred.connectionId,
+                activeConnectionId = connectionStore.activeConnectionId.value,
+            )
+        ) {
+            return Result.failure(IllegalStateException("Deferred pairing owner is no longer active"))
+        }
+        if (connectionStore.connections.value.none { it.id == ownerId }) {
+            return Result.failure(IllegalStateException("Deferred pairing owner is missing"))
+        }
+        val attemptAuthManager = authManager
+
+        applyPairingPayload(
+            payload = deferred.payload,
+            ttlSeconds = deferred.ttlSeconds,
+            preserveStandardConfig = deferred.preserveStandardConfig,
+        )
+
+        val terminal = withTimeoutOrNull(DASHBOARD_RELAY_PAIR_RESUME_TIMEOUT_MS) {
+            attemptAuthManager.authState.first {
+                it is AuthState.Paired || it is AuthState.Failed
+            }
+        } ?: return Result.failure(IllegalStateException("Relay pairing timed out"))
+
+        if (terminal is AuthState.Failed) {
+            return Result.failure(IllegalStateException(terminal.reason))
+        }
+        if (
+            authManager !== attemptAuthManager ||
+            !deferredDashboardRelayPairingOwnsActiveConnection(
+                deferredConnectionId = deferred.connectionId,
+                activeConnectionId = connectionStore.activeConnectionId.value,
+            )
+        ) {
+            return Result.failure(IllegalStateException("Connection changed while Relay pairing completed"))
+        }
+
+        val paired = withTimeoutOrNull(DASHBOARD_RELAY_PAIR_METADATA_TIMEOUT_MS) {
+            attemptAuthManager.currentPairedSession.first { it != null }
+        } ?: return Result.failure(IllegalStateException("Relay pairing metadata did not settle"))
+        val current = connectionStore.connections.value
+            .firstOrNull { it.id == ownerId }
+            ?: return Result.failure(IllegalStateException("Paired connection disappeared"))
+        if (current.pairedAt == null) {
+            connectionStore.markPaired(
+                connectionId = ownerId,
+                pairedAtMillis = System.currentTimeMillis(),
+                transportHint = paired.transportHint,
+                expiresAtMillis = paired.expiresAt?.let { it * 1000L },
+            )
+        }
+        if (current.label == PLACEHOLDER_LABEL) {
+            val labelSource = deferred.payload.dashboardUrl
+                ?.takeIf(String::isNotBlank)
+                ?: deferred.payload.relay?.url
+            if (!labelSource.isNullOrBlank()) {
+                connectionStore.connections.value
+                    .firstOrNull { it.id == ownerId }
+                    ?.let {
+                        connectionStore.updateConnection(
+                            it.copy(label = Connection.extractDefaultLabel(labelSource)),
+                        )
+                    }
+            }
+        }
+        deferredDashboardRelayPairingMutex.withLock {
+            if (deferredDashboardRelayPairings[ownerId] === deferred) {
+                deferredDashboardRelayPairings.remove(ownerId)
+            }
+        }
+        revalidate()
+        return Result.success(Unit)
     }
 
     // --- Unified pairing apply ----------------------------------------------

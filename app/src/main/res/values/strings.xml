@@ -1061,7 +1061,7 @@
     <string name="active_section_relay_optional_bridge">Optional bridge features and remote access</string>
     <string name="active_section_configure_relay">Configure Relay</string>
     <string name="active_section_scan_relay_qr">Scan Relay QR</string>
-    <string name="active_section_other_relay_methods">Other pairing methods</string>
+    <string name="active_section_direct_relay_endpoint">Direct Relay endpoint</string>
     <string name="active_section_pair_device_using_code">Pair this device using a code from the server.</string>
     <string name="active_section_enter_pairing_code">Enter pairing code</string>
     <string name="active_section_done">Done</string>

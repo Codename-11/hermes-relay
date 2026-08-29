@@ -932,7 +932,7 @@
     <string name="active_section_relay_optional_bridge">Дополнительные функции моста и удаленный доступ</string>
     <string name="active_section_configure_relay">Настроить плагин Relay</string>
     <string name="active_section_scan_relay_qr">Сканировать QR-код Relay</string>
-    <string name="active_section_other_relay_methods">Другие методы сопряжения</string>
+    <string name="active_section_direct_relay_endpoint">Прямой адрес Relay</string>
     <string name="active_section_pair_device_using_code">Сопрячьте это устройство с помощью кода с сервера.</string>
     <string name="active_section_enter_pairing_code">Введите код сопряжения</string>
     <string name="active_section_done">Готово</string>

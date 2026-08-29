@@ -1,6 +1,5 @@
 package com.hermesandroid.relay.ui.components
 
-import android.content.ClipData
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -15,14 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Edit
@@ -62,15 +59,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -93,17 +87,12 @@ import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
-import com.hermesandroid.relay.ui.LocalSnackbarHost
-import com.hermesandroid.relay.ui.UiMessageBus
-import com.hermesandroid.relay.ui.showHumanError
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import java.net.URI
 
 /**
@@ -114,8 +103,8 @@ import java.net.URI
  *
  * The per-card action row (Reconnect/Rename/Re-pair/Revoke/Remove) stays
  * on `ConnectionCard` itself. Everything below the first divider — status
- * rows, endpoints expander, advanced expander (manual URL, insecure
- * toggle, manual pairing code), and the security-posture strip — is
+ * rows, endpoints expander, compatibility overrides, and the
+ * security-posture strip — is
  * extracted here so `ConnectionsSettingsScreen` stays focused on the list
  * layout and this file owns the active-card deep content.
  *
@@ -623,12 +612,15 @@ private fun CapabilityRow(
 }
 
 /**
- * Advanced tab content — three directly visible subsections:
- *  - Manual URL configuration (API URL + key + Save & Test,
- *    Relay URL + Save & Test + Disconnect)
- *  - Allow-insecure-connections toggle (with first-enable Ack dialog)
- *  - Manual pairing code fallback (3-step flow with in-flight Connect
- *    watcher + snackbar feedback)
+ * Advanced compatibility and override content:
+ *  - optional direct API fallback URL/key
+ *  - explicit direct Relay endpoint override/test
+ *  - allow-insecure-connections development toggle
+ *
+ * Relay pairing is intentionally not implemented inline here. Every QR,
+ * enter-code, and show-code method routes through [onPairRelay], which opens
+ * the shared connection-scoped Pair flow and therefore keeps one pairing
+ * state machine for setup, sign-in, TTL/grants, retries, and draft ownership.
  *
  * [onInsecureAckRequested] opens the `InsecureConnectionAckDialog` at
  * screen scope; this composable never owns it directly so the dialog
@@ -646,7 +638,6 @@ fun ActiveCardAdvancedSection(
     var apiEditorOpen by rememberSaveable { mutableStateOf(false) }
     var apiHelpOpen by rememberSaveable { mutableStateOf(false) }
     var relayEditorOpen by rememberSaveable { mutableStateOf(false) }
-    var pairingOpen by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -748,10 +739,10 @@ fun ActiveCardAdvancedSection(
         Button(onClick = onPairRelay) {
             Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.size(8.dp))
-            Text(stringResource(R.string.active_section_scan_relay_qr))
+            Text(stringResource(R.string.detail_pair_relay))
         }
         TextButton(onClick = { relayEditorOpen = !relayEditorOpen }) {
-            Text(stringResource(R.string.active_section_other_relay_methods))
+            Text(stringResource(R.string.active_section_direct_relay_endpoint))
         }
         if (relayEditorOpen) {
             Surface(
@@ -779,33 +770,6 @@ fun ActiveCardAdvancedSection(
             style = MaterialTheme.typography.titleMedium,
         )
         InsecureToggleSubsection(connectionViewModel, onInsecureAckRequested)
-
-        HorizontalDivider()
-        Text(
-            text = stringResource(R.string.active_section_manual_pairing),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            text = stringResource(R.string.active_section_pair_device_using_code),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedButton(onClick = { pairingOpen = !pairingOpen }) {
-            Icon(Icons.Filled.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.size(8.dp))
-            Text(stringResource(R.string.active_section_enter_pairing_code))
-        }
-        if (pairingOpen) {
-            Surface(
-                color = Color.Transparent,
-                shape = appearanceRoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    ManualPairingCodeSubsection(connectionViewModel)
-                }
-            }
-        }
     }
 }
 
@@ -1211,246 +1175,6 @@ private fun InsecureToggleSubsection(
                     connectionViewModel.setInsecureMode(enabled)
                 }
             },
-        )
-    }
-}
-
-/**
- * Manual pairing code subsection — the 3-step fallback flow for when
- * the QR scanner isn't usable (no camera, headless host, bad lighting).
- *
- *  1. Copy the phone-generated code (with Refresh to regenerate)
- *  2. Run `hermes pair --register-code <code>` on the host
- *  3. Tap Connect — with a 15s auth watcher that surfaces success /
- *     failure through the global snackbar host
- *
- * Mirrors the legacy `ConnectionSettingsScreen` Card 3 flow verbatim
- * since it's already battle-tested. The top-level "Connect" button on
- * this card requires a relay URL — if the user hasn't set one in the
- * Manual URL subsection above, the button is disabled and an inline
- * hint points them there.
- */
-@Composable
-private fun ManualPairingCodeSubsection(
-    connectionViewModel: ConnectionViewModel,
-) {
-    val pairingCode by connectionViewModel.pairingCode.collectAsState()
-    val relayUrl by connectionViewModel.relayUrl.collectAsState()
-
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
-    val snackbarHost = LocalSnackbarHost.current
-
-    // Connect state + auth-watcher attempt counter. Keyed counter so
-    // retrying cancels any in-flight watcher and restarts with a fresh
-    // 15s budget — matches the legacy Card 3 behavior byte-for-byte.
-    var connectInProgress by remember { mutableStateOf(false) }
-    var connectAttempt by remember { mutableStateOf(0) }
-    var explainerExpanded by rememberSaveable { mutableStateOf(false) }
-
-    // Pre-resolve strings for non-composable contexts (LaunchedEffect, UiMessageBus)
-    val pairedSuccessfullyToast = stringResource(R.string.active_section_paired_successfully)
-    val noResponseFromRelayToast = stringResource(R.string.active_section_no_response_from_relay)
-    val pairingCodeCopiedToast = stringResource(R.string.active_section_pairing_code_copied)
-    val commandCopiedToast = stringResource(R.string.active_section_command_copied)
-    val hermesPairCommandLabel = stringResource(R.string.active_section_hermes_pair_command)
-    val copyPairingCodeDesc = stringResource(R.string.conn_info_copy_pairing_code)
-    val generateNewCodeDesc = stringResource(R.string.active_section_generate_new_code)
-    val copyHermesPairCommandDesc = stringResource(R.string.active_section_copy_hermes_pair_command)
-    val connectingText = stringResource(R.string.active_section_connecting)
-    val connectText = stringResource(R.string.active_section_connect)
-    val relayUrlNotSetText = stringResource(R.string.active_section_relay_url_not_set)
-    val hideExplanationText = stringResource(R.string.active_section_hide_explanation)
-    val howDoesThisWorkText = stringResource(R.string.active_section_how_does_this_work)
-    val manualPairingExplanation = stringResource(R.string.active_section_manual_pairing_explanation)
-    val pairingCodeLabel = stringResource(R.string.conn_info_pairing_code)
-
-    LaunchedEffect(connectAttempt) {
-        if (connectAttempt == 0) return@LaunchedEffect
-        try {
-            val terminal = kotlinx.coroutines.withTimeout(15_000) {
-                connectionViewModel.authState
-                    .first { it is AuthState.Paired || it is AuthState.Failed }
-            }
-            connectInProgress = false
-            when (terminal) {
-                is AuthState.Paired -> UiMessageBus.success(pairedSuccessfullyToast)
-                is AuthState.Failed -> {
-                    val human = classifyError(
-                        IllegalStateException(terminal.reason),
-                        context = "pair",
-                    )
-                    snackbarHost.showHumanError(human)
-                }
-                else -> Unit
-            }
-        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            connectInProgress = false
-            val human = classifyError(
-                java.io.IOException(noResponseFromRelayToast),
-                context = "pair",
-            )
-            snackbarHost.showHumanError(human)
-        } catch (e: Exception) {
-            connectInProgress = false
-            snackbarHost.showHumanError(classifyError(e, context = "pair"))
-        }
-    }
-
-    // Pre-resolve other UI strings
-    val manualPairingCodeTitle = stringResource(R.string.active_section_manual_pairing_code_title)
-    val manualPairingCodeDesc = stringResource(R.string.active_section_manual_pairing_code_desc)
-    val step1CopyCode = stringResource(R.string.active_section_step_1_copy_code)
-    val step2RunCommand = stringResource(R.string.active_section_step_2_run_command)
-    val step3TapConnect = stringResource(R.string.active_section_step_3_tap_connect)
-
-    Text(
-        text = manualPairingCodeTitle,
-        style = MaterialTheme.typography.titleSmall,
-    )
-    Text(
-        text = manualPairingCodeDesc,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-
-    // Step 1 — display + copy + regenerate
-    ManualPairStep(number = 1, title = step1CopyCode) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = pairingCode,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = MaterialTheme.typography.headlineMedium.fontSize * 0.15,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = {
-                scope.launch {
-                    clipboard.setClipEntry(
-                        ClipEntry(ClipData.newPlainText(pairingCodeLabel, pairingCode)),
-                    )
-                    UiMessageBus.info(pairingCodeCopiedToast)
-                }
-            }) {
-                Icon(
-                    imageVector = Icons.Filled.ContentCopy,
-                    contentDescription = copyPairingCodeDesc,
-                )
-            }
-            IconButton(onClick = { connectionViewModel.regeneratePairingCode() }) {
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = generateNewCodeDesc,
-                )
-            }
-        }
-    }
-
-    // Step 2 — host command
-    ManualPairStep(number = 2, title = step2RunCommand) {
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = appearanceRoundedCornerShape(6.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    text = "hermes pair --register-code $pairingCode",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(
-                    onClick = {
-                        val cmd = "hermes pair --register-code $pairingCode"
-                        scope.launch {
-                            clipboard.setClipEntry(
-                                ClipEntry(ClipData.newPlainText(hermesPairCommandLabel, cmd)),
-                            )
-                            UiMessageBus.info(commandCopiedToast)
-                        }
-                    },
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = copyHermesPairCommandDesc,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-    }
-
-    // Step 3 — Connect button + relay-URL prerequisite check
-    ManualPairStep(number = 3, title = step3TapConnect) {
-        val canConnect = !connectInProgress &&
-            relayUrl.isNotBlank() &&
-            pairingCode.isNotBlank()
-        Button(
-            onClick = {
-                connectInProgress = true
-                connectAttempt += 1
-                // Atomic apply-code-and-reset avoids races between the
-                // stale session's code-regeneration and this fresh
-                // authenticate()'s mirror-write. Then kick a disconnect
-                // + connect so the WSS handshake uses the new code.
-                connectionViewModel.authManager
-                    .applyServerIssuedCodeAndReset(pairingCode)
-                connectionViewModel.disconnectRelay()
-                connectionViewModel.connectRelay(relayUrl)
-            },
-            enabled = canConnect,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (connectInProgress) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(connectingText)
-            } else {
-                Text(connectText)
-            }
-        }
-        if (relayUrl.isBlank()) {
-            Text(
-                text = relayUrlNotSetText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-
-    HorizontalDivider()
-
-    TextButton(
-        onClick = { explainerExpanded = !explainerExpanded },
-        contentPadding = PaddingValues(horizontal = 0.dp),
-    ) {
-        Text(
-            text = if (explainerExpanded) hideExplanationText else howDoesThisWorkText,
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-    if (explainerExpanded) {
-        Text(
-            text = manualPairingExplanation,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -2420,51 +2144,3 @@ internal fun hasConfiguredTailscaleRoute(
     primaryEndpointUrl: String,
 ): Boolean = endpoints.any { it.role.equals("tailscale", ignoreCase = true) } ||
     Connection.inferRouteRole(primaryEndpointUrl) == "tailscale"
-
-/**
- * Numbered step row for the Manual pairing code fallback. Tightly
- * coupled to its Card 3 layout — step badge sizing + content shape —
- * so it stays private-ish here rather than promoted to a shared
- * component. Lift to `ui.components` if a second caller appears.
- */
-@Composable
-private fun ManualPairStep(
-    number: Int,
-    title: String,
-    content: @Composable () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Surface(
-            color = MaterialTheme.colorScheme.primary,
-            shape = RoundedCornerShape(percent = 50),
-            modifier = Modifier.size(24.dp),
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Text(
-                    text = number.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            content()
-        }
-    }
-}

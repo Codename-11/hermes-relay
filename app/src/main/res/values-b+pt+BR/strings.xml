@@ -3339,7 +3339,7 @@
     <string name="active_section_where_api_key">Onde obtenho essa chave?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY é criada no seu servidor Hermes; este aplicativo não fornece a chave. Configure-a somente ao ativar o servidor de API opcional, que exige uma chave utilizável, e insira aqui o mesmo valor.</string>
     <string name="active_section_scan_relay_qr">Escanear QR do Relay</string>
-    <string name="active_section_other_relay_methods">Outros métodos de pareamento</string>
+    <string name="active_section_direct_relay_endpoint">Endpoint direto do Relay</string>
     <string name="cw_pair_relay_for">Emparelhar Relay com %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Adicione a extensão opcional Relay a esta conexão Hermes salva. Isso não adiciona nem substitui um servidor.</string>
     <string name="cw_current_connection">Conexão atual</string>

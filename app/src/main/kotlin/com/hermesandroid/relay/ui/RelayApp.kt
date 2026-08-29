@@ -263,6 +263,11 @@ internal fun shouldCommitPairDraftBeforeDashboardSignIn(
     draftConnectionId: String?,
 ): Boolean = connectionId != null && connectionId == draftConnectionId
 
+/** Pair-origin sign-in must finish the staged Dashboard-ingress Relay handshake. */
+internal fun shouldResumePairingAfterDashboardAuthentication(source: String): Boolean =
+    source == Screen.DashboardSignIn.SOURCE_PAIR ||
+        source == Screen.DashboardSignIn.SOURCE_ONBOARDING
+
 /** A replaced/canceled attempt must not evict the newer job from the route map. */
 internal fun isCurrentPairPreparation(mappedJob: Any?, completingJob: Any): Boolean =
     mappedJob === completingJob
@@ -2590,6 +2595,13 @@ fun RelayApp() {
                     DashboardSignInScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
+                        onAuthenticationReady = if (
+                            shouldResumePairingAfterDashboardAuthentication(source)
+                        ) {
+                            { connectionViewModel.resumeDeferredDashboardRelayPairing() }
+                        } else {
+                            null
+                        },
                         onAuthenticated = {
                             when (source) {
                                 Screen.DashboardSignIn.SOURCE_ONBOARDING -> {

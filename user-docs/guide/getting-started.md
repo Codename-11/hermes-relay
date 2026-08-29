@@ -457,11 +457,11 @@ back to API-server SSE when it is not.
 4. Optional: expand **Advanced** to add an API fallback URL/key or Relay route.
 5. Tap **Connect**.
 
-**After onboarding:** open **Settings → Connections**. Each Hermes host is a card;
-the active card expands inline to show status rows, route details, and an
-**Advanced** section with manual API URL/key config, Relay URL override,
-insecure-mode toggle, and the manual Relay pairing-code fallback. The per-card
-**Pair Relay** / **Re-pair** button scans a Relay QR when you need power tools.
+**After onboarding:** open **Settings → Gateways** and select a Hermes host.
+**Advanced** contains only compatibility controls: optional direct API URL/key,
+an explicit direct Relay endpoint override, and the insecure-development toggle.
+Use **Pair Relay** / **Re-pair** for the shared QR, enter-code, or show-code flow.
+Edit the normal Dashboard/Gateway address and network paths under **Routes**.
 
 For Vanilla Hermes setup, use discovery or enter the Dashboard/Gateway address.
 If a QR includes a Relay block, Android shows the Relay pairing confirmation and

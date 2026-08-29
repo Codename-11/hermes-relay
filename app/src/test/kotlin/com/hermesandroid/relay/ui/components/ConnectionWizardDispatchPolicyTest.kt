@@ -52,6 +52,50 @@ class ConnectionWizardDispatchPolicyTest {
     }
 
     @Test
+    fun dashboardIngressRelaySignsInBeforePairing() {
+        val payload = HermesPairingPayload(
+            dashboardUrl = "https://agent.example.com/hermes",
+            relay = RelayPairing(
+                url = "wss://agent.example.com/hermes/api/plugins/hermes-relay/transport",
+                code = "ABC123",
+            ),
+        )
+
+        assertEquals(SetupQrDispatch.Relay, setupQrDispatch(payload))
+        assertEquals(
+            RelayPairStartOrder.DashboardSignInFirst,
+            relayPairStartOrder(payload),
+        )
+    }
+
+    @Test
+    fun directRelayPairsBeforeDashboardSignIn() {
+        val payload = HermesPairingPayload(
+            dashboardUrl = "https://agent.example.com/hermes",
+            relay = RelayPairing(
+                url = "wss://agent.example.com:8767",
+                code = "ABC123",
+            ),
+        )
+
+        assertEquals(SetupQrDispatch.Relay, setupQrDispatch(payload))
+        assertEquals(RelayPairStartOrder.PairFirst, relayPairStartOrder(payload))
+        assertTrue(shouldOfferDashboardSignInAfterRelayPair(payload))
+    }
+
+    @Test
+    fun relayOnlyPairDoesNotOpenDashboardSignIn() {
+        val payload = HermesPairingPayload(
+            relay = RelayPairing(
+                url = "wss://agent.example.com:8767",
+                code = "ABC123",
+            ),
+        )
+
+        assertFalse(shouldOfferDashboardSignInAfterRelayPair(payload))
+    }
+
+    @Test
     fun acceptedQrFingerprintProvesIngressOnlyRoutesWithoutSecrets() {
         val payload = HermesPairingPayload(
             hermes = 3,
@@ -136,7 +180,7 @@ class ConnectionWizardDispatchPolicyTest {
             generation = 7,
         )
 
-        val reset = resetQrScanTransaction(previous, WizardStep.Method)
+        val reset = resetQrScanTransaction(previous, WizardStep.Nearby)
 
         assertEquals(null, reset.pendingPayload)
         assertEquals(null, reset.pendingManualCode)
@@ -153,7 +197,7 @@ class ConnectionWizardDispatchPolicyTest {
         assertEquals("", reset.standardApiKey)
         assertEquals("", reset.manualCode)
         assertEquals(com.hermesandroid.relay.data.PairingPreferences.DEFAULT_TTL_SECONDS, reset.ttlSeconds)
-        assertEquals(WizardStep.Method, reset.step)
+        assertEquals(WizardStep.Nearby, reset.step)
         assertEquals(PairMethod.Scan, reset.chosenMethod)
         assertEquals(8, reset.generation)
     }
@@ -191,7 +235,7 @@ class ConnectionWizardDispatchPolicyTest {
             ),
         )
         assertEquals(
-            WizardStep.Method,
+            WizardStep.Nearby,
             restorableWizardStep(
                 saved = WizardStep.Confirm,
                 method = PairMethod.Scan,

@@ -109,6 +109,7 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.hasHermesReach
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.presentationRouteUrl
 import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.secureLinkServices
@@ -256,7 +257,7 @@ fun ConnectionWizard(
     ) { mutableStateOf(DashboardEntryIntent.Server) }
     var pendingDashboardDraft by remember { mutableStateOf<DashboardConnectionDraft?>(null) }
     val relayScopedFlow = autoStart == "relay"
-    val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Method
+    val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Nearby
 
     // Pre-pair duplicate detection. When the user is about to pair to an
     // API URL that already has a connection in the store, we stop the
@@ -483,9 +484,16 @@ fun ConnectionWizard(
                 is AuthState.Paired -> {
                     android.util.Log.i(
                         "ConnectionWizard",
-                        "verify[$verifyAttempt] terminal=Paired → onComplete()"
+                        "verify[$verifyAttempt] terminal=Paired"
                     )
-                    onComplete()
+                    if (
+                        pendingPayload?.let(::shouldOfferDashboardSignInAfterRelayPair) == true &&
+                        onManageSignIn != null
+                    ) {
+                        onManageSignIn()
+                    } else {
+                        onComplete()
+                    }
                 }
                 is AuthState.Failed -> {
                     android.util.Log.w(
@@ -748,13 +756,11 @@ fun ConnectionWizard(
                 )
 
                 WizardStep.Method -> MethodStep(
+                    onBack = { step = WizardStep.Nearby },
                     onPickStandard = {
                         chosenMethod = PairMethod.Standard
                         standardError = null
                         step = WizardStep.StandardEntry
-                    },
-                    onPickScan = {
-                        launchCleanQrScan()
                     },
                     onPickEnterCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -765,8 +771,6 @@ fun ConnectionWizard(
                         chosenMethod = PairMethod.ShowCode
                         step = WizardStep.ShowCode
                     },
-                    onSkip = if (showSkip) onCancel else null,
-                    onTryDemo = onTryDemo,
                 )
 
                 WizardStep.StandardEntry -> StandardEntryStep(
@@ -884,6 +888,29 @@ fun ConnectionWizard(
                                                 reorderedPayload.dashboardUrl.orEmpty(),
                                                 reorderedPayload.endpoints,
                                             )
+                                        } else if (
+                                            relayPairStartOrder(reorderedPayload) ==
+                                            RelayPairStartOrder.DashboardSignInFirst
+                                        ) {
+                                            if (onManageSignIn != null) {
+                                                wizardScope.launch {
+                                                    connectionViewModel.ensureActiveConnectionForSetup(
+                                                        apiServerUrl = reorderedPayload.serverUrl,
+                                                        relayUrl = reorderedPayload.relay?.url.orEmpty(),
+                                                        routeCandidates = reorderedPayload.endpoints,
+                                                    )
+                                                    connectionViewModel.stageDashboardIngressPairingForSignIn(
+                                                        reorderedPayload,
+                                                        ttlSeconds,
+                                                    )
+                                                    onManageSignIn()
+                                                }
+                                            } else {
+                                                verifyError = context.getString(
+                                                    R.string.cw_dashboard_sign_in_required,
+                                                )
+                                                step = WizardStep.Verify
+                                            }
                                         } else {
                                             wizardScope.launch {
                                                 connectionViewModel.ensureActiveConnectionForSetup(
@@ -1313,13 +1340,13 @@ internal fun restorableWizardStep(
 ): WizardStep = when {
     saved == WizardStep.DashboardFound && !hasDashboardProbe -> WizardStep.DashboardManual
     saved == WizardStep.Confirm && !hasPayload -> {
-        if (relayScoped) WizardStep.RelayChoice else WizardStep.Method
+        if (relayScoped) WizardStep.RelayChoice else WizardStep.Nearby
     }
     saved == WizardStep.Verify && verifyAttempt == 0 -> when (method) {
         PairMethod.Standard -> WizardStep.StandardEntry
         PairMethod.EnterCode -> WizardStep.ManualEntry
         PairMethod.Scan, PairMethod.ShowCode -> {
-            if (relayScoped) WizardStep.RelayChoice else WizardStep.Method
+            if (relayScoped) WizardStep.RelayChoice else WizardStep.Nearby
         }
     }
     else -> saved
@@ -1333,6 +1360,24 @@ internal fun setupQrDispatch(payload: HermesPairingPayload): SetupQrDispatch = w
     !payload.hasApiServer && !payload.dashboardUrl.isNullOrBlank() -> SetupQrDispatch.Dashboard
     else -> SetupQrDispatch.StandardApi
 }
+
+internal enum class RelayPairStartOrder { DashboardSignInFirst, PairFirst }
+
+/** Dashboard ingress needs Dashboard admission before its Relay socket can open. */
+internal fun relayPairStartOrder(payload: HermesPairingPayload): RelayPairStartOrder =
+    if (
+        !payload.dashboardUrl.isNullOrBlank() &&
+        isDashboardRelayIngressUrl(payload.relay?.url)
+    ) {
+        RelayPairStartOrder.DashboardSignInFirst
+    } else {
+        RelayPairStartOrder.PairFirst
+    }
+
+/** Direct Relay can pair first, but a composite setup still completes Dashboard auth next. */
+internal fun shouldOfferDashboardSignInAfterRelayPair(payload: HermesPairingPayload): Boolean =
+    relayPairStartOrder(payload) == RelayPairStartOrder.PairFirst &&
+        !payload.dashboardUrl.isNullOrBlank()
 
 /** Secret-free evidence that a newly accepted QR replaced the prior scan. */
 internal fun pairingPayloadFingerprint(payload: HermesPairingPayload): String {
@@ -2114,12 +2159,10 @@ private fun RelayChoiceStep(
 
 @Composable
 private fun MethodStep(
+    onBack: () -> Unit,
     onPickStandard: () -> Unit,
-    onPickScan: () -> Unit,
     onPickEnterCode: () -> Unit,
     onPickShowCode: () -> Unit,
-    onSkip: (() -> Unit)?,
-    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -2127,7 +2170,7 @@ private fun MethodStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = stringResource(R.string.cw_connect_to_hermes),
+            text = stringResource(R.string.cw_other_connection_methods),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
@@ -2135,39 +2178,6 @@ private fun MethodStep(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-
-        // Offline "Try the demo" entry point — only surfaced where a first-run
-        // user benefits (onboarding + the Add Gateway screen). Lets a reviewer or
-        // curious user see the app work with zero setup and zero network
-        // before committing to connecting a real server.
-        if (onTryDemo != null) {
-            OutlinedButton(
-                onClick = onTryDemo,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(vertical = 4.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.cw_try_demo),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_try_demo_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                )
-            }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2205,13 +2215,6 @@ private fun MethodStep(
             subtitle = stringResource(R.string.cw_method_hermes_subtitle),
             onClick = onPickStandard,
             isPrimary = true,
-        )
-
-        MethodTile(
-            icon = Icons.Filled.QrCodeScanner,
-            title = stringResource(R.string.cw_method_scan_title),
-            subtitle = stringResource(R.string.cw_method_scan_subtitle),
-            onClick = onPickScan,
         )
 
         HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
@@ -2257,13 +2260,11 @@ private fun MethodStep(
             onClick = onPickShowCode,
         )
 
-        if (onSkip != null) {
-            TextButton(
-                onClick = onSkip,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.cw_skip_for_now))
-            }
+        TextButton(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.cw_back))
         }
     }
 }

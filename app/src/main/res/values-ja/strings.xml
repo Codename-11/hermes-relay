@@ -3556,7 +3556,7 @@
     <string name="active_section_where_api_key">このキーはどこで入手しますか？</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定します。このサーバーには使用可能なキーが必要です。同じ値をここに入力してください。</string>
     <string name="active_section_scan_relay_qr">Relay QR をスキャン</string>
-    <string name="active_section_other_relay_methods">その他のペアリング方法</string>
+    <string name="active_section_direct_relay_endpoint">Relay の直接エンドポイント</string>
     <string name="endpoints_tailscale_setup_hint">両方のデバイスで Tailscale に接続し、Hermes Dashboard がポート 9119 で到達可能である必要があります。</string>
     <string name="endpoints_setup_help">Tailscale セットアップヘルプ</string>
     <string name="voice_settings_provider_desc">音声を生成する場所です。利用可能な選択肢は、この Hermes ホストとインストール済みプロバイダーから取得されます。</string>

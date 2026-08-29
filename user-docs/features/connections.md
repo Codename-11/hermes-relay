@@ -51,9 +51,10 @@ The detail screen is organized into tabs:
   configured. LAN, Tailscale (`100.x` or `.ts.net`), and public Dashboard routes
   can be added and tested without API configuration. Optional API routes are
   only for direct chat fallback on the same networks.
-- **Advanced** — manual Dashboard, API, and Relay endpoints; API credentials;
-  the insecure-connection toggle; and the manual pairing-code fallback. Most
-  people never need this.
+- **Advanced** — optional direct API fallback credentials, an explicit direct
+  Relay endpoint override, and the development-only insecure-connection toggle.
+  Dashboard addresses stay under **Routes**. **Pair Relay** opens the same shared
+  QR / enter-code / show-code flow used everywhere else.
 - **Security** — transport posture, Dashboard authentication, credential storage,
   and **Relay sessions**, where you can review and revoke phones paired with that
   server or sign out of the Dashboard session.
