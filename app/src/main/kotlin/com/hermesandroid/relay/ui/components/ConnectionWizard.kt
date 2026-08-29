@@ -3691,7 +3691,7 @@ private fun ConfirmStep(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = stringResource(R.string.cw_mixed_route_secure, secureLabel, plainLabel),
+                                text = stringResource(R.string.cw_mixed_route_secure, secureLabel),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )

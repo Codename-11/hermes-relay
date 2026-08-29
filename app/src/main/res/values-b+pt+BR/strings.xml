@@ -419,9 +419,6 @@
     <string name="cw_insecure_relay_warning">Este relay usa ws:// sem criptografia — o tráfego não é criptografado.</string>
     <string name="cw_insecure_relay_trust">Continue somente se confiar na rede em qualquer conexão (LAN, Tailscale, VPN).</string>
     <string name="cw_insecure_ack">Entendo que este pareamento envia o tráfego como texto simples — visível para qualquer pessoa na rede.</string>
-    <string name="cw_mixed_route_plain">%1$s usa ws:// sem criptografia — adequado em casa ou no escritório, mas não em Wi-Fi público.</string>
-    <string name="cw_mixed_route_secure">%1$s é criptografada (wss://), e o app a usa automaticamente quando %2$s está inacessível.</string>
-    <string name="cw_mixed_safe">Você está protegido em qualquer rede.</string>
     <string name="cw_connecting_to_hermes">Conectando ao Hermes</string>
     <string name="cw_connecting_detail">Verificando o servidor API, a chave salva e o painel.</string>
     <string name="cw_pairing_title">Pareando…</string>

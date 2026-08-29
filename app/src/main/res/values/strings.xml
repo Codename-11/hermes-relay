@@ -485,9 +485,9 @@
     <string name="cw_insecure_relay_warning">This relay uses plain ws:// — traffic is not encrypted.</string>
     <string name="cw_insecure_relay_trust">Only continue if you trust the network on any connection (LAN, Tailscale, VPN).</string>
     <string name="cw_insecure_ack">I understand this pairing sends traffic in plain text — visible to anyone on the network.</string>
-    <string name="cw_mixed_route_plain">%1$s is plain ws:// — fine at home or the office, not on public Wi-Fi.</string>
-    <string name="cw_mixed_route_secure">%1$s is encrypted (wss://) and the app uses it automatically when %2$s is unreachable.</string>
-    <string name="cw_mixed_safe">You\'re safe on any network.</string>
+    <string name="cw_mixed_route_plain">%1$s uses plain HTTP/WS. Use it only on a trusted private network or through a VPN you control.</string>
+    <string name="cw_mixed_route_secure">%1$s uses HTTPS/WSS with transport encryption.</string>
+    <string name="cw_mixed_safe">The app probes these routes and selects an available one. You can change the preferred route later.</string>
     <string name="cw_connecting_to_hermes">Connecting to Hermes</string>
     <string name="cw_connecting_detail">Checking the API server, saved key, and dashboard.</string>
     <string name="cw_pairing_title">Pairing…</string>

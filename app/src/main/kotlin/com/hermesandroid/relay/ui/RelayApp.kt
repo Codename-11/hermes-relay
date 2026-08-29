@@ -3289,11 +3289,31 @@ fun RelayApp() {
                                 ) && targetId != null
                             ) {
                                 connectionSwitchScope.launch {
-                                    connectionViewModel.commitConnectionDraft(targetId)
-                                    navController.navigate(
-                                        Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
-                                    ) {
-                                        launchSingleTop = true
+                                    android.util.Log.i(
+                                        "GatewayPairFlow",
+                                        "Committing staged gateway before Dashboard sign-in",
+                                    )
+                                    runCatching {
+                                        connectionViewModel.commitConnectionDraft(targetId)
+                                    }.onSuccess {
+                                        android.util.Log.i(
+                                            "GatewayPairFlow",
+                                            "Opening Dashboard sign-in for staged gateway",
+                                        )
+                                        navController.navigate(
+                                            Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                                        ) {
+                                            launchSingleTop = true
+                                        }
+                                    }.onFailure { error ->
+                                        android.util.Log.e(
+                                            "GatewayPairFlow",
+                                            "Could not commit staged gateway before sign-in",
+                                            error,
+                                        )
+                                        snackbarHostState.showSnackbar(
+                                            error.message ?: "Could not prepare Dashboard sign-in",
+                                        )
                                     }
                                 }
                             } else {

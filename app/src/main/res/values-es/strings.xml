@@ -400,9 +400,6 @@
     <string name="cw_insecure_relay_warning">Este relay utiliza ws:// simple: el tráfico no está cifrado.</string>
     <string name="cw_insecure_relay_trust">Continúe solo si confía en la red en cualquier conexión (LAN, Tailscale, VPN).</string>
     <string name="cw_insecure_ack">Entiendo que este emparejamiento envía tráfico en texto sin formato, visible para cualquier persona en la red.</string>
-    <string name="cw_mixed_route_plain">%1$s es simple ws://: está bien en casa o en la oficina, no en público Wi-Fi.</string>
-    <string name="cw_mixed_route_secure">%1$s está encriptado (wss://) y la aplicación lo usa automáticamente cuando no se puede acceder a %2$s.</string>
-    <string name="cw_mixed_safe">Estás a salvo en cualquier red.</string>
     <string name="cw_connecting_to_hermes">Conexión a Hermes</string>
     <string name="cw_connecting_detail">Comprobación del servidor API, la clave guardada y el panel.</string>
     <string name="cw_pairing_title">Emparejamiento…</string>

@@ -447,9 +447,6 @@
     <string name="cw_insecure_relay_warning">このRelayはプレーンな ws:// を使用します。トラフィックは暗号化されません。</string>
     <string name="cw_insecure_relay_trust">いずれかの接続 (LAN、Tailscale、VPN) 上のネットワークを信頼する場合にのみ続行してください。</string>
     <string name="cw_insecure_ack">このペアリングではトラフィックがプレーン テキストで送信され、ネットワーク上の誰にでも表示されると理解しています。</string>
-    <string name="cw_mixed_route_plain">%1$s はプレーンな ws:// です。自宅やオフィスでは問題ありませんが、公衆 Wi-Fi には適しません。</string>
-    <string name="cw_mixed_route_secure">%1$s は暗号化されています (wss://) であり、%2$s に到達できない場合、アプリはそれを自動的に使用します。</string>
-    <string name="cw_mixed_safe">どのネットワークでも安全です。</string>
     <string name="cw_connecting_to_hermes">Hermes に接続しています</string>
     <string name="cw_connecting_detail">API サーバー、保存されたキー、ダッシュボードを確認します。</string>
     <string name="cw_pairing_title">ペアリング中…</string>

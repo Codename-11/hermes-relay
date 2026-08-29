@@ -572,10 +572,6 @@ internal fun materializeDashboardConnectionDraft(
         ?: Connection.extractDefaultLabel(dashboardUrl),
 )
 
-/** No outgoing connection exists, so first-gateway activation must not emit a destructive switch event. */
-internal fun shouldActivateCommittedDraftWithoutSwitch(activeConnectionId: String?): Boolean =
-    activeConnectionId == null
-
 /** The preallocated Add-gateway draft owns setup ahead of any persisted active row. */
 internal fun connectionSetupOwnerId(
     pendingDraftId: String?,
@@ -5373,6 +5369,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Promote a preallocated Add-gateway draft without the ordinary teardown
+     * pipeline. [beginAddConnection] already installed this draft's exact auth
+     * owner; switching again would emit a global Chat handoff and wait on auth
+     * hydration before setup could navigate to Dashboard sign-in.
+     */
+    private suspend fun activateCommittedDraftContext(connection: Connection) {
+        connectionStore.setActiveConnection(connection.id)
+        _apiServerUrl.value = connection.apiServerUrl
+        _relayUrl.value = connection.relayUrl
+        connectionManager.setManualRoleOverride(connection.preferredRouteRole)
+        getApplication<Application>().relayDataStore.edit { prefs ->
+            prefs[KEY_API_SERVER_URL] = connection.apiServerUrl
+            prefs[KEY_RELAY_URL] = connection.relayUrl
+        }
+        connectionManager.refreshActiveEndpoint()
+        rebuildApiClient()
+    }
+
     private fun ownsDashboardProbe(connectionId: String, dashboardUrl: String): Boolean {
         return isCurrentDashboardProbe(
             requestConnectionId = connectionId,
@@ -6318,12 +6333,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             expiresAt = pairedSession?.expiresAt?.let { it * 1000L },
         )
         connectionStore.addConnection(connection)
-        if (shouldActivateCommittedDraftWithoutSwitch(connectionStore.activeConnectionId.value)) {
-            connectionStore.setActiveConnection(connectionId)
-            restorePersistedActiveConnectionContext(connection)
-        } else {
-            switchConnection(connectionId).join()
-        }
+        activateCommittedDraftContext(connection)
         pendingConnectionDraft = null
         _connectionDraftId.value = null
         true

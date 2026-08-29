@@ -447,9 +447,6 @@
     <string name="cw_insecure_relay_warning">此 Relay 使用明文 ws://——流量未加密。</string>
     <string name="cw_insecure_relay_trust">仅当您信任所有连接（LAN、Tailscale、VPN）的网络时才继续。</string>
     <string name="cw_insecure_ack">我了解此配对以明文形式发送流量——网络上的任何人都可以看到。</string>
-    <string name="cw_mixed_route_plain">%1$s 使用明文 ws://——在家或办公室没问题，但不要在公共 Wi-Fi 上使用。</string>
-    <string name="cw_mixed_route_secure">%1$s 已加密（wss://），当 %2$s 不可达时，应用会自动使用它。</string>
-    <string name="cw_mixed_safe">在任何网络上您都是安全的。</string>
     <string name="cw_connecting_to_hermes">正在连接到 Hermes</string>
     <string name="cw_connecting_detail">正在检查 API 服务器、已保存的密钥和仪表盘。</string>
     <string name="cw_pairing_title">正在配对…</string>

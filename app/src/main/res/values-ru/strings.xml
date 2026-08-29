@@ -443,9 +443,6 @@
     <string name="cw_insecure_relay_warning">Этот Relay использует обычный ws:// — трафик не зашифрован.</string>
     <string name="cw_insecure_relay_trust">Продолжайте только если вы доверяете сети на любом подключении (LAN, Tailscale, VPN).</string>
     <string name="cw_insecure_ack">Я понимаю, что это сопряжение отправляет трафик в открытом виде — видимый для любого в сети.</string>
-    <string name="cw_mixed_route_plain">%1$s — это обычный ws:// — подходит дома или в офисе, но не на общественном Wi-Fi.</string>
-    <string name="cw_mixed_route_secure">%1$s зашифрован (wss://), и приложение использует его автоматически, когда %2$s недоступен.</string>
-    <string name="cw_mixed_safe">Вы в безопасности на любой сети.</string>
     <string name="cw_connecting_to_hermes">Подключение к Гермесу</string>
     <string name="cw_connecting_detail">Проверка сервера API, сохраненного ключа и панели управления.</string>
     <string name="cw_pairing_title">Сопряжение…</string>

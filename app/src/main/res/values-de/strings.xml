@@ -447,9 +447,6 @@
     <string name="cw_insecure_relay_warning">Dieses Relay verwendet unverschlüsseltes ws:// — der Datenverkehr ist nicht verschlüsselt.</string>
     <string name="cw_insecure_relay_trust">Fahre nur fort, wenn du das Netzwerk bei jeder Verbindung (LAN, Tailscale, VPN) als vertrauenswürdig einstufst.</string>
     <string name="cw_insecure_ack">Ich verstehe, dass diese Kopplung Daten im Klartext sendet — sichtbar für alle im Netzwerk.</string>
-    <string name="cw_mixed_route_plain">%1$s nutzt unverschlüsseltes ws:// — zu Hause oder im Büro in Ordnung, nicht aber in öffentlichen WLANs.</string>
-    <string name="cw_mixed_route_secure">%1$s ist verschlüsselt (wss://) und wird von der App automatisch verwendet, wenn %2$s nicht erreichbar ist.</string>
-    <string name="cw_mixed_safe">Du bist in jedem Netzwerk geschützt.</string>
     <string name="cw_connecting_to_hermes">Verbindung mit Hermes wird hergestellt</string>
     <string name="cw_connecting_detail">API-Server, gespeicherter Schlüssel und Dashboard werden geprüft.</string>
     <string name="cw_pairing_title">Kopplung läuft…</string>
