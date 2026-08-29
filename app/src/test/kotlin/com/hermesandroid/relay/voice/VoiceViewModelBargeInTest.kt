@@ -12,6 +12,7 @@ import com.hermesandroid.relay.data.BargeInPreferencesRepository
 import com.hermesandroid.relay.data.BargeInSensitivity
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.viewmodel.ChatViewModel
+import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import io.mockk.every
@@ -271,6 +272,224 @@ class VoiceViewModelBargeInTest {
 
         verify(exactly = 0) { recorder.startRecording() }
         assertEquals(VoiceState.Idle, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `continuous completion waits for queue-drain barge-in release before capture`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returnsMany listOf(readerRelease, null, null)
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        // The play worker tears down barge-in before the shared completion
+        // finalizer runs. Repeated teardown calls must retain that first
+        // asynchronous release instead of attempting VoiceCapture immediately.
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 1) { recorder.startRecording() }
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `continuous completion repeats serialized handoff across turns`() = runTest {
+        val firstRelease = Job()
+        val secondRelease = Job()
+        var stopCalls = 0
+        every { bargeInListener.stop() } answers {
+            when (stopCalls++) {
+                0 -> firstRelease
+                1 -> secondRelease
+                else -> null
+            }
+        }
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("First."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+        firstRelease.complete()
+        runCurrent()
+
+        vm.seedSpeakingStateForTest(chunks = listOf("Second."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+        verify(exactly = 1) { recorder.startRecording() }
+
+        secondRelease.complete()
+        runCurrent()
+        verify(exactly = 2) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `barge-in disabled keeps continuous completion immediate`() = runTest {
+        val vm = buildViewModel(
+            BargeInPreferences(
+                enabled = false,
+                sensitivity = BargeInSensitivity.Off,
+            ),
+        )
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+
+        verify(exactly = 1) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `exit cancels continuous capture waiting for microphone release`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returnsMany listOf(readerRelease, null, null)
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.startBargeInListenerForTest()
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+
+        vm.exitVoiceMode()
+        vm.startBargeInListenerForTest()
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        verify(exactly = 1) { bargeInListener.start(any()) }
+        assertTrue(!vm.uiState.value.voiceMode)
+    }
+
+    @Test
+    fun `pause cancels continuous capture waiting for microphone release`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returnsMany listOf(readerRelease, null, null)
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.startBargeInListenerForTest()
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+
+        vm.pauseContinuousMode()
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 0) { recorder.startRecording() }
+        assertEquals(VoiceState.Idle, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `rapid mode change starts only the newly armed continuous capture`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returnsMany listOf(readerRelease, null, null, null)
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        vm.startBargeInListenerForTest()
+        vm.stopBargeInListenerForTest()
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+
+        vm.setInteractionMode(InteractionMode.TapToTalk)
+        vm.setInteractionMode(InteractionMode.Continuous)
+        runCurrent()
+        readerRelease.complete()
+        runCurrent()
+
+        verify(exactly = 1) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `next barge-in generation waits for prior reader release`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returnsMany listOf(readerRelease, null)
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("First."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.stopBargeInListenerForTest()
+        vm.startBargeInListenerForTest()
+        vm.startBargeInListenerForTest()
+        runCurrent()
+        verify(exactly = 1) { bargeInListener.start(any()) }
+
+        readerRelease.complete()
+        runCurrent()
+        verify(exactly = 2) { bargeInListener.start(any()) }
+    }
+
+    @Test
+    fun `barge-in capture waits for reader release`() = runTest {
+        val readerRelease = Job()
+        every { bargeInListener.stop() } returns readerRelease
+        val vm = buildViewModel()
+        vm.seedSpeakingStateForTest(chunks = listOf("Speaking."), currentIdx = 0)
+        vm.startBargeInListenerForTest()
+        runCurrent()
+
+        vm.onBargeInDetected()
+        runCurrent()
+        verify(exactly = 0) { recorder.startRecording() }
+
+        readerRelease.complete()
+        runCurrent()
+        verify(exactly = 1) { recorder.startRecording() }
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+    }
+
+    @Test
+    fun `transient recorder ownership failures remain explicitly retryable`() = runTest {
+        var attempts = 0
+        every { recorder.startRecording() } answers {
+            attempts++
+            if (attempts <= 2) {
+                throw IllegalStateException("Microphone is in use by another voice feature")
+            }
+            java.io.File("voice-retry-test.wav")
+        }
+        val vm = buildViewModel(
+            BargeInPreferences(
+                enabled = false,
+                sensitivity = BargeInSensitivity.Off,
+            ),
+        )
+        vm.seedSpeakingStateForTest(chunks = listOf("Finished."), currentIdx = 0)
+        vm.setInteractionMode(InteractionMode.Continuous)
+
+        vm.finishAgentAudioOutputForTest()
+        runCurrent()
+        assertEquals(VoiceState.Error, vm.uiState.value.state)
+
+        vm.startListening()
+        runCurrent()
+        assertEquals(VoiceState.Error, vm.uiState.value.state)
+
+        vm.startListening()
+        runCurrent()
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        verify(exactly = 3) { recorder.startRecording() }
     }
 
     // -------------------------------------------------------------------

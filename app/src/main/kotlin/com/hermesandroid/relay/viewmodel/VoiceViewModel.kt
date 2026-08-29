@@ -90,6 +90,7 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import com.hermesandroid.relay.data.VoicePreferencesRepository
 import com.hermesandroid.relay.data.VoiceAudioRoute
 
@@ -1037,6 +1038,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var bargeInListener: BargeInListener? = null
     private var bargeInListenerJob: Job? = null
     private var bargeInVadEngine: VadEngine? = null
+    /**
+     * The most recent asynchronous AudioRecord shutdown still releasing the
+     * process-wide BargeIn microphone lease. Teardown is intentionally
+     * idempotent, so completion paths may call [stopBargeInListener] after the
+     * listener reference has already been cleared. Retaining this fence makes
+     * every subsequent VoiceCapture start join the same ownership handoff.
+     */
+    private val pendingBargeInReaderRelease = AtomicReference<Job?>(null)
     private val bargeInTurnEpoch = AtomicLong(0L)
     @Volatile private var activeBargeInTurnEpoch: Long = 0L
 
@@ -1374,6 +1383,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (mode != InteractionMode.Continuous) {
+            cancelPendingListeningStart()
             continuousLoopArmed = false
             continuousListeningPaused = false
             continuousResumeJob?.cancel()
@@ -1844,6 +1854,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun exitVoiceMode() {
+        cancelPendingListeningStart()
         // Idempotence guard — added 2026-04-21 after logcat showed the voice-
         // exit chime playing on every Add-connection tap.
         //
@@ -1995,6 +2006,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // ---------------------------------------------------------------------
 
     fun startListening() {
+        startListening(requireContinuousLoop = false)
+    }
+
+    private fun startListening(requireContinuousLoop: Boolean) {
         // A direct mic tap starts a normal capture. Only the recorder opened by
         // onBargeInDetected may carry response-interruption command context.
         responseInterruptedForVoiceCommand = false
@@ -2003,6 +2018,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             setError("Recorder not initialized")
             return
         }
+        if (requireContinuousLoop && !canStartContinuousCapture()) return
         if (pendingListeningStartJob?.isActive == true) return
         if (rec.isRecording()) return
         if (_uiState.value.state == VoiceState.Listening) {
@@ -2037,7 +2053,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
 
         if (microphoneRelease == null || microphoneRelease.isCompleted) {
-            startVoiceCapture(rec)
+            if (!requireContinuousLoop || canStartContinuousCapture()) {
+                startVoiceCapture(rec)
+            }
             return
         }
 
@@ -2045,7 +2063,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val pendingStart = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 microphoneRelease.join()
-                if (listeningStartEpoch == startEpoch) {
+                if (listeningStartEpoch == startEpoch &&
+                    (!requireContinuousLoop || canStartContinuousCapture())
+                ) {
                     startVoiceCapture(rec)
                 }
             } finally {
@@ -2056,6 +2076,15 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         pendingListeningStartJob = pendingStart
         pendingStart.start()
+    }
+
+    private fun canStartContinuousCapture(): Boolean {
+        val state = _uiState.value
+        return state.voiceMode &&
+            state.interactionMode == InteractionMode.Continuous &&
+            state.state == VoiceState.Idle &&
+            continuousLoopArmed &&
+            !continuousListeningPaused
     }
 
     private fun startVoiceCapture(rec: VoiceRecorder) {
@@ -2218,6 +2247,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * listening turn; until then, idle queue-drain callbacks are ignored.
      */
     fun pauseContinuousMode() {
+        cancelPendingListeningStart()
         continuousLoopArmed = false
         continuousListeningPaused = _uiState.value.interactionMode == InteractionMode.Continuous
         continuousResumeJob?.cancel()
@@ -5760,7 +5790,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             continuousLoopArmed &&
             _uiState.value.state == VoiceState.Idle
         ) {
-            startListening()
+            startListening(requireContinuousLoop = true)
         }
     }
 
@@ -5825,6 +5855,29 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             )
             return
         }
+        if (!activeResponseOwnsBargeIn()) {
+            Log.i(TAG, "Barge-in listener skipped; no active voice response owns the microphone")
+            return
+        }
+
+        val pendingReaderRelease = pendingBargeInReaderRelease.get()?.takeUnless { it.isCompleted }
+        if (pendingReaderRelease != null) {
+            // A late playback/realtime callback may request the next turn's
+            // listener while the previous AudioRecord is still unwinding.
+            // Join the same ownership fence as VoiceCapture, then re-check the
+            // turn epoch so stale generations cannot reopen the microphone.
+            activeBargeInTurnEpoch = epoch
+            viewModelScope.launch {
+                pendingReaderRelease.join()
+                if (activeBargeInTurnEpoch == epoch &&
+                    bargeInListener == null &&
+                    activeResponseOwnsBargeIn()
+                ) {
+                    startBargeInListenerIfEnabled(epoch = epoch)
+                }
+            }
+            return
+        }
 
         val vad = try {
             vadFactory().also { it.setSensitivity(prefs.sensitivity) }
@@ -5873,6 +5926,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun activeResponseOwnsBargeIn(): Boolean {
+        val state = _uiState.value
+        return state.voiceMode &&
+            (state.state == VoiceState.Thinking || state.state == VoiceState.Speaking)
+    }
+
     /**
      * Tear down the active [BargeInListener], cancel its event subscribers,
      * unduck the player (in case a ducking watchdog hadn't yet restored
@@ -5906,7 +5965,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             try { realtimePcmPlayer?.unduck() } catch (_: Throwable) { /* ignore */ }
             isDucked = false
         }
-        return stoppedReaderJob
+        if (stoppedReaderJob != null) {
+            pendingBargeInReaderRelease.set(stoppedReaderJob)
+            stoppedReaderJob.invokeOnCompletion {
+                pendingBargeInReaderRelease.compareAndSet(stoppedReaderJob, null)
+            }
+        }
+        return pendingBargeInReaderRelease.get()?.takeUnless { it.isCompleted }
     }
 
     private fun markBargeInPlaybackStarted(graceMs: Long) {
@@ -6315,8 +6380,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     @androidx.annotation.VisibleForTesting
+    internal fun stopBargeInListenerForTest(): Job? = stopBargeInListener()
+
+    @androidx.annotation.VisibleForTesting
+    internal fun finishAgentAudioOutputForTest() {
+        finishAgentAudioOutput()
+    }
+
+    @androidx.annotation.VisibleForTesting
     internal fun beginBargeInTurnForTest() {
-        _uiState.update { it.copy(state = VoiceState.Thinking) }
+        _uiState.update { it.copy(voiceMode = true, state = VoiceState.Thinking) }
         beginBargeInTurnIfEnabled()
     }
 
