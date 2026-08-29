@@ -481,6 +481,37 @@ internal fun standardApiDashboardSecurityError(
         .takeIf { publicDashboardAddressRequiresHttps(null, effectiveDashboardUrl) }
 }
 
+internal data class PendingConnectionDraft(
+    val id: String,
+    val previousConnectionId: String?,
+    var pairingPayload: com.hermesandroid.relay.ui.components.HermesPairingPayload? = null,
+    var label: String? = null,
+)
+
+/** Keep Dashboard-only setup attached to the Add-gateway draft. */
+internal fun materializeDashboardConnectionDraft(
+    draft: PendingConnectionDraft,
+    dashboardUrl: String,
+    discoveredHostname: String?,
+): PendingConnectionDraft = draft.copy(
+    pairingPayload = com.hermesandroid.relay.ui.components.HermesPairingPayload(
+        dashboardUrl = dashboardUrl,
+        endpoints = listOfNotNull(
+            Connection.endpointCandidateFromDashboardUrl(
+                role = Connection.inferRouteRole(dashboardUrl),
+                priority = 0,
+                dashboardUrl = dashboardUrl,
+            ),
+        ),
+    ),
+    label = discoveredHostname?.trim()?.takeIf { it.isNotBlank() }
+        ?: Connection.extractDefaultLabel(dashboardUrl),
+)
+
+/** No outgoing connection exists, so first-gateway activation must not emit a destructive switch event. */
+internal fun shouldActivateCommittedDraftWithoutSwitch(activeConnectionId: String?): Boolean =
+    activeConnectionId == null
+
 internal fun withExplicitDashboardAddress(
     connection: Connection,
     normalizedAddress: String,
@@ -3633,12 +3664,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     private val addConnectionMutex = Mutex()
 
-    private data class PendingConnectionDraft(
-        val id: String,
-        val previousConnectionId: String?,
-        var pairingPayload: com.hermesandroid.relay.ui.components.HermesPairingPayload? = null,
-    )
-
     private var pendingConnectionDraft: PendingConnectionDraft? = null
     private val _connectionDraftId = MutableStateFlow<String?>(null)
     val connectionDraftId: StateFlow<String?> = _connectionDraftId.asStateFlow()
@@ -5828,7 +5853,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         discoveredHostname: String? = null,
         onComplete: (Result<Unit>) -> Unit,
     ) {
-        val normalized = Connection.normalizeApiUrlInput(
+        val normalized = Connection.normalizeDashboardUrlInput(
             dashboardUrl,
             defaultPort = Connection.DEFAULT_DASHBOARD_PORT,
         )
@@ -5836,8 +5861,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             onComplete(Result.failure(IllegalArgumentException("Hermes address is required")))
             return
         }
+        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = normalized)) {
+            onComplete(Result.failure(IllegalArgumentException("Public Gateway addresses require HTTPS")))
+            return
+        }
         viewModelScope.launch {
             runCatching {
+                val stagedDraft = addConnectionMutex.withLock {
+                    val draft = pendingConnectionDraft ?: return@withLock false
+                    pendingConnectionDraft = materializeDashboardConnectionDraft(
+                        draft = draft,
+                        dashboardUrl = normalized,
+                        discoveredHostname = discoveredHostname,
+                    )
+                    true
+                }
+                if (stagedDraft) return@runCatching
+
                 ensureActiveConnectionForSetup()
                 val activeId = connectionStore.activeConnectionId.value
                     ?: error("No active connection")
@@ -5997,7 +6037,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val pairedSession = authManager.currentPairedSession.value
         val connection = Connection(
             id = connectionId,
-            label = apiUrl.takeIf(String::isNotBlank)
+            label = draft.label
+                ?: apiUrl.takeIf(String::isNotBlank)
                 ?.let(Connection::extractDefaultLabel)
                 ?: dashboardUrl?.let(Connection::extractDefaultLabel)
                 ?: "Hermes",
@@ -6011,7 +6052,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             expiresAt = pairedSession?.expiresAt?.let { it * 1000L },
         )
         connectionStore.addConnection(connection)
-        switchConnection(connectionId).join()
+        if (shouldActivateCommittedDraftWithoutSwitch(connectionStore.activeConnectionId.value)) {
+            connectionStore.setActiveConnection(connectionId)
+            restorePersistedActiveConnectionContext(connection)
+        } else {
+            switchConnection(connectionId).join()
+        }
         pendingConnectionDraft = null
         _connectionDraftId.value = null
         true

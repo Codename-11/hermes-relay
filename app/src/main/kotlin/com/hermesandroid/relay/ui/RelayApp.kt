@@ -258,6 +258,11 @@ internal fun resolvePairSetupReady(
 internal fun shouldStartPairPreparation(hasActiveJob: Boolean, retryRequested: Boolean): Boolean =
     retryRequested || !hasActiveJob
 
+internal fun shouldCommitPairDraftBeforeDashboardSignIn(
+    connectionId: String?,
+    draftConnectionId: String?,
+): Boolean = connectionId != null && connectionId == draftConnectionId
+
 /** A replaced/canceled attempt must not evict the newer job from the route map. */
 internal fun isCurrentPairPreparation(mappedJob: Any?, completingJob: Any): Boolean =
     mappedJob === completingJob
@@ -3264,10 +3269,27 @@ fun RelayApp() {
                             }
                         },
                         onManageSignIn = {
-                            navController.navigate(
-                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                            val targetId = connectionIdArg
+                            if (
+                                shouldCommitPairDraftBeforeDashboardSignIn(
+                                    connectionId = targetId,
+                                    draftConnectionId = pairDraftId,
+                                ) && targetId != null
                             ) {
-                                launchSingleTop = true
+                                connectionSwitchScope.launch {
+                                    connectionViewModel.commitConnectionDraft(targetId)
+                                    navController.navigate(
+                                        Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                                    ) {
+                                        launchSingleTop = true
+                                    }
+                                }
+                            } else {
+                                navController.navigate(
+                                    Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                                ) {
+                                    launchSingleTop = true
+                                }
                             }
                         },
                         onCancel = {
