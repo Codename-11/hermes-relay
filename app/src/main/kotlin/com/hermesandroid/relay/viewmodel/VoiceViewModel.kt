@@ -1382,8 +1382,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // A mode change supersedes any capture that is still waiting for the
+        // previous microphone owner to release. The selected mode below may
+        // start a fresh Continuous capture with its own generation.
+        cancelPendingListeningStart()
+
         if (mode != InteractionMode.Continuous) {
-            cancelPendingListeningStart()
             continuousLoopArmed = false
             continuousListeningPaused = false
             continuousResumeJob?.cancel()
@@ -2019,7 +2023,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (requireContinuousLoop && !canStartContinuousCapture()) return
-        if (pendingListeningStartJob?.isActive == true) return
+        // A direct/new capture request supersedes a stale handoff waiter. It
+        // will join the same retained microphone-release fence under a fresh
+        // epoch below instead of being silently dropped.
+        cancelPendingListeningStart()
         if (rec.isRecording()) return
         if (_uiState.value.state == VoiceState.Listening) {
             // Listening is reserved for a live AudioRecord. Reconcile a stale
@@ -6023,6 +6030,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     internal fun onBargeInDetected() {
         if (isBargeInStartupGuardActive()) return
+        val interruptedMode = _uiState.value.interactionMode
+        val interruptedEngine = voiceEngineMode
         val interruptedSpokenReply = _uiState.value.outputAudioActive
         if (interruptedSpokenReply) spokenInterruptionLatch.mark()
         duckingWatchdog?.cancel(); duckingWatchdog = null
@@ -6056,18 +6065,63 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 responseText = "",
             )
         }
-        viewModelScope.launch {
+        val captureEpoch = ++listeningStartEpoch
+        val pendingStart = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 microphoneRelease?.join()
-                val rec = recorder
-                if (rec != null && !rec.isRecording()) {
+                if (!canStartBargeInCapture(captureEpoch, interruptedMode, interruptedEngine)) {
+                    abandonBargeInCaptureIfCurrent(captureEpoch)
+                    return@launch
+                }
+                val rec = recorder ?: error("Recorder not initialized")
+                if (!rec.isRecording()) {
                     rec.startRecording()
                 }
-                scheduleResumeWatchdog()
+                if (canStartBargeInCapture(captureEpoch, interruptedMode, interruptedEngine)) {
+                    scheduleResumeWatchdog()
+                } else {
+                    try { rec.cancel() } catch (_: Throwable) { /* ignore */ }
+                    abandonBargeInCaptureIfCurrent(captureEpoch)
+                }
+            } catch (t: CancellationException) {
+                abandonBargeInCaptureIfCurrent(captureEpoch)
+                throw t
             } catch (t: Throwable) {
-                responseInterruptedForVoiceCommand = false
-                Log.w(TAG, "barge-in microphone handoff failed: ${t.message}")
-                surfaceError(t, context = "record")
+                if (listeningStartEpoch == captureEpoch) {
+                    responseInterruptedForVoiceCommand = false
+                    Log.w(TAG, "barge-in microphone handoff failed: ${t.message}")
+                    surfaceError(t, context = "record")
+                }
+            } finally {
+                if (listeningStartEpoch == captureEpoch) {
+                    pendingListeningStartJob = null
+                }
+            }
+        }
+        pendingListeningStartJob = pendingStart
+        pendingStart.start()
+    }
+
+    private fun canStartBargeInCapture(
+        captureEpoch: Long,
+        interruptedMode: InteractionMode,
+        interruptedEngine: VoiceEngineMode,
+    ): Boolean {
+        val state = _uiState.value
+        return listeningStartEpoch == captureEpoch &&
+            state.voiceMode &&
+            state.state == VoiceState.Listening &&
+            state.interactionMode == interruptedMode &&
+            voiceEngineMode == interruptedEngine &&
+            responseInterruptedForVoiceCommand
+    }
+
+    private fun abandonBargeInCaptureIfCurrent(captureEpoch: Long) {
+        if (listeningStartEpoch != captureEpoch) return
+        responseInterruptedForVoiceCommand = false
+        if (_uiState.value.state == VoiceState.Listening && recorder?.isRecording() != true) {
+            _uiState.update {
+                it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
             }
         }
     }
@@ -6385,6 +6439,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     @androidx.annotation.VisibleForTesting
     internal fun finishAgentAudioOutputForTest() {
         finishAgentAudioOutput()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun setVoiceEngineModeForTest(mode: VoiceEngineMode) {
+        voiceEngineMode = mode
     }
 
     @androidx.annotation.VisibleForTesting
