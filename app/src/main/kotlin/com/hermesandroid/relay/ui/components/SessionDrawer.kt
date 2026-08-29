@@ -215,7 +215,6 @@ fun SessionDrawerContent(
     /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
     onOpenBotMode: (() -> Unit)? = null,
     onNewChat: () -> Unit,
-    onNewDefaultChat: (() -> Unit)? = null,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (String, String) -> Unit,
@@ -535,13 +534,7 @@ fun SessionDrawerContent(
 
             // New Chat button
             Button(
-                onClick = {
-                    if (showAllProfiles) {
-                        onNewDefaultChat?.invoke() ?: onNewChat()
-                    } else {
-                        onNewChat()
-                    }
-                },
+                onClick = onNewChat,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = newChatEnabled,
             ) {

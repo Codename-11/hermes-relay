@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.prepareTextTransportAttachments
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
@@ -660,6 +661,7 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+    var onFreshDraftSelected: ((String?, SessionTransport) -> Unit)? = null
 
     /**
      * Send a user message into an agent **Thread** (a `source=phone` session)
@@ -4264,6 +4266,7 @@ class ChatViewModel : ViewModel() {
             sessionId = sessionId,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
         return true
     }
@@ -4274,7 +4277,7 @@ class ChatViewModel : ViewModel() {
      * `default` profile wins over the server's sticky active profile everywhere.
      */
     fun createProfileChat(
-        profileName: String,
+        profileName: String?,
         profile: Profile?,
         contextKey: String,
     ): Boolean {
@@ -4286,9 +4289,20 @@ class ChatViewModel : ViewModel() {
             sessionId = null,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
+        // Selection has already moved persistence to the target profile, so
+        // clear that profile/transport's stored last-session slot as part of
+        // the same draft transfer. A restart must reopen the draft, not the
+        // target profile's previous conversation.
+        persistFreshDraft(profileName)
         AppAnalytics.onSessionCreated()
         return true
+    }
+
+    private fun persistFreshDraft(profileName: String?) {
+        val transport = SessionTransport.forEndpoint(streamingEndpoint)
+        onFreshDraftSelected?.invoke(profileName, transport) ?: onSessionChanged?.invoke(null)
     }
 
     fun switchProfileContext(contextKey: String, sessionId: String?) {
@@ -4313,14 +4327,19 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         explicitProfileName: String? = null,
         explicitDisplayProfile: Profile? = null,
+        explicitBinding: Boolean = false,
         reconciliation: Boolean = false,
     ) {
         val handler = chatHandler ?: return
         dismissChatFailure()
         val previousBinding = conversationBinding.value
         val isInitialContextBinding = !previousBinding.isBound
-        val targetProfileName = explicitProfileName ?: sessionProfileNameProvider()
-        if (explicitProfileName != null) {
+        val targetProfileName = if (explicitBinding) {
+            explicitProfileName
+        } else {
+            sessionProfileNameProvider()
+        }
+        if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
                 profileName = explicitProfileName,
@@ -4678,7 +4697,11 @@ class ChatViewModel : ViewModel() {
         if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.newChat) return
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
-        clearOpenedSessionOwner()
+        // A new chat clears only the durable session identity. Keep the bound
+        // profile/context so an All Profiles conversation becomes a fresh
+        // draft for that same owner instead of falling back to the globally
+        // restored default profile.
+        conversationBindingController.startFreshDraft()
         pendingThread = null
         creatingThread = null
 
@@ -4710,7 +4733,7 @@ class ChatViewModel : ViewModel() {
             _fastEnabled.value = null
             approvalModeRevision.incrementAndGet()
             pendingYolo = null
-            onSessionChanged?.invoke(null)
+            persistFreshDraft(currentSessionProfileName())
             AppAnalytics.onSessionCreated()
             onReady?.invoke(null)
             return

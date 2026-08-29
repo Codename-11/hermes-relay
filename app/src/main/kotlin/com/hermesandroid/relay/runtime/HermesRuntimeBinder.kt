@@ -196,6 +196,7 @@ internal class HermesRuntimeBinder(
         chat.profileSessionPinner = connection::setSessionPinned
         chat.profileSessionArchiver = connection::setSessionArchived
         chat.onSessionChanged = connection::saveLastSessionId
+        chat.onFreshDraftSelected = connection::saveFreshDraft
         chat.setDemoModeWiring(
             isDemo = { connection.isDemoMode.value },
             handler = { connection.chatHandler },

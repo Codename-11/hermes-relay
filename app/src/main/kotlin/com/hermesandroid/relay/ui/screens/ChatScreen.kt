@@ -2385,8 +2385,24 @@ fun ChatScreen(
     }
     val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
         if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
-            connectionViewModel.selectProfile(profile)
-            chatViewModel.activateGatewayProfile(profile)
+            if (currentSessionId == null) {
+                // A header switch while a fresh draft is open transfers that
+                // draft to the selected profile. Do not run the ordinary
+                // profile restore path: its persisted last-session id would
+                // reopen an old conversation for the target profile.
+                val profileName = profile?.name
+                chatViewModel.createProfileChat(
+                    profileName = profileName,
+                    profile = profile,
+                    contextKey = AgentDisplay.profileContextKey(
+                        connectionId = activeConnection?.id,
+                        profileName = profileName,
+                    ),
+                )
+            } else {
+                connectionViewModel.selectProfile(profile)
+                chatViewModel.activateGatewayProfile(profile)
+            }
         }
     }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
@@ -2468,25 +2484,6 @@ fun ChatScreen(
                         chatViewModel.createNewChat()
                         scope.launch { drawerState.close() }
                     }
-                },
-                onNewDefaultChat = {
-                    if (isProfileLocked) return@SessionDrawerContent
-                    val defaultProfile = agentProfiles.firstOrNull {
-                        it.name.equals("default", ignoreCase = true)
-                    } ?: com.hermesandroid.relay.data.Profile(
-                        name = "default",
-                        model = "",
-                        description = "Default",
-                    )
-                    val opened = chatViewModel.createProfileChat(
-                        profileName = "default",
-                        profile = defaultProfile,
-                        contextKey = AgentDisplay.profileContextKey(
-                            connectionId = activeConnection?.id,
-                            profileName = "default",
-                        ),
-                    )
-                    if (opened) scope.launch { drawerState.close() }
                 },
                 onSelectSession = { sessionId ->
                     chatViewModel.switchSession(sessionId)

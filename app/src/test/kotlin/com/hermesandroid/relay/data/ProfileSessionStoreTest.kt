@@ -17,7 +17,8 @@ import kotlinx.coroutines.sync.withLock
 
 class ProfileSessionStoreTest {
 
-    private val store = ProfileSessionStore(InMemoryPreferencesDataStore())
+    private val dataStore = InMemoryPreferencesDataStore()
+    private val store = ProfileSessionStore(dataStore)
 
     @Test
     fun setAndGet_defaultProfileSession() = runBlocking {
@@ -83,6 +84,26 @@ class ProfileSessionStoreTest {
 
         assertNull(store.sessionIdFlow("conn-1", "mizu", GATEWAY).first())
         assertEquals("session-sse", store.sessionIdFlow("conn-1", "mizu", SSE).first())
+    }
+
+    @Test
+    fun clearedDraftSurvivesStoreRecreationAndPreservesOtherScopes() = runBlocking {
+        store.setSessionId("conn-1", "mizu", GATEWAY, "session-gw")
+        store.setSessionId("conn-1", "mizu", SSE, "session-sse")
+        store.setSessionId("conn-2", "mizu", GATEWAY, "session-other")
+
+        store.setSessionId("conn-1", "mizu", GATEWAY, null)
+        val restartedStore = ProfileSessionStore(dataStore)
+
+        assertNull(restartedStore.sessionIdFlow("conn-1", "mizu", GATEWAY).first())
+        assertEquals(
+            "session-sse",
+            restartedStore.sessionIdFlow("conn-1", "mizu", SSE).first(),
+        )
+        assertEquals(
+            "session-other",
+            restartedStore.sessionIdFlow("conn-2", "mizu", GATEWAY).first(),
+        )
     }
 
     @Test

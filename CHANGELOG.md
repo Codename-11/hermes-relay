@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+- **Android New Chat keeps the current profile and stays fresh across profile switches.** Starting from All Profiles no longer forces the literal default profile, and choosing another profile from an empty draft no longer reopens that profile's previous session after route settlement or restart.
 
 ### Removed
 

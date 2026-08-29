@@ -14,6 +14,7 @@ import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -431,8 +432,17 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
 
         viewModel.createNewChat()
-        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
-        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+        assertTrue(viewModel.conversationBinding.value.hasExplicitOwner)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertNull(handler.currentSessionId.value)
     }
 
     @Test
@@ -647,7 +657,97 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
         assertEquals("Hermes", handler.activeAgentName)
-        assertEquals("unchanged", persistedSession)
+        assertEquals("cleared", persistedSession)
+    }
+
+    @Test
+    fun freshDraftTransferKeepsNullableServerDefaultAndRejectsOldSessionRestore() {
+        val named = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var selected: Profile? = named
+        var persistedDraft: Pair<String?, SessionTransport>? = null
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onFreshDraftSelected = { profileName, transport ->
+            persistedDraft = profileName to transport
+        }
+
+        assertTrue(
+            viewModel.createProfileChat(
+                profileName = null,
+                profile = null,
+                contextKey = AgentDisplay.profileContextKey("connection-a", null),
+            ),
+        )
+
+        assertNull(selected)
+        assertTrue(viewModel.conversationBinding.value.hasExplicitOwner)
+        assertNull(viewModel.conversationBinding.value.profileName)
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertEquals(null to SessionTransport.GATEWAY, persistedDraft)
+        assertNull(gatewayClient.sessionProfileProvider())
+
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            sessionId = "old-default-session",
+        )
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertNull(handler.currentSessionId.value)
+    }
+
+    @Test
+    fun freshDraftTransferToNamedProfileCreatesInsteadOfResumingItsOldSession() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        var persistedDraft: Pair<String?, SessionTransport>? = null
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onFreshDraftSelected = { profileName, transport ->
+            persistedDraft = profileName to transport
+        }
+
+        viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+        viewModel.createNewChat()
+        assertTrue(
+            viewModel.createProfileChat(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+
+        assertEquals(beta, selected)
+        assertEquals(beta.name to SessionTransport.GATEWAY, persistedDraft)
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", beta.name),
+            sessionId = "beta-old-session",
+        )
+        assertNull(handler.currentSessionId.value)
+
+        gatewayHarness.createdSessionProfileName = beta.name
+        val resumeCountBeforeFreshSend = gatewayHarness.rpcLog.count {
+            it.first == "session.resume"
+        }
+        viewModel.sendMessage("Fresh beta turn")
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertEquals(
+            resumeCountBeforeFreshSend,
+            gatewayHarness.rpcLog.count { it.first == "session.resume" },
+        )
     }
 
     @Test
