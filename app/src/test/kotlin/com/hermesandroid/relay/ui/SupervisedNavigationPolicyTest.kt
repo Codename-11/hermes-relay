@@ -86,6 +86,21 @@ class SupervisedNavigationPolicyTest {
         assertTrue(isRelayNavigationHydrated(true, "home", true))
     }
 
+    @Test fun `policy owner hydration keeps safe setup navigation mounted`() {
+        assertFalse(shouldCoverRelayNavigation(false, true, Screen.Onboarding.route))
+        assertFalse(shouldCoverRelayNavigation(false, true, Screen.Pair.route("draft")))
+        assertFalse(
+            shouldCoverRelayNavigation(
+                false,
+                true,
+                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+            ),
+        )
+        assertTrue(shouldCoverRelayNavigation(false, true, Screen.Chat.route))
+        assertFalse(shouldCoverRelayNavigation(true, true, Screen.Chat.route))
+        assertTrue(shouldCoverRelayNavigation(true, false, Screen.Pair.route("draft")))
+    }
+
     @Test fun `parent access relocks as soon as chat becomes current`() {
         assertTrue(shouldRelockParentAccess(true, true, "chat?sessionId=ignored"))
         assertFalse(shouldRelockParentAccess(true, true, "settings/supervised"))

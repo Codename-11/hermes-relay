@@ -62,6 +62,25 @@ internal fun isRelayNavigationHydrated(
 ): Boolean = connectionStoreHydrated &&
     (activeConnectionId == null || supervisedPolicyHydrated)
 
+/**
+ * Keep the NavHost mounted while a new connection's supervised policy loads.
+ * Setup and Dashboard sign-in expose no protected conversation/settings data,
+ * so they may remain visible; every other route stays covered fail-closed.
+ */
+internal fun shouldCoverRelayNavigation(
+    navigationHydrated: Boolean,
+    routeContentAllowed: Boolean,
+    currentRoute: String?,
+): Boolean {
+    if (!routeContentAllowed) return true
+    if (navigationHydrated) return false
+    return currentRoute?.substringBefore('?') !in setOf(
+        Screen.Onboarding.route,
+        Screen.Pair.route.substringBefore('?'),
+        Screen.DashboardSignIn.route.substringBefore('?'),
+    )
+}
+
 /** A parent unlock never follows the user back into the supervised chat root. */
 internal fun shouldRelockParentAccess(
     supervisedEnabled: Boolean,

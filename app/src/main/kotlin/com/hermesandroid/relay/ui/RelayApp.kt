@@ -821,18 +821,14 @@ fun RelayApp() {
     }
     val ownedSupervisedPolicyState = supervisedPolicyState.value
         ?.takeIf { (ownerConnectionId, _) -> ownerConnectionId == activeConnectionId }
-    // Fail closed across process restoration. activeConnectionId starts as
-    // null while ConnectionStore reads DataStore, so null alone cannot prove
-    // this is a fresh install with no supervised policy to restore.
-    if (!isRelayNavigationHydrated(
-            connectionStoreHydrated = connectionStoreHydrated,
-            activeConnectionId = activeConnectionId,
-            supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
-        )
-    ) {
-        SupervisedStartupLoadingScreen()
-        return
-    }
+    // Keep navigation mounted while the new connection owner's supervised
+    // policy loads. Protected destinations are covered later in the NavHost
+    // box; returning here would dispose the controller and replay cold start.
+    val relayNavigationHydrated = isRelayNavigationHydrated(
+        connectionStoreHydrated = connectionStoreHydrated,
+        activeConnectionId = activeConnectionId,
+        supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
+    )
     val supervisedPolicy = ownedSupervisedPolicyState?.second ?: SupervisedModePolicy()
     val supervisedPinnedProfile = supervisedPolicy.pinnedProfileName?.let { name ->
         agentProfiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
@@ -848,12 +844,14 @@ fun RelayApp() {
     var parentAccessUnlocked by remember(activeConnectionId) { mutableStateOf(false) }
 
     LaunchedEffect(
+        relayNavigationHydrated,
         activeConnectionId,
         supervisedPolicy,
         agentProfiles,
         selectedProfile,
         profileSelectionSettled,
     ) {
+        if (!relayNavigationHydrated) return@LaunchedEffect
         chatViewModel.updateSupervisedModePolicy(chatSupervisedPolicy)
         connectionViewModel.authManager.updateSupervisedMode(chatSupervisedPolicy)
         if (!supervisedPolicy.enabled) {
@@ -1301,10 +1299,12 @@ fun RelayApp() {
         // ineffective even before the state-clearing effect runs.
         LaunchedEffect(
             navController,
+            relayNavigationHydrated,
             supervisedPolicy.enabled,
             parentAccessForCurrentRoute,
         ) {
             com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
+                if (!relayNavigationHydrated) return@collect
                 if (
                     supervisedPolicy.enabled &&
                     !isSupervisedRouteAllowed(route, parentAccessForCurrentRoute)
@@ -1315,10 +1315,12 @@ fun RelayApp() {
             }
         }
         LaunchedEffect(
+            relayNavigationHydrated,
             supervisedPolicy.enabled,
             parentAccessForCurrentRoute,
             currentRoute,
         ) {
+            if (!relayNavigationHydrated) return@LaunchedEffect
             val redirect = shouldRedirectSupervisedRoute(
                 supervisedEnabled = supervisedPolicy.enabled,
                 parentAccessUnlocked = parentAccessForCurrentRoute,
@@ -1362,11 +1364,12 @@ fun RelayApp() {
             lifecycleOwner.lifecycle.addObserver(relockObserver)
             onDispose { lifecycleOwner.lifecycle.removeObserver(relockObserver) }
         }
-        val suppressGlobalChrome = shouldSuppressGlobalChrome(
-            onboardingCompleted = onboardingCompleted,
-            isDemoMode = isDemoMode,
-            currentRoute = currentRoute,
-        )
+        val suppressGlobalChrome = !relayNavigationHydrated ||
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = onboardingCompleted,
+                isDemoMode = isDemoMode,
+                currentRoute = currentRoute,
+            )
 
         // Safety net: landing on a real connect surface (onboarding or the
         // Connect/Pair wizard) while demo is still active — via the banner's
@@ -3590,9 +3593,15 @@ fun RelayApp() {
                     )
                 }
             }
-                if (!routeContentAllowed) {
+                if (shouldCoverRelayNavigation(
+                        navigationHydrated = relayNavigationHydrated,
+                        routeContentAllowed = routeContentAllowed,
+                        currentRoute = currentRoute,
+                    )
+                ) {
                     // Keep the graph mounted so the redirect can complete, but
-                    // cover restored parent-only content with an opaque fail-closed surface.
+                    // cover restored parent-only content and policy-owner
+                    // hydration with an opaque fail-closed surface.
                     SupervisedStartupLoadingScreen()
                 }
                 }
