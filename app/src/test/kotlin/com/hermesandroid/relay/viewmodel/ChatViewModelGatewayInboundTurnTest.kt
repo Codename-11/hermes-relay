@@ -14,10 +14,12 @@ import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
@@ -722,7 +724,7 @@ class ChatViewModelGatewayInboundTurnTest {
         )
         viewModel.createNewChat()
         assertTrue(
-            viewModel.createProfileChat(
+            viewModel.selectProfileFromHeader(
                 profileName = beta.name,
                 profile = beta,
                 contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
@@ -748,6 +750,167 @@ class ChatViewModelGatewayInboundTurnTest {
             resumeCountBeforeFreshSend,
             gatewayHarness.rpcLog.count { it.first == "session.resume" },
         )
+    }
+
+    @Test
+    fun headerProfileSwitchExitsProvisionalThreadBeforeFreshProfileSend() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        val proactiveChatIds = mutableListOf<String?>()
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, chatId, _, _ -> proactiveChatIds += chatId }
+
+        viewModel.openProactiveThread(
+            chatId = "old-phone-chat",
+            entries = listOf(
+                ProactiveInboxEntry(
+                    id = "inbox-1",
+                    title = "Old phone thread",
+                    text = "Continue here",
+                    receivedAt = 1L,
+                    chatId = "old-phone-chat",
+                    connectionId = "connection-a",
+                ),
+            ),
+        )
+        assertNull(handler.currentSessionId.value)
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        viewModel.sendMessage("Fresh beta turn")
+
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertTrue(proactiveChatIds.isEmpty())
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
+    }
+
+    @Test
+    fun headerProfileSwitchExitsPromotedPhoneSessionWithoutReusingItsChatId() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        val proactiveChatIds = mutableListOf<String?>()
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, chatId, _, _ -> proactiveChatIds += chatId }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "promoted-phone-session",
+                title = "Promoted thread",
+                model = null,
+                source = "phone",
+            ),
+        )
+        handler.setSessionId("promoted-phone-session")
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        assertNull(handler.currentSessionId.value)
+        viewModel.sendMessage("Fresh beta after Thread")
+
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertTrue(proactiveChatIds.isEmpty())
+    }
+
+    @Test
+    fun newChatAndConnectionSwitchRetireProvisionalThreadRouting() {
+        val entry = ProactiveInboxEntry(
+            id = "inbox-1",
+            title = "Old phone thread",
+            text = "Continue here",
+            receivedAt = 1L,
+            chatId = "old-phone-chat",
+            connectionId = "connection-a",
+        )
+        val inbound = ProactiveMessage(
+            messageId = "late-1",
+            chatId = "old-phone-chat",
+            text = "Late old-thread message",
+            title = "Old phone thread",
+            surfacing = "thread",
+            sentAt = 2L,
+        )
+
+        viewModel.openProactiveThread("old-phone-chat", listOf(entry))
+        viewModel.createNewChat()
+        assertFalse(viewModel.injectThreadMessage(inbound))
+
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        viewModel.observeConnectionSwitches(switches)
+        viewModel.openProactiveThread("old-phone-chat", listOf(entry))
+        switches.tryEmit("connection-b")
+        awaitCondition { handler.messages.value.isEmpty() }
+        assertFalse(viewModel.injectThreadMessage(inbound))
+    }
+
+    @Test
+    fun staleThreadPromotionCannotReplaceTransferredProfileDraft() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = Profile(name = "alpha", model = "model-a")
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, _, _, _ -> }
+        viewModel.openProactiveThread(
+            "old-phone-chat",
+            listOf(
+                ProactiveInboxEntry(
+                    id = "inbox-1",
+                    title = "Old phone thread",
+                    text = "Continue here",
+                    receivedAt = 1L,
+                    chatId = "old-phone-chat",
+                    connectionId = "connection-a",
+                ),
+            ),
+        )
+        viewModel.sendMessage("Promote the old Thread")
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "late-promoted-thread",
+                title = "Late promoted thread",
+                model = null,
+                source = "phone",
+            ),
+        )
+        shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+        Thread.sleep(100)
+
+        assertNull(handler.currentSessionId.value)
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
     }
 
     @Test

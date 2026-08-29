@@ -680,6 +680,7 @@ class ChatViewModel : ViewModel() {
      */
     private data class PendingThread(val chatId: String, val name: String)
     private var pendingThread: PendingThread? = null
+    private val threadNavigationGeneration = AtomicLong(0L)
 
     /**
      * A "+ New Thread" whose first message has been sent — we're now polling for
@@ -694,6 +695,17 @@ class ChatViewModel : ViewModel() {
         val knownIds: Set<String>,
     )
     private var creatingThread: CreatingThread? = null
+
+    /**
+     * Provisional phone Threads are route-owned drafts, not transferable chat
+     * drafts. Leaving that surface retires only the pending local route; durable
+     * inbox/session rows and learned session-to-chat-id mappings stay intact.
+     */
+    private fun exitProvisionalThread() {
+        threadNavigationGeneration.incrementAndGet()
+        pendingThread = null
+        creatingThread = null
+    }
 
     /**
      * `sessionId` → phone-platform `chat_id`, learned for threads this app
@@ -4210,6 +4222,7 @@ class ChatViewModel : ViewModel() {
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 conversationBindingController.reset()
+                exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
                 _reasoningCapabilityRevision.value += 1L
@@ -4257,6 +4270,7 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
         // Detach the old live gateway session without reading launch/global
         // model options: session.info for the resumed owner is authoritative.
         activateGatewayProfile(profile, refreshModelOptions = false)
@@ -4282,6 +4296,10 @@ class ChatViewModel : ViewModel() {
         contextKey: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        // A provisional phone Thread belongs to its original connection/chat_id
+        // and cannot transfer to another profile. Exit it before binding or
+        // persisting the destination draft so the next send uses session.create.
+        exitProvisionalThread()
         activateGatewayProfile(profile, refreshModelOptions = false)
         refreshActiveAgentName(profile, relabelGenericMessages = true)
         switchProfileContextInternal(
@@ -4297,6 +4315,33 @@ class ChatViewModel : ViewModel() {
         // target profile's previous conversation.
         persistFreshDraft(profileName)
         AppAnalytics.onSessionCreated()
+        return true
+    }
+
+    /**
+     * Atomic owner switch for the Chat header.
+     *
+     * Empty ordinary drafts and provisional phone Threads both become a fresh
+     * destination-profile draft, but only after provisional routing is retired.
+     * Durable sessions keep the established profile-selection lifecycle, whose
+     * binder may restore the destination profile's compatible last session.
+     */
+    fun selectProfileFromHeader(
+        profileName: String?,
+        profile: Profile?,
+        contextKey: String,
+    ): Boolean {
+        val handler = chatHandler ?: return false
+        val currentSessionId = handler.currentSessionId.value
+        val activeSession = handler.sessions.value.firstOrNull {
+            it.sessionId == currentSessionId
+        }
+        if (currentSessionId == null || activeSession?.source == "phone") {
+            return createProfileChat(profileName, profile, contextKey)
+        }
+        if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
+        activateGatewayProfile(profile)
         return true
     }
 
@@ -4702,8 +4747,7 @@ class ChatViewModel : ViewModel() {
         // draft for that same owner instead of falling back to the globally
         // restored default profile.
         conversationBindingController.startFreshDraft()
-        pendingThread = null
-        creatingThread = null
+        exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
         releaseTurnForNavigation(handler)
@@ -4803,6 +4847,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "new_thread")
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
@@ -4839,6 +4884,7 @@ class ChatViewModel : ViewModel() {
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
 
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "open_proactive_thread")
 
         releaseTurnForNavigation(handler)
@@ -4848,7 +4894,6 @@ class ChatViewModel : ViewModel() {
             chatId = normalizedChatId,
             name = ordered.last().title.ifBlank { "Hermes" },
         )
-        creatingThread = null
         gatewayClient?.clearSession()
         handler.setSessionId(null)
         selectBackgroundProcessSession(null)
@@ -4901,11 +4946,20 @@ class ChatViewModel : ViewModel() {
      */
     private fun switchToCreatedThread() {
         val creating = creatingThread ?: return
+        val generation = threadNavigationGeneration.get()
         viewModelScope.launch {
             for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L, 4500L)) {
                 delay(delayMs)
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 refreshSessions()
                 delay(400L) // let the refresh job land in the sessions flow
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 val match = chatHandler?.sessions?.value?.firstOrNull {
                     it.source == "phone" && it.sessionId !in creating.knownIds
                 }
@@ -4935,8 +4989,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         dismissChatFailure()
         if (streamingEndpoint != "gateway" && apiClient == null) return
-        pendingThread = null
-        creatingThread = null
+        exitProvisionalThread()
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.

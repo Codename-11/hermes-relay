@@ -2385,24 +2385,15 @@ fun ChatScreen(
     }
     val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
         if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
-            if (currentSessionId == null) {
-                // A header switch while a fresh draft is open transfers that
-                // draft to the selected profile. Do not run the ordinary
-                // profile restore path: its persisted last-session id would
-                // reopen an old conversation for the target profile.
-                val profileName = profile?.name
-                chatViewModel.createProfileChat(
+            val profileName = profile?.name
+            chatViewModel.selectProfileFromHeader(
+                profileName = profileName,
+                profile = profile,
+                contextKey = AgentDisplay.profileContextKey(
+                    connectionId = activeConnection?.id,
                     profileName = profileName,
-                    profile = profile,
-                    contextKey = AgentDisplay.profileContextKey(
-                        connectionId = activeConnection?.id,
-                        profileName = profileName,
-                    ),
-                )
-            } else {
-                connectionViewModel.selectProfile(profile)
-                chatViewModel.activateGatewayProfile(profile)
-            }
+                ),
+            )
         }
     }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
