@@ -190,14 +190,23 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
     async def test_ttl_and_transport_hint_flow_through_to_relay_block(self) -> None:
         result = await self._mint({
-            "ttl_seconds": 3600,
+            "ttl_seconds": 3600.0,
+            "grants": {"terminal": 1800.0},
             "transport_hint": "ws",
         })
         qr = json.loads(result["qr_payload"])
 
         relay = qr["relay"]
         self.assertEqual(relay["ttl_seconds"], 3600)
+        self.assertIs(type(relay["ttl_seconds"]), int)
+        self.assertEqual(relay["grants"]["terminal"], 1800)
+        self.assertIs(type(relay["grants"]["terminal"]), int)
         self.assertEqual(relay["transport_hint"], "ws")
+
+    async def test_fractional_pairing_durations_are_rejected(self) -> None:
+        response = await self.client.post("/pairing/mint", json={"ttl_seconds": 1.5})
+        self.assertEqual(response.status, 400)
+        self.assertIn("whole number", (await response.json())["error"])
 
     async def test_hermes_version_is_v2_when_metadata_present(self) -> None:
         result = await self._mint({"ttl_seconds": 3600})

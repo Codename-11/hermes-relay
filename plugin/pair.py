@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import random
 import socket
@@ -416,14 +417,22 @@ def build_relay_pairing_block(
     transport_hint: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build the nested ``relay`` block used by all QR emitters."""
+    def wire_seconds(value: Any) -> Any:
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return int(value)
+        return value
+
     relay_block: dict[str, Any] = {
         "url": relay_url,
         "code": code,
     }
     if ttl_seconds is not None:
-        relay_block["ttl_seconds"] = ttl_seconds
+        relay_block["ttl_seconds"] = wire_seconds(ttl_seconds)
     if grants is not None:
-        relay_block["grants"] = grants
+        relay_block["grants"] = {
+            channel: wire_seconds(duration)
+            for channel, duration in grants.items()
+        }
     if transport_hint is not None:
         relay_block["transport_hint"] = transport_hint
     return relay_block

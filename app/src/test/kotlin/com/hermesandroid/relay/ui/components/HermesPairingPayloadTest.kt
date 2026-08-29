@@ -27,6 +27,69 @@ import org.junit.Test
 class HermesPairingPayloadTest {
 
     @Test
+    fun integralFloatDurations_doNotDowngradeStructuredRelayPayload() {
+        val raw = """
+            {
+              "hermes": 3,
+              "host": "172.16.24.250",
+              "port": 8642,
+              "key": "api-key",
+              "tls": false,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "ws://172.16.24.250:8767",
+                "code": "ABC123",
+                "ttl_seconds": 2592000.0,
+                "grants": { "terminal": 604800.0 },
+                "transport_hint": "ws"
+              },
+              "endpoints": [
+                {
+                  "role": "https",
+                  "priority": 0,
+                  "dashboard": { "url": "https://dashboard.example.test" },
+                  "relay": {
+                    "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss"
+                  }
+                },
+                {
+                  "role": "lan",
+                  "priority": 1,
+                  "relay": { "url": "ws://172.16.24.250:8767", "transport_hint": "ws" }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertNotNull(payload!!.relay)
+        assertEquals(2592000L, payload.relay?.ttlSeconds)
+        assertEquals(604800L, payload.relay?.grants?.get("terminal"))
+        assertEquals(2, payload.endpoints?.size)
+        assertNotNull(payload.endpoints?.first()?.relay)
+    }
+
+    @Test
+    fun malformedStructuredRelayPayload_failsClosedInsteadOfBecomingDashboardOnly() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport",
+                "code": "ABC123",
+                "ttl_seconds": 1.5
+              }
+            }
+        """.trimIndent()
+
+        assertNull(parseHermesPairingQr(raw))
+    }
+
+    @Test
     fun apiLessDashboardRelayPayload_isAccepted() {
         val raw = """
             {

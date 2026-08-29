@@ -81,8 +81,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
@@ -277,20 +280,52 @@ private val json = Json {
  */
 fun parseHermesPairingQr(raw: String): HermesPairingPayload? {
     val trimmed = raw.trim()
-    return parseHermesRelayQr(trimmed)
-        ?: parseGenericApiJsonQr(trimmed)
+    parseHermesRelayQr(trimmed)?.let { return it }
+    // Structured Hermes payloads fail closed. Falling through to the generic
+    // parser would silently discard Relay credentials and route candidates.
+    if (looksLikeStructuredHermesPayload(trimmed)) return null
+    return parseGenericApiJsonQr(trimmed)
         ?: parseGenericDashboardJsonQr(trimmed)
         ?: parseGenericApiUrlQr(trimmed)
+}
+
+private fun looksLikeStructuredHermesPayload(raw: String): Boolean = runCatching {
+    val obj = json.decodeFromString<JsonObject>(raw)
+    obj.keys.any { it in setOf("hermes", "relay", "endpoints", "sig") }
+}.getOrDefault(false)
+
+private fun normalizeIntegralDuration(element: JsonElement): JsonElement {
+    val numeric = (element as? JsonPrimitive)?.doubleOrNull ?: return element
+    if (!numeric.isFinite() || numeric < 0 || numeric % 1.0 != 0.0) return element
+    if (numeric > Long.MAX_VALUE.toDouble()) return element
+    return JsonPrimitive(numeric.toLong())
+}
+
+/** Accept older Relay emitters that wrote whole seconds as JSON floats. */
+private fun normalizeRelayDurationFields(obj: JsonObject): JsonObject {
+    val relay = obj["relay"] as? JsonObject ?: return obj
+    val normalizedRelay = relay.toMutableMap()
+    relay["ttl_seconds"]?.let {
+        normalizedRelay["ttl_seconds"] = normalizeIntegralDuration(it)
+    }
+    (relay["grants"] as? JsonObject)?.let { grants ->
+        normalizedRelay["grants"] = JsonObject(
+            grants.mapValues { (_, duration) -> normalizeIntegralDuration(duration) },
+        )
+    }
+    return JsonObject(obj.toMutableMap().apply {
+        put("relay", JsonObject(normalizedRelay))
+    })
 }
 
 private fun parseHermesRelayQr(raw: String): HermesPairingPayload? {
     return try {
         // Future compatible versions remain accepted. The legacy top-level
         // API host is optional when Dashboard plus Relay identity is present.
-        val obj = json.decodeFromString<JsonObject>(raw)
+        val obj = normalizeRelayDurationFields(json.decodeFromString<JsonObject>(raw))
         val version = obj["hermes"]?.jsonPrimitive?.intOrNull ?: 1
         if (version < 1) return null
-        val decoded = json.decodeFromString<HermesPairingPayload>(raw)
+        val decoded = json.decodeFromString<HermesPairingPayload>(obj.toString())
         val dashboardAlias = firstString(obj, "dashboardUrl")
         val decodedWithAliases =
             if (decoded.dashboardUrl.isNullOrBlank() && dashboardAlias != null) {

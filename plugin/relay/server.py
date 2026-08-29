@@ -469,7 +469,7 @@ async def handle_pairing_register(request: web.Request) -> web.Response:
 
 def _parse_pairing_metadata(
     payload: dict[str, Any],
-) -> tuple[float | None, dict[str, float] | None, str | None, str | None]:
+) -> tuple[int | None, dict[str, int] | None, str | None, str | None]:
     """Extract ``ttl_seconds`` / ``grants`` / ``transport_hint`` from a
     ``/pairing/register`` or ``/pairing/approve`` JSON body.
 
@@ -478,21 +478,24 @@ def _parse_pairing_metadata(
     validation failure. Missing fields are reported as ``None``, which
     the auth layer interprets as "use defaults".
     """
-    ttl_seconds: float | None = None
+    ttl_seconds: int | None = None
     raw_ttl = payload.get("ttl_seconds")
     if raw_ttl is not None:
         if not isinstance(raw_ttl, (int, float)) or isinstance(raw_ttl, bool):
             return None, None, None, "ttl_seconds must be a number"
         if raw_ttl < 0:
             return None, None, None, "ttl_seconds must be >= 0 (0 = never)"
-        ttl_seconds = float(raw_ttl)
+        numeric_ttl = float(raw_ttl)
+        if not math.isfinite(numeric_ttl) or not numeric_ttl.is_integer():
+            return None, None, None, "ttl_seconds must be a whole number of seconds"
+        ttl_seconds = int(numeric_ttl)
 
-    grants: dict[str, float] | None = None
+    grants: dict[str, int] | None = None
     raw_grants = payload.get("grants")
     if raw_grants is not None:
         if not isinstance(raw_grants, dict):
             return None, None, None, "grants must be an object"
-        cleaned: dict[str, float] = {}
+        cleaned: dict[str, int] = {}
         for channel, value in raw_grants.items():
             if not isinstance(channel, str):
                 return None, None, None, "grants keys must be strings"
@@ -500,7 +503,10 @@ def _parse_pairing_metadata(
                 return None, None, None, f"grants['{channel}'] must be a number"
             if value < 0:
                 return None, None, None, f"grants['{channel}'] must be >= 0"
-            cleaned[channel] = float(value)
+            numeric_value = float(value)
+            if not math.isfinite(numeric_value) or not numeric_value.is_integer():
+                return None, None, None, f"grants['{channel}'] must be whole seconds"
+            cleaned[channel] = int(numeric_value)
         grants = cleaned
 
     transport_hint: str | None = None
