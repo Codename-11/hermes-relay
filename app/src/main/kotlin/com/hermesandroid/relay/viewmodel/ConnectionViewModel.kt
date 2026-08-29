@@ -488,6 +488,12 @@ internal data class PendingConnectionDraft(
     var label: String? = null,
 )
 
+/** Hide user-confirmed removals immediately while serialized cleanup finishes. */
+internal fun visibleConnectionsDuringRemoval(
+    connections: List<Connection>,
+    removingIds: Set<String>,
+): List<Connection> = connections.filterNot { it.id in removingIds }
+
 /**
  * One Dashboard-gated Relay pairing that must not consume its one-time code
  * until the Dashboard session can mint ingress WebSocket tickets.
@@ -981,7 +987,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * migrateLegacyConnectionIfNeeded runs). Exposed through
      * [connectionStore] directly for cheap access.
      */
-    val connections: StateFlow<List<Connection>> = connectionStore.connections
+    private val _removingConnectionIds = MutableStateFlow<Set<String>>(emptySet())
+    val connections: StateFlow<List<Connection>> = combine(
+        connectionStore.connections,
+        _removingConnectionIds,
+        ::visibleConnectionsDuringRemoval,
+    ).stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        emptyList(),
+    )
     val connectionsHydrated: StateFlow<Boolean> = connectionStore.isHydrated
     val activeConnection: StateFlow<Connection?> = connectionStore.activeConnection
     val activeConnectionId: StateFlow<String?> = connectionStore.activeConnectionId
@@ -4042,36 +4057,39 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * renders "No connection" until the user adds one via Settings.
      */
     suspend fun removeConnection(connectionId: String) {
-        val removed = connectionStore.connections.value.firstOrNull { it.id == connectionId }
-            ?: return
-        val wasActive = connectionId == activeConnectionId.value
-        val removedDeviceId = readStoredDeviceIdForRemoval(removed, wasActive)
-        if (wasActive) {
-            val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
-            if (other != null) {
-                // Await the full switch before deleting the store file.
-                // switchConnection launches on viewModelScope; if we
-                // proceeded to ConnectionStore.removeConnection (which
-                // calls Context.deleteSharedPreferences) before the
-                // coordinator finished tearing down the old AuthManager,
-                // the old manager's in-flight init/hydrate coroutine could
-                // fault reading a file that was just deleted.
-                switchConnection(other.id).join()
-            } else {
-                // No successor to switch into — the removed connection
-                // WAS the last one. Before the teardown was wired here,
-                // `removeConnection` in this branch only cleared the
-                // store entry, which left the API client, the WSS socket,
-                // and the reachable/health flags alive and pointed at
-                // the just-removed URL: status chips kept saying "Paired
-                // · Reachable" for a ghost connection.
-                //
-                // teardownActive() runs the transport half of
-                // switchConnection (stream cancel → voice stop → WSS
-                // disconnect → switch-event emit) against the active
-                // coordinator mutex, so a concurrent Add-connection flow
-                // from the UI serialises cleanly.
-                connectionSwitchCoordinator.teardownActive().join()
+        if (connectionId in _removingConnectionIds.value) return
+        _removingConnectionIds.value = _removingConnectionIds.value + connectionId
+        try {
+            val removed = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+                ?: return
+            val wasActive = connectionId == activeConnectionId.value
+            val removedDeviceId = readStoredDeviceIdForRemoval(removed, wasActive)
+            if (wasActive) {
+                val other = connectionStore.connections.value.firstOrNull { it.id != connectionId }
+                if (other != null) {
+                    // Await the full switch before deleting the store file.
+                    // switchConnection launches on viewModelScope; if we
+                    // proceeded to ConnectionStore.removeConnection (which
+                    // calls Context.deleteSharedPreferences) before the
+                    // coordinator finished tearing down the old AuthManager,
+                    // the old manager's in-flight init/hydrate coroutine could
+                    // fault reading a file that was just deleted.
+                    switchConnection(other.id).join()
+                } else {
+                    // No successor to switch into — the removed connection
+                    // WAS the last one. Before the teardown was wired here,
+                    // `removeConnection` in this branch only cleared the
+                    // store entry, which left the API client, the WSS socket,
+                    // and the reachable/health flags alive and pointed at
+                    // the just-removed URL: status chips kept saying "Paired
+                    // · Reachable" for a ghost connection.
+                    //
+                    // teardownActive() runs the transport half of
+                    // switchConnection (stream cancel → voice stop → WSS
+                    // disconnect → switch-event emit) against the active
+                    // coordinator mutex, so a concurrent Add-connection flow
+                    // from the UI serialises cleanly.
+                    connectionSwitchCoordinator.teardownActive().join()
 
                 // Clear the in-memory AuthManager state for the
                 // about-to-be-removed connection. Without this the
@@ -4083,7 +4101,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // `currentPairedSession`, which the relay UI state
                 // resolver needs in order to flip its row off
                 // Connected.
-                authManager.clearSession()
+                    authManager.clearSession()
 
                 // URL flows + persisted DataStore entries point at the
                 // removed URL. Blank them out so the 30 s periodic
@@ -4091,42 +4109,45 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // != null` and `_relayUrl.value.isNotBlank()`) stop
                 // firing, and cold relaunch doesn't re-seed connection
                 // 0 from stale legacy keys.
-                _apiServerUrl.value = ""
-                _relayUrl.value = ""
-                getApplication<Application>().relayDataStore.edit { prefs ->
-                    prefs[KEY_API_SERVER_URL] = ""
-                    prefs[KEY_RELAY_URL] = ""
-                    prefs.remove(KEY_LAST_SESSION_ID)
-                }
+                    _apiServerUrl.value = ""
+                    _relayUrl.value = ""
+                    getApplication<Application>().relayDataStore.edit { prefs ->
+                        prefs[KEY_API_SERVER_URL] = ""
+                        prefs[KEY_RELAY_URL] = ""
+                        prefs.remove(KEY_LAST_SESSION_ID)
+                    }
                 // rebuildApiClient() with blank URL nulls _apiClient,
                 // flips _apiServerReachable / _apiServerHealth /
                 // _chatMode / _serverCapabilities to their disconnected
                 // poses (see the `else` branch of rebuildApiClient).
                 // This is what actually drives the status badges back
                 // to "Not configured".
-                rebuildApiClient()
+                    rebuildApiClient()
+                }
             }
+            scrubConnectionArtifacts(removed, removedDeviceId)
+            upstreamTransport.disposeConnectionRouteClients(connectionId)
+            connectionStore.removeConnection(connectionId)
+            botModeController.connectionRemoved(connectionId)
+            // Clear the persisted profile selection for the removed connection
+            // AFTER the switch-away above has finished. Ordering matters: if
+            // we cleared first, any in-flight hydration from the just-swapped
+            // AuthManager could race with the delete. Safe because
+            // ProfileSelectionStore is a separate DataStore file from
+            // ConnectionStore's EncryptedSharedPrefs.
+            profileController.profileSelectionStore.clear(connectionId)
+            profileController.profileLockStore.clear(connectionId)
+            com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())
+                .clear(connectionId)
+            profileController.profilePresentationStore.clear(connectionId)
+            profileController.profileSessionStore.clearConnection(connectionId)
+            profileController.profileDisplayAliasStore.clearConnection(connectionId)
+            profileController.profileIconStore.clearConnection(connectionId)
+            com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository(getApplication())
+                .clearConnection(connectionId)
+        } finally {
+            _removingConnectionIds.value = _removingConnectionIds.value - connectionId
         }
-        scrubConnectionArtifacts(removed, removedDeviceId)
-        upstreamTransport.disposeConnectionRouteClients(connectionId)
-        connectionStore.removeConnection(connectionId)
-        botModeController.connectionRemoved(connectionId)
-        // Clear the persisted profile selection for the removed connection
-        // AFTER the switch-away above has finished. Ordering matters: if
-        // we cleared first, any in-flight hydration from the just-swapped
-        // AuthManager could race with the delete. Safe because
-        // ProfileSelectionStore is a separate DataStore file from
-        // ConnectionStore's EncryptedSharedPrefs.
-        profileController.profileSelectionStore.clear(connectionId)
-        profileController.profileLockStore.clear(connectionId)
-        com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())
-            .clear(connectionId)
-        profileController.profilePresentationStore.clear(connectionId)
-        profileController.profileSessionStore.clearConnection(connectionId)
-        profileController.profileDisplayAliasStore.clearConnection(connectionId)
-        profileController.profileIconStore.clearConnection(connectionId)
-        com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository(getApplication())
-            .clearConnection(connectionId)
     }
 
     private suspend fun readStoredDeviceIdForRemoval(
