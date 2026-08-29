@@ -376,7 +376,9 @@ internal class HermesRuntimeBinder(
                 if (!AssistantAppSessionState.active.value) return@collect
                 if (state.voiceMode) AssistantAppSessionState.markVoiceStarted()
                 if (state.voiceMode || AssistantAppSessionState.hasVoiceStarted()) {
-                    AssistantSessionProtocol.publish(application, snapshot)
+                    state.assistantActivationId?.let { activationId ->
+                        AssistantSessionProtocol.publish(application, activationId, snapshot)
+                    }
                 }
             }
         }

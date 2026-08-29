@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+- **Android Assistant sessions explain when no speech was captured instead of appearing stuck at Ready.** Retry feedback survives the separate system overlay process, recreated session UI requests the current turn state, and locked sessions keep transcript, response, and technical error text private.
 
 ### Removed
 

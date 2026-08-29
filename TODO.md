@@ -1300,7 +1300,12 @@ and whether the agent is waiting on the user.
   permissions; exercise compact, expanded, collapsed, and full-Voice handoff
   states, background tap-through, rotation and insets, cancel/back, microphone
   denial, network failure, process kill/recreation, and wake→voice→wake
-  resumption. Measure idle battery drain because third-party assistants do not
+  resumption. For background and keyguard capture, record `AudioRecord`, AppOps,
+  and foreground-service state: the user-installed app owns capture outside the
+  separate session process, so confirm whether the selected Assistant role is
+  sufficient on each target OS or whether activation needs an explicit,
+  activation-scoped microphone foreground-service lease. Measure idle battery
+  drain because third-party assistants do not
   receive Google's dedicated low-power hotword hardware.
 
 - **Audio quality guardrails** — normalize output volume across realtime and

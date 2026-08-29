@@ -52,6 +52,7 @@ import com.hermesandroid.relay.voice.VoiceCommandInterpreter
 import com.hermesandroid.relay.voice.SpokenInterruptionLatch
 import com.hermesandroid.relay.voice.voiceInterfaceContextPrompt
 import com.hermesandroid.relay.assistant.assistantContextStore
+import com.hermesandroid.relay.assistant.AssistantSessionNotice
 import com.hermesandroid.relay.assistant.buildAssistantVoiceTurnPayload
 // === PHASE3-voice-intents: voice→bridge intent routing ===
 import com.hermesandroid.relay.voice.IntentResult
@@ -124,6 +125,25 @@ internal fun voiceSubmissionRetryState(state: VoiceUiState): VoiceUiState = stat
     outputAudioActive = false,
     responseText = "",
     error = null,
+)
+
+internal fun voiceNoSpeechState(state: VoiceUiState): VoiceUiState = state.copy(
+    state = VoiceState.Idle,
+    amplitude = 0f,
+    outputAudioActive = false,
+    transcribedText = null,
+    error = null,
+    assistantNotice = AssistantSessionNotice.NoSpeech,
+)
+
+internal fun voiceCaptureCancellationState(
+    state: VoiceUiState,
+    notice: AssistantSessionNotice? = null,
+): VoiceUiState = state.copy(
+    state = VoiceState.Idle,
+    amplitude = 0f,
+    outputAudioActive = false,
+    assistantNotice = notice,
 )
 
 internal data class AssistantContextTurnDisposition(
@@ -328,6 +348,10 @@ data class VoiceUiState(
     val responseText: String = "",
     /** Human-readable error surfaced in the overlay. */
     val error: String? = null,
+    /** Content-free retry status safe for the system Assistant surface. */
+    val assistantNotice: AssistantSessionNotice? = null,
+    /** Stable owner for cross-process Assistant status; null for ordinary voice. */
+    val assistantActivationId: String? = null,
     /** Currently-selected interaction mode. */
     val interactionMode: InteractionMode = InteractionMode.TapToTalk,
     /**
@@ -440,6 +464,7 @@ internal fun voiceSessionExitState(state: VoiceUiState): VoiceUiState =
         transcribedText = null,
         responseText = "",
         error = null,
+        assistantNotice = null,
         destructiveCountdown = null,
         hermesConfirmation = null,
         handoffStatus = null,
@@ -1630,6 +1655,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 state = VoiceState.Idle,
                 outputAudioActive = false,
                 error = null,
+                assistantActivationId = activationId,
                 hermesConfirmation = null,
                 backgroundRun = if (orphanedRun != null) null else it.backgroundRun,
             )
@@ -2067,6 +2093,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     state = VoiceState.Listening,
                     outputAudioActive = false,
                     error = null,
+                    assistantNotice = null,
                     responseText = "",
                     // v0.4.1 — fresh turn, drop any stale JIT permission chip
                     // from the previous dispatch.
@@ -2176,7 +2203,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun shouldDiscardVoiceCaptureBeforeStop(durationMs: Long): Boolean =
         durationMs < MIN_VOICE_CAPTURE_DURATION_MS
 
-    private fun cancelListeningWithoutProcessing(title: String, detail: String? = null) {
+    private fun cancelListeningWithoutProcessing(
+        title: String,
+        detail: String? = null,
+        notice: AssistantSessionNotice? = null,
+    ) {
         responseInterruptedForVoiceCommand = false
         silenceWatchdogJob?.cancel()
         silenceWatchdogJob = null
@@ -2188,9 +2219,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             title = title,
             detail = detail,
         )
-        _uiState.update {
-            it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
-        }
+        _uiState.update { voiceCaptureCancellationState(it, notice) }
     }
 
     /** Reconcile microphone state after the Activity returns to foreground. */
@@ -2327,6 +2356,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         cancelListeningWithoutProcessing(
                             title = getApplication<Application>().getString(R.string.voice_status_no_speech),
                             detail = "No speech within ${IDLE_NO_SPEECH_MS / 1000}s",
+                            notice = AssistantSessionNotice.NoSpeech,
                         )
                         return@launch
                     }
@@ -6497,13 +6527,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             detail = detail,
         )
         _uiState.update {
-            it.copy(
-                state = VoiceState.Idle,
-                amplitude = 0f,
-                outputAudioActive = false,
-                error = null,
-                transcribedText = null,
-            )
+            voiceNoSpeechState(it)
         }
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }

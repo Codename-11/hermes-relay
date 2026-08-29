@@ -3,6 +3,11 @@ package com.hermesandroid.relay.assistant
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
@@ -67,6 +72,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -108,6 +114,11 @@ internal fun shouldCancelVoiceWhenSessionUiEnds(
     presentation: AssistantSessionPresentation,
 ): Boolean = presentation == AssistantSessionPresentation.Overlay
 
+internal fun assistantPresentationLocked(
+    currentKeyguardLocked: Boolean?,
+    fallbackLocked: Boolean,
+): Boolean = currentKeyguardLocked ?: fallbackLocked
+
 private class HermesVoiceInteractionSession(
     private val service: HermesVoiceInteractionSessionService,
 ) : VoiceInteractionSession(service) {
@@ -118,12 +129,19 @@ private class HermesVoiceInteractionSession(
     private var surfaceExpanded by mutableStateOf(false)
     private var activationId: String? = null
     private var manualMic = false
+    private var keyguardLocked by mutableStateOf(false)
     private var expectScreenContext: Boolean? = null
     private var pendingSemantic = AssistantSemanticContext()
     private var pendingScreenshot: ByteArray? = null
     private var screenContextUi by mutableStateOf(AssistantScreenContextUi())
     private val contextStore = assistantContextStore(service)
     private var heartbeatJob: Job? = null
+    private var keyguardReceiverRegistered = false
+    private val keyguardReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            refreshKeyguardState()
+        }
+    }
 
     init {
         scope.launch {
@@ -139,6 +157,17 @@ private class HermesVoiceInteractionSession(
 
     override fun onCreate() {
         super.onCreate()
+        ContextCompat.registerReceiver(
+            service,
+            keyguardReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        keyguardReceiverRegistered = true
         window.window?.apply {
             setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -155,6 +184,7 @@ private class HermesVoiceInteractionSession(
             PersistedHermesRelayTheme {
                 AssistantSessionSurface(
                     expanded = surfaceExpanded,
+                    locked = keyguardLocked,
                     screenContext = screenContextUi,
                     onExpandedChange = { surfaceExpanded = it },
                     onCancel = { finishSession(cancelVoice = true) },
@@ -183,8 +213,19 @@ private class HermesVoiceInteractionSession(
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        if (args?.getBoolean(HermesVoiceInteractionService.EXTRA_FROM_KEYGUARD, false) == true) {
+        refreshKeyguardState(
+            fallbackLocked = args?.getBoolean(
+                HermesVoiceInteractionService.EXTRA_FROM_KEYGUARD,
+                false,
+            ) == true,
+        )
+        if (keyguardLocked) {
             window.window?.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        } else {
+            window.window?.clearFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
@@ -195,10 +236,10 @@ private class HermesVoiceInteractionSession(
         if (!startsNewLifecycle) return
 
         surfaceExpanded = false
-        AssistantSessionState.reset()
         screenContextUi = AssistantScreenContextUi()
         activationId = args?.getString(AssistantSessionProtocol.EXTRA_ACTIVATION_ID)
             ?: UUID.randomUUID().toString()
+        AssistantSessionState.reset(activationId!!)
         manualMic = args?.getBoolean(AssistantSessionProtocol.EXTRA_MANUAL_MIC, false) ?: false
         expectScreenContext = args?.getBoolean(
             AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
@@ -300,6 +341,10 @@ private class HermesVoiceInteractionSession(
         pendingSemantic = AssistantSemanticContext()
         pendingScreenshot = null
         screenContextUi = AssistantScreenContextUi()
+        if (keyguardReceiverRegistered) {
+            runCatching { service.unregisterReceiver(keyguardReceiver) }
+            keyguardReceiverRegistered = false
+        }
         viewOwner.stop()
         scope.cancel()
         super.onDestroy()
@@ -319,6 +364,7 @@ private class HermesVoiceInteractionSession(
             )
         }.onFailure {
             AssistantSessionState.update(
+                activationId,
                 AssistantSessionSnapshot(
                     phase = AssistantSessionPhase.Error,
                     error = it.message ?: "Hermes could not open the voice session.",
@@ -337,6 +383,7 @@ private class HermesVoiceInteractionSession(
             setUiEnabled(false)
         }.onFailure {
             AssistantSessionState.update(
+                activationId,
                 AssistantSessionSnapshot(
                     phase = AssistantSessionPhase.Error,
                     error = it.message ?: "Hermes could not open full voice.",
@@ -375,6 +422,14 @@ private class HermesVoiceInteractionSession(
             }
             AssistantMicAction.Disabled -> Unit
         }
+    }
+
+    private fun refreshKeyguardState(fallbackLocked: Boolean = keyguardLocked) {
+        keyguardLocked = assistantPresentationLocked(
+            currentKeyguardLocked = service.getSystemService(KeyguardManager::class.java)
+                ?.isKeyguardLocked,
+            fallbackLocked = fallbackLocked,
+        )
     }
 
     @RequiresApi(android.os.Build.VERSION_CODES.Q)
@@ -463,6 +518,7 @@ private class AssistantSessionViewOwner :
 @Composable
 private fun AssistantSessionSurface(
     expanded: Boolean,
+    locked: Boolean,
     screenContext: AssistantScreenContextUi,
     onExpandedChange: (Boolean) -> Unit,
     onCancel: () -> Unit,
@@ -471,7 +527,8 @@ private fun AssistantSessionSurface(
     onOpenFullVoice: () -> Unit,
     onSurfaceBoundsChanged: (android.graphics.Rect) -> Unit,
 ) {
-    val snapshot by AssistantSessionState.snapshot.collectAsState()
+    val rawSnapshot by AssistantSessionState.snapshot.collectAsState()
+    val snapshot = assistantSnapshotForPresentation(rawSnapshot, locked)
     val status = assistantStatus(snapshot.phase)
     val transmittedScreenContext = if (snapshot.screenContextSupported) {
         screenContext
@@ -648,6 +705,13 @@ private fun ExpandedAssistantSurface(
                 icon = Icons.Filled.AutoAwesome,
                 text = response,
                 color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        snapshot.notice?.let { notice ->
+            Text(
+                text = assistantNoticeText(notice),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
         snapshot.error?.let { error ->
@@ -896,5 +960,11 @@ private fun assistantStatus(phase: AssistantSessionPhase): String = when (phase)
 private fun compactAssistantText(snapshot: AssistantSessionSnapshot): String =
     snapshot.transcript?.takeIf { it.isNotBlank() }
         ?: snapshot.response.takeIf { it.isNotBlank() }
+        ?: snapshot.notice?.let { assistantNoticeText(it) }
         ?: snapshot.error?.takeIf { it.isNotBlank() }
         ?: assistantStatus(snapshot.phase)
+
+@Composable
+private fun assistantNoticeText(notice: AssistantSessionNotice): String = when (notice) {
+    AssistantSessionNotice.NoSpeech -> stringResource(R.string.voice_no_speech_try_again)
+}

@@ -2495,6 +2495,8 @@ boundary.
 - Activation heartbeats let the main runtime clean up after assistant-process loss.
   Finish and show-failure paths clear pending/watchdog state, while Full Voice
   explicitly transfers ownership before the session overlay stops heartbeats.
+  A recreated session process requests the current activation-fenced voice
+  snapshot rather than treating its empty local state as authoritative.
 - Connection, chat, and voice runtime ownership is application-lifetime in the
   main process rather than Activity-owned. The assistant service may initialize
   that graph and start a turn while no Activity exists; the app UI later binds
@@ -2508,6 +2510,9 @@ boundary.
 
 - Background and locked-screen invocation is mediated by Android's selected
   assistant UI/session rather than an ordinary background Activity launch.
+- Locked assistant UI exposes only generic phase and retry status. Transcript,
+  response, route-specific errors, diagnostics, and screen context remain hidden
+  until the device is unlocked; no-speech retry copy is deliberately content-free.
 - Users can leave Hermes selected for gesture/power-button invocation while
   turning continuous KWS off, or remove Hermes through Android's Assistant
   settings.
