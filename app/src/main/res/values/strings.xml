@@ -491,6 +491,10 @@
     <string name="cw_connecting_to_hermes">Connecting to Hermes</string>
     <string name="cw_connecting_detail">Checking the API server, saved key, and dashboard.</string>
     <string name="cw_pairing_title">Pairing…</string>
+    <string name="cw_pair_in_progress">Working…</string>
+    <string name="cw_pair_status_preparing_gateway">Preparing gateway…</string>
+    <string name="cw_pair_status_opening_sign_in">Opening secure sign-in…</string>
+    <string name="cw_pair_status_pairing_relay">Pairing Relay…</string>
     <string name="cw_pairing_failed">Pairing failed</string>
     <string name="cw_negotiating_relay">Negotiating with the relay…</string>
     <string name="cw_paired_opening_chat">Paired — opening chat…</string>

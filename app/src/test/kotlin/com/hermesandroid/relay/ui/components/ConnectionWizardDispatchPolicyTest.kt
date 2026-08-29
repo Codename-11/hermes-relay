@@ -10,6 +10,14 @@ import org.junit.Test
 
 class ConnectionWizardDispatchPolicyTest {
     @Test
+    fun pairSubmissionStagesLockActionsUntilHandoff() {
+        assertFalse(PairSubmissionStage.Idle.inProgress)
+        assertTrue(PairSubmissionStage.PreparingGateway.inProgress)
+        assertTrue(PairSubmissionStage.OpeningSignIn.inProgress)
+        assertTrue(PairSubmissionStage.PairingRelay.inProgress)
+    }
+
+    @Test
     fun setupOwnerRemainsStableWhenDraftBecomesActive() {
         val staged = resolveConnectionWizardOwner(null, "draft-id")
         val committed = resolveConnectionWizardOwner(staged, null)

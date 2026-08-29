@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -93,6 +94,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -240,6 +242,8 @@ fun ConnectionWizard(
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
     var standardBusy by remember { mutableStateOf(false) }
+    var pairSubmissionStage by remember { mutableStateOf(PairSubmissionStage.Idle) }
+    var pairSubmissionError by remember { mutableStateOf<String?>(null) }
     var standardError by remember { mutableStateOf<String?>(null) }
     var standardSuccess by remember { mutableStateOf<ConnectionViewModel.StandardApiSetupResult?>(null) }
     var nearbyBusy by remember { mutableStateOf(false) }
@@ -573,6 +577,8 @@ fun ConnectionWizard(
         standardBusy = true
         standardError = null
         standardSuccess = null
+        pairSubmissionStage = PairSubmissionStage.Idle
+        pairSubmissionError = null
         connectionViewModel.saveStandardApiConnection(
             apiUrl = trimmedApi,
             apiKey = apiKey,
@@ -837,6 +843,9 @@ fun ConnectionWizard(
                             onTtlChange = { ttlSeconds = it },
                             isTailscaleDetected = isTailscaleDetected,
                             standardBusy = standardBusy,
+                            pairSubmissionStage = pairSubmissionStage,
+                            pairSubmissionError = pairSubmissionError,
+                            animateStatusChanges = animateWizardTransitions,
                             standardSuccess = standardSuccess,
                             onBack = {
                                 pendingPayload = null
@@ -851,6 +860,10 @@ fun ConnectionWizard(
                                 // "Prefer" choice on every failure.
                                 pendingPayload = reorderedPayload
                                 val dispatch = setupQrDispatch(reorderedPayload)
+                                if (dispatch == SetupQrDispatch.Relay) {
+                                    pairSubmissionStage = PairSubmissionStage.PreparingGateway
+                                    pairSubmissionError = null
+                                }
                                 when (dispatch) {
                                     SetupQrDispatch.Dashboard -> {
                                         // Dashboard-only setup belongs to the same
@@ -884,6 +897,7 @@ fun ConnectionWizard(
                                             )
                                         }
                                         if (existing != null) {
+                                            pairSubmissionStage = PairSubmissionStage.Idle
                                             duplicatePrompt = existing
                                         } else if (dispatch == SetupQrDispatch.StandardApi) {
                                             launchStandardConnect(
@@ -899,16 +913,24 @@ fun ConnectionWizard(
                                         ) {
                                             if (onManageSignIn != null) {
                                                 wizardScope.launch {
-                                                    connectionViewModel.ensureActiveConnectionForSetup(
-                                                        apiServerUrl = reorderedPayload.serverUrl,
-                                                        relayUrl = reorderedPayload.relay?.url.orEmpty(),
-                                                        routeCandidates = reorderedPayload.endpoints,
-                                                    )
-                                                    connectionViewModel.stageDashboardIngressPairingForSignIn(
-                                                        reorderedPayload,
-                                                        ttlSeconds,
-                                                    )
-                                                    onManageSignIn()
+                                                    runCatching {
+                                                        connectionViewModel.ensureActiveConnectionForSetup(
+                                                            apiServerUrl = reorderedPayload.serverUrl,
+                                                            relayUrl = reorderedPayload.relay?.url.orEmpty(),
+                                                            routeCandidates = reorderedPayload.endpoints,
+                                                        )
+                                                        connectionViewModel.stageDashboardIngressPairingForSignIn(
+                                                            reorderedPayload,
+                                                            ttlSeconds,
+                                                        )
+                                                    }.onSuccess {
+                                                        pairSubmissionStage = PairSubmissionStage.OpeningSignIn
+                                                        onManageSignIn()
+                                                    }.onFailure { error ->
+                                                        pairSubmissionStage = PairSubmissionStage.Idle
+                                                        pairSubmissionError = error.message
+                                                            ?: context.getString(R.string.cw_pairing_did_not_complete)
+                                                    }
                                                 }
                                             } else {
                                                 verifyError = context.getString(
@@ -918,18 +940,26 @@ fun ConnectionWizard(
                                             }
                                         } else {
                                             wizardScope.launch {
-                                                connectionViewModel.ensureActiveConnectionForSetup(
-                                                    apiServerUrl = reorderedPayload.serverUrl,
-                                                    relayUrl = reorderedPayload.relay?.url.orEmpty(),
-                                                    routeCandidates = reorderedPayload.endpoints,
-                                                )
-                                                connectionViewModel.applyPairingPayload(
-                                                    reorderedPayload,
-                                                    ttlSeconds,
-                                                    preserveStandardConfig = relayScopedFlow,
-                                                )
-                                                step = WizardStep.Verify
-                                                verifyAttempt += 1
+                                                runCatching {
+                                                    connectionViewModel.ensureActiveConnectionForSetup(
+                                                        apiServerUrl = reorderedPayload.serverUrl,
+                                                        relayUrl = reorderedPayload.relay?.url.orEmpty(),
+                                                        routeCandidates = reorderedPayload.endpoints,
+                                                    )
+                                                }.onSuccess {
+                                                    pairSubmissionStage = PairSubmissionStage.PairingRelay
+                                                    connectionViewModel.applyPairingPayload(
+                                                        reorderedPayload,
+                                                        ttlSeconds,
+                                                        preserveStandardConfig = relayScopedFlow,
+                                                    )
+                                                    step = WizardStep.Verify
+                                                    verifyAttempt += 1
+                                                }.onFailure { error ->
+                                                    pairSubmissionStage = PairSubmissionStage.Idle
+                                                    pairSubmissionError = error.message
+                                                        ?: context.getString(R.string.cw_pairing_did_not_complete)
+                                                }
                                             }
                                         }
                                     }
@@ -3339,6 +3369,9 @@ private fun ConfirmStep(
     onTtlChange: (Long) -> Unit,
     isTailscaleDetected: Boolean,
     standardBusy: Boolean,
+    pairSubmissionStage: PairSubmissionStage,
+    pairSubmissionError: String?,
+    animateStatusChanges: Boolean,
     standardSuccess: ConnectionViewModel.StandardApiSetupResult?,
     onBack: () -> Unit,
     onComplete: () -> Unit,
@@ -3779,7 +3812,7 @@ private fun ConfirmStep(
             ) {
                 OutlinedButton(
                     onClick = onBack,
-                    enabled = !standardBusy,
+                    enabled = !standardBusy && !pairSubmissionStage.inProgress,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(stringResource(R.string.cw_back))
@@ -3803,21 +3836,71 @@ private fun ConfirmStep(
                             ?: payload
                         onConfirm(effective)
                     },
-                    enabled = gateIsSatisfied && !standardBusy,
+                    enabled = gateIsSatisfied && !standardBusy && !pairSubmissionStage.inProgress,
                     modifier = Modifier.weight(1f),
                 ) {
-                    if (relayUrl == null && standardBusy) {
+                    if (standardBusy || pairSubmissionStage.inProgress) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
                         )
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(R.string.cw_pair_in_progress))
                     } else {
                         Text(if (relayUrl == null) stringResource(R.string.cw_connect_button) else stringResource(R.string.cw_pair_button))
                     }
                 }
             }
+            if (relayUrl != null && pairSubmissionStage.inProgress) {
+                val pairStatusDescription = stringResource(pairSubmissionStage.statusTextRes)
+                AnimatedContent(
+                    targetState = pairSubmissionStage,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            stateDescription = pairStatusDescription
+                        },
+                    transitionSpec = {
+                        if (animateStatusChanges) {
+                            loadedContentTransform()
+                        } else {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                    },
+                    label = "pairSubmissionStatus",
+                ) { stage ->
+                    Text(
+                        text = stringResource(stage.statusTextRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            if (!pairSubmissionError.isNullOrBlank()) {
+                Text(
+                    text = pairSubmissionError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
+}
+
+internal enum class PairSubmissionStage(@StringRes val statusTextRes: Int) {
+    Idle(R.string.cw_pair_button),
+    PreparingGateway(R.string.cw_pair_status_preparing_gateway),
+    OpeningSignIn(R.string.cw_pair_status_opening_sign_in),
+    PairingRelay(R.string.cw_pair_status_pairing_relay),
+    ;
+
+    val inProgress: Boolean get() = this != Idle
 }
 
 @Composable
