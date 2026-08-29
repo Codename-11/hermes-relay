@@ -425,6 +425,18 @@ class ConnectionManager(
     }
 
     /**
+     * Open the exact QR-advertised socket for a fresh pair. Relay health probes
+     * require an established Relay session, so running the normal resolver
+     * before `auth.ok` is circular and can consume the entire pairing window.
+     * Post-pair reconnects continue to use [connect] and full route resolution.
+     */
+    fun connectPairing(url: String) {
+        ensureNetworkCallbackRegistered()
+        _activeRelayEndpoint.value = null
+        connectToUrlOnMainPath(url, replaceReason = "Fresh Relay pairing")
+    }
+
+    /**
      * Replace an ordinary scheduled reconnect with an immediate attempt.
      *
      * Foregrounding the app or opening Relay status is an explicit signal that
@@ -1149,7 +1161,14 @@ class ConnectionManager(
             // runs on a background coroutine, so letting OkHttp's url() throw
             // would crash the app — the #131 "Invalid URL host" class, relay-
             // socket half. Route it through the same path onFailure uses.
-            Log.e(TAG, "doConnect: malformed relay URL '$url' — not connecting")
+            Log.e(
+                TAG,
+                if (isDashboardRelayIngressUrl(url)) {
+                    "doConnect: Dashboard Relay ticket/request unavailable for '$url'"
+                } else {
+                    "doConnect: malformed relay URL '$url' — not connecting"
+                },
+            )
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,

@@ -10,6 +10,16 @@ import org.junit.Test
 
 class ConnectionWizardDispatchPolicyTest {
     @Test
+    fun setupOwnerRemainsStableWhenDraftBecomesActive() {
+        val staged = resolveConnectionWizardOwner(null, "draft-id")
+        val committed = resolveConnectionWizardOwner(staged, null)
+
+        assertEquals("draft-id", staged)
+        assertEquals(staged, committed)
+        assertEquals("new-dashboard-connection", resolveConnectionWizardOwner(null, null))
+    }
+
+    @Test
     fun dashboardOnlyQrUsesDashboardOwner() {
         val payload = HermesPairingPayload(
             dashboardUrl = "https://agent.example.com/hermes",
@@ -100,6 +110,7 @@ class ConnectionWizardDispatchPolicyTest {
         val payload = HermesPairingPayload(
             hermes = 3,
             dashboardUrl = "https://hermes.example.com",
+            sig = "public-signature",
             relay = RelayPairing(
                 url = "wss://hermes.example.com/api/plugins/hermes-relay/transport",
                 code = "SECRET",
@@ -121,7 +132,7 @@ class ConnectionWizardDispatchPolicyTest {
         val fingerprint = pairingPayloadFingerprint(payload)
 
         assertEquals(
-            "hermes=3 relay=true api=false roles=https,lan " +
+            "hermes=3 relay=true api=false sig=public-s roles=https,lan " +
                 "dashboardPorts=443,9119 relayPorts=443,9119",
             fingerprint,
         )
@@ -144,7 +155,7 @@ class ConnectionWizardDispatchPolicyTest {
         val fingerprint = pairingPayloadFingerprint(payload)
 
         assertEquals(
-            "hermes=3 relay=false api=false roles=other dashboardPorts=443 relayPorts=null",
+            "hermes=3 relay=false api=false sig=none roles=other dashboardPorts=443 relayPorts=null",
             fingerprint,
         )
         assertFalse(fingerprint.contains("SECRET"))

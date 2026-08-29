@@ -352,6 +352,18 @@ class ConnectionManagerRouteTest {
     }
 
     @Test
+    fun `fresh pairing dials supplied websocket before relay health resolution`() {
+        val manager = buildManager { listOf(candidate(role = "slow-health")) }
+        manager.setInsecureMode(true)
+
+        manager.connectPairing("ws://${server.hostName}:${server.port}")
+
+        val request = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(request)
+        assertEquals("/ws", request!!.path)
+    }
+
+    @Test
     fun `dashboard relay ingress asks for a fresh authorized request per dial`() {
         val requestCount = AtomicInteger(0)
         val manager = ConnectionManager(

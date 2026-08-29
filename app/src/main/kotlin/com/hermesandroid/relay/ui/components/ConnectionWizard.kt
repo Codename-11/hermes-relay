@@ -216,7 +216,12 @@ fun ConnectionWizard(
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
     val currentDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
-    val wizardDraftIdentity = activeConnection?.id ?: "new-dashboard-connection"
+    val connectionDraftId by connectionViewModel.connectionDraftId.collectAsState()
+    var wizardOwnerId by rememberSaveable { mutableStateOf(activeConnection?.id) }
+    LaunchedEffect(connectionDraftId) {
+        wizardOwnerId = resolveConnectionWizardOwner(wizardOwnerId, connectionDraftId)
+    }
+    val wizardDraftIdentity = resolveConnectionWizardOwner(wizardOwnerId, null)
     val accessibleMotion = rememberAccessibleMotionState()
     val animateWizardTransitions = shouldAnimateWizardTransitions(accessibleMotion)
 
@@ -1266,6 +1271,14 @@ internal enum class WizardStep {
 
 internal enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
 
+private const val NewConnectionWizardOwner = "new-dashboard-connection"
+
+/** A setup session keeps one owner while its transient draft becomes active. */
+internal fun resolveConnectionWizardOwner(
+    latchedOwnerId: String?,
+    pendingDraftId: String?,
+): String = pendingDraftId ?: latchedOwnerId ?: NewConnectionWizardOwner
+
 internal data class QrScanTransactionState(
     val pendingPayload: HermesPairingPayload?,
     val pendingManualCode: String?,
@@ -1398,6 +1411,7 @@ internal fun pairingPayloadFingerprint(payload: HermesPairingPayload): String {
         append("hermes=").append(payload.hermes)
         append(" relay=").append(payload.relay != null)
         append(" api=").append(payload.hasApiServer)
+        append(" sig=").append(payload.sig?.take(8) ?: "none")
         append(" roles=").append(endpoints.joinToString(",") { safeRole(it.role) })
         append(" dashboardPorts=").append(endpoints.joinToString(",") { port(it.dashboard?.url).toString() })
         append(" relayPorts=").append(endpoints.joinToString(",") { port(it.relay?.url).toString() })

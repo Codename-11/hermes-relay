@@ -5946,12 +5946,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     "applyPairingPayload: disconnecting old relay + connecting to ${relay.url}"
                 )
                 disconnectRelay()
-                if (preserveStandardConfig) {
-                    // connectRelay(url) also rebuilds standard candidates.
-                    connectRelayInternal(relay.url)
-                } else {
-                    connectRelay(relay.url)
-                }
+                // Fresh pairing must use the exact QR route. Relay health
+                // resolution is session-authenticated and cannot succeed
+                // until this socket receives auth.ok.
+                connectRelayInternal(relay.url, freshPairing = true)
             } ?: android.util.Log.w(
                 "ConnectionVM",
                 "applyPairingPayload: NO relay block in QR — relay/session will NOT pair"
@@ -7229,7 +7227,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * typed URL before pairing), call [testRelayReachable] instead — it
      * probes `GET /health` without touching the WSS channel.
      */
-    private fun connectRelayInternal(url: String) {
+    private fun connectRelayInternal(url: String, freshPairing: Boolean = false) {
         if (isDemoMode.value) return // Demo mode is offline — never open the WSS channel.
         if (!authManager.hasPairContext) {
             android.util.Log.i(
@@ -7251,7 +7249,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             title = ctx.getString(R.string.conn_status_relay_connect_requested),
             url = url,
         )
-        connectionManager.connect(url)
+        if (freshPairing) {
+            connectionManager.connectPairing(url)
+        } else {
+            connectionManager.connect(url)
+        }
         viewModelScope.launch { probeActiveRouteSurfaces() }
     }
 
