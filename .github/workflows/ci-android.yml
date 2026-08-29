@@ -33,7 +33,9 @@ on:
       - "scripts/check-android-locales.py"
       - "scripts/android-locale-harness.py"
       - "scripts/check-android-collection-apis.py"
+      - "scripts/check-android-native-compat.py"
       - "scripts/check-android-release-notes.py"
+      - "scripts/tests/check_android_native_compat_test.py"
       - "scripts/tests/check_android_release_notes_test.py"
       - ".github/workflows/ci-android.yml"
       - ".github/workflows/play-preflight-android.yml"
@@ -80,6 +82,9 @@ jobs:
           python3 scripts/check-android-release-notes.py
           python3 -m unittest scripts.tests.check_android_release_notes_test
 
+      - name: Test Android native compatibility checker
+        run: python3 -m unittest scripts.tests.check_android_native_compat_test
+
       - name: Run Android lint
         run: ./gradlew lint --console=plain
 
@@ -108,6 +113,12 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
+
+      - name: Verify packaged ONNX Runtime compatibility
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/debug/*.apk \
+            app/build/outputs/apk/sideload/debug/*.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
@@ -225,3 +236,9 @@ jobs:
           python3 scripts/check-android-collection-apis.py \
             --apk app/build/outputs/apk/googlePlay/release/*.apk \
             --apk app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Verify packaged ONNX Runtime compatibility
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/release/*.apk \
+            app/build/outputs/apk/sideload/release/*.apk
