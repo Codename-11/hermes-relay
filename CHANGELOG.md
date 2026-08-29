@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android Continuous voice waits for barge-in microphone teardown before listening again.** Multi-turn hands-free conversations no longer lose the microphone after a response finishes with barge-in enabled. (#464)
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
 ### Removed
