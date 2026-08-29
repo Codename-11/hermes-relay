@@ -74,13 +74,13 @@ object ProactiveMessageNotifier {
         text: String,
         messageId: String?,
         chatId: String?,
-    ) {
+    ): Int? {
         ensureChannel(context)
         if (!hasPostNotificationsPermission(context)) {
             Log.i(TAG, "POST_NOTIFICATIONS not granted — skipping proactive notification")
-            return
+            return null
         }
-        if (text.isBlank()) return
+        if (text.isBlank()) return null
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -89,7 +89,7 @@ object ProactiveMessageNotifier {
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         // Distinct requestCode per slot so each notification gets its own
         // PendingIntent rather than all sharing slot 0's intent.
-        val notificationId = slotFor(messageId)
+        val notificationId = slotFor(messageId, chatId)
         val tapPending =
             PendingIntent.getActivity(context, notificationId, tapIntent, pendingFlags)
 
@@ -108,9 +108,15 @@ object ProactiveMessageNotifier {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
-        runCatching {
+        return runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
-        }.onFailure { Log.w(TAG, "notify failed", it) }
+            notificationId
+        }.onFailure { Log.w(TAG, "notify failed", it) }.getOrNull()
+    }
+
+    /** Cancel one exact slot previously returned by [notificationIdFor]. */
+    fun cancel(context: Context, notificationId: Int) {
+        NotificationManagerCompat.from(context).cancel(notificationId)
     }
 
     /**
@@ -206,8 +212,12 @@ object ProactiveMessageNotifier {
     }
 
     /** Derive a stable notification slot from the message id. */
-    private fun slotFor(messageId: String?): Int {
-        val key = messageId?.takeIf { it.isNotBlank() } ?: return ID_BASE
+    internal fun notificationIdFor(messageId: String?, chatId: String?): Int =
+        slotFor(messageId, chatId)
+
+    private fun slotFor(messageId: String?, chatId: String?): Int {
+        val key = messageId?.takeIf { it.isNotBlank() }
+            ?: "chat:${chatId?.takeIf { it.isNotBlank() } ?: "phone"}"
         // Keep within a small positive window above the base so re-delivery of
         // the same id collapses to one slot and distinct ids spread out.
         return ID_BASE + (key.hashCode() and 0xFFFF)

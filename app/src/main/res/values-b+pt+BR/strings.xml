@@ -916,6 +916,8 @@
     <string name="drawer_delete_session_title">Excluir sessão?</string>
     <string name="drawer_delete_session_prefix">Isso excluirá permanentemente \"</string>
     <string name="drawer_delete_session_suffix">\" e o histórico de mensagens.</string>
+    <string name="drawer_remove_provisional_thread_title">Remover Thread?</string>
+    <string name="drawer_remove_provisional_thread_message">Isso remove \"%1$s\" deste dispositivo. O histórico promovido ou armazenado no servidor não será excluído.</string>
     <string name="drawer_untitled">Sem título</string>
     <string name="drawer_delete">Excluir</string>
     <string name="drawer_thread">Thread</string>

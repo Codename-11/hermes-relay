@@ -992,6 +992,8 @@
     <string name="drawer_delete_session_title">Удалить сессию?</string>
     <string name="drawer_delete_session_prefix">Это навсегда удалит &quot;</string>
     <string name="drawer_delete_session_suffix">&quot; и историю сообщений.</string>
+    <string name="drawer_remove_provisional_thread_title">Удалить поток?</string>
+    <string name="drawer_remove_provisional_thread_message">Это удалит «%1$s» с этого устройства. Повышенная или серверная история не будет удалена.</string>
     <string name="drawer_untitled">Без названия</string>
     <string name="drawer_delete">Удалить</string>
     <string name="drawer_thread">Ветка</string>

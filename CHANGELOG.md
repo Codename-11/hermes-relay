@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android provisional Threads can be removed without touching server history.** The drawer now offers a local-only removal action, reconciles promoted phone sessions without duplicate rows, and keeps Thread routing isolated to the active saved connection.
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
 ### Removed

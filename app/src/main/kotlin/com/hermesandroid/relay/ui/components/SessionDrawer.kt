@@ -237,6 +237,8 @@ fun SessionDrawerContent(
     onNewThread: ((String) -> Unit)? = null,
     provisionalThreads: List<ProvisionalThreadRow> = emptyList(),
     onSelectProvisionalThread: ((String) -> Unit)? = null,
+    /** Deletes only the local provisional inbox row; never a server session. */
+    onDeleteProvisionalThread: ((String) -> Unit)? = null,
     /** Gateway sources currently hidden from the drawer (default: cron+webhook). */
     hiddenSources: Set<String> = emptySet(),
     /** Toggle a source's visibility (persisted). Null hides the source filter. */
@@ -789,13 +791,17 @@ fun SessionDrawerContent(
                             showTokens = viewOptions.showTokens,
                             showCost = viewOptions.showCost,
                             nowMillis = drawerNowMillis,
-                            actionsEnabled = !provisional && (
+                            actionsEnabled = if (provisional) {
+                                onDeleteProvisionalThread != null &&
+                                    supervisedSessionActions?.delete != false
+                            } else {
                                 supervisedSessionActions == null ||
                                     supervisedSessionActions.pin ||
                                     supervisedSessionActions.rename ||
                                     supervisedSessionActions.delete ||
                                     (supervisedSessionActions.archive && archiveSupported)
-                                ),
+                            },
+                            provisional = provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
                             animationEnabled = animationEnabled && isOpen,
@@ -934,15 +940,38 @@ fun SessionDrawerContent(
     // Delete confirmation dialog
     deleteDialogTarget?.let { (row, allProfiles) ->
         val session = row.session
+        val provisional = session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)
         AlertDialog(
             onDismissRequest = { deleteDialogTarget = null },
-            title = { Text(stringResource(R.string.drawer_delete_session_title)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (provisional) {
+                            R.string.drawer_remove_provisional_thread_title
+                        } else {
+                            R.string.drawer_delete_session_title
+                        },
+                    ),
+                )
+            },
             text = {
-                Text(stringResource(R.string.drawer_delete_session_prefix) + (session.title ?: stringResource(R.string.drawer_untitled)) + stringResource(R.string.drawer_delete_session_suffix))
+                val title = session.title ?: stringResource(R.string.drawer_untitled)
+                Text(
+                    if (provisional) {
+                        stringResource(R.string.drawer_remove_provisional_thread_message, title)
+                    } else {
+                        stringResource(R.string.drawer_delete_session_prefix) + title +
+                            stringResource(R.string.drawer_delete_session_suffix)
+                    },
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (allProfiles) {
+                    if (session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)) {
+                        onDeleteProvisionalThread?.invoke(
+                            session.sessionId.removePrefix(PROVISIONAL_THREAD_PREFIX),
+                        )
+                    } else if (allProfiles) {
                         onDeleteProfileSession?.invoke(row.profile, session.sessionId)
                     } else {
                         onDeleteSession(session.sessionId)
@@ -1358,6 +1387,7 @@ private fun SessionItem(
     showCost: Boolean,
     nowMillis: Long,
     actionsEnabled: Boolean,
+    provisional: Boolean,
     isActive: Boolean,
     activityState: SessionActivityState?,
     animationEnabled: Boolean,
@@ -1528,7 +1558,7 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
-                if (supervisedSessionActions?.pin != false) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions?.pin != false) DropdownMenuItem(
                     text = {
                         Text(
                             if (pinned) {
@@ -1554,7 +1584,7 @@ private fun SessionItem(
                         onTogglePinned()
                     },
                 )
-                if (supervisedSessionActions == null) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions == null) DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_copy_session_id)) },
                     leadingIcon = {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
@@ -1564,7 +1594,7 @@ private fun SessionItem(
                         onCopySessionId()
                     },
                 )
-                if (supervisedSessionActions?.rename != false) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions?.rename != false) DropdownMenuItem(
                     text = { Text(stringResource(R.string.drawer_rename)) },
                     leadingIcon = {
                         Icon(Icons.Filled.Edit, contentDescription = null)
@@ -1574,7 +1604,7 @@ private fun SessionItem(
                         onRename()
                     },
                 )
-                if (archiveSupported && supervisedSessionActions?.archive != false) {
+                if (!provisional && archiveSupported && supervisedSessionActions?.archive != false) {
                     DropdownMenuItem(
                         text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
                         leadingIcon = {

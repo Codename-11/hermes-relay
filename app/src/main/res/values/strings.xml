@@ -1090,6 +1090,8 @@
     <string name="drawer_delete_session_title">Delete Session?</string>
     <string name="drawer_delete_session_prefix">This will permanently delete \"</string>
     <string name="drawer_delete_session_suffix">\" and its message history.</string>
+    <string name="drawer_remove_provisional_thread_title">Remove Thread?</string>
+    <string name="drawer_remove_provisional_thread_message">This removes \"%1$s\" from this device. It does not delete promoted or server history.</string>
     <string name="drawer_untitled">Untitled</string>
     <string name="drawer_delete">Delete</string>
     <string name="drawer_thread">Thread</string>

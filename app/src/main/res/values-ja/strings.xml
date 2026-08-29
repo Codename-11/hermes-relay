@@ -976,6 +976,8 @@
     <string name="drawer_delete_session_title">セッションを削除しますか?</string>
     <string name="drawer_delete_session_prefix">「</string>
     <string name="drawer_delete_session_suffix">」とそのメッセージ履歴を完全に削除します。</string>
+    <string name="drawer_remove_provisional_thread_title">スレッドを削除しますか？</string>
+    <string name="drawer_remove_provisional_thread_message">「%1$s」をこのデバイスから削除します。昇格済みまたはサーバー上の履歴は削除されません。</string>
     <string name="drawer_untitled">無題</string>
     <string name="drawer_delete">消去</string>
     <string name="drawer_thread">糸</string>
