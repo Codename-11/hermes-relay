@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Supervised connection setup stays blocked until parent access is unlocked.** The Add Connection flow now follows the supervised navigation gate consistently, and the locale registry refresh keeps shipped translation hashes current.
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
 ### Removed
