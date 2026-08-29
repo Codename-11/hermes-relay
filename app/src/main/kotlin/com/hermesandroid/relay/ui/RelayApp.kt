@@ -2135,6 +2135,7 @@ fun RelayApp() {
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 composable(Screen.Onboarding.route) {
+                    val onboardingDraftId by connectionViewModel.connectionDraftId.collectAsState()
                     // The wizard inside OnboardingScreen now owns credential
                     // application via ConnectionViewModel.applyPairingPayload,
                     // so the callback collapses to "mark complete + navigate
@@ -2153,19 +2154,69 @@ fun RelayApp() {
                     OnboardingScreen(
                         connectionViewModel = connectionViewModel,
                         onComplete = {
-                            connectionViewModel.completeOnboarding()
-                            // Concrete bare-"chat" URI — the Screen.Chat.route
-                            // field is the route TEMPLATE (contains
-                            // `{openAgentSheet}`) and must not be navigated
-                            // to directly; build the URI via Screen.Chat.route(...).
-                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                popUpTo(Screen.Onboarding.route) { inclusive = true }
+                            val draftId = onboardingDraftId
+                            connectionSwitchScope.launch {
+                                val prepared = runCatching {
+                                    if (draftId != null) {
+                                        connectionViewModel.commitConnectionDraft(draftId)
+                                    }
+                                }
+                                if (prepared.isFailure) {
+                                    val error = prepared.exceptionOrNull()
+                                    android.util.Log.e(
+                                        "GatewayPairFlow",
+                                        "Could not commit onboarding gateway",
+                                        error,
+                                    )
+                                    snackbarHostState.showSnackbar(
+                                        error?.message ?: "Could not finish gateway setup",
+                                    )
+                                    return@launch
+                                }
+                                connectionViewModel.completeOnboarding()
+                                // Concrete bare-"chat" URI — the Screen.Chat.route
+                                // field is the route TEMPLATE (contains
+                                // `{openAgentSheet}`) and must not be navigated
+                                // to directly; build the URI via Screen.Chat.route(...).
+                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
+                                }
                             }
                         },
                         onManageSignIn = {
-                            navController.navigate(
-                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_ONBOARDING),
-                            )
+                            val draftId = onboardingDraftId
+                            connectionSwitchScope.launch {
+                                android.util.Log.i(
+                                    "GatewayPairFlow",
+                                    "Preparing onboarding gateway for Dashboard sign-in",
+                                )
+                                val prepared = runCatching {
+                                    if (draftId != null) {
+                                        connectionViewModel.commitConnectionDraft(draftId)
+                                    }
+                                }
+                                if (prepared.isFailure) {
+                                    val error = prepared.exceptionOrNull()
+                                    android.util.Log.e(
+                                        "GatewayPairFlow",
+                                        "Could not prepare onboarding Dashboard sign-in",
+                                        error,
+                                    )
+                                    snackbarHostState.showSnackbar(
+                                        error?.message ?: "Could not prepare Dashboard sign-in",
+                                    )
+                                    return@launch
+                                }
+                                android.util.Log.i(
+                                    "GatewayPairFlow",
+                                    "Opening Dashboard sign-in from onboarding",
+                                )
+                                navController.navigate(
+                                    Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_ONBOARDING),
+                                ) {
+                                    launchSingleTop = true
+                                }
+                            }
                         },
                         onOpenPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
