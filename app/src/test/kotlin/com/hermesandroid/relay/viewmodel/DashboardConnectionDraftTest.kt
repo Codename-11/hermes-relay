@@ -28,4 +28,12 @@ class DashboardConnectionDraftTest {
         assertTrue(shouldActivateCommittedDraftWithoutSwitch(null))
         assertFalse(shouldActivateCommittedDraftWithoutSwitch("existing-gateway"))
     }
+
+    @Test
+    fun `preallocated draft remains the setup owner until commit`() {
+        assertEquals("draft", connectionSetupOwnerId("draft", null))
+        assertEquals("draft", connectionSetupOwnerId("draft", "existing"))
+        assertEquals("existing", connectionSetupOwnerId(null, "existing"))
+        assertNull(connectionSetupOwnerId(null, null))
+    }
 }

@@ -512,6 +512,12 @@ internal fun materializeDashboardConnectionDraft(
 internal fun shouldActivateCommittedDraftWithoutSwitch(activeConnectionId: String?): Boolean =
     activeConnectionId == null
 
+/** The preallocated Add-gateway draft owns setup ahead of any persisted active row. */
+internal fun connectionSetupOwnerId(
+    pendingDraftId: String?,
+    activeConnectionId: String?,
+): String? = pendingDraftId ?: activeConnectionId
+
 internal fun withExplicitDashboardAddress(
     connection: Connection,
     normalizedAddress: String,
@@ -3770,7 +3776,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         relayUrl: String = "",
         routeCandidates: List<EndpointCandidate>? = null,
     ): String = addConnectionMutex.withLock {
-        val activeId = connectionStore.activeConnectionId.value
+        val draftId = pendingConnectionDraft?.id
+        val activeId = connectionSetupOwnerId(
+            pendingDraftId = draftId,
+            activeConnectionId = connectionStore.activeConnectionId.value,
+        )
+        if (draftId != null) {
+            android.util.Log.i(
+                "ConnectionViewModel",
+                "ensureActiveConnectionForSetup: retaining pending draft id=$draftId",
+            )
+            return@withLock draftId
+        }
         val active = activeId?.let { id ->
             connectionStore.connections.value.firstOrNull { it.id == id }
         }
