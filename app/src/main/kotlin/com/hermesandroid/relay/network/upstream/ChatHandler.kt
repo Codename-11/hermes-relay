@@ -1007,6 +1007,56 @@ class ChatHandler {
     }
 
     /**
+     * Bound the ephemeral, read-only child-watch projection. This is stricter
+     * than the main transcript: system rows and tool results are not part of
+     * the preview contract, and one live child must not retain unbounded text.
+     */
+    internal fun boundReadOnlyPreview(
+        maxMessages: Int = 100,
+        maxTotalChars: Int = 32_000,
+        maxFieldChars: Int = 8_000,
+        maxToolChars: Int = 1_000,
+    ): Boolean {
+        var truncated = false
+        _messages.update { current ->
+            val visible = current.filterNot { it.role == MessageRole.SYSTEM }
+            if (visible.size != current.size || visible.size > maxMessages) truncated = true
+            var remaining = maxTotalChars
+            val kept = mutableListOf<ChatMessage>()
+            visible.takeLast(maxMessages).asReversed().forEach { message ->
+                if (remaining <= 0) {
+                    truncated = true
+                    return@forEach
+                }
+                fun bounded(value: String, limit: Int): String {
+                    val allowed = minOf(limit, remaining)
+                    val next = value.takeLast(allowed)
+                    if (next.length != value.length) truncated = true
+                    remaining -= next.length
+                    return next
+                }
+                val content = bounded(message.content, maxFieldChars)
+                val thinking = bounded(message.thinkingContent, maxFieldChars)
+                val tools = message.toolCalls.takeLast(50).map { tool ->
+                    if (message.toolCalls.size > 50) truncated = true
+                    tool.copy(
+                        args = tool.args?.let { bounded(it, maxToolChars) },
+                        result = null,
+                        error = tool.error?.let { bounded(it, maxToolChars) },
+                    )
+                }
+                kept += message.copy(
+                    content = content,
+                    thinkingContent = thinking,
+                    toolCalls = tools,
+                )
+            }
+            kept.asReversed()
+        }
+        return truncated
+    }
+
+    /**
      * Rehydrate the last client-owned state of an unfinished turn.
      *
      * The caller loads server history first. That means the user row may already
@@ -3030,7 +3080,9 @@ class ChatHandler {
     fun onSubagentEvent(messageId: String, event: GatewaySubagentEvent) {
         val label = event.goal.trim().take(60).ifBlank { null }
         when (event.phase) {
-            GatewaySubagentEvent.Phase.START -> {
+            GatewaySubagentEvent.Phase.SPAWN_REQUESTED,
+            GatewaySubagentEvent.Phase.START,
+            -> {
                 if (label != null) subagentLabels[event.taskIndex] = label
                 event.subagentId?.takeIf(String::isNotBlank)?.let {
                     subagentIds[event.taskIndex] = it

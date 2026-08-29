@@ -595,6 +595,10 @@ class GatewayEventMapperTest {
     fun `subagent lifecycle maps phases and fields`() {
         val r = Recorder()
         val mapper = mapperWith(r)
+        mapper.onEvent(
+            "subagent.spawn_requested",
+            obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17","child_session_id":"session-17","parent_id":"parent-child","depth":2,"model":"hermes-4"}"""),
+        )
         mapper.onEvent("subagent.start", obj("""{"goal":"research topic","task_index":1,"task_count":3,"subagent_id":"child-17"}"""))
         mapper.onEvent("subagent.thinking", obj("""{"goal":"research topic","task_index":1,"task_count":3,"text":"hmm"}"""))
         mapper.onEvent(
@@ -609,6 +613,7 @@ class GatewayEventMapperTest {
 
         assertEquals(
             listOf(
+                GatewaySubagentEvent.Phase.SPAWN_REQUESTED,
                 GatewaySubagentEvent.Phase.START,
                 GatewaySubagentEvent.Phase.THINKING,
                 GatewaySubagentEvent.Phase.TOOL,
@@ -617,17 +622,22 @@ class GatewayEventMapperTest {
             ),
             r.subagentEvents.map { it.phase },
         )
-        val start = r.subagentEvents[0]
+        val spawn = r.subagentEvents[0]
+        assertEquals("session-17", spawn.childSessionId)
+        assertEquals("parent-child", spawn.parentId)
+        assertEquals(2, spawn.depth)
+        assertEquals("hermes-4", spawn.model)
+        val start = r.subagentEvents[1]
         assertEquals(1, start.taskIndex)
         assertEquals(3, start.taskCount)
         assertEquals("research topic", start.goal)
         assertEquals("child-17", start.subagentId)
-        assertEquals("hmm", r.subagentEvents[1].preview)
-        val tool = r.subagentEvents[2]
+        assertEquals("hmm", r.subagentEvents[2].preview)
+        val tool = r.subagentEvents[3]
         assertEquals("web_search", tool.toolName)
         assertEquals("searching docs", tool.preview)
-        assertEquals("halfway", r.subagentEvents[3].preview)
-        val complete = r.subagentEvents[4]
+        assertEquals("halfway", r.subagentEvents[4].preview)
+        val complete = r.subagentEvents[5]
         assertEquals("completed", complete.status)
         assertEquals("found it", complete.summary)
         assertEquals(12.5, complete.durationSeconds!!, 0.001)
@@ -1057,7 +1067,7 @@ class GatewayEventMapperTest {
             "message.complete", "error", "clarify.request", "approval.request",
             "sudo.request", "secret.request", "reasoning.available",
             "clarify.expire", "sudo.expire", "secret.expire", "approval.expire",
-            "tool.generating", "subagent.start", "subagent.thinking",
+            "tool.generating", "subagent.spawn_requested", "subagent.start", "subagent.thinking",
             "subagent.tool", "subagent.progress", "subagent.complete",
             "tool.output_risk", "moa.reference", "moa.progress", "moa.phase", "moa.aggregating",
         ).forEach { type ->

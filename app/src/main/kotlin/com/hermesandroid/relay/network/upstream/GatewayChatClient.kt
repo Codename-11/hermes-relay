@@ -209,6 +209,9 @@ class GatewayChatClient(
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
         private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
         private const val MAX_RECOVERY_BUFFERED_EVENTS = 256
+        internal const val MAX_CHILD_WATCH_HISTORY_ITEMS = 200
+        internal const val MAX_CHILD_WATCH_HISTORY_CHARS = 64_000
+        private const val MAX_PENDING_CHILD_WATCH_EVENTS = 256
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -381,6 +384,15 @@ class GatewayChatClient(
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
 
+    /** Monotonic client-local fence for lazy child watch open/close races. */
+    private val childWatchGeneration = AtomicLong(0)
+
+    /** Live child runtime id -> exact watcher that owns its callbacks. */
+    private val childWatches = ConcurrentHashMap<String, ChildWatchRegistration>()
+
+    /** Events that race a lazy `session.resume` acknowledgement. */
+    private val pendingChildWatchOpens = ConcurrentHashMap<Long, PendingChildWatchOpen>()
+
     /** Live (per-connection) session id ←→ the stored DB id it was resumed/created from. */
     @Volatile
     private var liveSessionId: String? = null
@@ -445,6 +457,62 @@ class GatewayChatClient(
         val storedSessionId: String,
         val profile: String?,
         @Volatile var pendingAsk: GatewayAsk? = null,
+    )
+
+    private class ChildWatchRegistration(
+        val storedSessionId: String,
+        val liveSessionId: String,
+        val profile: String?,
+        val generation: Long,
+        val callbacks: GatewayTurnCallbacks,
+    ) {
+        lateinit var mapper: GatewayEventMapper
+    }
+
+    private data class ChildWatchEvent(
+        val sessionId: String,
+        val type: String,
+        val payload: JsonObject?,
+    )
+
+    private data class PendingChildWatchReplay(
+        val events: List<ChildWatchEvent>,
+        val truncated: Boolean,
+    )
+
+    private class PendingChildWatchOpen {
+        private val lock = Any()
+        private val events = mutableListOf<ChildWatchEvent>()
+        private var closed = false
+        private var truncated = false
+
+        fun capture(event: ChildWatchEvent): Boolean = synchronized(lock) {
+            if (closed) return@synchronized false
+            if (events.size >= MAX_PENDING_CHILD_WATCH_EVENTS) {
+                events.removeAt(0)
+                truncated = true
+            }
+            events += event
+            true
+        }
+
+        fun closeAndTake(sessionId: String): PendingChildWatchReplay = synchronized(lock) {
+            closed = true
+            PendingChildWatchReplay(
+                events = events.filter { it.sessionId == sessionId },
+                truncated = truncated,
+            ).also { events.clear() }
+        }
+
+        fun close() = synchronized(lock) {
+            closed = true
+            events.clear()
+        }
+    }
+
+    private data class BoundedChildHistory(
+        val messages: List<MessageItem>,
+        val truncated: Boolean,
     )
 
     /**
@@ -945,6 +1013,200 @@ class GatewayChatClient(
             }
         }
         return sessionReady
+    }
+
+    /**
+     * Open the vanilla-upstream child-session watcher advertised by
+     * `subagent.*.child_session_id`. This RPC deliberately does not mutate
+     * [liveSessionId], [storedSessionId], or [liveSessionProfile]: the parent
+     * conversation keeps owning the main mapper while the returned short live
+     * id routes a second, read-only event stream on the same socket.
+     *
+     * Returned history is bounded locally even when an upstream gateway sends
+     * the child's entire transcript in the resume acknowledgement. The server
+     * may still enforce its own larger resume safety limit before replying.
+     */
+    suspend fun openChildWatch(
+        childSessionId: String,
+        profile: String? = currentSessionProfile(),
+        callbacks: GatewayTurnCallbacks,
+        historyLimit: Int = MAX_CHILD_WATCH_HISTORY_ITEMS,
+    ): Result<GatewayChildWatch> = runCatching {
+        val storedChildId = childSessionId.trim()
+        require(storedChildId.isNotEmpty()) { "child session id is required" }
+        val requestedProfile = profile?.trim()?.takeIf(String::isNotEmpty)
+        connectMutex.withLock {
+            // Allocate and register under the same mutex as the resume RPC so
+            // concurrent opens complete in generation order; an older caller
+            // can never `put` after a newer one for the same live child id.
+            val generation = childWatchGeneration.incrementAndGet()
+            val pending = PendingChildWatchOpen()
+            pendingChildWatchOpens[generation] = pending
+            try {
+                ensureConnected()
+                val result = rpc(
+                    "session.resume",
+                    buildJsonObject {
+                        put("session_id", storedChildId)
+                        put("cols", DEFAULT_COLS)
+                        put("source", sessionSource)
+                        put("lazy", true)
+                        put("close_on_disconnect", true)
+                        requestedProfile?.let { put("profile", it) }
+                    },
+                ).getOrElse { error ->
+                    throw GatewayPreflightException(
+                        "child session resume failed: ${error.message}",
+                    )
+                }
+                val liveChildId = result.stringField("session_id")?.takeIf(String::isNotBlank)
+                    ?: throw GatewayPreflightException(
+                        "child session resume returned no live session id",
+                    )
+                try {
+                    requireConfirmedSessionProfile(result, requestedProfile)
+                } catch (error: GatewayPreflightException) {
+                    // The wrong profile must not leave an unowned lazy watcher behind.
+                    rpc(
+                        "session.close",
+                        buildJsonObject { put("session_id", liveChildId) },
+                    )
+                    throw error
+                }
+
+                val registration = ChildWatchRegistration(
+                    storedSessionId = storedChildId,
+                    liveSessionId = liveChildId,
+                    profile = requestedProfile,
+                    generation = generation,
+                    callbacks = callbacks,
+                )
+                val dispatchedCallbacks = dispatchOn(callbacks) {
+                    childWatches[liveChildId] === registration
+                }
+                registration.mapper = GatewayEventMapper(
+                    dispatchedCallbacks,
+                    dedupeAdjacentMessageStarts = true,
+                )
+                childWatches.put(liveChildId, registration)?.let { prior ->
+                    if (prior.generation != generation) {
+                        notifyChildWatchFailure(
+                            prior,
+                            "Child watch was replaced by a newer view",
+                        )
+                    }
+                }
+
+                // Replay only frames tagged with the exact live id returned by
+                // this resume. Unknown gateway sessions captured during the
+                // narrow ack race remain foreign and are discarded.
+                val replay = pending.closeAndTake(liveChildId)
+                if (replay.truncated) dispatchedCallbacks.onReconcileRequired()
+                replay.events.forEach { event ->
+                    if (childWatches[liveChildId] === registration) {
+                        registration.mapper.onEvent(event.type, event.payload)
+                    }
+                }
+                val replayedTerminal = replay.events.any {
+                    it.type == "message.complete" || it.type == "error"
+                }
+
+                val history = parseChildWatchMessages(result, historyLimit)
+                GatewayChildWatch(
+                    storedSessionId = storedChildId,
+                    liveSessionId = liveChildId,
+                    profile = requestedProfile,
+                    generation = generation,
+                    messages = history.messages,
+                    historyTruncated = history.truncated,
+                    running = !replayedTerminal && result.booleanField("running") == true,
+                    status = if (replayedTerminal) "idle" else result.stringField("status"),
+                )
+            } finally {
+                pendingChildWatchOpens.remove(generation, pending)
+                pending.close()
+            }
+        }
+    }
+
+    /**
+     * Close only the exact lazy watcher represented by [watch]. A stale handle
+     * is a no-op so it can never close a newer watcher whose live id was reused.
+     * The parent session and delegated child continue running server-side.
+     */
+    suspend fun closeChildWatch(watch: GatewayChildWatch): Result<Unit> =
+        connectMutex.withLock {
+            val registration = childWatches[watch.liveSessionId]
+                ?: return@withLock Result.success(Unit)
+            if (
+                registration.generation != watch.generation ||
+                registration.storedSessionId != watch.storedSessionId ||
+                registration.profile != watch.profile ||
+                !childWatches.remove(watch.liveSessionId, registration)
+            ) {
+                return@withLock Result.success(Unit)
+            }
+            if (webSocket == null || readySignal?.isCompleted != true) {
+                return@withLock Result.success(Unit)
+            }
+            val result = rpc(
+                "session.close",
+                buildJsonObject { put("session_id", watch.liveSessionId) },
+            )
+            result.fold(
+                onSuccess = { Result.success(Unit) },
+                onFailure = { error ->
+                    // Permit an exact-handle retry. Opens share connectMutex,
+                    // so no newer registration can race this restoration.
+                    childWatches.putIfAbsent(watch.liveSessionId, registration)
+                    Result.failure(error)
+                },
+            )
+        }
+
+    private fun parseChildWatchMessages(
+        result: JsonObject,
+        requestedLimit: Int,
+    ): BoundedChildHistory {
+        val limit = requestedLimit.coerceIn(1, MAX_CHILD_WATCH_HISTORY_ITEMS)
+        val all = (result["messages"] as? JsonArray).orEmpty()
+        val raw = all.takeLast(limit)
+        var retainedChars = 0
+        var truncated = all.size > raw.size
+        val newestFirst = raw.asReversed().mapNotNull { element ->
+            val message = element as? JsonObject ?: run {
+                truncated = true
+                return@mapNotNull null
+            }
+            // Gateway display history uses `text`; the shared session DTO uses
+            // `content`. Normalize only that projection boundary.
+            val normalized = JsonObject(message.toMutableMap().apply {
+                if (!containsKey("content")) {
+                    put("content", message["text"] ?: message["context"] ?: JsonNull)
+                }
+                if (!containsKey("tool_name") && message.containsKey("name")) {
+                    put("tool_name", message["name"] ?: JsonNull)
+                }
+            })
+            val serializedChars = normalized.toString().length
+            if (serializedChars > MAX_CHILD_WATCH_HISTORY_CHARS - retainedChars) {
+                truncated = true
+                return@mapNotNull null
+            }
+            val decoded = runCatching {
+                json.decodeFromJsonElement(MessageItem.serializer(), normalized)
+            }.onFailure {
+                Log.w(TAG, "child watch returned an unreadable history row", it)
+            }.getOrNull()
+            if (decoded == null) {
+                truncated = true
+                null
+            } else {
+                retainedChars += serializedChars
+                decoded
+            }
+        }
+        return BoundedChildHistory(newestFirst.asReversed(), truncated)
     }
 
     /**
@@ -3022,6 +3284,9 @@ class GatewayChatClient(
             val reason = payload?.stringField("reason")
             val supportedReason = reason in setOf("idle_timeout", "lru_evict", "ws_orphan_reap")
             if (!reclaimedLiveId.isNullOrBlank() && supportedReason) {
+                childWatches.remove(reclaimedLiveId)?.let { registration ->
+                    notifyChildWatchFailure(registration, "Gateway reclaimed the child watch")
+                }
                 val background = backgroundTurns.remove(reclaimedLiveId)
                 if (background != null) {
                     callbackDispatcher {
@@ -3072,6 +3337,23 @@ class GatewayChatClient(
             }
             return
         }
+
+        // A lazy child watcher is a second session on this shared socket. Route
+        // it before the main-session recovery/foreign-session gates and require
+        // the exact live id returned by its own session.resume acknowledgement.
+        val childWatch = eventSessionId?.let(childWatches::get)
+        if (childWatch != null) {
+            if (childWatches[eventSessionId] === childWatch) {
+                childWatch.mapper.onEvent(type, payload)
+            }
+            return
+        }
+
+        val capturedForPendingChildWatch = !eventSessionId.isNullOrBlank() &&
+            eventSessionId != liveSessionId &&
+            !backgroundTurns.containsKey(eventSessionId) &&
+            capturePendingChildWatchEvent(ChildWatchEvent(eventSessionId, type, payload))
+        if (capturedForPendingChildWatch) return
 
         // A cold session.resume may schedule auto-continue before its RPC
         // response reaches Android. The recovery buffer is an ownership gate,
@@ -3315,6 +3597,7 @@ class GatewayChatClient(
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
+        failChildWatches("Child watch disconnected from the gateway")
         val turn = activeTurn
         if (turn == null) {
             if (backgroundTurns.isNotEmpty() && !backgroundRejoinInProgress) {
@@ -3497,6 +3780,7 @@ class GatewayChatClient(
         _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.Idle
+        failChildWatches("Child watch closed with the gateway socket")
     }
 
     private fun scheduleBackgroundClose() {
@@ -3506,12 +3790,34 @@ class GatewayChatClient(
         backgroundCloseJob?.cancel()
         backgroundCloseJob = scope.launch {
             delay(BACKGROUND_CLOSE_GRACE_MS)
-            if (activeTurn == null && backgroundTurns.isEmpty() &&
+            if (activeTurn == null && backgroundTurns.isEmpty() && childWatches.isEmpty() &&
                 !AppForegroundTracker.isForeground.value
             ) {
                 closeSocket("app backgrounded")
             }
         }
+    }
+
+    private fun failChildWatches(message: String) {
+        if (childWatches.isEmpty()) return
+        val registrations = childWatches.values.toSet()
+        childWatches.clear()
+        registrations.forEach { notifyChildWatchFailure(it, message) }
+    }
+
+    private fun notifyChildWatchFailure(
+        registration: ChildWatchRegistration,
+        message: String,
+    ) {
+        callbackDispatcher { registration.callbacks.onResumeFailure(message) }
+    }
+
+    private fun capturePendingChildWatchEvent(event: ChildWatchEvent): Boolean {
+        var captured = false
+        pendingChildWatchOpens.values.forEach { pending ->
+            if (pending.capture(event)) captured = true
+        }
+        return captured
     }
 
     // ------------------------------------------------------------------
@@ -4062,44 +4368,55 @@ class GatewayChatClient(
     }
 
     /** Wrap callbacks so every invocation lands on the callback dispatcher (main thread). */
-    private fun dispatchOn(callbacks: GatewayTurnCallbacks) = GatewayTurnCallbacks(
-        onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
-        onStart = { callbackDispatcher { callbacks.onStart() } },
-        onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
+    private fun dispatchOn(
+        callbacks: GatewayTurnCallbacks,
+        stillCurrent: () -> Boolean = { true },
+    ) = GatewayTurnCallbacks(
+        onSessionId = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onSessionId(v) } },
+        onStart = { dispatchIfCurrent(stillCurrent) { callbacks.onStart() } },
+        onTextDelta = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onTextDelta(v) } },
         onInterimMessage = { text, alreadyStreamed ->
-            callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onInterimMessage(text, alreadyStreamed) }
         },
         onInterimReconciled = { text ->
-            callbackDispatcher { callbacks.onInterimReconciled(text) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onInterimReconciled(text) }
         },
-        onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
+        onThinkingDelta = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { id, name, args ->
-            callbackDispatcher { callbacks.onToolCallStart(id, name, args) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onToolCallStart(id, name, args) }
         },
-        onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
-        onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
-        onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
-        onTurnComplete = { callbackDispatcher { callbacks.onTurnComplete() } },
-        onReconcileRequired = { callbackDispatcher { callbacks.onReconcileRequired() } },
-        onComplete = { callbackDispatcher { callbacks.onComplete() } },
-        onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },
-        onError = { v -> callbackDispatcher { callbacks.onError(v) } },
-        onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
-        onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
-        onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
-        onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
-        onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
-        onResumeFailure = { v -> callbackDispatcher { callbacks.onResumeFailure(v) } },
-        onFailure = { v -> callbackDispatcher { callbacks.onFailure(v) } },
+        onToolCallDone = { a, b -> dispatchIfCurrent(stillCurrent) { callbacks.onToolCallDone(a, b) } },
+        onToolCallFailed = { a, b -> dispatchIfCurrent(stillCurrent) { callbacks.onToolCallFailed(a, b) } },
+        onToolOutputRisk = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onToolOutputRisk(v) } },
+        onTurnComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onTurnComplete() } },
+        onReconcileRequired = { dispatchIfCurrent(stillCurrent) { callbacks.onReconcileRequired() } },
+        onComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onComplete() } },
+        onUsage = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onUsage(v) } },
+        onError = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onError(v) } },
+        onToolGenerating = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onToolGenerating(v) } },
+        onSubagentEvent = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onSubagentEvent(v) } },
+        onMoaReference = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onMoaReference(v) } },
+        onInteractionRequest = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onInteractionRequest(v) } },
+        onInteractionExpired = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onInteractionExpired(v) } },
+        onResumeFailure = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onResumeFailure(v) } },
+        onFailure = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onFailure(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update
         // included. Without it markError never fires, the turn isn't badged
         // "Error", and onComplete's history reload wipes the error bubble (the
         // "reply appears then vanishes" bug).
-        onStatusUpdate = { kind, text -> callbackDispatcher { callbacks.onStatusUpdate(kind, text) } },
-        onStatusClear = { kind -> callbackDispatcher { callbacks.onStatusClear(kind) } },
+        onStatusUpdate = { kind, text ->
+            dispatchIfCurrent(stillCurrent) { callbacks.onStatusUpdate(kind, text) }
+        },
+        onStatusClear = { kind -> dispatchIfCurrent(stillCurrent) { callbacks.onStatusClear(kind) } },
     )
+
+    private fun dispatchIfCurrent(stillCurrent: () -> Boolean, callback: () -> Unit) {
+        callbackDispatcher {
+            if (stillCurrent()) callback()
+        }
+    }
 }
 
 internal fun parseGatewayPersonalityOptions(result: JsonObject): List<String> =

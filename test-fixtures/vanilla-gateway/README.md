@@ -88,6 +88,11 @@ The initial catalog covers ordinary streaming, rapid chunks/reasoning/tool
 events, queued turns, scoped and foreign/unscoped inputs, persisted history,
 and both issue #365 terminal-gap forms:
 
+- `subagent_child_preview`: interleaved concurrent child lifecycle events carry
+  stable child/session identity, thinking/progress/tool previews, and distinct
+  completed/interrupted terminal states. Its upstream requirement also proves
+  the vanilla lazy child-session watch contract used by read-only clients.
+
 - `active_status_lifecycle`: one successful live snapshot contains starting,
   working, waiting, and idle rows; the next successful snapshot is empty so a
   client can prove a complete, unambiguously resolved snapshot clears prior

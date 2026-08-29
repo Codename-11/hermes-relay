@@ -1,0 +1,28 @@
+{
+  "name": "subagent_child_preview",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete",
+    "gateway.subagent_child_watch"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "subagent.spawn_requested", "payload": {"goal": "Inspect Android", "task_index": 0, "task_count": 2, "subagent_id": "child-a", "child_session_id": "child-session-a", "depth": 0}},
+        {"op": "event", "type": "subagent.start", "payload": {"goal": "Inspect Android", "task_index": 0, "task_count": 2, "subagent_id": "child-a", "child_session_id": "child-session-a", "depth": 0}},
+        {"op": "event", "type": "subagent.start", "payload": {"goal": "Review privacy", "task_index": 1, "task_count": 2, "subagent_id": "child-b", "child_session_id": "child-session-b", "depth": 0}},
+        {"op": "event", "type": "subagent.thinking", "payload": {"task_index": 0, "task_count": 2, "subagent_id": "child-a", "child_session_id": "child-session-a", "text": "Mapping events"}},
+        {"op": "event", "type": "subagent.tool", "payload": {"task_index": 1, "task_count": 2, "subagent_id": "child-b", "child_session_id": "child-session-b", "tool_name": "read_file", "tool_preview": "policy.md"}},
+        {"op": "event", "type": "subagent.progress", "payload": {"task_index": 0, "task_count": 2, "subagent_id": "child-a", "child_session_id": "child-session-a", "text": "One tool complete"}},
+        {"op": "event", "type": "subagent.complete", "payload": {"task_index": 1, "task_count": 2, "subagent_id": "child-b", "child_session_id": "child-session-b", "status": "interrupted", "summary": "Stopped safely"}},
+        {"op": "event", "type": "subagent.complete", "payload": {"task_index": 0, "task_count": 2, "subagent_id": "child-a", "child_session_id": "child-session-a", "status": "completed", "summary": "Mapped Android events", "duration_seconds": 2.5}},
+        {"op": "persist", "messages": [{"id": 1, "role": "user", "content": "Exercise child previews.", "timestamp": 1.0}, {"id": 2, "role": "assistant", "content": "Delegation complete.", "timestamp": 2.0}]},
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "Delegation complete.", "status": "complete"}}
+      ]
+    }
+  ]
+}

@@ -267,6 +267,7 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_unsupported",
             "ordinary_turn",
             "rapid_tools_interims",
+            "subagent_child_preview",
             "terminal_gap_activate",
             "terminal_gap_session_info",
             "queued_follow_up",
