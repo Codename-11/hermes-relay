@@ -1119,12 +1119,16 @@ fun ChatScreen(
     }
 
     // Recover any durable in-flight chat checkpoint whenever Chat returns to
-    // the foreground. On Gateway this also pre-warms/re-attaches the socket;
-    // sessions-SSE falls back to bounded persisted-history reconciliation.
+    // the foreground. setChatVisible owns that edge; an ordinary Gateway open
+    // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        chatViewModel.setChatVisible(appForeground && chatReady)
-        if (appForeground && chatReady) {
+        val chatVisible = appForeground && chatReady
+        val visibilityChanged = chatViewModel.setChatVisible(chatVisible)
+        if (isGatewayTransport && chatVisible && !visibilityChanged) {
+            // Gateway availability can settle after Chat was already visible.
+            // Repeat the socket-only warmup for that edge; ordinary observation
+            // still cannot resume or activate a session.
             chatViewModel.prewarmGateway()
         }
         if (isGatewayTransport && appForeground && chatReady) {

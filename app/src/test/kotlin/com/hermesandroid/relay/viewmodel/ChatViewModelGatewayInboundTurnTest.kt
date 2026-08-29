@@ -992,11 +992,12 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { handler.messages.value.any { it.content == "Partial A" } }
 
         viewModel.switchSession(secondSession)
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
         assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
 
         viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("session.resume", 2)
         gatewayHarness.awaitRpcCount("prompt.submit", 2)
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -1824,11 +1825,12 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { viewModel.queuedMessages.value == listOf("Follow up A") }
 
         viewModel.switchSession(secondSession)
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
         assertTrue("session B must not show A's queue", viewModel.queuedMessages.value.isEmpty())
 
         viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("session.resume", 2)
         gatewayHarness.awaitRpcCount("prompt.submit", 2)
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -2031,13 +2033,16 @@ class ChatViewModelGatewayInboundTurnTest {
         serverWs.close(1012, "test disconnect")
         awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
 
+        viewModel.setChatVisible(true)
         viewModel.prewarmGateway()
         gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
 
         awaitCondition {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
         }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
     }
 
@@ -2048,16 +2053,19 @@ class ChatViewModelGatewayInboundTurnTest {
 
         // Foreground arrives while OkHttp still reports the old socket ready,
         // so the one-shot prewarm is an intentional no-op. The delayed close
-        // callback must itself trigger an exact-session reattach.
+        // callback must itself restore the observation socket and catch up
+        // history without attaching the live session.
         viewModel.prewarmGateway()
         serverWs.close(1012, "late background close")
 
         awaitCondition { gatewayHarness.ticketMints.get() >= 2 }
         serverWs = gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
         }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
     }
 
@@ -2366,34 +2374,187 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun reconnectAfterMissedStartRecoversOnExactSessionCompletion() {
+    fun reconnectCatchupClosesCompletionBetweenFirstReadAndIdleSnapshot() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        val firstReadStarted = CompletableDeferred<Unit>()
+        val releaseFirstRead = CompletableDeferred<Unit>()
+        val readCount = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            if (readCount.incrementAndGet() == 1) {
+                firstReadStarted.complete(Unit)
+                releaseFirstRead.await()
+                Result.success(emptyList())
+            } else {
+                Result.success(persistedHistory)
+            }
+        }
         serverWs.close(1012, "missed start")
         awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
+        viewModel.setChatVisible(true)
         viewModel.prewarmGateway()
         serverWs = gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
-
-        // Reconnected midway through the synthetic turn: no message.start is
-        // replayed, so the delta is intentionally ignored and completion drives
-        // authoritative history recovery.
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
+        awaitCondition { firstReadStarted.isCompleted }
+        // Completion persists after the reconnect's first catch-up read began,
+        // while the first active-list snapshot is already empty/idle. The
+        // pending final-read marker must close this exact ordering window.
         persistedHistory = persistedAnswerHistory()
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.complete",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
+        releaseFirstRead.complete(Unit)
 
         awaitCondition { handler.messages.value.any { it.content == BACKGROUND_ANSWER } }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun passiveForegroundObservationNeverClaimsOrInterruptsDesktopTurn() {
+        val observerProfile = Profile(
+            name = "observer",
+            model = "model-a",
+            description = "Observer",
+        )
+        viewModel.setSelectedProfileProvider { observerProfile }
+        viewModel.setSessionProfileNameProvider { observerProfile.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            assertEquals(STORED_SESSION_ID, sessionId)
+            Result.success(
+                if (profileName == observerProfile.name) {
+                    persistedHistory
+                } else {
+                    listOf(
+                        MessageItem(
+                            id = "wrong-profile",
+                            sessionId = STORED_SESSION_ID,
+                            role = "assistant",
+                            content = JsonPrimitive("Wrong profile history"),
+                        ),
+                    )
+                },
+            )
+        }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", observerProfile.name),
+            STORED_SESSION_ID,
+        )
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val ownershipMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "session.interrupt",
+            "prompt.submit",
+        )
+        val baseline = ownershipMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val baselineActiveList = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("working")
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+        )
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.updateGatewayClient(gatewayClient)
+
+        viewModel.setChatVisible(true)
+        viewModel.prewarmGateway()
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" } > baselineActiveList
+        }
+        persistedHistory = listOf(
+            MessageItem(
+                id = "desktop-answer",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Desktop completed without Android attachment."),
+            ),
+        )
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.content ==
+                "Desktop completed without Android attachment."
+        }
+        ownershipMethods.forEach { method ->
+            assertEquals(
+                "passive foreground sent $method",
+                baseline.getValue(method),
+                gatewayHarness.rpcLog.count { it.first == method },
+            )
+        }
+
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        assertEquals(
+            "observer teardown interrupted the Desktop turn",
+            baseline.getValue("session.interrupt"),
+            gatewayHarness.rpcLog.count { it.first == "session.interrupt" },
+        )
+    }
+
+    @Test
+    fun observerReadyAfterChatHidesCannotRestartPassiveWork() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val historyReads = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            historyReads.incrementAndGet()
+            Result.success(persistedHistory)
+        }
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "session.interrupt",
+            "prompt.submit",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val baselineActiveList = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
+        gatewayHarness.suppressGatewayReady = true
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+        )
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.updateGatewayClient(gatewayClient)
+
+        viewModel.setChatVisible(true)
+        val delayedSocket = gatewayHarness.awaitServerSocket()
+        viewModel.setChatVisible(false)
+        gatewayHarness.sendGatewayReady(delayedSocket)
+        shadowOf(Looper.getMainLooper()).idleFor(500, TimeUnit.MILLISECONDS)
+        Thread.sleep(100)
+
+        assertEquals(0, historyReads.get())
+        assertEquals(
+            baselineActiveList,
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" },
+        )
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
     }
 
     @Test

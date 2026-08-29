@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Opening Android no longer claims or interrupts a turn already running in Hermes Desktop/TUI.** Passive foreground and session browsing now use read-only Gateway status plus profile-scoped history; live-session resume remains reserved for explicit Android actions and exact Android-owned recovery.
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 
 ### Removed

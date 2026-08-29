@@ -231,11 +231,14 @@ class GatewayClientHarness(
     val suppressAckMethods: MutableSet<String> = ConcurrentHashMap.newKeySet()
     val pendingAcks = LinkedBlockingQueue<PendingAck>()
 
+    @Volatile
+    var suppressGatewayReady: Boolean = false
+
     private val wsListener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
             serverSockets.add(webSocket)
             allServerSockets.add(webSocket)
-            webSocket.send(eventFrame("gateway.ready", null, null))
+            if (!suppressGatewayReady) sendGatewayReady(webSocket)
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -626,6 +629,10 @@ class GatewayClientHarness(
 
     fun awaitServerSocket(): WebSocket =
         serverSockets.poll(5, TimeUnit.SECONDS) ?: error("server socket never opened")
+
+    fun sendGatewayReady(webSocket: WebSocket) {
+        webSocket.send(eventFrame("gateway.ready", null, null))
+    }
 
     fun awaitRpc(method: String): JsonObject {
         val deadline = System.currentTimeMillis() + 5_000
@@ -1405,6 +1412,27 @@ class GatewayChatClientTest {
         Thread.sleep(100)
 
         assertEquals(listOf("stored-session"), resumedSessions.toList())
+    }
+
+    @Test
+    fun `observation warmup never claims or interrupts a foreign runtime`() = runBlocking {
+        val registrations = AtomicInteger(0)
+        client.setUnsolicitedTurnProvider {
+            registrations.incrementAndGet()
+            GatewayInboundTurnRegistration(Recorder().callbacks) { true }
+        }
+
+        assertTrue(client.observeAwait())
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, "foreign-runtime"))
+        delay(100)
+        client.shutdown()
+
+        assertEquals(0, registrations.get())
+        assertFalse(harness.rpcLog.any { it.first == "session.resume" })
+        assertFalse(harness.rpcLog.any { it.first == "session.activate" })
+        assertFalse(harness.rpcLog.any { it.first == "session.interrupt" })
+        assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
     }
 
     @Test

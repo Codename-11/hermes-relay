@@ -907,6 +907,30 @@ class GatewayChatClient(
     }
 
     /**
+     * Establish only the shared Gateway socket for read-only observation.
+     *
+     * `session.resume` and `session.activate` attach a live runtime to this
+     * transport. Opening Chat, foreground restoration, and selecting a saved
+     * transcript must not claim a turn that another Desktop/TUI client owns,
+     * so those paths use this socket-only warmup and observe through REST
+     * history plus `session.active_list` instead.
+     */
+    fun observe(onReady: (() -> Unit)? = null) {
+        scope.launch {
+            if (observeAwait() && onReady != null) callbackDispatcher(onReady)
+        }
+    }
+
+    /** Suspending [observe]; returns true once the read-only socket is ready. */
+    suspend fun observeAwait(): Boolean = try {
+        connectMutex.withLock { ensureConnected() }
+        true
+    } catch (e: Exception) {
+        Log.d(TAG, "Gateway observation warmup skipped: ${e.message}")
+        false
+    }
+
+    /**
      * Suspending [prewarm]: establishes the socket and (when [storedSessionId]
      * is non-null) resumes the existing session, returning only once that work
      * has settled. Returns true when a live session is available afterwards.

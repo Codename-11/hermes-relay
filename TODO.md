@@ -26,6 +26,9 @@ model device-certified:
   renders as Working.
 - Run a background process that outlives its parent turn and verify Background
   work remains separate from the conversation's Idle state.
+- On a physical phone, open and repeatedly foreground Android while the same
+  session is working in official Desktop/TUI; verify Android sends no live
+  attach/interrupt RPC, the producer completes, and final history appears.
 - Pursue an upstream `session.active_list` profile field/filter or an aggregate
   activity route with explicit profile ownership so multi-profile clients do
   not need to resolve process-wide rows from durable keys.
