@@ -6,7 +6,7 @@
     <string name="notification_companion_label">Hermes-Relay 通知コンパニオン</string>
 
     <string name="onboarding_skip_setup_title">セットアップをスキップしますか?</string>
-    <string name="onboarding_skip_setup_text">問題ありません。デモを探索して Hermes-Relay がどのように機能するかを確認し、[設定] → [接続] からいつでも独自の Hermes サーバーに接続できます。パワーツール用のRelayペアリングは後から追加することもできます。</string>
+    <string name="onboarding_skip_setup_text">問題ありません。デモを試した後でも、[設定] → [ゲートウェイ] から独自の Hermes ゲートウェイをいつでも追加できます。パワーツール用の Relay ペアリングは後から追加できます。</string>
     <string name="onboarding_skip_for_now">今のところスキップしてください</string>
     <string name="onboarding_go_back">戻る</string>
     <string name="onboarding_skip">スキップ</string>
@@ -150,7 +150,7 @@
     <string name="chat_editing_notice">編集中 — 会話を巻き戻します</string>
     <string name="chat_mic_perm_needed">マイクの許可が必要です</string>
     <string name="chat_mic_perm_body">[設定を開く] をタップし、音声モードを使用するためのマイクへのアクセスを許可します。</string>
-    <string name="chat_manage_connections">接続を管理する</string>
+    <string name="chat_manage_connections">ゲートウェイを管理</string>
     <string name="chat_no_clipboard_image">クリップボードに画像がありません</string>
     <string name="chat_copied_to_clipboard">クリップボードにコピーされました</string>
     <string name="chat_camera_open_failed">カメラを開けませんでした</string>
@@ -211,7 +211,7 @@
     <string name="conn_label_route">ルート</string>
     <string name="conn_label_status">状態</string>
     <string name="conn_label_connect">接続する</string>
-    <string name="conn_label_connections">接続</string>
+    <string name="conn_label_connections">ゲートウェイ</string>
     <string name="conn_detail_add_connection">バニラ Hermes API/ダッシュボード接続を追加します</string>
     <string name="conn_detail_waiting_network">Android がインターネット ルートを報告するのを待っています</string>
     <string name="conn_detail_chat_unavailable">チャットやプロフィール通話が利用できない場合があります</string>
@@ -297,19 +297,19 @@
     <string name="error_classify_open_settings">設定を開く</string>
 
     <!-- Connection wizard — Connect page essentials -->
-    <string name="cw_connect_to_hermes">Hermes に接続します</string>
+    <string name="cw_connect_to_hermes">ゲートウェイを追加</string>
     <string name="cw_nearby_description">このネットワーク上の Hermes を検索します。ダッシュボードとゲートウェイが、チャット、管理、音声の標準接続を提供します。</string>
-    <string name="cw_connection_chooser_description">利用するセットアップを選択してください。Hermes Relay は任意です。</string>
+    <string name="cw_connection_chooser_description">1 つのゲートウェイは 1 つの Hermes 環境です。この端末からの接続方法を選択してください。</string>
     <string name="cw_scan_setup_qr_title">Hermes セットアップ QR をスキャン</string>
     <string name="cw_scan_setup_qr_subtitle">ローカル、リモート、および利用可能な Relay ルートを設定します</string>
     <string name="cw_recommended">推奨</string>
-    <string name="cw_other_ways_to_connect">その他の接続方法</string>
+    <string name="cw_other_ways_to_connect">ゲートウェイを選択</string>
     <string name="cw_advanced">詳細設定</string>
     <string name="cw_cloud_title">Nous ホスト版 Hermes</string>
     <string name="cw_cloud_subtitle">ホスト済みエージェントに接続します</string>
-    <string name="cw_server_vps_title">サーバーまたは VPS</string>
-    <string name="cw_server_vps_subtitle">安全な Dashboard アドレスを入力します</string>
-    <string name="cw_relay_optional_note">標準のチャット、管理、音声は Relay なしで動作します。互換性のあるセットアップ QR では、利用可能な場合に Relay の拡張機能も追加されます。</string>
+    <string name="cw_server_vps_title">リモートゲートウェイ</string>
+    <string name="cw_server_vps_subtitle">Dashboard アドレスを入力</string>
+    <string name="cw_relay_optional_note">プライベート LAN と Tailscale のアドレスは HTTP または HTTPS を使用できます。公開アドレスには HTTPS が必要です。Relay と API フォールバックは任意です。</string>
     <string name="cw_cloud_entry_title">Nous ホスト版 Hermes に接続</string>
     <string name="cw_cloud_entry_description">Nous Portal に表示されるエージェントのアドレスを入力してください。Hermes が見つかった後、安全にサインインします。</string>
     <string name="cw_cloud_agent_name">エージェントのアドレス</string>
@@ -336,7 +336,7 @@
     <string name="cw_nearby_search_again">再検索</string>
     <string name="cw_nearby_enter_address">アドレスを入力</string>
     <string name="cw_other_connection_methods">その他の接続方法</string>
-    <string name="cw_manual_hermes_title">Hermes のアドレスを入力</string>
+    <string name="cw_manual_hermes_title">ゲートウェイのアドレスを入力</string>
     <string name="cw_manual_hermes_description">ブラウザで開くダッシュボードアドレスを入力します。このスマートフォンで開けない場合は hermes dashboard を起動し、Wi-Fi または Tailscale を確認してください。</string>
     <string name="cw_hermes_address">Hermes アドレス</string>
     <string name="cw_hermes_address_placeholder">192.168.1.10 または hermes.example.com</string>
@@ -475,7 +475,7 @@
     <string name="cw_voice_after_connect">接続後に確認したところ</string>
     <string name="cw_remote">リモート</string>
     <string name="cw_remote_fallback_ready">自宅から離れた場所でも使用できるフォールバック ルート</string>
-    <string name="cw_remote_lan_only">LAN のみ — [設定] → [接続] → [ルート] で Tailscale またはパブリック ルートを追加します。</string>
+    <string name="cw_remote_lan_only">LAN のみ — [設定] → [ゲートウェイ] → [ルート] で Tailscale またはパブリックルートを追加します。</string>
     <string name="cw_relay">Relay</string>
     <string name="cw_relay_paired">パワーツールをペアリングしました</string>
     <string name="cw_relay_optional">端末およびBridgeの場合はオプション</string>
@@ -674,7 +674,7 @@
     <string name="relay_state_needs_repair">再ペアリングが必要</string>
     <string name="settings_no_connection">接続がありません</string>
     <string name="settings_server_default">サーバーのデフォルト</string>
-    <string name="settings_connections">接続</string>
+    <string name="settings_connections">ゲートウェイ</string>
     <string name="settings_connections_desc">API、ダッシュボード、Relayのペアリング、およびルート</string>
     <string name="settings_hermes">Hermes</string>
     <string name="settings_hermes_management">Hermes 管理</string>
@@ -820,10 +820,27 @@
 
     <!-- P0: ConnectionsSettingsScreen -->
     <string name="conn_back">戻る</string>
-    <string name="conn_title">接続</string>
-    <string name="conn_add_connection">接続の追加</string>
-    <string name="conn_no_connections">まだ接続がありません</string>
-    <string name="conn_no_connections_desc">[接続の追加] をタップして Hermes に接続します。</string>
+    <string name="conn_title">ゲートウェイ</string>
+    <string name="conn_add_connection">ゲートウェイを追加</string>
+    <string name="conn_no_connections">ゲートウェイはまだありません</string>
+    <string name="conn_no_connections_desc">[ゲートウェイを追加] をタップして Hermes に接続します。</string>
+    <string name="gateways_title">ゲートウェイ</string>
+    <plurals name="gateway_count"><item quantity="one">%d ゲートウェイ</item><item quantity="other">%d ゲートウェイ</item></plurals>
+    <string name="gateway_add">ゲートウェイを追加</string>
+    <string name="gateways_empty_title">ゲートウェイはまだありません</string>
+    <string name="gateways_empty_body">ゲートウェイを追加して、この端末を Hermes に接続します。</string>
+    <string name="gateway_route_not_configured">ルート未設定</string>
+    <string name="gateway_status_online">ゲートウェイはオンライン</string>
+    <string name="gateway_status_sign_in_required">サインインが必要</string>
+    <string name="gateway_status_offline">ゲートウェイはオフライン</string>
+    <string name="gateway_status_checking">ゲートウェイを確認中…</string>
+    <string name="gateway_status_not_checked">ゲートウェイ未確認</string>
+    <string name="gateway_status_last_check_sign_in_required">前回の確認：サインインが必要</string>
+    <string name="gateway_status_last_check_succeeded">前回の確認は成功</string>
+    <string name="gateway_status_last_check_failed">前回の確認は失敗</string>
+    <string name="gateway_status_no_route">ゲートウェイルートなし</string>
+    <string name="gateway_status_unavailable">ゲートウェイを利用できません</string>
+    <string name="conn_add_requires_parent_access">ゲートウェイを追加する前に、保護者アクセスのロックを解除してください。</string>
     <string name="conn_active">アクティブ</string>
     <string name="conn_connected">接続済み</string>
     <string name="conn_standard_not_paired">標準 · Relay はペアになっていません</string>
@@ -913,6 +930,8 @@
     <string name="detail_tab_routes">ルート</string>
     <string name="detail_tab_advanced">高度な</string>
     <string name="detail_tab_security">安全</string>
+    <string name="detail_tab_access">アクセス</string>
+    <string name="detail_current_route">現在のルート</string>
     <string name="detail_dashboard_primary">Dashboard を優先</string>
     <string name="detail_core_ready">Hermes コアは準備完了</string>
     <string name="detail_core_configured">Hermes コアを設定済み</string>
@@ -1006,7 +1025,7 @@
     <string name="bridge_relay_label">Relay</string>
     <string name="bridge_safety_label">安全性</string>
     <string name="bridge_not_connected_title">Relay が接続されていません</string>
-    <string name="bridge_not_connected_body">Bridge コマンドはRelayを介して送信されます。Bridgeが実際に何かを実行できるようにするには、[設定] → [接続] でRelayをペアリングします。</string>
+    <string name="bridge_not_connected_body">Bridge コマンドは Relay を介して送信されます。Bridge を使用するには、[設定] → [ゲートウェイ] で Relay をペアリングします。</string>
     <string name="bridge_accessibility_needed">最初にアクセシビリティ サービスを有効にする必要があります。</string>
     <string name="bridge_open_settings">設定を開く</string>
     <string name="bridge_allow_agent_control">エージェント制御を許可する</string>
@@ -1043,8 +1062,8 @@
     <string name="bridge_core_relay_body">Bridge コアは、端末、通知、メディア、音声機能と同じペアのRelay セッションを使用します。</string>
     <string name="bridge_core_surface_title">Bridge 表面</string>
     <string name="bridge_core_surface_meta">設定では隠されていません</string>
-    <string name="bridge_core_connections">接続</string>
-    <string name="bridge_core_connections_sub">Relayルートのペアリング、切り替え、検証</string>
+    <string name="bridge_core_connections">ゲートウェイ</string>
+    <string name="bridge_core_connections_sub">Relay のペアリング、ゲートウェイの切り替え、ルートの検証</string>
     <string name="bridge_core_terminal_tile">ターミナル</string>
     <string name="bridge_core_terminal_sub">Hermes中継端末に取り付けます</string>
     <string name="bridge_core_voice">声</string>
@@ -1402,7 +1421,7 @@
     <string name="proactive_let_hermes_message_me">Hermes にメッセージを送ってください</string>
     <string name="proactive_allow_proactive_messages">プロアクティブなメッセージを許可する</string>
     <string name="proactive_allow_proactive_messages_desc">エージェントは、リマインダー、完了したジョブ、アラートなど、独自に連絡を取ることができます。そのメッセージはチャットに Threads として表示され、そこで返信できます。</string>
-    <string name="proactive_not_paired_warning">まだペアリングされていません — メッセージの受信を開始するには、[設定] → [接続] で Hermes サーバーとペアリングします。</string>
+    <string name="proactive_not_paired_warning">まだペアリングされていません — メッセージを受信するには、[設定] → [ゲートウェイ] で Relay をペアリングします。</string>
     <string name="proactive_your_threads">あなたのThreads</string>
     <string name="proactive_your_threads_desc">エージェントが開始した各会話はチャット内のスレッドとして表示されます。セッション リストを開いて Threads にフィルターし、そこですぐに返信します。</string>
     <string name="proactive_open_chat">オープンチャット</string>
@@ -1588,7 +1607,7 @@
     <string name="voice_settings_engine_realtime">リアルタイムエージェント</string>
     <string name="voice_settings_engine_realtime_desc">Hermes 仲介ツールを使用したプロバイダーネイティブのリアルタイム音声。ペアになった Relay が必要です。</string>
     <string name="voice_settings_experimental">実験的</string>
-    <string name="voice_settings_realtime_no_relay">この接続には Relay が構成されていないため、リアルタイム エージェントを開始できません。 [設定] → [接続] で Relay をペアリングするか、Hermes チャット + 音声出力に戻します。</string>
+    <string name="voice_settings_realtime_no_relay">このゲートウェイには Relay が構成されていないため、リアルタイムエージェントを開始できません。[設定] → [ゲートウェイ] で Relay をペアリングするか、Hermes チャット + 音声出力に戻します。</string>
     <string name="voice_settings_route_label">STT/TTSルート</string>
     <string name="voice_settings_status_ready">準備ができて</string>
     <string name="voice_settings_status_sign_in_required">ダッシュボードへのサインインが必要です</string>
@@ -1809,8 +1828,8 @@
     <string name="dashboard_tile_config_sub">スキーマとランタイムのオプション</string>
 
     <!-- Nav tiles -->
-    <string name="dashboard_nav_connections_title">接続</string>
-    <string name="dashboard_nav_connections_sub">ルートのペアリング、切り替え、検証</string>
+    <string name="dashboard_nav_connections_title">ゲートウェイ</string>
+    <string name="dashboard_nav_connections_sub">サインイン、Relay のペアリング、切り替え、ルートの検証</string>
 
     <!-- Hub header -->
     <string name="dashboard_hub_title">Relay ハブ</string>
@@ -2439,7 +2458,7 @@
     <string name="conn_info_loading_profiles">プロファイルを読み込み中…</string>
     <string name="conn_info_local_display_name">ローカル表示名</string>
     <string name="conn_info_locked_to">%1$s にロックされています</string>
-    <string name="conn_info_manage_connections">接続を管理する</string>
+    <string name="conn_info_manage_connections">ゲートウェイを管理</string>
     <string name="conn_info_manage_profiles">プロフィール表示を管理</string>
     <string name="conn_info_manage_profiles_hint">プロフィールを並べ替えたり、使用しないものを非表示にしたりできます。アクティブなプロフィールは表示されたままです。</string>
     <string name="conn_info_move_profile_up">%1$s を上へ移動</string>
@@ -2716,8 +2735,8 @@
 
     <!-- ConnectionSwitcherSheet -->
     <string name="conn_switcher_title">スイッチ接続</string>
-    <string name="conn_switcher_empty">まだ接続がありません</string>
-    <string name="conn_switcher_manage">接続の管理&#8230;</string>
+    <string name="conn_switcher_empty">ゲートウェイはまだありません</string>
+    <string name="conn_switcher_manage">ゲートウェイを管理&#8230;</string>
 
     <!-- DiagnosticsLogPanel -->
     <string name="diagnostics_title">最近の活動</string>
@@ -3107,7 +3126,7 @@
     <string name="screen_bridge_label">Bridge</string>
     <string name="screen_manage_label">管理</string>
     <string name="screen_settings_label">設定</string>
-    <string name="screen_connections_label">接続</string>
+    <string name="screen_connections_label">ゲートウェイ</string>
     <string name="screen_connection_label">繋がり</string>
     <string name="screen_voice_label">声</string>
     <string name="screen_notification_companion_label">通知コンパニオン</string>
@@ -3193,7 +3212,7 @@
     <string name="cw_hint_chat">チャット</string>
     <string name="cw_hint_manage">管理</string>
     <string name="cw_http_url_field_label">URL</string>
-    <string name="cw_http_url_scheme_error">%1$s は http:// または https:// を期待します (裸のホストは http://) を取得します)</string>
+    <string name="cw_http_url_scheme_error">%1$s には http:// または https:// が必要です（プライベートホストは http://、公開ホストは https:// を使用します）</string>
     <string name="cw_label_api_key">API キー</string>
     <string name="cw_label_api_server">API サーバー</string>
     <string name="cw_label_dashboard">ダッシュボード</string>
@@ -3246,7 +3265,7 @@
     <string name="cw_step_3_3">ステップ 3/3</string>
     <string name="cw_tailscale_placeholder">http://100.x.x.x:8642</string>
     <string name="cw_tailscale_supporting_detected">Tailscale ネットワークが検出されました</string>
-    <string name="cw_tailscale_supporting_other">サーバー ネットワークから離れている場合は、タイムアウト、アドレス、API ポート (8642) および http:// のデフォルトを手動で切り替えます。設定 → 接続 → ルートで変更できます。</string>
+    <string name="cw_tailscale_supporting_other">サーバーネットワークから離れている場合は、[設定] → [ゲートウェイ] → [ルート] でタイムアウト、アドレス、API ポート (8642)、http:// のデフォルトを変更できます。</string>
     <string name="cw_value_derived">自動検出</string>
     <string name="cw_value_included">付属</string>
     <string name="cw_value_not_included">含まれていない</string>
@@ -4445,22 +4464,22 @@
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="api_fallback_title">API fallback</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="dashboard_address_editor_body">Set the address this phone should use for Dashboard, Gateway chat, sessions, voice, and sign-in. Use your canonical HTTPS domain for self-hosted OIDC.</string>
-    <string name="dashboard_address_editor_title">Dashboard address</string>
+    <string name="dashboard_address_editor_body">この端末で使う Dashboard と Gateway のアドレスを設定します。プライベート LAN と Tailscale ルートは HTTP または HTTPS を使用でき、公開ルートには HTTPS が必要です。</string>
+    <string name="dashboard_address_editor_title">ゲートウェイのアドレス</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
     <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
-    <string name="dashboard_address_required">Enter your Hermes Dashboard address</string>
+    <string name="dashboard_address_required">Hermes Gateway のアドレスを入力してください</string>
     <string name="dashboard_gateway_configured">Configured address</string>
     <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
-    <string name="dashboard_gateway_secure_origin">Secure sign-in address</string>
+    <string name="dashboard_gateway_secure_origin">サインイン元</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
-    <string name="network_routes_summary">Optional LAN, Tailscale, public, API, and Relay paths. These do not replace the signed-in Dashboard origin.</string>
+    <string name="network_routes_summary">LAN、Tailscale、公開ルートはこの Gateway への接続経路です。API フォールバックと Relay 拡張は任意です。</string>
     <string name="network_routes_title">Network routes</string>
     <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>
@@ -4474,6 +4493,9 @@
     <string name="active_section_configured_not_probed">Network routes are configured; Routes shows their latest reachability.</string>
     <string name="active_section_relay_ownership">Relay owns extension tools only; standard Hermes stays independent.</string>
     <string name="active_section_no_sign_in_required">No sign-in required</string>
+    <string name="active_section_use_selected_route">選択したルートを使用</string>
+    <string name="active_section_use_selected_route_failed">Dashboard のサインインを選択したルートに戻せませんでした。</string>
+    <string name="active_section_forget_sign_in_origin">サインイン元を削除</string>
     <string name="active_section_unavailable">Unavailable</string>
     <string name="detail_inactive_badge">Not active</string>
     <string name="detail_overview_clarity_summary">What works now, the path this phone is using, and what can take over if it becomes unavailable.</string>

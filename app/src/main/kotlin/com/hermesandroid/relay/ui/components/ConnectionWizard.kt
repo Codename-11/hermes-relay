@@ -123,8 +123,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
- * Shared connection wizard used by both onboarding (first run) and
- * Settings → Connections. Hermes setup starts with the one Dashboard address
+ * Shared Gateway wizard used by both onboarding (first run) and
+ * Settings → Gateways. Hermes setup starts with the one Dashboard address
  * the phone can open, probes public `/api/status`, and lets advertised
  * capabilities select authentication. A separate public sign-in URL is never
  * universally required. API fallback, Relay pairing, and extra LAN/Tailscale
@@ -187,7 +187,7 @@ fun ConnectionWizard(
      * Currently only `"scan"` is honored — jumps directly into camera-
      * permission-request → scanner, skipping the Method chooser. Null
      * keeps the default Method step so users can still pick Scan / Enter
-     * code / Show code manually. The "Add connection" FAB sets this to
+     * code / Show code manually. The "Add gateway" FAB sets this to
      * `"scan"` because the single-purpose entry deserves a single-purpose
      * flow; re-pair surfaces leave it null so the chooser stays available.
      */
@@ -198,8 +198,8 @@ fun ConnectionWizard(
      * Optional "Try the demo" affordance shown atop the Method step. When
      * non-null, the wizard surfaces an offline Demo / Explore entry point so a
      * first-run user (or a Play reviewer with no server) can see the app work
-     * with zero setup. Null hides it — Settings → Connections passes null
-     * because there's nothing to "first-run" there; onboarding + the Connect
+     * with zero setup. Null hides it — Settings → Gateways passes null
+     * because there's nothing to "first-run" there; onboarding + the Add Gateway
      * screen pass a callback that enters demo and routes to Chat.
      */
     onTryDemo: (() -> Unit)? = null,
@@ -339,7 +339,7 @@ fun ConnectionWizard(
     }
 
     // Deep-link: when the caller passed autoStart="scan" (currently only the
-    // "Add connection" FAB does), fire the permission launcher on first
+    // "Add gateway" FAB does), fire the permission launcher on first
     // composition. Equivalent to the user tapping the Scan tile in the
     // Method step — sets chosenMethod and bounces through the camera
     // permission gate into the scanner. Only runs once per wizard mount
@@ -467,9 +467,9 @@ fun ConnectionWizard(
     }
 
     // Look up an existing connection pointing at [serverUrl] — excluding
-    // the active one, which during the Add-connection flow is the blank
+    // the active one, which during the Add-gateway flow is the blank
     // placeholder we pre-created in [ConnectionViewModel.beginAddConnection].
-    // Re-pair flows from Settings → Connections switch to the target BEFORE
+    // Re-pair flows from Settings → Gateways switch to the target BEFORE
     // entering the wizard, so during those the active id IS the target
     // and the filter correctly returns null (no pointless self-prompt).
     val findDuplicateFor:
@@ -1423,55 +1423,6 @@ private fun NewNearbyHermesStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = setupReady, role = Role.Button, onClick = onScanQr),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-            ),
-            shape = appearanceRoundedCornerShape(18.dp),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.QrCodeScanner,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(34.dp),
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.cw_scan_setup_qr_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_recommended),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_scan_setup_qr_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-        }
-
         Text(
             text = stringResource(R.string.cw_other_ways_to_connect),
             style = MaterialTheme.typography.titleMedium,
@@ -1484,25 +1435,12 @@ private fun NewNearbyHermesStep(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                ConnectionChooserRow(
-                    icon = Icons.Filled.Cloud,
-                    title = stringResource(R.string.cw_cloud_title),
-                    subtitle = stringResource(R.string.cw_cloud_subtitle),
-                    onClick = onCloud,
-                    enabled = setupReady,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ConnectionChooserRow(
-                    icon = Icons.Filled.Dns,
-                    title = stringResource(R.string.cw_server_vps_title),
-                    subtitle = stringResource(R.string.cw_server_vps_subtitle),
-                    onClick = onManualServer,
-                    enabled = setupReady,
-                )
                 if (results.isNotEmpty()) {
-                    results.forEach { candidate ->
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        ConnectionChooserRow(
+                    results.forEachIndexed { index, candidate ->
+                        if (index > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                        GatewayChooserRow(
                             icon = Icons.Filled.Wifi,
                             title = stringResource(R.string.cw_nearby_heading),
                             subtitle = candidate.dashboardUrl.orEmpty(),
@@ -1512,8 +1450,7 @@ private fun NewNearbyHermesStep(
                         )
                     }
                 } else {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    ConnectionChooserRow(
+                    GatewayChooserRow(
                         icon = Icons.Filled.Wifi,
                         title = stringResource(R.string.cw_nearby_heading),
                         subtitle = when {
@@ -1526,6 +1463,22 @@ private fun NewNearbyHermesStep(
                         showProgress = busy,
                     )
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                GatewayChooserRow(
+                    icon = Icons.Filled.Cloud,
+                    title = stringResource(R.string.cw_cloud_title),
+                    subtitle = stringResource(R.string.cw_cloud_subtitle),
+                    onClick = onCloud,
+                    enabled = setupReady,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                GatewayChooserRow(
+                    icon = Icons.Filled.Dns,
+                    title = stringResource(R.string.cw_server_vps_title),
+                    subtitle = stringResource(R.string.cw_server_vps_subtitle),
+                    onClick = onManualServer,
+                    enabled = setupReady,
+                )
             }
         }
 
@@ -1534,6 +1487,20 @@ private fun NewNearbyHermesStep(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+            shape = appearanceRoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            GatewayChooserRow(
+                icon = Icons.Filled.QrCodeScanner,
+                title = stringResource(R.string.cw_scan_setup_qr_title),
+                subtitle = stringResource(R.string.cw_scan_setup_qr_subtitle),
+                onClick = onScanQr,
+                enabled = setupReady,
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1567,7 +1534,7 @@ private fun NewNearbyHermesStep(
 }
 
 @Composable
-private fun ConnectionChooserRow(
+private fun GatewayChooserRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
@@ -2046,7 +2013,7 @@ private fun MethodStep(
         )
 
         // Offline "Try the demo" entry point — only surfaced where a first-run
-        // user benefits (onboarding + the Connect screen). Lets a reviewer or
+        // user benefits (onboarding + the Add Gateway screen). Lets a reviewer or
         // curious user see the app work with zero setup and zero network
         // before committing to connecting a real server.
         if (onTryDemo != null) {

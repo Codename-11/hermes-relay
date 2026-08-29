@@ -300,7 +300,20 @@ class ConnectionDashboardFieldsTest {
     fun inferRouteRole_detectsTailscaleCgnat() {
         assertEquals("tailscale", Connection.inferRouteRole("https://100.75.1.2:8642"))
         assertEquals("lan", Connection.inferRouteRole("http://10.0.0.5:8642"))
+        assertEquals("lan", Connection.inferRouteRole("http://homelab.lan:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://hermes-box:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://[fd00::10]:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://[fe80::10]:9119"))
+        assertEquals("tailscale", Connection.inferRouteRole("http://[fd7a:115c:a1e0::10]:9119"))
+        assertEquals("public", Connection.inferRouteRole("https://[2001:4860:4860::8888]:9119"))
         assertEquals("public", Connection.inferRouteRole("https://hermes.example.com:8642"))
+    }
+
+    @Test
+    fun normalizeDashboardUrlInput_usesHttpsForBarePublicHosts() {
+        assertEquals("https://hermes.example.com", Connection.normalizeDashboardUrlInput("hermes.example.com"))
+        assertEquals("http://homelab.lan:9119", Connection.normalizeDashboardUrlInput("homelab.lan"))
+        assertEquals("http://100.75.1.2:9119", Connection.normalizeDashboardUrlInput("100.75.1.2"))
     }
 
     @Test

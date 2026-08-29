@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.data
 
 import kotlinx.serialization.Serializable
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.URI
 
 @Serializable
@@ -520,6 +522,12 @@ data class Connection(
             )
         }
 
+        /**
+         * Normalize a hand-typed Dashboard/Gateway address. Bare private,
+         * LAN, and Tailscale hosts use upstream's `http://…:9119` default;
+         * bare public hosts use `https://` on the standard HTTPS port.
+         * Explicit schemes and ports are preserved for precise validation.
+         */
         fun normalizeDashboardUrlInput(
             raw: String,
             defaultPort: Int = DEFAULT_DASHBOARD_PORT,
@@ -527,7 +535,10 @@ data class Connection(
             val trimmed = raw.trim().trimEnd('/')
             if (trimmed.isEmpty()) return trimmed
             if (SCHEME_REGEX.containsMatchIn(trimmed)) return trimmed
-            val withScheme = "http://$trimmed"
+            val provisionalHttpUrl = "http://$trimmed"
+            val publicAddress = inferRouteRole(provisionalHttpUrl) == "public"
+            val withScheme = if (publicAddress) "https://$trimmed" else provisionalHttpUrl
+            if (publicAddress) return withScheme
             val uri = runCatching { URI(withScheme) }.getOrNull()
             val canAppendPort = uri != null &&
                 !uri.host.isNullOrBlank() &&
@@ -542,15 +553,40 @@ data class Connection(
                 .getOrNull()
                 ?.lowercase()
                 ?: return "custom"
+            val normalizedHost = host.removePrefix("[").removeSuffix("]")
+            if (normalizedHost.contains(':')) {
+                val address = runCatching { InetAddress.getByName(normalizedHost) }
+                    .getOrNull() as? Inet6Address
+                    ?: return "public"
+                return when {
+                    isTailscaleIpv6(address) -> "tailscale"
+                    address.isAnyLocalAddress ||
+                        address.isLoopbackAddress ||
+                        address.isLinkLocalAddress ||
+                        isUniqueLocalIpv6(address) -> "lan"
+                    else -> "public"
+                }
+            }
             return when {
-                host.endsWith(".ts.net") || isTailscaleIpv4(host) -> "tailscale"
-                host == "localhost" ||
-                    host == "127.0.0.1" ||
-                    host == "::1" ||
-                    isPrivateLanIpv4(host) -> "lan"
+                normalizedHost.endsWith(".ts.net") || isTailscaleIpv4(normalizedHost) -> "tailscale"
+                normalizedHost == "localhost" ||
+                    normalizedHost == "127.0.0.1" ||
+                    normalizedHost.endsWith(".local") ||
+                    normalizedHost.endsWith(".lan") ||
+                    !normalizedHost.contains('.') ||
+                    isPrivateLanIpv4(normalizedHost) -> "lan"
                 else -> "public"
             }
         }
+
+        private fun isTailscaleIpv6(address: Inet6Address): Boolean {
+            val bytes = address.address
+            val prefix = intArrayOf(0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0)
+            return prefix.indices.all { index -> bytes[index].toInt() and 0xff == prefix[index] }
+        }
+
+        private fun isUniqueLocalIpv6(address: Inet6Address): Boolean =
+            address.address.first().toInt() and 0xfe == 0xfc
 
         private fun isTailscaleIpv4(host: String): Boolean {
             val parts = host.split('.').mapNotNull { it.toIntOrNull() }

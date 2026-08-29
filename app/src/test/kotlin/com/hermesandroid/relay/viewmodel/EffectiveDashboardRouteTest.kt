@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.DashboardConnectionStatus
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
@@ -202,6 +203,99 @@ class EffectiveDashboardRouteTest {
     }
 
     @Test
+    fun `clearing authenticated origin restores selected route without changing capabilities`() {
+        val tailscaleRoute = EndpointCandidate(
+            role = "tailscale",
+            priority = 1,
+            api = ApiEndpoint("100.71.8.56", 8642),
+            relay = RelayEndpoint("ws://100.71.8.56:8767"),
+            dashboard = DashboardEndpoint("http://100.71.8.56:9119"),
+        )
+        val original = connection(
+            dashboardUrl = "http://192.168.1.20:9119",
+            apiServerUrl = "http://192.168.1.20:8642",
+        ).copy(
+            relayUrl = "ws://192.168.1.20:8767",
+            authenticatedDashboardOrigin = "https://hermes.example.com",
+            routeCandidates = listOf(tailscaleRoute),
+            preferredRouteRole = "tailscale",
+        )
+
+        val reset = withoutAuthenticatedDashboardOrigin(original)
+        val selectedDashboardUrl = resolveEffectiveDashboardUrl(reset, tailscaleRoute)
+
+        assertEquals(null, reset.authenticatedDashboardOrigin)
+        assertEquals(original.dashboardUrl, reset.dashboardUrl)
+        assertEquals(original.apiServerUrl, reset.apiServerUrl)
+        assertEquals(original.relayUrl, reset.relayUrl)
+        assertEquals(original.routeCandidates, reset.routeCandidates)
+        assertEquals(original.preferredRouteRole, reset.preferredRouteRole)
+        assertEquals("http://100.71.8.56:9119", selectedDashboardUrl)
+        assertTrue(dashboardCredentialsMustBeRetired(original, selectedDashboardUrl))
+    }
+
+    @Test
+    fun `clearing redundant authenticated origin keeps same-origin credentials`() {
+        val publicRoute = EndpointCandidate(
+            role = "public",
+            dashboard = DashboardEndpoint("https://hermes.example.com/"),
+        )
+        val original = connection(
+            dashboardUrl = null,
+            apiServerUrl = "",
+        ).copy(
+            authenticatedDashboardOrigin = "https://hermes.example.com",
+            routeCandidates = listOf(publicRoute),
+        )
+
+        val reset = withoutAuthenticatedDashboardOrigin(original)
+        val selectedDashboardUrl = resolveEffectiveDashboardUrl(reset, publicRoute)
+
+        assertEquals("https://hermes.example.com/", selectedDashboardUrl)
+        assertFalse(dashboardCredentialsMustBeRetired(original, selectedDashboardUrl))
+    }
+
+    @Test
+    fun `clearing authenticated origin does not require a fallback dashboard address`() {
+        val original = connection(
+            dashboardUrl = null,
+            apiServerUrl = "",
+        ).copy(
+            relayUrl = "wss://relay.example.com",
+            authenticatedDashboardOrigin = "https://hermes.example.com",
+        )
+
+        val reset = withoutAuthenticatedDashboardOrigin(original)
+        val selectedDashboardUrl = resolveEffectiveDashboardUrl(reset, endpoint = null)
+
+        assertEquals("", selectedDashboardUrl)
+        assertEquals(original.relayUrl, reset.relayUrl)
+        assertTrue(dashboardCredentialsMustBeRetired(original, selectedDashboardUrl))
+    }
+
+    @Test
+    fun `changing dashboard owner invalidates its persisted status and topology authority`() {
+        val previous = connection(
+            dashboardUrl = "http://192.168.1.20:9119",
+            apiServerUrl = "http://192.168.1.20:8642",
+        ).copy(
+            authenticatedDashboardOrigin = "https://old.example.com",
+            dashboardLastStatus = DashboardConnectionStatus(
+                reachable = true,
+                gatewayMode = "multiplex",
+                servedProfiles = listOf("sentinel"),
+            ),
+        )
+
+        assertTrue(dashboardCredentialsMustBeRetired(previous, "https://new.example.com"))
+        assertEquals(null, dashboardStatusAfterOriginReset(previous, "https://new.example.com"))
+        assertEquals(
+            previous.dashboardLastStatus,
+            dashboardStatusAfterOriginReset(previous, "https://old.example.com/"),
+        )
+    }
+
+    @Test
     fun `failed promotion restores the exact previous routing model`() = runTest {
         val originalRoute = EndpointCandidate(
             role = "lan",
@@ -252,6 +346,47 @@ class EffectiveDashboardRouteTest {
         assertEquals(null, normalizeDashboardAddressForEdit("https://hermes.example.com#fragment"))
         assertEquals(null, normalizeDashboardAddressForEdit("http://"))
         assertEquals("https://hermes.example.com/base", normalizeDashboardAddressForEdit("https://hermes.example.com/base"))
+    }
+
+    @Test
+    fun `public dashboard addresses require https while private routes may use http`() {
+        assertTrue(publicDashboardAddressRequiresHttps(null, "http://hermes.example.com:9119"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "https://hermes.example.com"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "http://192.168.1.20:9119"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "http://homelab.lan:9119"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "http://hermes-box:9119"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "http://[fd00::10]:9119"))
+        assertFalse(publicDashboardAddressRequiresHttps(null, "http://[fd7a:115c:a1e0::10]:9119"))
+        assertTrue(publicDashboardAddressRequiresHttps(null, "http://[2001:4860:4860::8888]:9119"))
+        assertTrue(publicDashboardAddressRequiresHttps("public", "http://192.168.1.20:9119"))
+        assertTrue(publicDashboardAddressRequiresHttps("lan", "http://hermes.example.com:9119"))
+        assertTrue(publicDashboardAddressRequiresHttps("tailscale", "http://hermes.example.com:9119"))
+        assertTrue(publicDashboardAddressRequiresHttps("custom", "http://hermes.example.com:9119"))
+    }
+
+    @Test
+    fun `advanced API setup rejects a derived public http dashboard`() {
+        assertEquals(
+            "Public Gateway addresses require HTTPS",
+            standardApiDashboardSecurityError(
+                normalizedApiUrl = "http://hermes.example.com:8642",
+                normalizedDashboardUrl = "",
+            ),
+        )
+        assertEquals(
+            null,
+            standardApiDashboardSecurityError(
+                normalizedApiUrl = "http://hermes.example.com:8642",
+                normalizedDashboardUrl = "https://hermes.example.com",
+            ),
+        )
+        assertEquals(
+            null,
+            standardApiDashboardSecurityError(
+                normalizedApiUrl = "http://192.168.1.20:8642",
+                normalizedDashboardUrl = "",
+            ),
+        )
     }
 
     @Test

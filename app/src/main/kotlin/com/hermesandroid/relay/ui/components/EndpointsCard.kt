@@ -57,14 +57,12 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
-import com.hermesandroid.relay.data.SurfaceSecurityKind
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.secureLinkServices
-import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
-import com.hermesandroid.relay.data.isTlsUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.network.shared.EndpointSurface
@@ -292,7 +290,11 @@ private fun EndpointRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    SurfaceSecurityGlyph(kind = candidate.routeSecurityKind())
+                    Text(
+                        text = routeTransportLabel(candidate),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 FlowRow(
                     modifier = Modifier.padding(top = 4.dp),
@@ -560,6 +562,7 @@ private fun RouteSurfaceMap(
     val dashboardOutcome = outcomeFor(EndpointSurface.Dashboard)
     val apiOutcome = outcomeFor(EndpointSurface.Api)
     val relayOutcome = outcomeFor(EndpointSurface.Relay)
+    val plainRelayTransport = candidate.hasPlainRelayTransport()
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
@@ -589,8 +592,12 @@ private fun RouteSurfaceMap(
             RouteSurfaceRow(
                 label = stringResource(R.string.active_section_relay),
                 url = relayUrl,
-                status = routeSurfaceRuntimeStatus(relayUrl, relayOutcome),
-                warning = relayOutcome.isDefinitiveFailure(),
+                status = if (plainRelayTransport) {
+                    stringResource(R.string.active_section_not_encrypted)
+                } else {
+                    routeSurfaceRuntimeStatus(relayUrl, relayOutcome)
+                },
+                warning = plainRelayTransport || relayOutcome.isDefinitiveFailure(),
             )
         }
     }
@@ -769,17 +776,28 @@ internal fun RouteProbeOutcome.isSupersededProbeFailure(): Boolean {
         value.contains("superseded")
 }
 
-/**
- * Per-route security classification for the picker glyph. Keyed on the
- * candidate's own scheme + role (no device-level Tailscale detection needed —
- * a `tailscale`/`plugin_proxy` role is encrypted regardless), so each row can
- * be classified independently before it's the active route.
- */
-private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
-    hasSecureProxy() -> SurfaceSecurityKind.Tls
-    isTlsUrl(primaryRouteUrl().orEmpty()) -> SurfaceSecurityKind.Tls
-    isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
-    else -> SurfaceSecurityKind.Plain
+/** Explicit HTTP/HTTPS route identity; security warnings stay surface-scoped. */
+internal fun routeTransportLabel(candidate: EndpointCandidate): String {
+    val routeUrl = candidate.dashboard?.url
+        ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
+        ?: candidate.primaryRouteUrl()
+    return when (runCatching { URI(routeUrl.orEmpty()).scheme?.lowercase() }.getOrNull()) {
+        "https" -> "HTTPS"
+        "http" -> "HTTP"
+        "wss" -> "WSS"
+        "ws" -> "WS"
+        else -> "—"
+    }
+}
+
+/** Plain transport warnings belong to Relay, not to an allowed HTTP Gateway. */
+internal fun EndpointCandidate.hasPlainRelayTransport(): Boolean {
+    val relayScheme = runCatching { URI(relay?.url.orEmpty()).scheme?.lowercase() }.getOrNull()
+    if (relayScheme !in setOf("ws", "http")) return false
+    val routeHint = security.orEmpty().lowercase()
+    return role.lowercase() != "tailscale" &&
+        !routeHint.contains("tailscale") &&
+        !routeHint.contains("wireguard")
 }
 
 /** First-class editor for the Dashboard/Gateway origin used by Manage, chat, sessions, and OIDC. */
@@ -885,6 +903,7 @@ private fun isValidDashboardEditorAddress(address: String): Boolean {
  *   receives a user-facing error string to render inline, or null on
  *   success (the dialog then closes itself).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RouteEditorDialog(
     original: EndpointCandidate?,
@@ -893,11 +912,11 @@ fun RouteEditorDialog(
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    val knownRoles = listOf("tailscale", "public")
+    val knownRoles = GATEWAY_ROUTE_EDITOR_ROLES
     var selectedRole by remember {
         mutableStateOf(
             when (original?.role?.lowercase()) {
-                null -> "tailscale"
+                null -> "lan"
                 in knownRoles -> original.role.lowercase()
                 else -> CUSTOM_ROLE
             },
@@ -908,7 +927,7 @@ fun RouteEditorDialog(
             original?.role?.takeIf { it.lowercase() !in knownRoles }.orEmpty(),
         )
     }
-    var url by remember(original) { mutableStateOf(original?.primaryRouteUrl().orEmpty()) }
+    var url by remember(original) { mutableStateOf(routeEditorInitialGatewayUrl(original)) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
@@ -932,7 +951,12 @@ fun RouteEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedRole == "lan",
+                        onClick = { selectedRole = "lan" },
+                        label = { Text(stringResource(R.string.cw_role_lan)) },
+                    )
                     FilterChip(
                         selected = selectedRole == "tailscale",
                         onClick = { selectedRole = "tailscale" },
@@ -1056,3 +1080,6 @@ private const val REMOTE_ACCESS_DOCS_URL =
     "https://hermes-relay.dev/docs/guide/remote-access"
 
 private const val CUSTOM_ROLE = "__custom__"
+internal val GATEWAY_ROUTE_EDITOR_ROLES = listOf("lan", "tailscale", "public")
+internal fun routeEditorInitialGatewayUrl(original: EndpointCandidate?): String =
+    original?.gatewayRouteUrl().orEmpty()

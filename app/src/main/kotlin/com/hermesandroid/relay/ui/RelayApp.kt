@@ -551,7 +551,7 @@ sealed class Screen(
             return if (params.isEmpty()) "pair" else "pair?${params.joinToString("&")}"
         }
     }
-    data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
+    data object ConnectionsSettings : Screen("settings/connections", "Gateways", Icons.Filled.Settings)
     // Level-2 detail for a single connection (tabbed: Overview / Routes /
     // Advanced / Security). Drilled into from the Connections list. The
     // `connectionId` path segment survives process death via SavedStateHandle;
@@ -2337,7 +2337,7 @@ fun RelayApp() {
                         },
                         // AgentInfoSheet footer jumps straight into the full
                         // Connections CRUD screen — saves a detour through
-                        // Settings → Connections.
+                        // Settings → Gateways.
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
@@ -3101,14 +3101,20 @@ fun RelayApp() {
                         onOpenConnection = { id ->
                             navController.navigate(Screen.ConnectionDetail.route(id))
                         },
+                        addConnectionEnabled = mayStartAddConnection(
+                            supervisedEnabled = supervisedPolicy.enabled,
+                            parentAccessUnlocked = parentAccessForCurrentRoute,
+                        ),
                         onAddConnection = {
                             val id = java.util.UUID.randomUUID().toString()
-                            // Draw step 1 immediately. Placeholder persistence
-                            // and the heavy connection-context switch continue
-                            // underneath the discovery UI instead of blocking
-                            // navigation on encrypted-store/client setup.
-                            navController.navigate(Screen.Pair.route(connectionId = id))
-                            prepareAddConnection(id, false)
+                            runAddConnectionAction(
+                                supervisedEnabled = supervisedPolicy.enabled,
+                                parentAccessUnlocked = parentAccessForCurrentRoute,
+                                navigateToPair = {
+                                    navController.navigate(Screen.Pair.route(connectionId = id))
+                                },
+                                prepareConnection = { prepareAddConnection(id, false) },
+                            )
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status

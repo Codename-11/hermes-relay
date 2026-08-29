@@ -201,6 +201,11 @@ fun EndpointCandidate.primaryRouteUrl(): String? =
         ?: relay?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
         ?: proxy?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
+/** Dashboard/Gateway identity only; Relay and broker transports are extensions. */
+fun EndpointCandidate.gatewayRouteUrl(): String? =
+    dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: api?.url?.let(Connection::deriveDefaultDashboardUrl)
+
 /** Stable host/port identity without assuming that an API surface exists. */
 fun EndpointCandidate.routeAuthority(): String? {
     val rawUrl = primaryRouteUrl() ?: return null

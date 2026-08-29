@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Schedule
@@ -82,12 +83,13 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
-import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
-import com.hermesandroid.relay.data.SurfaceUseState
+import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.isDashboardOnlyRoute
+import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.network.relay.ConnectionState
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -102,6 +104,7 @@ import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.net.URI
 
 /**
  * ──────────────────────────────────────────────────────────────────────
@@ -1155,7 +1158,7 @@ private fun InsecureToggleSubsection(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
 
     // Pre-resolve strings
-    val plainConnectionNotEncrypted = stringResource(R.string.active_section_plain_connection_not_encrypted)
+    val plainConnectionNotEncrypted = stringResource(R.string.cw_insecure_relay_warning)
     val allowPlainConnections = stringResource(R.string.active_section_allow_plain_connections)
     val enableWsHttpForDev = stringResource(R.string.active_section_enable_ws_http_for_dev)
 
@@ -1453,30 +1456,42 @@ private fun ManualPairingCodeSubsection(
 }
 
 /**
- * Security posture strip — always visible on the active card, directly
- * below the Advanced expander. Renders, in order:
- *  - Transport security badge (wss:// vs ws://)
- *  - Tailscale detected chip (conditional)
- *  - Hardware keystore badge (conditional)
- *  - Relay sessions row (always — tap to navigate)
+ * Access tab for one saved Hermes Gateway.
  *
- * These are the "what's my pairing posture?" facts. Short + info-dense,
- * so they don't live behind an expander.
+ * Dashboard sign-in and Relay pairing are deliberately separate authorities:
+ * a Gateway may need no sign-in at all, while Relay remains an optional paired
+ * extension. Transport warnings are similarly scoped to the Relay row so an
+ * operator-approved LAN/Tailscale HTTP Dashboard route is not presented as a
+ * broken connection-wide security posture.
  */
 @Composable
 fun ActiveCardSecurityPosture(
     connectionViewModel: ConnectionViewModel,
     onNavigateToPairedDevices: () -> Unit,
     onRevokeRelay: () -> Unit,
+    onOpenDashboardSignIn: (() -> Unit)? = null,
+    onUseSelectedRoute: (() -> Unit)? = null,
+    onForgetSignInOrigin: (() -> Unit)? = null,
 ) {
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
     val authState by connectionViewModel.authState.collectAsState()
     val currentPairedSession by connectionViewModel.currentPairedSession.collectAsState()
     val pairedDevices by connectionViewModel.pairedDevices.collectAsState()
-    var showSecurityDetails by remember { mutableStateOf(false) }
 
     val dashboardStatus = activeConnection?.dashboardLastStatus
+    val dashboardSignInRequired = dashboardStatus?.authRequired == true &&
+        dashboardStatus.authenticated != true
+    val dashboardValue = when {
+        activeConnection?.resolvedDashboardUrl.isNullOrBlank() ->
+            stringResource(R.string.active_section_not_configured)
+        dashboardStatus == null -> stringResource(R.string.active_section_not_checked)
+        !dashboardStatus.reachable -> stringResource(R.string.active_section_unreachable)
+        dashboardSignInRequired -> stringResource(R.string.active_section_sign_in_required)
+        dashboardStatus.authenticated == true -> stringResource(R.string.active_section_signed_in)
+        dashboardStatus.authRequired == false -> stringResource(R.string.active_section_available)
+        else -> stringResource(R.string.active_section_available)
+    }
     val pairedLabel = when (authState) {
         is AuthState.Paired -> stringResource(R.string.relay_state_ready)
         AuthState.Pairing -> stringResource(R.string.relay_state_reconnecting)
@@ -1484,116 +1499,179 @@ fun ActiveCardSecurityPosture(
         AuthState.Unpaired -> stringResource(R.string.relay_state_optional)
     }
     val relaySessionUsable = authState is AuthState.Paired
+    val relaySecurity = connectionSecurity.surfaces.firstOrNull { surface ->
+        surface.label.equals("Relay tools", ignoreCase = true)
+    }
+    val hasSignInOrigin = !activeConnection?.authenticatedDashboardOrigin.isNullOrBlank()
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = stringResource(R.string.dashboard_gateway_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                val postureColor = when (connectionSecurity.level) {
-                    ConnectionSecurityLevel.Tls,
-                    ConnectionSecurityLevel.Overlay -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-                    ConnectionSecurityLevel.Mixed -> Color(0xFFF9A825)
-                    ConnectionSecurityLevel.Plain -> MaterialTheme.colorScheme.error
-                    ConnectionSecurityLevel.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showSecurityDetails = true }
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Shield,
+                        imageVector = Icons.Filled.Dashboard,
                         contentDescription = null,
-                        tint = postureColor,
-                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
                     )
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = when (connectionSecurity.level) {
-                                ConnectionSecurityLevel.Tls,
-                                ConnectionSecurityLevel.Overlay -> stringResource(R.string.active_section_protected)
-                                ConnectionSecurityLevel.Mixed -> stringResource(R.string.active_section_mixed_protection)
-                                ConnectionSecurityLevel.Plain -> stringResource(R.string.active_section_not_encrypted)
-                                ConnectionSecurityLevel.Unknown -> stringResource(R.string.active_section_protection_unavailable)
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = postureColor,
+                            text = stringResource(R.string.active_section_dashboard),
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(
-                            text = when (connectionSecurity.level) {
-                                ConnectionSecurityLevel.Tls,
-                                ConnectionSecurityLevel.Overlay -> stringResource(R.string.active_section_no_security_issues)
-                                ConnectionSecurityLevel.Mixed -> stringResource(R.string.active_section_mixed_protection_summary)
-                                ConnectionSecurityLevel.Plain -> stringResource(R.string.active_section_unencrypted_transport)
-                                ConnectionSecurityLevel.Unknown -> stringResource(R.string.active_section_no_active_surfaces)
+                            text = activeConnection?.resolvedDashboardUrl.orEmpty().ifBlank {
+                                stringResource(R.string.active_section_not_configured)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Text(
+                        text = dashboardValue,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (dashboardStatus?.authenticated == true ||
+                            dashboardStatus?.authRequired == false
+                        ) {
+                            com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                        } else if (dashboardSignInRequired) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+
+                if (dashboardSignInRequired && onOpenDashboardSignIn != null) {
+                    OutlinedButton(
+                        onClick = onOpenDashboardSignIn,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.active_section_sign_in))
+                    }
+                }
+
+                if (hasSignInOrigin) {
+                    HorizontalDivider()
+                    Text(
+                        text = stringResource(R.string.dashboard_gateway_secure_origin),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        text = activeConnection?.authenticatedDashboardOrigin.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (onUseSelectedRoute != null || onForgetSignInOrigin != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            onUseSelectedRoute?.let { useSelectedRoute ->
+                                TextButton(
+                                    onClick = useSelectedRoute,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.active_section_use_selected_route))
+                                }
+                            }
+                            onForgetSignInOrigin?.let { forgetSignInOrigin ->
+                                TextButton(
+                                    onClick = forgetSignInOrigin,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.active_section_forget_sign_in_origin))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (dashboardStatus?.authenticated == true) {
+                    OutlinedButton(
+                        onClick = { connectionViewModel.clearDashboardSession() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Filled.Logout, contentDescription = null)
+                        Text(
+                            stringResource(R.string.active_section_sign_out_dashboard),
+                            modifier = Modifier.padding(start = 8.dp),
                         )
                     }
                 }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                connectionSecurity.surfaces.forEachIndexed { index, surface ->
-                    SecurityFactRow(
-                        icon = when (surface.label) {
-                            "Dashboard & Gateway" -> Icons.Filled.Dashboard
-                            "API fallback" -> Icons.Filled.Chat
-                            else -> Icons.Filled.Link
-                        },
-                        label = surface.label,
-                        value = when (surface.useState) {
-                            SurfaceUseState.InUse -> stringResource(
-                                R.string.active_section_in_use_mechanism,
-                                surface.mechanism,
-                            )
-                            SurfaceUseState.Available -> stringResource(
-                                R.string.active_section_available_fallback_mechanism,
-                                surface.mechanism,
-                            )
-                            SurfaceUseState.Unavailable -> stringResource(
-                                R.string.active_section_unavailable_mechanism,
-                                surface.mechanism,
-                            )
-                        },
-                        positive = surface.useState == SurfaceUseState.InUse &&
-                            surface.kind != SurfaceSecurityKind.Plain,
-                    )
-                    if (index < connectionSecurity.surfaces.lastIndex) HorizontalDivider()
-                }
-                if (connectionSecurity.surfaces.isNotEmpty()) HorizontalDivider()
-                SecurityFactRow(
-                    icon = Icons.Filled.VpnKey,
-                    label = stringResource(R.string.active_section_credential_storage),
-                    value = when {
-                        currentPairedSession?.hasHardwareStorage == true -> stringResource(R.string.active_section_hardware_backed)
-                        currentPairedSession != null -> stringResource(R.string.active_section_encrypted_storage)
-                        else -> stringResource(R.string.active_section_no_relay_credential)
-                    },
-                    positive = currentPairedSession?.hasHardwareStorage == true,
-                )
-                HorizontalDivider()
-                SecurityFactRow(
-                    icon = Icons.Filled.Link,
-                    label = stringResource(R.string.active_section_relay_session),
-                    value = pairedLabel,
-                    positive = relaySessionUsable,
-                )
             }
         }
 
-        Text(text = stringResource(R.string.active_section_access), style = MaterialTheme.typography.titleSmall)
+        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+
+        Text(
+            text = stringResource(R.string.active_section_relay),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = stringResource(R.string.active_section_relay_optional_summary),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             shape = appearanceRoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {
+                SecurityFactRow(
+                    icon = Icons.Filled.Link,
+                    label = stringResource(R.string.active_section_relay_session),
+                    value = pairedLabel,
+                    positive = relaySessionUsable,
+                )
+                relaySecurity?.let { security ->
+                    HorizontalDivider()
+                    SecurityFactRow(
+                        icon = if (security.kind == SurfaceSecurityKind.Plain) {
+                            Icons.Filled.Warning
+                        } else {
+                            Icons.Filled.Shield
+                        },
+                        label = stringResource(R.string.active_section_transport),
+                        value = security.mechanism,
+                        positive = security.kind != SurfaceSecurityKind.Plain,
+                        warning = security.kind == SurfaceSecurityKind.Plain,
+                    )
+                }
+                HorizontalDivider()
+                SecurityFactRow(
+                    icon = Icons.Filled.VpnKey,
+                    label = stringResource(R.string.active_section_credential_storage),
+                    value = when {
+                        currentPairedSession?.hasHardwareStorage == true ->
+                            stringResource(R.string.active_section_hardware_backed)
+                        currentPairedSession != null ->
+                            stringResource(R.string.active_section_encrypted_storage)
+                        else -> stringResource(R.string.active_section_no_relay_credential)
+                    },
+                    positive = currentPairedSession?.hasHardwareStorage == true,
+                )
+                HorizontalDivider()
                 SecurityAccessRow(
                     icon = Icons.Filled.Devices,
                     label = stringResource(R.string.active_section_paired_devices),
@@ -1618,15 +1696,6 @@ fun ActiveCardSecurityPosture(
             }
         }
 
-        Text(text = stringResource(R.string.active_section_actions), style = MaterialTheme.typography.titleSmall)
-        OutlinedButton(
-            onClick = { connectionViewModel.clearDashboardSession() },
-            enabled = dashboardStatus?.authenticated == true,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Filled.Logout, contentDescription = null)
-            Text(stringResource(R.string.active_section_sign_out_dashboard), modifier = Modifier.padding(start = 8.dp))
-        }
         OutlinedButton(
             onClick = onRevokeRelay,
             enabled = relaySessionUsable && currentPairedSession != null,
@@ -1639,12 +1708,6 @@ fun ActiveCardSecurityPosture(
             text = stringResource(R.string.active_section_credentials_encrypted),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    if (showSecurityDetails) {
-        ConnectionSecuritySheet(
-            security = connectionSecurity,
-            onDismiss = { showSecurityDetails = false },
         )
     }
 }
@@ -1690,18 +1753,23 @@ private fun SecurityFactRow(
     label: String,
     value: String,
     positive: Boolean,
+    warning: Boolean = false,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = if (warning) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
             modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.size(10.dp))
@@ -1713,10 +1781,10 @@ private fun SecurityFactRow(
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
-            color = if (positive) {
-                com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
+            color = when {
+                warning -> MaterialTheme.colorScheme.error
+                positive -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
     }
@@ -1778,9 +1846,6 @@ fun ActiveCardRoutesSection(
         context.packageManager.getLaunchIntentForPackage("com.tailscale.ipn")
     }
     val isRouteProbing = routeProbeStatus is ConnectionViewModel.RouteProbeStatus.Probing
-    val dashboardUrl = connection.authenticatedDashboardOrigin
-        ?.takeIf { it.isNotBlank() }
-        ?: connection.resolvedDashboardUrl
     val networkEndpoints = endpoints.filterNot { candidate ->
         candidate.isDashboardOnlyRoute() ||
             candidate.role.equals("authenticated_dashboard", ignoreCase = true)
@@ -1789,7 +1854,20 @@ fun ActiveCardRoutesSection(
         candidate.isDashboardOnlyRoute() ||
             candidate.role.equals("authenticated_dashboard", ignoreCase = true)
     }
-    val dashboardReachable = connection.dashboardLastStatus?.reachable == true
+    val gatewayRoute = gatewayRoutePresentation(
+        activeEndpoint = activeNetworkEndpoint,
+        configuredDashboardUrl = connection.configuredDashboardUrl,
+    )
+    val activeDashboardOutcome = activeNetworkEndpoint?.let { candidate ->
+        routeProbeOutcomes[
+            connectionViewModel.routeOutcomeKey(candidate, EndpointSurface.Dashboard)
+        ] ?: routeProbeOutcomes[connectionViewModel.routeOutcomeKey(candidate)]
+    }
+    val dashboardStatusAppliesToSelectedRoute = connection.authenticatedDashboardOrigin
+        ?.let { origin -> sameGatewayRouteBase(origin, gatewayRoute.address) }
+        ?: true
+    val dashboardReachable = activeDashboardOutcome?.reachable
+        ?: (dashboardStatusAppliesToSelectedRoute && connection.dashboardLastStatus?.reachable == true)
     val networkProbeOutcomes = networkEndpoints.mapNotNull { candidate ->
         routeProbeOutcomes[
             connectionViewModel.routeOutcomeKey(candidate, EndpointSurface.Dashboard)
@@ -1804,7 +1882,6 @@ fun ActiveCardRoutesSection(
         allNetworkRoutesDefinitivelyFailed
 
     // Pre-resolve other UI strings
-    val chooseHowPhoneReachesText = stringResource(R.string.current_surface_paths_title)
     val noRoutesAnsweredProbeText = stringResource(R.string.active_section_no_routes_answered_probe)
     val tailscaleRouteNotActiveText = stringResource(R.string.active_section_tailscale_route_not_active)
     val connectPhoneInTailscaleText = stringResource(R.string.active_section_connect_phone_in_tailscale)
@@ -1821,7 +1898,7 @@ fun ActiveCardRoutesSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = chooseHowPhoneReachesText,
+            text = stringResource(R.string.detail_current_route),
             style = MaterialTheme.typography.titleSmall,
         )
 
@@ -1839,26 +1916,34 @@ fun ActiveCardRoutesSection(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Dashboard,
+                        imageVector = when (gatewayRoute.role) {
+                            GatewayRouteRole.Lan -> Icons.Filled.Lan
+                            GatewayRouteRole.Tailscale -> Icons.Filled.VpnKey
+                            GatewayRouteRole.Public -> Icons.Filled.Public
+                            GatewayRouteRole.Custom -> Icons.Filled.Dashboard
+                        },
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = if (gatewayRoute.publicHttpViolation) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
                         modifier = Modifier.size(20.dp),
                     )
                     Text(
-                        text = if (connection.authenticatedDashboardOrigin.isNullOrBlank()) {
-                            stringResource(R.string.dashboard_gateway_configured)
-                        } else {
-                            stringResource(R.string.dashboard_gateway_secure_origin)
-                        },
+                        text = gatewayRoute.label,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
                 }
                 Text(
-                    text = dashboardUrl,
+                    text = gatewayRoute.address.ifBlank {
+                        stringResource(R.string.active_section_not_configured)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1867,9 +1952,17 @@ fun ActiveCardRoutesSection(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.CheckCircle,
+                        imageVector = if (!gatewayRoute.configured) {
+                            Icons.Filled.LinkOff
+                        } else if (gatewayRoute.publicHttpViolation) {
+                            Icons.Filled.Warning
+                        } else {
+                            Icons.Filled.CheckCircle
+                        },
                         contentDescription = null,
-                        tint = if (dashboardReachable) {
+                        tint = if (gatewayRoute.publicHttpViolation) {
+                            MaterialTheme.colorScheme.error
+                        } else if (dashboardReachable) {
                             com.hermesandroid.relay.ui.theme.RelayRefresh.Green
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
@@ -1878,21 +1971,28 @@ fun ActiveCardRoutesSection(
                     )
                     Text(
                         text = when {
-                            dashboardReachable && connection.dashboardLastStatus?.authenticated == true ->
-                                stringResource(R.string.active_section_dashboard_reachable_signed_in)
+                            !gatewayRoute.configured ->
+                                stringResource(R.string.active_section_not_configured)
+                            gatewayRoute.publicHttpViolation ->
+                                stringResource(R.string.transport_badge_insecure_public)
+                            isRouteProbing -> stringResource(R.string.active_section_checking)
                             dashboardReachable -> stringResource(R.string.active_section_dashboard_reachable)
-                            connection.dashboardLastStatus == null -> stringResource(R.string.active_section_dashboard_not_checked)
+                            activeDashboardOutcome != null ->
+                                stringResource(R.string.active_section_dashboard_unreachable)
+                            !dashboardStatusAppliesToSelectedRoute ->
+                                stringResource(R.string.active_section_dashboard_not_checked)
+                            connection.dashboardLastStatus == null ->
+                                stringResource(R.string.active_section_dashboard_not_checked)
                             else -> stringResource(R.string.active_section_dashboard_unreachable)
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (gatewayRoute.publicHttpViolation) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
-                Text(
-                    text = stringResource(R.string.dashboard_gateway_oidc_explainer),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 dashboardRecheckError?.let { error ->
                     Text(
                         text = error,
@@ -2201,6 +2301,78 @@ private fun displayRouteRole(role: String): String = when (role.lowercase()) {
     "public" -> "Public"
     else -> role
 }
+
+internal enum class GatewayRouteRole { Lan, Tailscale, Public, Custom }
+
+internal data class GatewayRoutePresentation(
+    val role: GatewayRouteRole,
+    val label: String,
+    val address: String,
+    val transport: String,
+    val publicHttpViolation: Boolean,
+    val configured: Boolean,
+)
+
+/** Dashboard-first route identity for the user-facing Gateway route card. */
+internal fun gatewayRoutePresentation(
+    activeEndpoint: EndpointCandidate?,
+    configuredDashboardUrl: String,
+): GatewayRoutePresentation {
+    val candidateGatewayUrl = activeEndpoint?.gatewayRouteUrl()
+    val address = (candidateGatewayUrl ?: configuredDashboardUrl).trim().trimEnd('/')
+    val configured = address.isNotBlank()
+    val scheme = runCatching { URI(address).scheme?.lowercase() }.getOrNull().orEmpty()
+    val transport = when (scheme) {
+        "https" -> "HTTPS"
+        "http" -> "HTTP"
+        "wss" -> "WSS"
+        "ws" -> "WS"
+        else -> scheme.uppercase()
+    }
+    val candidateOwnsAddress = candidateGatewayUrl != null && sameGatewayRouteBase(candidateGatewayUrl, address)
+    val roleKey = activeEndpoint?.role?.lowercase()?.takeIf { candidateOwnsAddress }
+        ?: Connection.inferRouteRole(address)
+    val role = when (roleKey) {
+        "lan" -> GatewayRouteRole.Lan
+        "tailscale" -> GatewayRouteRole.Tailscale
+        "public", "https", "dashboard", "authenticated_dashboard" -> GatewayRouteRole.Public
+        else -> GatewayRouteRole.Custom
+    }
+    val roleLabel = if (!configured) {
+        "Gateway"
+    } else {
+        when (role) {
+            GatewayRouteRole.Lan -> "LAN"
+            GatewayRouteRole.Tailscale -> "Tailscale"
+            GatewayRouteRole.Public -> "Public"
+            GatewayRouteRole.Custom -> activeEndpoint?.displayLabel()?.takeIf { candidateOwnsAddress } ?: "Gateway"
+        }
+    }
+    return GatewayRoutePresentation(
+        role = role,
+        label = if (transport.isBlank()) roleLabel else "$roleLabel ($transport)",
+        address = address,
+        transport = transport,
+        publicHttpViolation = configured && transport == "HTTP" &&
+            (role == GatewayRouteRole.Public || Connection.inferRouteRole(address) == "public"),
+        configured = configured,
+    )
+}
+
+internal fun sameGatewayRouteBase(left: String, right: String): Boolean = runCatching {
+    fun normalized(url: String): List<Any> {
+        val uri = URI(url.trim().trimEnd('/'))
+        val scheme = uri.scheme.lowercase()
+        val port = uri.port.takeIf { it > 0 } ?: if (scheme == "https") 443 else 80
+        return listOf(
+            scheme,
+            uri.host.lowercase(),
+            port,
+            uri.rawPath.orEmpty().trimEnd('/'),
+        )
+    }
+    normalized(left) == normalized(right)
+}.getOrDefault(false)
 
 @Composable
 private fun CurrentSurfacePathRow(

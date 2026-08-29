@@ -458,6 +458,29 @@ internal fun normalizeDashboardAddressForEdit(raw: String): String? {
     return clean
 }
 
+internal fun publicDashboardAddressRequiresHttps(
+    role: String?,
+    normalizedAddress: String,
+): Boolean {
+    val uri = runCatching { URI(normalizedAddress) }.getOrNull() ?: return false
+    val explicitRole = role?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+    val inferredRole = Connection.inferRouteRole(normalizedAddress)
+    return uri.scheme.equals("http", ignoreCase = true) &&
+        (explicitRole == "public" || inferredRole == "public")
+}
+
+internal fun standardApiDashboardSecurityError(
+    normalizedApiUrl: String,
+    normalizedDashboardUrl: String,
+): String? {
+    val effectiveDashboardUrl = normalizedDashboardUrl
+        .takeIf { it.isNotBlank() }
+        ?: Connection.deriveDefaultDashboardUrl(normalizedApiUrl)
+        ?: return null
+    return "Public Gateway addresses require HTTPS"
+        .takeIf { publicDashboardAddressRequiresHttps(null, effectiveDashboardUrl) }
+}
+
 internal fun withExplicitDashboardAddress(
     connection: Connection,
     normalizedAddress: String,
@@ -529,6 +552,29 @@ internal fun withAuthenticatedDashboardOrigin(
             )
         },
     )
+}
+
+/**
+ * Return Dashboard/Gateway ownership to the configured or resolver-selected
+ * route without changing any network capability or route preference.
+ */
+internal fun withoutAuthenticatedDashboardOrigin(connection: Connection): Connection =
+    connection.copy(authenticatedDashboardOrigin = null)
+
+/** Credentials never survive a move from their exact owner to another route. */
+internal fun dashboardCredentialsMustBeRetired(
+    previous: Connection,
+    nextDashboardUrl: String,
+): Boolean = !sameDashboardBase(
+    dashboardCredentialOrigin(previous),
+    nextDashboardUrl,
+)
+
+internal fun dashboardStatusAfterOriginReset(
+    previous: Connection,
+    nextDashboardUrl: String,
+) = previous.dashboardLastStatus.takeUnless {
+    dashboardCredentialsMustBeRetired(previous, nextDashboardUrl)
 }
 
 /** Persist an authenticated origin atomically from the caller's perspective. */
@@ -837,6 +883,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * [connectionStore] directly for cheap access.
      */
     val connections: StateFlow<List<Connection>> = connectionStore.connections
+    val connectionsHydrated: StateFlow<Boolean> = connectionStore.isHydrated
     val activeConnection: StateFlow<Connection?> = connectionStore.activeConnection
     val activeConnectionId: StateFlow<String?> = connectionStore.activeConnectionId
     val startupConnectionId: StateFlow<String?> = connectionStore.startupConnectionId
@@ -3388,10 +3435,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         label = ctx.getString(R.string.conn_label_routes),
                         detail = if (tailscaleDetector.isTailscaleDetected.value) {
                             "Phone is on Tailscale — add your server's Tailscale " +
-                                "URL under Connections → Routes"
+                                "URL under Gateways → Routes"
                         } else {
                             "Away from the server's network? Add a Tailscale or " +
-                                "public route under Connections → Routes"
+                                "public route under Gateways → Routes"
                         },
                     )
                 } else {
@@ -5712,6 +5759,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
             return
         }
+        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = dashboardUrl)) {
+            onResult(
+                DashboardSetupResult(
+                    ok = false,
+                    dashboardUrl = dashboardUrl,
+                    message = "Public Gateway addresses require HTTPS",
+                ),
+            )
+            return
+        }
         viewModelScope.launch {
             val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
             try {
@@ -5845,6 +5902,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             onResult("Enter an http:// or https:// Hermes Dashboard address")
             return
         }
+        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = normalized)) {
+            onResult("Public Gateway addresses require HTTPS")
+            return
+        }
         viewModelScope.launch {
             val activeId = connectionStore.activeConnectionId.value
             val current = connectionStore.connections.value.firstOrNull { it.id == activeId }
@@ -5870,6 +5931,51 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             persistDashboardProbeStatus(activeId, status, session)
             probeStandardVoice()
             onResult(null)
+        }
+    }
+
+    /**
+     * Remove the authenticated Dashboard-origin override and let the current
+     * configured/resolver-selected route own Dashboard and Gateway again.
+     *
+     * This is deliberately not an address editor: a connection may have no
+     * Dashboard route after the override is removed. API fallback, Relay, all
+     * route candidates, and route preference remain unchanged. Dashboard
+     * cookies and bearer credentials are retired before the ownership change
+     * whenever the exact effective base changes.
+     */
+    fun useSelectedDashboardRoute(
+        onComplete: (Result<Unit>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                val activeId = connectionStore.activeConnectionId.value
+                    ?: error("No active connection")
+                val current = connectionStore.connections.value
+                    .firstOrNull { it.id == activeId }
+                    ?: error("Active connection is missing")
+                if (current.authenticatedDashboardOrigin == null) return@runCatching
+
+                val reset = withoutAuthenticatedDashboardOrigin(current)
+                val nextDashboardUrl = resolveEffectiveDashboardUrl(
+                    connection = reset,
+                    endpoint = connectionManager.activeEndpoint.value,
+                )
+                val originChanged = dashboardCredentialsMustBeRetired(current, nextDashboardUrl)
+                val next = reset.copy(
+                    dashboardLastStatus = dashboardStatusAfterOriginReset(current, nextDashboardUrl),
+                )
+                if (originChanged) {
+                    withContext(Dispatchers.IO) {
+                        upstreamTransport.clearDashboardAuthentication(activeId)
+                    }
+                }
+                connectionStore.updateConnection(next)
+                if (originChanged) {
+                    updateDashboardTopology(activeId, null)
+                }
+                probeStandardVoice()
+            }.also(onComplete)
         }
     }
 
@@ -6107,6 +6213,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 StandardApiSetupResult(
                     ok = false,
                     message = "API server URL is required",
+                    apiReachable = false,
+                    relayPaired = authState.value is AuthState.Paired,
+                ),
+            )
+            return
+        }
+        standardApiDashboardSecurityError(
+            normalizedApiUrl = trimmedApiUrl,
+            normalizedDashboardUrl = trimmedDashboardUrl,
+        )?.let { message ->
+            onResult(
+                StandardApiSetupResult(
+                    ok = false,
+                    message = message,
                     apiReachable = false,
                     relayPaired = authState.value is AuthState.Paired,
                 ),
@@ -6890,6 +7010,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // Accept bare hosts/IPs — http:// is assumed and the standard
             // Dashboard/Gateway port defaults to 9119.
             val trimmedUrl = Connection.normalizeDashboardUrlInput(dashboardUrl)
+            if (publicDashboardAddressRequiresHttps(role, trimmedUrl)) {
+                onResult("Public Gateway routes require HTTPS")
+                return@launch
+            }
             val existing = seedRouteCandidates(current)
             if (existing.isEmpty()) {
                 onResult("Set the connection's Dashboard/Gateway URL first")

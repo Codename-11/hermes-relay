@@ -12,6 +12,23 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
         normalized == Screen.SupervisedAppearanceSettings.route
 }
 
+internal fun mayStartAddConnection(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+): Boolean = !supervisedEnabled || parentAccessUnlocked
+
+internal inline fun runAddConnectionAction(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+    navigateToPair: () -> Unit,
+    prepareConnection: () -> Unit,
+): Boolean {
+    if (!mayStartAddConnection(supervisedEnabled, parentAccessUnlocked)) return false
+    navigateToPair()
+    prepareConnection()
+    return true
+}
+
 /** Do not inspect or mutate a NavController until its first destination exists. */
 internal fun shouldRedirectSupervisedRoute(
     supervisedEnabled: Boolean,
