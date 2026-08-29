@@ -3263,6 +3263,7 @@
     <string name="card_send_answer_a11y">Enviar resposta</string>
     <string name="card_submit">Enviar</string>
     <string name="card_answer_placeholder">Digite uma resposta…</string>
+    <string name="card_other_answer_placeholder">Outra (digite sua resposta)…</string>
     <string name="session_ttl_title">Manter este pareamento por…</string>
     <string name="session_ttl_intro">Seu celular se reconectará automaticamente durante este período. Você pode revogar o pareamento a qualquer momento.</string>
     <string name="session_ttl_stays_paired">Este dispositivo permanecerá pareado até você revogá-lo.</string>

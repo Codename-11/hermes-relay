@@ -2509,6 +2509,30 @@ class ChatViewModel : ViewModel() {
                 }
                 is GatewayBackgroundInteractionEvent.Expired -> {
                     if (key != null) {
+                        val checkpoint = backgroundTurnCheckpoints[key]
+                        val checkpointAsk = checkpoint?.pendingAsk
+                        if (checkpoint != null && checkpointAsk != null &&
+                            checkpointAsk.kind == event.ask.kind.name &&
+                            (event.ask.kind == GatewayAsk.Kind.APPROVAL ||
+                                checkpointAsk.requestId == event.ask.requestId)
+                        ) {
+                            val updated = checkpoint.copy(
+                                pendingAsk = null,
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                            // Recovery consults memory before disk, so retire the
+                            // stale card synchronously before a navigation can
+                            // reclaim this turn. Persist the same exact owner so
+                            // process restart cannot resurrect it either.
+                            backgroundTurnCheckpoints[key] = updated
+                            chatTurnCheckpointStore?.let { store ->
+                                viewModelScope.launch {
+                                    checkpointMutex.withLock {
+                                        runCatching { store.write(updated) }
+                                    }
+                                }
+                            }
+                        }
                         backgroundNeedsInputKeys -= key
                         backgroundPendingInteractions.computeIfPresent(key) { _, current ->
                             if (current.ask.kind == event.ask.kind &&

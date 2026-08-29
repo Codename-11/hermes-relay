@@ -11,6 +11,7 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
@@ -1047,6 +1048,65 @@ class ChatViewModelGatewayInboundTurnTest {
         )
         awaitCondition { !handler.isStreaming.value && !gatewayClient.hasActiveTurn() }
         assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun detachedClarifyExpiryCannotRestoreAStaleCardAfterNavigation() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        val checkpointStore = MemoryCheckpointStore()
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Ask before continuing")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-detached")
+                    put("question", "Which rollout?")
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("canary"))
+                        add(JsonPrimitive("all at once"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value?.ask?.requestId == "clarify-detached" }
+
+        viewModel.switchSession(secondSession)
+        gatewayHarness.awaitRpcCount("session.resume", 2)
+        awaitCondition { handler.currentSessionId.value == secondSession }
+        awaitCondition { checkpointStore.checkpoint?.pendingAsk?.requestId == "clarify-detached" }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.expire",
+                buildJsonObject { put("request_id", "clarify-detached") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            checkpointStore.checkpoint != null && checkpointStore.checkpoint?.pendingAsk == null
+        }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Waiting for rollout choice"
+        viewModel.switchSession(STORED_SESSION_ID)
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.currentSessionId.value == STORED_SESSION_ID && handler.isStreaming.value
+        }
+
+        assertNull(viewModel.pendingAsk.value)
+        assertTrue(
+            handler.messages.value.flatMap { it.cards }
+                .none { it.type == HermesCard.BuiltInTypes.ASK_CLARIFY },
+        )
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "clarify.respond" })
     }
 
     @Test
