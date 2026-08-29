@@ -197,6 +197,20 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `committed pair target stays ready while public inventory catches up`() {
+        assertTrue(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "committed-draft",
+                authorizedHandoffId = null,
+                activeConnectionId = "committed-draft",
+                connectionIds = emptySet(),
+                draftConnectionId = null,
+            ),
+        )
+    }
+
+    @Test
     fun `configured chat settles unavailable only from transport verdict`() {
         assertTrue(
             shouldSettleStartupUnreachable(

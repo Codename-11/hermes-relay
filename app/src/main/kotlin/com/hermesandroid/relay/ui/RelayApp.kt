@@ -250,9 +250,11 @@ internal fun resolvePairSetupReady(
     activeConnectionId: String?,
     connectionIds: Set<String>,
     draftConnectionId: String? = null,
-): Boolean = connectionId == null || connectionId == draftConnectionId || storeHydrated && activeConnectionId != null &&
-    activeConnectionId in connectionIds &&
-    (activeConnectionId == connectionId || activeConnectionId == authorizedHandoffId)
+): Boolean = connectionId == null || connectionId == draftConnectionId ||
+    storeHydrated && activeConnectionId != null && (
+        activeConnectionId == connectionId ||
+            activeConnectionId == authorizedHandoffId && activeConnectionId in connectionIds
+        )
 
 /** A user retry replaces even a still-active preparation attempt. */
 internal fun shouldStartPairPreparation(hasActiveJob: Boolean, retryRequested: Boolean): Boolean =

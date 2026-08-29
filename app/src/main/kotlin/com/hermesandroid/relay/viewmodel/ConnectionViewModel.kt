@@ -5405,8 +5405,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             prefs[KEY_API_SERVER_URL] = connection.apiServerUrl
             prefs[KEY_RELAY_URL] = connection.relayUrl
         }
-        connectionManager.refreshActiveEndpoint()
-        rebuildApiClient()
+        // The persisted draft is now a valid sign-in owner. Route resolution
+        // and client rebuilding are network work and must not hold navigation
+        // on the "secure local storage" preparation surface.
+        viewModelScope.launch {
+            connectionManager.refreshActiveEndpoint()
+            rebuildApiClient()
+        }
     }
 
     private fun ownsDashboardProbe(connectionId: String, dashboardUrl: String): Boolean {
