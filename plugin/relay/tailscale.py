@@ -2,9 +2,10 @@
 
 Implements ADR 25 — first-class Tailscale helper as optional hermes
 enhancement. The relay stays loopback-bound on ``127.0.0.1:8767``. The
-recommended tailnet ingress publishes Dashboard on ``127.0.0.1:9119``;
-Relay rides its same-origin plugin transport path. The optional Hermes API
-server on 8642 remains available for headless compatibility.
+recommended tailnet ingress listens on Tailscale HTTPS 443 and proxies the
+Dashboard on ``127.0.0.1:9119``; Relay rides its same-origin plugin transport
+path. The optional Hermes API server on 8642 remains available for headless
+compatibility.
 
 All public functions are **safe to call unconditionally** — they shell
 out to the ``tailscale`` CLI via ``subprocess.run(..., check=False)``
@@ -37,6 +38,7 @@ _TIMEOUT_SECONDS = 5
 # Default ports — relay matches plugin/relay/server.py, API matches
 # hermes-agent's API server default used by plugin/pair.py.
 DEFAULT_RELAY_PORT = 8767
+DEFAULT_DASHBOARD_LISTENER_PORT = 443
 DEFAULT_DASHBOARD_PORT = 9119
 DEFAULT_API_PORT = 8642
 DEFAULT_PORT = DEFAULT_DASHBOARD_PORT
@@ -309,29 +311,52 @@ def enable(port: int = DEFAULT_PORT, https: bool = True) -> dict[str, Any]:
     (or ``--http=<port>`` when ``https=False``). Returns ``{ok, message,
     command}``. No-op with ``ok=False`` when the CLI is absent.
     """
-    if not _valid_port(port):
-        return _invalid_port_result(port)
+    return enable_proxy(listener_port=port, target_port=port, https=https)
 
-    command = _build_enable_command(port=port, https=https)
+
+def enable_proxy(
+    listener_port: int,
+    target_port: int,
+    https: bool = True,
+) -> dict[str, Any]:
+    """Publish one tailnet listener backed by a distinct loopback target."""
+    if not _valid_port(listener_port):
+        return _invalid_port_result(listener_port)
+    if not _valid_port(target_port):
+        return _invalid_port_result(target_port)
+
+    command = _build_enable_command(
+        listener_port=listener_port,
+        target_port=target_port,
+        https=https,
+    )
 
     if not _tailscale_available():
         return {
             "ok": False,
             "message": "tailscale binary not found",
             "command": command,
+            "listener_port": listener_port,
+            "target_port": target_port,
         }
 
     rc, out, err = _run(command)
     if rc == 0:
         return {
             "ok": True,
-            "message": (out or err).strip() or f"serving 127.0.0.1:{port} on tailnet",
+            "message": (out or err).strip() or (
+                f"serving 127.0.0.1:{target_port} on tailnet port {listener_port}"
+            ),
             "command": command,
+            "listener_port": listener_port,
+            "target_port": target_port,
         }
     return {
         "ok": False,
         "message": (err or out).strip() or f"tailscale serve exited {rc}",
         "command": command,
+        "listener_port": listener_port,
+        "target_port": target_port,
     }
 
 
@@ -339,14 +364,24 @@ def enable_stack(
     relay_port: int = DEFAULT_DASHBOARD_PORT,
     api_port: int | None = DEFAULT_API_PORT,
     https: bool = True,
+    dashboard_listener_port: int = DEFAULT_DASHBOARD_LISTENER_PORT,
 ) -> dict[str, Any]:
     """Publish Dashboard and the optional Hermes API via Tailscale Serve.
 
     ``relay_port`` retains its historical parameter name for compatibility,
-    but defaults to Dashboard's 9119 listener. Passing 8767 is an explicit
-    legacy-direct action. Recommended setup does not disable an existing
-    8767 publication because paired clients may still depend on it.
+    but is the loopback Dashboard target (9119), not the tailnet listener.
+    Recommended setup listens on HTTPS 443 and never disables an existing
+    direct 8767 publication because paired clients may still depend on it.
     """
+    if not _valid_port(dashboard_listener_port):
+        result = _invalid_port_result(dashboard_listener_port)
+        return {
+            "ok": False,
+            "message": f"dashboard listener: {result['message']}",
+            "commands": [],
+            "dashboard": result,
+            "api": None,
+        }
     if not _valid_port(relay_port):
         result = _invalid_port_result(relay_port)
         return {
@@ -365,12 +400,27 @@ def enable_stack(
             "dashboard": None,
             "api": result,
         }
+    if api_port == dashboard_listener_port:
+        return {
+            "ok": False,
+            "message": (
+                "api listener must differ from the Dashboard tailnet listener "
+                f"({dashboard_listener_port})"
+            ),
+            "commands": [],
+            "dashboard": None,
+            "api": None,
+        }
 
     results: dict[str, dict[str, Any] | None] = {
-        "dashboard": enable(port=relay_port, https=https),
+        "dashboard": enable_proxy(
+            listener_port=dashboard_listener_port,
+            target_port=relay_port,
+            https=https,
+        ),
         "api": None,
     }
-    if api_port is not None and api_port != relay_port:
+    if api_port is not None:
         results["api"] = enable(port=api_port, https=https)
 
     ok = all(
@@ -432,8 +482,18 @@ def disable(port: int = DEFAULT_PORT) -> dict[str, Any]:
 def disable_stack(
     relay_port: int = DEFAULT_DASHBOARD_PORT,
     api_port: int | None = DEFAULT_API_PORT,
+    dashboard_listener_port: int = DEFAULT_DASHBOARD_LISTENER_PORT,
 ) -> dict[str, Any]:
-    """Remove Dashboard and API publications, leaving legacy 8767 intact."""
+    """Remove Dashboard listener and API, leaving legacy 8767 intact."""
+    if not _valid_port(dashboard_listener_port):
+        result = _invalid_port_result(dashboard_listener_port)
+        return {
+            "ok": False,
+            "message": f"dashboard listener: {result['message']}",
+            "commands": [],
+            "dashboard": result,
+            "api": None,
+        }
     if not _valid_port(relay_port):
         result = _invalid_port_result(relay_port)
         return {
@@ -452,12 +512,23 @@ def disable_stack(
             "dashboard": None,
             "api": result,
         }
+    if api_port == dashboard_listener_port:
+        return {
+            "ok": False,
+            "message": (
+                "api listener must differ from the Dashboard tailnet listener "
+                f"({dashboard_listener_port})"
+            ),
+            "commands": [],
+            "dashboard": None,
+            "api": None,
+        }
 
     results: dict[str, dict[str, Any] | None] = {
-        "dashboard": disable(port=relay_port),
+        "dashboard": disable(port=dashboard_listener_port),
         "api": None,
     }
-    if api_port is not None and api_port != relay_port:
+    if api_port is not None:
         results["api"] = disable(port=api_port)
 
     ok = all(
@@ -482,15 +553,23 @@ def disable_stack(
     }
 
 
-def _build_enable_command(port: int, https: bool) -> list[str]:
+def _build_enable_command(
+    listener_port: int,
+    target_port: int,
+    https: bool,
+) -> list[str]:
     """Construct the ``tailscale serve ... enable`` argv."""
-    flag = f"--https={port}" if https else f"--http={port}"
+    flag = (
+        f"--https={listener_port}"
+        if https
+        else f"--http={listener_port}"
+    )
     return [
         "tailscale",
         "serve",
         "--bg",
         flag,
-        f"http://127.0.0.1:{port}",
+        f"http://127.0.0.1:{target_port}",
     ]
 
 
@@ -628,6 +707,7 @@ def canonical_upstream_present() -> bool:
 
 __all__ = [
     "DEFAULT_API_PORT",
+    "DEFAULT_DASHBOARD_LISTENER_PORT",
     "DEFAULT_DASHBOARD_PORT",
     "DEFAULT_PORT",
     "DEFAULT_RELAY_PORT",
@@ -635,6 +715,7 @@ __all__ = [
     "disable",
     "disable_stack",
     "enable",
+    "enable_proxy",
     "enable_stack",
     "funnel_url",
     "status",

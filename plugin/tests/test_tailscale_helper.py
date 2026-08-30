@@ -245,10 +245,12 @@ class EnableDisableTests(unittest.TestCase):
         self.assertEqual(
             result["commands"],
             [
-                ["tailscale", "serve", "--bg", "--https=9119", "http://127.0.0.1:9119"],
+                ["tailscale", "serve", "--bg", "--https=443", "http://127.0.0.1:9119"],
                 ["tailscale", "serve", "--bg", "--https=8642", "http://127.0.0.1:8642"],
             ],
         )
+        self.assertEqual(result["dashboard"]["listener_port"], 443)
+        self.assertEqual(result["dashboard"]["target_port"], 9119)
         self.assertIn("dashboard", result)
         self.assertNotIn("relay", result)
         self.assertNotIn("8767", json.dumps(result["commands"]))
@@ -259,6 +261,24 @@ class EnableDisableTests(unittest.TestCase):
         with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
             result = tailscale.enable_stack(relay_port=8767, api_port=70000)
         self.assertFalse(result["ok"])
+        self.assertEqual(result["commands"], [])
+        mock_run.assert_not_called()
+
+    def test_enable_stack_rejects_invalid_listener_before_partial_apply(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            result = tailscale.enable_stack(dashboard_listener_port=70000)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["commands"], [])
+        mock_run.assert_not_called()
+
+    def test_enable_stack_rejects_api_listener_collision(self) -> None:
+        with patch("plugin.relay.tailscale.subprocess.run") as mock_run:
+            result = tailscale.enable_stack(
+                dashboard_listener_port=443,
+                api_port=443,
+            )
+        self.assertFalse(result["ok"])
+        self.assertIn("must differ", result["message"])
         self.assertEqual(result["commands"], [])
         mock_run.assert_not_called()
 
@@ -299,7 +319,7 @@ class EnableDisableTests(unittest.TestCase):
         self.assertEqual(
             result["commands"],
             [
-                ["tailscale", "serve", "--https=9119", "off"],
+                ["tailscale", "serve", "--https=443", "off"],
                 ["tailscale", "serve", "--https=8642", "off"],
             ],
         )
@@ -374,6 +394,7 @@ class CliTests(unittest.TestCase):
             relay_port=9119,
             api_port=8642,
             https=True,
+            dashboard_listener_port=443,
         )
         enable.assert_not_called()
 
@@ -399,6 +420,39 @@ class CliTests(unittest.TestCase):
         enable.assert_called_once_with(port=9000, https=True)
         enable_stack.assert_not_called()
 
+    def test_dashboard_port_alias_changes_target_not_listener(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "enable_stack",
+            return_value={"ok": True},
+        ) as enable_stack:
+            self.assertEqual(
+                self._run(["enable", "--dashboard-port", "9120"]),
+                0,
+            )
+
+        enable_stack.assert_called_once_with(
+            relay_port=9120,
+            api_port=8642,
+            https=True,
+            dashboard_listener_port=443,
+        )
+
+    def test_no_api_publishes_only_dashboard_proxy(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "enable_stack",
+            return_value={"ok": True},
+        ) as enable_stack:
+            self.assertEqual(self._run(["enable", "--no-api"]), 0)
+
+        enable_stack.assert_called_once_with(
+            relay_port=9119,
+            api_port=None,
+            https=True,
+            dashboard_listener_port=443,
+        )
+
     def test_disable_default_leaves_legacy_relay_untouched(self) -> None:
         with patch.object(
             tailscale_cli.tailscale,
@@ -407,7 +461,11 @@ class CliTests(unittest.TestCase):
         ) as disable_stack, patch.object(tailscale_cli.tailscale, "disable") as disable:
             self.assertEqual(self._run(["disable"]), 0)
 
-        disable_stack.assert_called_once_with(relay_port=9119, api_port=8642)
+        disable_stack.assert_called_once_with(
+            relay_port=9119,
+            api_port=8642,
+            dashboard_listener_port=443,
+        )
         disable.assert_not_called()
 
 
