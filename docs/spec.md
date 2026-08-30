@@ -310,7 +310,7 @@ reconstruct that origin. Native PKCE uses the callback-owning origin only for
 the browser transaction; the older cookie flow verifies and may persist it as
 the authenticated Dashboard origin. Neither requires a second onboarding field.
 
-Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the relay URL + code + **chosen TTL + per-channel grants + HMAC signature** (plus the API server credentials and optional dashboard URL) in a single QR payload. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
+Pairing is QR-driven. The operator runs the pair command on the host — `hermes pair`, `/hermes-relay-pair` from any Hermes chat surface, or the compatibility `hermes-pair` shell shim. All share the same implementation in `plugin/pair.py`. The command probes for a running relay, generates a fresh 6-char code, pre-registers it with the relay via the loopback-only `POST /pairing/register` endpoint, then embeds the canonical Dashboard origin, its same-origin Relay transport, the code, **chosen TTL + per-channel grants + HMAC signature**, and any optional API fallback in a single QR payload. The Dashboard, CLI, and TUI surfaces emit the same route contract. The phone scans once, **confirms the TTL and grants via a picker dialog**, and is configured for both chat AND terminal/bridge.
 
 Each Android Add Pair route owns its exact allocated target connection identity.
 That target must be persisted and active before its wizard becomes ready; it is
@@ -321,9 +321,12 @@ authentication stores follow that existing identity. The waiting surface is
 bounded: a target that does not become ready exposes Retry and Cancel and
 records only boolean, secret-free readiness evidence in Diagnostics.
 
-The primary secure remote path today is Tailscale Serve, which exposes Relay as
-WSS and the independently authenticated upstream API/Dashboard surfaces as
-HTTPS. The optional Relay plugin **Hermes Secure Link** is a unified alternative: when
+The primary remote path today is Tailscale, which exposes the upstream Dashboard
+and its same-origin Relay ingress inside a private, ACL-controlled tailnet. Raw
+tailnet HTTP/WS has no application TLS but remains encrypted by Tailscale's
+WireGuard data plane; Tailscale Serve HTTPS adds application TLS where available.
+Public HTTPS remains the next secure fallback. The optional Relay plugin
+**Hermes Secure Link** is a unified alternative: when
 explicitly enabled it listens on `:9443`, advertises the operator-reviewed
 paired endpoint's SPKI material,
 and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
@@ -354,12 +357,13 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    and optionally --dashboard-url <url>.
 2. The pair command reads the API server config (host/port/key) from
    ~/.hermes/config.yaml or ~/.hermes/.env, and auto-detects candidate
-   endpoints: LAN IP via routing lookup; Tailscale hostname via
+   endpoints: LAN IP via routing lookup; Tailscale address via
    tailscale.status() when the CLI is present; public URL from
-   --public-url when provided. Generated defaults order secure candidates
-   (Hermes Secure Link when enabled, then Tailscale/public TLS) before plain LAN,
+   --public-url when provided. Each normal candidate includes Dashboard and
+   same-origin Relay URLs; API remains optional. Generated defaults order secure
+   candidates (Hermes Secure Link when enabled, then Tailscale/public TLS) before plain LAN,
    with 0 = highest. --mode lan/tailscale/public emits only that candidate.
-3. If a relay is reachable at localhost:RELAY_PORT (default 8767):
+3. If a relay is reachable internally at localhost:RELAY_PORT (default 8767):
    a. Mint a fresh 6-char code from A-Z / 0-9
    b. Compute the transport hint (wss / ws) from the relay's TLS config
    c. POST /pairing/register { code, ttl_seconds, grants, transport_hint,
@@ -383,7 +387,8 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    preselected (or default 30d on wss/Tailscale, 7d on plain ws). User
    picks: 1d / 7d / 30d / 90d / 1y / Never. Never-expire warns inline
    but is always selectable — user intent is the trust model.
-8. Phone opens WSS to the relay with the pairing code + confirmed
+8. Phone opens the candidate's Relay transport (normally the Dashboard
+   same-origin plugin path; direct `:8767` is legacy compatibility) with the pairing code + confirmed
    ttl_seconds + grants in the first system/auth envelope.
 9. Relay consumes the code (host-registered metadata wins over phone-sent
    metadata — operator policy is authoritative), creates a Session with
@@ -422,23 +427,27 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
   "port": 8642,
   "key": "api-bearer-token",
   "tls": true,
+  "dashboard_url": "http://100.64.0.5:9119",
   "relay": {
-    "url": "wss://hermes.tail-scale.ts.net:8767",
+    "url": "ws://100.64.0.5:9119/api/plugins/hermes-relay/transport",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
     "grants": { "terminal": 2592000, "bridge": 604800 },
-    "transport_hint": "wss"
+    "transport_hint": "ws"
   },
   "endpoints": [
     { "role": "tailscale", "priority": 0,
-      "api":   { "host": "hermes.tail-scale.ts.net", "port": 8642, "tls": true },
-      "relay": { "url": "wss://hermes.tail-scale.ts.net:8767", "transport_hint": "wss" } },
+      "dashboard": { "url": "http://100.64.0.5:9119" },
+      "api":   { "host": "100.64.0.5", "port": 8642, "tls": false },
+      "relay": { "url": "ws://100.64.0.5:9119/api/plugins/hermes-relay/transport", "transport_hint": "ws" } },
     { "role": "public",    "priority": 1,
+      "dashboard": { "url": "https://hermes.example.com" },
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
-      "relay": { "url": "wss://hermes.example.com/relay", "transport_hint": "wss" } },
+      "relay": { "url": "wss://hermes.example.com/api/plugins/hermes-relay/transport", "transport_hint": "wss" } },
     { "role": "lan",       "priority": 2,
+      "dashboard": { "url": "http://192.168.1.100:9119" },
       "api":   { "host": "192.168.1.100", "port": 8642, "tls": false },
-      "relay": { "url": "ws://192.168.1.100:8767", "transport_hint": "ws" } }
+      "relay": { "url": "ws://192.168.1.100:9119/api/plugins/hermes-relay/transport", "transport_hint": "ws" } }
   ],
   "sig": "base64url-hmac-sha256"
 }
@@ -448,7 +457,10 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
 - `endpoints` — **optional** ordered list of endpoint candidates. When present, the phone uses these in strict-priority order (0 = highest) and re-probes reachability on network change. When absent, the phone synthesizes a single priority-0 candidate from the top-level `host`/`port`/`tls` + `relay.url`/`transport_hint` fields. `role` is an open string (known values `lan` / `tailscale` / `public` / `plugin_proxy` / `outbound_broker` get styled UI; `plugin_proxy` is the compatibility wire role for Hermes Secure Link and `outbound_broker` is the wire role for Hermes Reach, while anything else renders as "Custom VPN (<role>)"). Entries can carry independently optional `api`, `dashboard`, `relay`, Secure Link, and Reach routing metadata; pairing code, TTL, and grants stay at the top level because they are per-pair artifacts. Full schema in ADR 24, the Secure Link trust contract in [`security-native-proxy.md`](security-native-proxy.md), and the Reach broker contract in [`security-broker-transport.md`](security-broker-transport.md).
 - Top-level fields (`host`/`port`/`key`/`tls`) configure the direct Hermes API Server. Unchanged since v1.
 - `relay` — **optional** and nullable. Present only when the pair command found a running relay and successfully pre-registered a pairing code with it.
-- `relay.url` — full WebSocket URL (`ws://` for dev, `wss://` for production).
+- `relay.url` — full WebSocket URL. New normal candidates use the Dashboard's
+  `/api/plugins/hermes-relay/transport` base and derive `/ws` and `/health`
+  from it. Direct `:8767` URLs remain
+  valid only for existing clients and explicit legacy compatibility.
 - `relay.code` — 6-char one-shot pairing code from `A-Z / 0-9`. Expires 10 minutes after registration.
 - `relay.ttl_seconds` — **optional**. Operator-chosen session lifetime in seconds. `0` means never expire. When present, the phone's TTL picker preselects this value; when missing, the phone picks a default based on transport hint (wss → 30d, ws → 7d). The user always confirms via the picker dialog.
 - `relay.grants` — **optional**. Per-channel expiries in seconds-from-now. Map keys: `"terminal"`, `"bridge"`. Each grant is clamped server-side to the overall session TTL — a grant cannot outlive its session. Default caps if unspecified: terminal 30 days, bridge 7 days.
@@ -485,7 +497,7 @@ Implementation references:
 | Cert pinning | TOFU via `CertPinStore` — SHA-256 SPKI fingerprint recorded per `host:port` on first successful wss connect. Subsequent connects verify via OkHttp `CertificatePinner`. Pin wiped explicitly on QR re-pair (`applyServerIssuedCodeAndReset`). Plain ws:// short-circuits pinning entirely. |
 | QR integrity | HMAC-SHA256 over canonicalized payload. Host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phone parses + stores the signature but does NOT verify yet (secret distribution TBD). |
 | Tailscale detection | Informational only — `tailscale0` interface + `100.64.0.0/10` CGNAT + `.ts.net` hostname checks. Displayed as a Connection-section chip. Does NOT auto-change TTL defaults. |
-| Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Publishes the loopback relay over the tailnet via `tailscale serve --bg --https=<port>`; managed TLS + tailnet ACL identity. Optional, graceful-absent when the binary isn't installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
+| Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Publishes Dashboard `:9119` and its same-origin Relay ingress over the private tailnet, with optional API `:8642`; a served direct Relay `:8767` is legacy compatibility. Tailscale supplies WireGuard encryption and ACL identity, while Serve HTTPS may add application TLS. Optional and graceful-absent when the binary is not installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
 | Multi-endpoint pairing | Single QR carries an ordered list of `role: lan/tailscale/public/...` candidates with strict-priority selection (ADR 24). Phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog. |
 | Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
 | Session policy updates | `PATCH /sessions/{token_prefix}` is self-targeted and reduction-only for normal Relay bearers. Extending a lifetime, adding or lengthening grants, or changing another session requires a fresh operator-approved pairing flow. |
@@ -514,7 +526,11 @@ Implementation references:
 - **Framework:** aiohttp (matches existing relay)
 - **Terminal:** `asyncio` + `pty` module for PTY, `libtmux` for session management
 - **Chat proxy:** HTTP client to Hermes WebAPI (localhost:8642 or direct `run_agent`)
-- **Port:** 8767 (WSS). The legacy standalone bridge relay on 8766 was retired in Phase 3 Wave 1 (2026-04-12) — the bridge channel is now multiplexed alongside chat, terminal, voice, and media on the unified relay.
+- **Internal port:** 8767. The Dashboard plugin exposes the normal external
+  Relay WebSocket under the Dashboard `:9119` origin; direct external `:8767`
+  is legacy compatibility. The standalone bridge relay on 8766 was retired in
+  Phase 3 Wave 1 (2026-04-12), and bridge is multiplexed alongside terminal,
+  voice, and media on the unified Relay process.
 - **TLS:** Let's Encrypt via certbot, or reverse proxy through Caddy/nginx
 
 ### CI/CD (GitHub Actions)

@@ -22,11 +22,14 @@ For a compact shareable reference covering connection paths, transport boundarie
 |------|----------|--------|---------|
 | Chat (preferred) | WS | Dashboard `:9119` | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
 | Chat (fallback) | HTTP/SSE | API Server `:8642` | Streaming conversations via the Sessions / runs / completions APIs |
-| Terminal | WSS | Relay Server `:8767` | Remote shell via tmux (Phase 2) |
-| Bridge | WSS | Relay Server `:8767` | Device control via AccessibilityService + MediaProjection (Phase 3) |
-| Notifications | WSS | Relay Server `:8767` | `NotificationListenerService` forwards posted notifications over a bounded channel |
+| Terminal | WS/WSS | Dashboard `:9119` same-origin Relay ingress | Remote shell via tmux (Phase 2) |
+| Bridge | WS/WSS | Dashboard `:9119` same-origin Relay ingress | Device control via AccessibilityService + MediaProjection (Phase 3) |
+| Notifications | WS/WSS | Dashboard `:9119` same-origin Relay ingress | `NotificationListenerService` forwards posted notifications over a bounded channel |
 
-The bridge channel was consolidated onto the unified relay port `:8767` in v0.3 — the legacy standalone `android_relay.py` service on port 8766 is retired.
+The Relay process still owns one internal listener on `:8767`, but normal LAN,
+Tailscale, and public clients reach it through the Dashboard plugin path on the
+Dashboard origin. Direct external `:8767` is retained only for explicit legacy
+compatibility. The older standalone `android_relay.py` service on port 8766 is retired.
 
 ## Key Components
 
@@ -94,5 +97,5 @@ Chat uses vanilla upstream Hermes either way (gateway preferred, API-server SSE 
 | Protocol | WS (`/api/ws`) preferred · HTTP/SSE fallback | WSS |
 | Connection | Persistent gateway socket · per-request on SSE fallback | Persistent |
 | Auth | Dashboard ws-ticket (gateway) · API bearer token (SSE fallback) | Pairing code + session token. Voice endpoints may also accept the API bearer token. |
-| Server | Hermes dashboard `:9119` · Hermes API `:8642` | Unified Relay `:8767` |
+| Server | Hermes dashboard `:9119` · Hermes API `:8642` | Dashboard `:9119` ingress → internal Relay `:8767` |
 | Live reasoning | Yes on gateway · post-hoc only on SSE fallback | — |

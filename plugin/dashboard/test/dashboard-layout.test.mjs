@@ -28,7 +28,26 @@ test("pairing uses the host dialog and keeps advanced connection options seconda
   assert.match(source, /<Dialog open=\{open\}/);
   assert.match(source, /<DialogContent className="hermes-relay-plugin hr-pair-dialog">/);
   assert.match(source, /Advanced connection options/);
+  assert.match(source, /dashboard_url: dashboardUrl/);
+  assert.match(source, /Unsafe pairing route blocked/);
+  assert.match(source, /route\.protection/);
+  assert.match(source, /surface\.label/);
   assert.doesNotMatch(source, /hr-modal-backdrop/);
+});
+
+test("remote access presents Dashboard ingress and keeps direct Relay explicitly legacy", () => {
+  const source = read("../src/tabs/RemoteAccess.jsx");
+
+  assert.match(source, /Dashboard → host :9119/);
+  assert.match(source, /API fallback → host :8642/);
+  assert.match(source, /Direct Relay → host :8767/);
+  assert.match(source, /serve_services/);
+  assert.match(source, /listen_ports/);
+  assert.match(source, /Enable optional API :8642/);
+  assert.match(source, /Disable legacy :8767 after re-pairing/);
+  assert.match(source, /Public Dashboard origin/);
+  assert.match(source, /Legacy Relay proxy path/);
+  assert.match(source, /probeEndpoints\(previewEndpoints\)/);
 });
 
 test("media is labeled as a bounded token diagnostic", () => {

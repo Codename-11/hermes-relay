@@ -104,11 +104,14 @@ export function getPublicUrl() {
   return fetchJSON("/remote-access/public-url");
 }
 
-export function putPublicUrl(url) {
+export function putPublicUrl(url, { legacyDirectRelay = false } = {}) {
   return fetchJSON("/remote-access/public-url", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: url == null ? null : String(url) }),
+    body: JSON.stringify({
+      url: url == null ? null : String(url),
+      legacy_direct_relay: !!legacyDirectRelay,
+    }),
   });
 }
 

@@ -582,12 +582,17 @@ function SessionCard({ session, compact = false, copied, revoking, onCopy, onRev
 
 function primaryRemoteRoute(status) {
   if (!status) return { value: "—", hint: "Checking routes" };
-  const ports = (status.tailscale && status.tailscale.serve_ports) || [];
-  if (ports.includes(8767)) return { value: "Tailscale", hint: "Private remote route active" };
+  const services = (status.tailscale && status.tailscale.serve_services) || {};
+  if (services.dashboard && services.dashboard.active === true) {
+    return { value: "Tailscale", hint: "Private Dashboard route active" };
+  }
+  if (services.legacy_relay && services.legacy_relay.active === true) {
+    return { value: "Tailscale", hint: "Legacy direct Relay route active" };
+  }
   if (status.secure_link && status.secure_link.enabled) {
     return { value: "Secure Link", hint: "Pinned TLS route active" };
   }
-  if (status.public && status.public.url) return { value: "Public URL", hint: "Pinned public route" };
+  if (status.public && status.public.url) return { value: "Public HTTPS", hint: "Pinned Dashboard origin" };
   return { value: "LAN only", hint: "No remote route configured" };
 }
 

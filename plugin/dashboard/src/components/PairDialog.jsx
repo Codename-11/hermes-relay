@@ -3,7 +3,13 @@ const { React } = SDK;
 const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 
 import QRCode from "qrcode";
-import { mintPairingWithMode } from "../lib/api.js";
+import { mintPairingWithMode, probeEndpoints } from "../lib/api.js";
+import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
+import {
+  pairingEndpointReceipt,
+  pairingProbeKey,
+  pairingSurfaceProbes,
+} from "../lib/pairing-receipt.mjs";
 import { Button, Badge } from "../lib/ui-shims.jsx";
 
 const {
@@ -29,11 +35,11 @@ const MODES = [
   { value: "auto",      label: "Auto (all reachable candidates)" },
   { value: "lan",       label: "LAN only" },
   { value: "tailscale", label: "Tailscale only" },
-  { value: "public",    label: "Public URL only" },
+  { value: "public",    label: "Public Dashboard only" },
 ];
 
 const PREFER_ROLES = [
-  { value: "",          label: "Natural order (LAN → Tailscale → Public)" },
+  { value: "",          label: "Natural order (Tailscale → Public → LAN)" },
   { value: "lan",       label: "LAN → priority 0" },
   { value: "tailscale", label: "Tailscale → priority 0" },
   { value: "public",    label: "Public → priority 0" },
@@ -102,30 +108,11 @@ function looksProxyFronted(host) {
   return h.includes(".") && !h.endsWith(".lan") && !h.endsWith(".home.arpa");
 }
 
-// Derive candidate URLs for the small preview list under the QR, from the
-// `endpoints` array on the minted payload. The actual rich preview lives
-// on the Remote Access tab; we just show "3 endpoints: LAN, Tailscale,
-// Public" here as a compact receipt.
-function summarizeEndpoints(qrPayload) {
-  if (!qrPayload) return null;
-  try {
-    const parsed = JSON.parse(qrPayload);
-    const eps = parsed.endpoints;
-    if (!Array.isArray(eps) || eps.length === 0) return null;
-    return eps.map((e, i) => ({
-      role: e.role || "?",
-      priority: e.priority != null ? e.priority : i,
-      api: e.api || {},
-    }));
-  } catch (_e) {
-    return null;
-  }
-}
-
 export default function PairDialog({ open, onClose }) {
   const [settings, setSettings] = useState(loadSettings);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [state, setState] = useState({ status: "idle" });
+  const [probeState, setProbeState] = useState({ status: "idle", results: [] });
   const [copyStatus, setCopyStatus] = useState("");
   // Operator's explicit "yes, I know it's proxy-fronted, mint anyway"
   // acknowledgement. Resets every time the pinned host changes so a new
@@ -135,10 +122,16 @@ export default function PairDialog({ open, onClose }) {
   const canvasRef = useRef(null);
   const countdown = useCountdown(state.data ? state.data.expires_at : null);
 
-  const endpoints = useMemo(
-    () => summarizeEndpoints(state.data ? state.data.qr_payload : null),
+  const receipt = useMemo(
+    () => pairingEndpointReceipt(state.data ? state.data.qr_payload : null),
     [state.data],
   );
+  const probes = useMemo(() => pairingSurfaceProbes(receipt), [receipt]);
+  const probeByKey = useMemo(() => {
+    const byKey = new Map();
+    (probeState.results || []).forEach((result) => byKey.set(pairingProbeKey(result), result));
+    return byKey;
+  }, [probeState.results]);
 
   // Derived — the pinned host in Advanced looks like a forward-auth-
   // gated FQDN. Gates the auto-mint: we don't want the dashboard to
@@ -149,6 +142,10 @@ export default function PairDialog({ open, onClose }) {
     const use = s || settings;
     setState({ status: "loading" });
     try {
+      const dashboardUrl = canonicalDashboardOrigin(window.location);
+      if (!dashboardUrl) {
+        throw new Error("This Dashboard does not have a valid HTTP(S) origin for pairing.");
+      }
       // Only forward host/port/tls/api_key when the operator has actually
       // pinned an API override — empty host means "use server config".
       const overrides = {};
@@ -160,6 +157,7 @@ export default function PairDialog({ open, onClose }) {
       const data = await mintPairingWithMode({
         mode: use.mode || "auto",
         prefer: use.prefer || undefined,
+        dashboard_url: dashboardUrl,
         ...overrides,
       });
       setCopyStatus("");
@@ -168,6 +166,32 @@ export default function PairDialog({ open, onClose }) {
       setState({ status: "error", error: err && err.message ? err.message : String(err) });
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (state.status !== "ok" || receipt.blockingIssues.length > 0 || probes.length === 0) {
+      setProbeState({ status: "idle", results: [] });
+      return undefined;
+    }
+    let cancelled = false;
+    setProbeState({ status: "loading", results: [] });
+    probeEndpoints(probes)
+      .then((data) => {
+        if (cancelled) return;
+        setProbeState({
+          status: "done",
+          results: data && Array.isArray(data.results) ? data.results : [],
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setProbeState({
+          status: "error",
+          results: [],
+          error: err && err.message ? err.message : String(err),
+        });
+      });
+    return () => { cancelled = true; };
+  }, [state.status, receipt, probes]);
 
   useEffect(() => {
     // Gate the auto-mint when the pinned host trips the proxy heuristic
@@ -189,6 +213,7 @@ export default function PairDialog({ open, onClose }) {
     if (open) return;
     setState({ status: "idle" });
     setCopyStatus("");
+    setProbeState({ status: "idle", results: [] });
     setAdvancedOpen(false);
     setProxyConfirmed(false);
   }, [open]);
@@ -239,6 +264,7 @@ export default function PairDialog({ open, onClose }) {
   // Pause the body UI and show the confirm-first block whenever the
   // override is proxy-fronted and hasn't been acknowledged.
   const blockForProxyConsent = hostLooksProxyFronted && !proxyConfirmed;
+  const blockForInvalidReceipt = state.status === "ok" && receipt.blockingIssues.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -272,6 +298,17 @@ export default function PairDialog({ open, onClose }) {
                     Clear override
                   </Button>
                 </div>
+              </div>
+            ) : blockForInvalidReceipt ? (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive space-y-2">
+                <div className="font-medium">Unsafe pairing route blocked</div>
+                <p className="text-xs">
+                  The invite was not shown or copied because its public route is incomplete or insecure.
+                </p>
+                <ul className="list-disc pl-4 text-xs space-y-1">
+                  {receipt.blockingIssues.map((issue) => <li key={issue}>{issue}</li>)}
+                </ul>
+                <Button size="sm" variant="outline" onClick={regenerate}>Mint a corrected route</Button>
               </div>
             ) : state.status === "loading" ? (
               <div className="hr-pair-loading text-sm text-muted-foreground">Minting a secure code…</div>
@@ -341,21 +378,59 @@ export default function PairDialog({ open, onClose }) {
                   ))}
                 </select>
               </div>
-              {endpoints && endpoints.length > 0 ? (
+              {receipt.routes.length > 0 ? (
                 <div className="hr-endpoint-list">
-                  {endpoints.map((endpoint) => (
-                    <div key={`${endpoint.role}-${endpoint.priority}`} className="hr-endpoint-row">
-                      <Badge variant="outline" className="text-xs capitalize">{endpoint.role}</Badge>
-                      <span className="font-mono text-xs hr-endpoint-address">
-                        {endpoint.api.host}{endpoint.api.port ? `:${endpoint.api.port}` : ""}
-                      </span>
-                      <span className="text-xs text-muted-foreground">p{endpoint.priority}</span>
+                  {receipt.routes.map((route) => (
+                    <div key={`${route.role}-${route.priority}`} className="hr-endpoint-route">
+                      <div className="hr-endpoint-row">
+                        <Badge variant="outline" className="text-xs capitalize">{route.role}</Badge>
+                        <span className="text-xs text-muted-foreground hr-endpoint-address">
+                          {route.protection}
+                        </span>
+                        <span className="text-xs text-muted-foreground">p{route.priority}</span>
+                      </div>
+                      <div className="hr-endpoint-surfaces">
+                        {route.surfaces.map((surface) => {
+                          const probe = probeByKey.get(pairingProbeKey({
+                            role: route.role,
+                            priority: route.priority,
+                            surface: surface.surface,
+                            url: surface.url,
+                          }));
+                          const probeText = probe
+                            ? probe.reachable
+                              ? `Ready${probe.latency_ms != null ? ` · ${probe.latency_ms}ms` : ""}`
+                              : probe.status != null
+                                ? `HTTP ${probe.status}`
+                                : "Unreachable"
+                            : probeState.status === "loading"
+                              ? "Checking…"
+                              : "Not checked";
+                          return (
+                            <div key={`${surface.surface}-${surface.url}`} className="hr-endpoint-surface">
+                              <span className="text-xs font-medium">{surface.label}</span>
+                              <span className="font-mono text-xs hr-endpoint-address" title={surface.url}>
+                                {surface.url}
+                              </span>
+                              <Badge variant="outline" className="text-xs">{probeText}</Badge>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground">Automatic route selection will use server configuration.</div>
               )}
+              <p className="text-xs text-muted-foreground">
+                Tailscale is preferred because it keeps the route private and ACL-controlled. A raw
+                HTTP/WS tailnet URL has no application TLS, but Tailscale still encrypts device-to-device
+                traffic. Public routes must use HTTPS/WSS.
+              </p>
+              {probeState.status === "error" ? (
+                <div className="text-xs text-destructive">Surface probes failed: {probeState.error}</div>
+              ) : null}
             </div>
 
             <details className="hr-pair-advanced" open={advancedOpen}>

@@ -131,6 +131,13 @@ or UI client; it does not need to render a camera QR.
 The invite is one-time and credential-bearing. Keep it private and mint a new
 one when it expires or has already been consumed.
 
+Auto prefers Tailscale, then public HTTPS, then LAN. Tailscale is first because
+it keeps the server inside a private, authenticated tailnet with ACLs. A raw
+tailnet `http://` or `ws://` address has no application TLS, but Tailscale's
+WireGuard transport still encrypts traffic between tailnet devices. Public
+routes must use HTTPS/WSS and remain the automatic fallback when Tailscale is
+unavailable.
+
 ## The Six Tabs
 
 ### Overview
@@ -171,16 +178,21 @@ instead of a chat or shell.
   Pair Hermes Relay**.
 - **The six-character code and copyable invite** — use these for manual Android
   entry or Desktop CLI `--pair-qr` pairing.
-- **Endpoint receipt and expiry** — the invite is one-time and single-use. Mint
-  a fresh one after it expires or is consumed.
+- **Endpoint receipt, per-surface probes, and expiry** — each route shows its
+  resolved Dashboard, Relay, and optional API URL, strict priority, and probe
+  result. The invite is one-time and single-use; mint a fresh one after it
+  expires or is consumed. Malformed or plaintext public candidates are blocked.
 - **Connection summary** — defaults to **Auto**, which derives every configured
   reachable candidate. LAN-only, Tailscale-only, and public-only modes remain available.
 - **Advanced connection options** — collapsed controls for role preference and
   the unusual API-host override.
 
 Leave **Auto** and natural ordering selected for the common case. Configure
-Tailscale and a pinned public URL on the **Remote Access** tab; PairDialog folds
-those server-owned values into the invite automatically.
+Tailscale and a pinned public Dashboard origin on the **Remote Access** tab;
+PairDialog folds those server-owned values into the invite automatically. New
+routes carry Relay under the Dashboard's same origin at
+`/api/plugins/hermes-relay/transport` (with `/ws` and `/health` derived by the
+client), so one external port serves both.
 
 The advanced host, port, and TLS override is for a deliberately pinned API
 fallback or unusual multi-homed/proxy topology. It is not the normal way to set
@@ -195,9 +207,11 @@ block carries the Relay WSS URL and pairing code. See `docs/spec.md` §3.3.1 for
 the full backward-compatible wire format.
 
 **If a manually overridden QR does not pair**, clear the advanced override and
-mint again with **Auto**. Port `8642` is the optional API fallback; port `8767`
-is Relay. Putting the Relay port in the API override sends the phone to the
-wrong service.
+mint again with **Auto**. Dashboard `:9119` is the recommended LAN/Tailscale
+ingress and port `8642` is the optional API fallback. The Relay process may
+still listen internally on `:8767`, but that direct port is legacy pairing
+compatibility and is not advertised in new QRs. Re-pair old clients before
+explicitly disabling a served `:8767` route.
 
 <!-- TODO: replace with real screenshot — PairDialog with QR and override fields expanded -->
 
@@ -239,7 +253,10 @@ Polls every 15 seconds.
 
 ### Remote Access, Git, and Settings
 
-- **Remote Access** retains the supported-first Tailscale, Secure Link, public URL, probe, and endpoint-preview workflow.
+- **Remote Access** retains the supported-first Tailscale, Secure Link, public
+  Dashboard origin, per-surface probe, and endpoint-preview workflow. A pathless
+  public URL means the Dashboard origin; an explicit Relay proxy path is labeled
+  as legacy compatibility.
 - **Git** retains the opt-in repository workspace and confirmed write operations.
 - **Settings** follows the Dashboard Config layout with General, Agent Context, and Maintenance categories.
 

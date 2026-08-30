@@ -1082,6 +1082,23 @@
   border-top: 1px solid var(--hr-border);
 }
 
+.hermes-relay-plugin .hr-endpoint-route {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-endpoint-route:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-endpoint-route > .hr-endpoint-row {
+  padding: 0;
+  border-bottom: 0;
+}
+
 .hermes-relay-plugin .hr-endpoint-row {
   padding: 0.65rem 0;
   border-bottom: 1px solid var(--hr-border);
@@ -1090,6 +1107,18 @@
 .hermes-relay-plugin .hr-endpoint-row:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-endpoint-surfaces {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.hermes-relay-plugin .hr-endpoint-surface {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .hermes-relay-plugin .hr-endpoint-address {
@@ -1204,6 +1233,15 @@
 
   .hermes-relay-plugin .hr-pair-connection-header select {
     width: 100%;
+  }
+
+  .hermes-relay-plugin .hr-endpoint-surface {
+    grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr);
+  }
+
+  .hermes-relay-plugin .hr-endpoint-surface > :last-child {
+    grid-column: 2;
+    justify-self: start;
   }
 }
 
