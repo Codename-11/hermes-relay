@@ -122,9 +122,9 @@ export default function MobileConnectDialog({ open, onClose }) {
                   Chat, Manage, sessions, and standard voice.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  This QR does not pair Relay or enable Terminal, Bridge, device tools, or Relay
-                  sessions. Use <strong>Pair new device</strong> separately when a reachable Relay
-                  server is available.
+                  This QR does not pair Hermes-Relay or enable Terminal, Bridge, device tools, or
+                  Hermes-Relay sessions. Use <strong>Pair new device</strong> separately when a
+                  reachable Hermes-Relay service is available.
                 </p>
               </div>
 

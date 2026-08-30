@@ -7,11 +7,11 @@ profile-scoped backend; neither creates a second Relay service or state store.
 ## What It Is
 
 If your Hermes server runs the Dashboard Plugin System, the unified
-Hermes-Relay plugin contributes a **Relay** page alongside Chat, Skills, Memory,
+Hermes-Relay plugin contributes a **Hermes-Relay** page alongside Chat, Skills, Memory,
 and the other Dashboard pages. The same package also contributes the official
 Hermes Desktop pane and the `hermes relay` / `hermes pair` CLI commands.
 
-The plugin is the browser operator surface for Relay. It reads health, sessions,
+The plugin is the browser operator surface for Hermes-Relay. It reads health, sessions,
 activity, media, and remote-access state, and performs explicit scoped actions:
 minting invites, revoking sessions, changing Relay-owned settings, and managing
 remote-access helpers. It never turns a viewed card into an implicit mutation;
@@ -47,11 +47,11 @@ API; Hermes-Relay does not use private hooks to imitate those features.
 
 ## Accessing the Dashboard
 
-Open the hermes-agent dashboard in your browser (default: `http://localhost:<dashboard_port>`). The **Relay** tab sits between Skills and whatever you have next in your nav order — click it and you land on the four-tab shell.
+Open the hermes-agent dashboard in your browser (default: `http://localhost:<dashboard_port>`). The **Hermes-Relay** tab sits between Skills and whatever you have next in your nav order — click it and you land on the six-tab shell.
 
 Use the real dashboard/Manage surface for this URL: start it with `hermes dashboard` and point Android's Dashboard URL at that service (default `:9119`). `hermes serve` is a headless backend/API command; it is useful for programmatic clients, but it does not serve the Manage UI that Android uses for Skills, Models, Keys, Profiles, voice auth, or dashboard plugins. `hermes relay doctor` warns when the Dashboard URL looks like an API-server/headless URL instead of the dashboard surface.
 
-The plugin's header shows the relay version, overall health (green / red dot), and an **Auto-refresh** toggle that persists to `localStorage`. Turn auto-refresh off if you're reading a specific activity row and don't want it to scroll out from under you.
+The Dashboard header names the page **Hermes-Relay** once. The plugin's Overview shows service health, version, uptime, paired-device count, remote-route summary, and recent Bridge activity. The **Live** switch persists to `localStorage`; turn it off when you want the current diagnostic view to stay still.
 
 ## Android Manage Surface
 
@@ -89,14 +89,14 @@ Server-side dashboard auth is owned by upstream Hermes. For current provider reg
 
 ## Connect and pair clients
 
-The Relay page exposes two different setup actions. They intentionally do not
+The Hermes-Relay Overview and Devices tabs expose two different setup actions. They intentionally do not
 share credentials:
 
 ### Connect mobile app — standard upstream connection
 
 Use this first for Android:
 
-1. Click **Connect mobile app** in the Relay page header.
+1. Open **Hermes-Relay → Devices** and click **Show setup QR** under **Connect mobile app**.
 2. In Android **Connect**, choose **Scan Hermes setup QR**.
 3. Scan the tokenless QR and sign in if prompted.
 
@@ -110,7 +110,7 @@ Relay pairing code.
 Use this after the standard Android connection, or whenever pairing Android,
 the Desktop CLI, or another Relay client:
 
-1. Click **Pair new device** on the Management tab.
+1. Open **Hermes-Relay → Devices** and click **Pair new device**.
 2. Keep **Auto** mode unless you specifically want LAN-only, Tailscale-only, or
    a pinned public route.
 3. Android scans the QR from **Settings → Connections → Pair Hermes Relay**.
@@ -120,44 +120,59 @@ the Desktop CLI, or another Relay client:
 hermes-relay pair --pair-qr "hermes-relay://pair?payload=…" --grant-tools
 ```
 
-Official Hermes Desktop exposes the same backend in its **Relay** pane. Its
+Official Hermes Desktop exposes the same backend in its **Hermes-Relay** pane. Its
 **Pair new device** action shows the one-time code and copyable invite for a CLI
 or UI client; it does not need to render a camera QR.
 
 The invite is one-time and credential-bearing. Keep it private and mint a new
 one when it expires or has already been consumed.
 
-## The Four Tabs
+## The Six Tabs
 
-### Relay Management
+### Overview
 
-The landing tab. Shows:
+The landing tab is status-first. Its panels load independently, so an optional
+remote-access or activity failure does not replace healthy service and device
+state with a page-wide error. It shows:
 
-- **Relay version + uptime + health** — served by the relay's `/relay/info` endpoint. Green dot = reachable, red = `relay unreachable at 127.0.0.1:8767` (the gateway can't see your relay process; check `systemctl --user status hermes-relay`).
-- **Paired devices list** — one row per active session. Columns: device name (from the phone's `PairedDeviceInfo`), token prefix (first 8 chars — full tokens are never sent), created-at, last-seen, expires-at, labeled per-channel grants (chat / bridge / terminal / TUI / voice), transport hint (`wss` / `ws`).
-- **Revoke button** per row — live. Click to pop a native browser confirm; on OK the button calls `DELETE /api/plugins/hermes-relay/sessions/{prefix}` which the plugin proxy forwards to the relay, and the list auto-reloads on success. Same effect as revoking from the Android app's Settings → Relay sessions or running `hermes pair --revoke <prefix>` on the server.
-- **Pair new device** — button in the card header opens the [PairDialog](#pairing-a-new-device) described below.
+- **Service status** — version, uptime, health, Live state, and update availability.
+- **Paired devices** — the authoritative Hermes-Relay session count.
+- **Remote access** — the primary configured route, such as Tailscale or Secure Link.
+- **Last Bridge event** and a bounded recent-activity preview.
+- **Quick actions** for standard Dashboard setup, Hermes-Relay pairing, and device management.
 
-<!-- TODO: replace with real screenshot — dashboard Relay Management tab with a paired device row -->
+The old combined Pending/Media counter is intentionally absent. Bridge pending
+is momentary activity, while the media registry size is not an active-delivery
+count.
+
+### Devices
+
+Devices keeps the two connection contracts together without conflating them:
+
+- **Connect mobile app** creates the tokenless standard Dashboard/Gateway connection.
+- **Pair with Hermes-Relay** grants Terminal, Bridge, media, remote-access, and extended voice capabilities.
+- **Paired devices** renders responsive cards with client type, last seen, expiry, transport, grants, copy-prefix, and host-confirmed revoke actions.
+
+<!-- TODO: replace with real screenshots — Hermes-Relay Overview and Devices tabs -->
 
 #### Pairing a new device
 
-The **Pair new device** button on Relay Management uses the same signed pairing
+The **Pair new device** button on Devices uses the same signed pairing
 contract as `/hermes-relay-pair` and `hermes pair`, driven from the browser
 instead of a chat or shell.
 
-**Click the button to open a PairDialog with:**
+**Click the button to open a QR-first PairDialog with:**
 
-- **Mode** — defaults to **Auto**, which derives every configured reachable
-  candidate. LAN-only, Tailscale-only, and public-only modes remain available.
-- **Prefer role** — optionally promotes LAN, Tailscale, or public without
-  removing fallback candidates.
 - **A freshly minted QR** — scan it from Android **Settings → Connections →
   Pair Hermes Relay**.
 - **The six-character code and copyable invite** — use these for manual Android
   entry or Desktop CLI `--pair-qr` pairing.
 - **Endpoint receipt and expiry** — the invite is one-time and single-use. Mint
   a fresh one after it expires or is consumed.
+- **Connection summary** — defaults to **Auto**, which derives every configured
+  reachable candidate. LAN-only, Tailscale-only, and public-only modes remain available.
+- **Advanced connection options** — collapsed controls for role preference and
+  the unusual API-host override.
 
 Leave **Auto** and natural ordering selected for the common case. Configure
 Tailscale and a pinned public URL on the **Remote Access** tab; PairDialog folds
@@ -182,7 +197,7 @@ wrong service.
 
 <!-- TODO: replace with real screenshot — PairDialog with QR and override fields expanded -->
 
-### Bridge Activity
+### Activity — Bridge activity
 
 Real-time feed of what the agent just did to the phone. Backed by an in-memory ring buffer on the relay (`BridgeHandler.recent_commands`, max 100 entries) that records every bridge command round-trip as it happens — no database, no replay across restarts.
 
@@ -194,21 +209,17 @@ Each row shows:
 - **`decision`** — `executed` (ran normally), `blocked` (phone-side safety-rail denied it), `confirmed` (destructive-verb confirmation accepted), `timeout` (no response in 30s), `error` (exception on either end), or `pending` (in-flight right now).
 - **`response_status`** + `result_summary` + `error` — HTTP status from the phone + the first line of the result + any error string.
 
-A filter-chip row above the table lets you narrow to `All | Executed | Blocked | Confirmed | Timeout | Error` at a glance. Polls every 5 seconds (pausable via the header Auto-refresh toggle).
+A filter-chip row above the table lets you narrow to `All | Executed | Blocked | Confirmed | Timeout | Error` at a glance. Polls every 5 seconds (pausable via the Live switch).
 
 <!-- TODO: replace with real screenshot — Bridge Activity tab mid-session, showing executed + one blocked row -->
 
-### Push Console
+### Activity — Media tokens
 
-**Stub for now.** Renders an "FCM integration not configured" banner with a link to the deferred-items doc. The plugin backend returns `{configured: false, reason: "FCM not yet wired; …"}` without hitting the network.
-
-When FCM lands, this tab will show outbound push delivery: target device, payload, delivery status, timestamps. The nav slot is reserved deliberately so the four-tab layout doesn't reshuffle when the feature ships — only `PushConsole.jsx` + the plugin's `/push` route change.
-
-<!-- TODO: replace with real screenshot — Push Console stub banner -->
-
-### Media Inspector
-
-Lists active `MediaRegistry` tokens — the handles the relay mints when a host-local tool (e.g. `android_screenshot`) registers a file for the paired phone to download. Each row shows:
+Media tokens is a diagnostic view nested under Activity. It lists active
+`MediaRegistry` tokens — the handles Hermes-Relay mints when a host-local tool
+(for example `android_screenshot`) registers a file for the paired phone to
+download. Bare-path media deliveries do not create registry tokens and are
+explicitly outside this view. Each row shows:
 
 - **Token** — truncated display, hover to copy full.
 - **`file_name`** — basename only. Absolute paths are never sent from the server; the inspector can't be used to enumerate your filesystem.
@@ -220,13 +231,19 @@ By default, expired entries are hidden. Click the **Show expired** toggle at the
 
 Polls every 15 seconds.
 
-<!-- TODO: replace with real screenshot — Media Inspector with a registered screenshot row, TTL counting down -->
+<!-- TODO: replace with real screenshot — Activity → Media tokens with a registered screenshot row -->
+
+### Remote Access, Git, and Settings
+
+- **Remote Access** retains the supported-first Tailscale, Secure Link, public URL, probe, and endpoint-preview workflow.
+- **Git** retains the opt-in repository workspace and confirmed write operations.
+- **Settings** follows the Dashboard Config layout with General, Agent Context, and Maintenance categories.
 
 ## How It's Wired (Brief)
 
 The plugin has three layers:
 
-1. **Frontend** — a pre-built React IIFE at `plugin/dashboard/dist/index.js` (~16 KB minified), loaded verbatim by the dashboard shell. Source lives in `plugin/dashboard/src/` and is bundled with esbuild. Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + shadcn primitives — no bundled React, no external HTTP library.
+1. **Frontend** — a pre-built React IIFE at `plugin/dashboard/dist/index.js` (about 110 KB minified), loaded verbatim by the dashboard shell. Source lives in `plugin/dashboard/src/` and is bundled with esbuild. Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + Nous primitives — no bundled React, no external HTTP library.
 2. **Backend proxy** — a FastAPI router at `plugin/dashboard/plugin_api.py` mounted at `/api/plugins/hermes-relay/*` inside the gateway process. Forwards five routes (`/overview`, `/sessions`, `/bridge-activity`, `/media`, `/push`) to the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}` via `httpx.AsyncClient` with a 5-second timeout. Translates relay connect-errors / timeouts / 5xx into `HTTP 502` with a human-readable detail so the UI can show "relay unreachable".
 3. **Relay** — three new loopback-gated HTTP routes (`/bridge/activity`, `/media/inspect`, `/relay/info`) plus a loopback-exempt branch on the existing `/sessions`. Both the plugin backend and the relay are localhost-bound, so no bearer is minted and no new credentials are introduced.
 
@@ -236,17 +253,17 @@ For the full wire-shape of each route (query params, response schemas, redaction
 
 **"Relay unreachable at 127.0.0.1:8767" on every tab.** The gateway can't see your relay process. Check `systemctl --user status hermes-relay` on the server; if the unit is inactive, `systemctl --user restart hermes-relay`. If you run the relay manually, confirm it's bound to `127.0.0.1:8767` and hasn't moved to a different port (override via `HERMES_RELAY_PORT` — the plugin reads this at import time).
 
-**No "Relay" tab appears after gateway restart.** Confirm the unified plugin is
+**No "Hermes-Relay" tab appears after gateway restart.** Confirm the unified plugin is
 enabled with `hermes plugins list`, then re-run
 `hermes plugins install Codename-11/hermes-relay/plugin --enable` and refresh or
 restart the Dashboard/Gateway plugin catalog. Check the gateway log for
 plugin-load errors if the manifest is installed but the page is absent.
 
-**The Relay tab appears but text, colors, or cards are hard to read.** Update the Hermes-Relay plugin and restart or rescan the dashboard plugin list. The plugin stylesheet is loaded by the upstream dashboard and follows its active theme tokens; stale `dist/style.css` files from older installs can render poorly after Hermes dashboard theme changes.
+**The Hermes-Relay tab appears but text, colors, or cards are hard to read.** Update the Hermes-Relay plugin and restart or rescan the dashboard plugin list. The plugin stylesheet is loaded by the upstream dashboard and follows its active theme tokens; stale `dist/style.css` files from older installs can render poorly after Hermes dashboard theme changes.
 
 **Bridge Activity tab is empty but the phone is issuing commands.** The ring buffer is in-memory and wipes on relay restart. If you just restarted the relay, you need the phone to issue at least one command before the tab has anything to show. If commands are going through but not appearing, confirm they're reaching the relay (`journalctl --user -u hermes-relay -f` should show the command round-trips).
 
-**Media Inspector shows tokens but files won't download.** That's a separate path — the inspector lists registered tokens but the actual download goes through `/media/{token}` (bearer-gated, via the phone). If the phone can't fetch a token, check the bearer's `media` grant and `RELAY_MEDIA_TTL_SECONDS` hasn't elapsed since registration.
+**Media tokens shows entries but files won't download.** That's a separate path — the diagnostic view lists token-backed registry entries, while the actual download goes through `/media/{token}` (bearer-gated, via the phone). Bare-path deliveries are not listed. If the phone can't fetch a token, check the bearer's `media` grant and `RELAY_MEDIA_TTL_SECONDS` hasn't elapsed since registration.
 
 **Revoke button fails silently.** Revoke is live as of the dashboard plugin release — `DELETE /api/plugins/hermes-relay/sessions/{prefix}` is proxied to the relay. If the click confirm fires but the list doesn't update, open the browser devtools network tab and re-click: a 502 means the relay itself is unreachable (see the "Relay unreachable" item above), a 404 means the token prefix is already gone (the list auto-reloaded between the button render and your click), and a 403 means the proxy is seeing a non-loopback caller (hermes-agent's dashboard shouldn't ever hit this — check `journalctl --user -u hermes-gateway -f` for the origin).
 
