@@ -31,7 +31,7 @@ play-publisher = "4.1.1"
 media3 = "1.11.0"
 androidVad = "2.0.10"
 sherpaOnnx = "v1.13.4"
-onnxRuntime = "1.29.0"
+onnxRuntime = "1.27.0"
 spatialsdk = "0.13.2"
 play-app-update = "2.1.0"
 
