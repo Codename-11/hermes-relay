@@ -35,7 +35,7 @@
   <!-- relay lane label cluster (between the violet lines) -->
   <text x="432" y="322" font-size="14" font-weight="700" fill="#6b4fb0">+ RELAY PLUGIN · pair to unlock</text>
   <text x="432" y="348" font-size="15" font-weight="700" fill="#4b2f88">Terminal · Bridge · Relay voice · Desktop tools</text>
-  <text x="432" y="370" font-size="11" fill="#94a3b8">same dashboard origin · tailscale :443 → local :9119</text>
+  <text x="432" y="370" font-size="11" fill="#94a3b8">same dashboard origin · tailscale :10443 → local :9119</text>
 
   <!-- ===================== LEFT: your machine ===================== -->
   <rect x="60" y="180" width="300" height="120" rx="14" fill="#eef2f7" stroke="#334155" stroke-width="2"/>

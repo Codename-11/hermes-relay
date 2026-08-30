@@ -306,6 +306,7 @@ The app permits cleartext at the Android network-security layer so LAN, emulator
 - API-key voice over non-loopback plain HTTP is blocked by the relay unless the operator temporarily enables `hermes relay insecure-api-key on`.
 - Tailscale and public reverse-proxy setups should use HTTPS/WSS.
 
-For remote access, prefer `hermes-relay-tailscale enable`, which maps tailnet
-HTTPS `:443` to local Dashboard `:9119` and its same-origin Relay ingress. The
-API fallback on `:8642` is optional; direct Relay `:8767` is legacy-only.
+For remote access, prefer `hermes-relay-tailscale enable`, which maps dedicated
+tailnet HTTPS `:10443` to local Dashboard `:9119` and its same-origin Relay
+ingress without colliding with a reverse proxy on `:443`. The API fallback on
+`:8642` is optional; direct Relay `:8767` is legacy-only.

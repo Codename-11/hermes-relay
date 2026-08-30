@@ -8,22 +8,47 @@ import {
   pairingSurfaceProbes,
 } from "../src/lib/pairing-receipt.mjs";
 
-test("Dashboard Serve migration requires listener 443", () => {
+test("Dashboard Serve migration requires the dedicated recommended listener", () => {
   assert.deepEqual(
     dashboardServeState({ active: true, listen_ports: [9119] }),
-    { active: true, listenPorts: [9119], recommended443: false, legacy9119: true },
+    {
+      active: true,
+      listenPorts: [9119],
+      recommendedPort: 10443,
+      recommendedActive: false,
+      migration443: false,
+      migration9119: true,
+    },
   );
   assert.deepEqual(
     dashboardServeState({ active: true, listen_ports: [9119, 443, 443] }),
-    { active: true, listenPorts: [443, 9119], recommended443: true, legacy9119: true },
+    {
+      active: true,
+      listenPorts: [443, 9119],
+      recommendedPort: 10443,
+      recommendedActive: false,
+      migration443: true,
+      migration9119: true,
+    },
   );
   assert.deepEqual(
-    dashboardServeState({ active: true, listen_ports: [443] }),
-    { active: true, listenPorts: [443], recommended443: true, legacy9119: false },
+    dashboardServeState({ active: true, listen_ports: [10443, 443, 9119] }),
+    {
+      active: true,
+      listenPorts: [443, 9119, 10443],
+      recommendedPort: 10443,
+      recommendedActive: true,
+      migration443: true,
+      migration9119: true,
+    },
   );
   assert.equal(
-    dashboardServeState({ active: false, listen_ports: [443, 9119] }).recommended443,
+    dashboardServeState({ active: false, listen_ports: [10443] }).recommendedActive,
     false,
+  );
+  assert.equal(
+    dashboardServeState({ active: true, listen_ports: [11443] }, 11443).recommendedActive,
+    true,
   );
 });
 

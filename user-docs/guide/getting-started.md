@@ -408,8 +408,10 @@ when you change networks.
   in the QR. Add `--public-url https://hermes.example.com` to include an external
   reverse-proxy or Cloudflare Tunnel URL.
 - **Use the helper's detected Tailscale HTTPS address** —
-  `hermes-relay-tailscale enable` publishes `https://host.ts.net` on tailnet
-  `:443` and proxies local Dashboard `:9119` plus its same-origin Relay ingress.
+  `hermes-relay-tailscale enable` publishes `https://host.ts.net:10443` on a
+  dedicated tailnet listener and proxies local Dashboard `:9119` plus its
+  same-origin Relay ingress. The dedicated port avoids conflicts with an
+  existing Traefik, Caddy, or nginx HTTPS listener on `:443`.
   A raw `http://100.x.y.z:9119` address remains valid when Dashboard is
   deliberately reachable there, but it has no application TLS. Prefer a reverse proxy + Let's Encrypt or a
   self-hosted VPN? Both work as long as the phone can reach each capability you

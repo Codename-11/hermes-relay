@@ -322,7 +322,7 @@ bounded: a target that does not become ready exposes Retry and Cancel and
 records only boolean, secret-free readiness evidence in Diagnostics.
 
 The primary remote path today is Tailscale. Recommended setup exposes an HTTPS
-listener on tailnet `:443` that proxies the upstream Dashboard at local `:9119`
+listener on tailnet `:10443` that proxies the upstream Dashboard at local `:9119`
 and its same-origin Relay ingress inside a private, ACL-controlled tailnet. Raw
 tailnet HTTP/WS has no application TLS but remains encrypted by Tailscale's
 WireGuard data plane. Public HTTPS remains the next secure fallback. The optional Relay plugin
@@ -427,9 +427,9 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
   "port": 8642,
   "key": "api-bearer-token",
   "tls": true,
-  "dashboard_url": "https://hermes-host.tail1234.ts.net",
+  "dashboard_url": "https://hermes-host.tail1234.ts.net:10443",
   "relay": {
-    "url": "wss://hermes-host.tail1234.ts.net/api/plugins/hermes-relay/transport",
+    "url": "wss://hermes-host.tail1234.ts.net:10443/api/plugins/hermes-relay/transport",
     "code": "ABCD12",
     "ttl_seconds": 2592000,
     "grants": { "terminal": 2592000, "bridge": 604800 },
@@ -437,9 +437,9 @@ Biometric gate on the app side for terminal access (fingerprint/face) remains pl
   },
   "endpoints": [
     { "role": "tailscale", "priority": 0,
-      "dashboard": { "url": "https://hermes-host.tail1234.ts.net" },
+      "dashboard": { "url": "https://hermes-host.tail1234.ts.net:10443" },
       "api":   { "host": "hermes-host.tail1234.ts.net", "port": 8642, "tls": true },
-      "relay": { "url": "wss://hermes-host.tail1234.ts.net/api/plugins/hermes-relay/transport", "transport_hint": "wss" } },
+      "relay": { "url": "wss://hermes-host.tail1234.ts.net:10443/api/plugins/hermes-relay/transport", "transport_hint": "wss" } },
     { "role": "public",    "priority": 1,
       "dashboard": { "url": "https://hermes.example.com" },
       "api":   { "host": "hermes.example.com", "port": 443, "tls": true },
@@ -497,7 +497,7 @@ Implementation references:
 | Cert pinning | TOFU via `CertPinStore` — SHA-256 SPKI fingerprint recorded per `host:port` on first successful wss connect. Subsequent connects verify via OkHttp `CertificatePinner`. Pin wiped explicitly on QR re-pair (`applyServerIssuedCodeAndReset`). Plain ws:// short-circuits pinning entirely. |
 | QR integrity | HMAC-SHA256 over canonicalized payload. Host-local secret at `~/.hermes/hermes-relay-qr-secret`. Phone parses + stores the signature but does NOT verify yet (secret distribution TBD). |
 | Tailscale detection | Informational only — `tailscale0` interface + `100.64.0.0/10` CGNAT + `.ts.net` hostname checks. Displayed as a Connection-section chip. Does NOT auto-change TTL defaults. |
-| Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Recommended setup maps tailnet HTTPS `:443` to local Dashboard `:9119` and its same-origin Relay ingress, with optional API `:8642`; a served direct Relay `:8767` is legacy compatibility. Tailscale supplies WireGuard encryption, ACL identity, and application TLS on the recommended listener. Optional and graceful-absent when the binary is not installed. Auto-retires when upstream PR #9295 lands. See [`docs/remote-access.md`](remote-access.md). |
+| Tailscale helper (first-class) | `plugin/relay/tailscale.py` + `hermes-relay-tailscale` CLI (ADR 25). Recommended setup uses helper-reported `recommended_listener_port` (`:10443` by default) for local Dashboard `:9119` and its same-origin Relay ingress, avoiding conflicts with existing Traefik, Caddy, or nginx HTTPS listeners on `:443`. API `:8642` is optional; `:443`/`:9119` remain migration/explicit routes and direct Relay `:8767` is legacy compatibility. |
 | Multi-endpoint pairing | Single QR carries an ordered list of `role: lan/tailscale/public/...` candidates with strict-priority selection (ADR 24). Phone re-probes reachability on every network change. Per-candidate `transport_hint` drives the plaintext-`ws://` consent dialog. |
 | Device revocation | Paired Devices screen → `GET /sessions` (tokens masked to 8-char prefix) / `DELETE /sessions/{token_prefix}` (self-revoke allowed, wipes local state + redirects to pair flow). Any paired device can revoke any other — trade-off documented in ADR 15. |
 | Session policy updates | `PATCH /sessions/{token_prefix}` is self-targeted and reduction-only for normal Relay bearers. Extending a lifetime, adding or lengthening grants, or changing another session requires a fresh operator-approved pairing flow. |
@@ -528,7 +528,7 @@ Implementation references:
 - **Chat proxy:** HTTP client to Hermes WebAPI (localhost:8642 or direct `run_agent`)
 - **Internal port:** 8767. The Dashboard plugin exposes the normal external
   Relay WebSocket under the selected Dashboard origin (LAN commonly uses
-  `:9119`; recommended Tailscale uses HTTPS `:443` → local `:9119`); direct external `:8767`
+  `:9119`; recommended Tailscale uses HTTPS `:10443` → local `:9119`); direct external `:8767`
   is legacy compatibility. The standalone bridge relay on 8766 was retired in
   Phase 3 Wave 1 (2026-04-12), and bridge is multiplexed alongside terminal,
   voice, and media on the unified Relay process.

@@ -30,8 +30,10 @@ The Relay process still owns one internal listener on `:8767`, but normal LAN,
 Tailscale, and public clients reach it through the Dashboard plugin path on the
 Dashboard origin. Direct external `:8767` is retained only for explicit legacy
 compatibility. The older standalone `android_relay.py` service on port 8766 is retired.
-For recommended Tailscale, the selected origin is HTTPS `:443` and proxies the
-local Dashboard target on `:9119`.
+For recommended Tailscale, the selected origin uses the helper-reported
+dedicated HTTPS listener (`:10443` by default) and proxies the local Dashboard
+target on `:9119`. The dedicated port avoids colliding with an existing
+Traefik, Caddy, or nginx listener on `:443`.
 
 ## Key Components
 

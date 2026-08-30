@@ -138,16 +138,22 @@ export function pairingProbeKey(entry) {
 }
 
 /** Classify the recommended and old Dashboard Serve listeners independently. */
-export function dashboardServeState(service) {
+export function dashboardServeState(service, recommendedListenerPort = 10443) {
   const active = !!(service && service.active === true);
   const listenPorts = Array.isArray(service && service.listen_ports)
     ? [...new Set(service.listen_ports.filter((port) => Number.isInteger(port)))].sort((a, b) => a - b)
     : [];
+  const recommendedPort = Number.isInteger(recommendedListenerPort) &&
+    recommendedListenerPort > 0 && recommendedListenerPort <= 65535
+    ? recommendedListenerPort
+    : 10443;
   return {
     active,
     listenPorts,
-    recommended443: active && listenPorts.includes(443),
-    legacy9119: active && listenPorts.includes(9119),
+    recommendedPort,
+    recommendedActive: active && listenPorts.includes(recommendedPort),
+    migration443: active && recommendedPort !== 443 && listenPorts.includes(443),
+    migration9119: active && recommendedPort !== 9119 && listenPorts.includes(9119),
   };
 }
 

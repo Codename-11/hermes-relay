@@ -175,9 +175,10 @@ hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The helper publishes tailnet HTTPS `:443` for local Dashboard `:9119` and its
-same-origin Relay path. The API fallback remains optional on `:8642`; direct
-Relay `:8767` is legacy compatibility. A manually exposed
+The helper publishes dedicated tailnet HTTPS `:10443` for local Dashboard
+`:9119` and its same-origin Relay path. The dedicated port avoids conflicts
+with Traefik, Caddy, or nginx on `:443`. The API fallback remains optional on
+`:8642`; direct Relay `:8767` is legacy compatibility. A manually exposed
 `http://100.x.y.z:9119` Dashboard also works over the encrypted tailnet, but it
 is not the recommended helper route and has no application TLS.
 The route menu in Settings

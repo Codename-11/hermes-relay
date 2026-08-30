@@ -138,21 +138,24 @@ secure (🛡️) with no certificates to manage. The recommended helper also cre
 the TLS-fronted Dashboard origin:
 
 ```bash
-tailscale serve --bg --https=443 http://127.0.0.1:9119
+tailscale serve --bg --https=10443 http://127.0.0.1:9119
 ```
 
-The `hermes-relay-tailscale` helper configures that HTTPS `:443` listener for
-local Dashboard `:9119`, including the plugin's same-origin Relay transport.
+The `hermes-relay-tailscale` helper configures a dedicated HTTPS listener
+(`:10443` by default) for local Dashboard `:9119`, including the plugin's
+same-origin Relay transport. This avoids conflicts when Traefik, Caddy, nginx,
+or another service already owns `:443`.
 The API fallback on `:8642` remains optional:
 
 ```bash
 hermes-relay-tailscale enable
 ```
 
-The phone uses the advertised `https://host.ts.net` listener, not local target
+The phone uses the advertised `https://host.ts.net:10443` listener, not local target
 port `:9119`. A manually exposed `http://100.x.y.z:9119` route is still
 WireGuard-encrypted and secure over the tailnet, but it has no application TLS.
-Direct Relay `:8767` remains only for older paired clients until re-pairing.
+Old `:443` and `:9119` listeners remain migration/explicit routes; direct Relay
+`:8767` remains only for older paired clients until re-pairing.
 
 ### 2. A public reverse proxy
 

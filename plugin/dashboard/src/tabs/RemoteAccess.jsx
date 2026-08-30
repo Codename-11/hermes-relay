@@ -75,12 +75,16 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
   const servePorts = (status && status.serve_ports) || [];
   const services = (status && status.serve_services) || {};
   const dashboardService = services.dashboard || {};
-  const dashboardState = dashboardServeState(dashboardService);
+  const recommendedListenerPort = Number.isInteger(status && status.recommended_listener_port)
+    ? status.recommended_listener_port
+    : 10443;
+  const dashboardState = dashboardServeState(dashboardService, recommendedListenerPort);
   const apiService = services.api || {};
   const legacyRelayService = services.legacy_relay || {};
   const dashboardServing = dashboardState.active;
-  const recommendedDashboardServing = dashboardState.recommended443;
-  const legacyDashboardServing = dashboardState.legacy9119;
+  const recommendedDashboardServing = dashboardState.recommendedActive;
+  const migration443Serving = dashboardState.migration443;
+  const migration9119Serving = dashboardState.migration9119;
   const apiServing = apiService.active === true;
   const legacyRelayServing = legacyRelayService.active === true;
   const serving = recommendedDashboardServing;
@@ -107,7 +111,9 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
           away from home. Tailscale supplies private routing, WireGuard encryption,
           and ACLs. Raw tailnet HTTP/WS has no application TLS, but traffic remains
           encrypted between tailnet devices; Hermes authentication still applies.
-          Recommended setup maps tailnet HTTPS :443 to local Dashboard :9119.
+          Recommended setup maps dedicated tailnet HTTPS :{dashboardState.recommendedPort}
+          to local Dashboard :9119, avoiding conflicts with Traefik, Caddy, nginx,
+          or another service that already owns :443.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -120,13 +126,19 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
             <Dot tone={recommendedDashboardServing ? "ok" : available ? "warn" : "muted"} />
             <span>
               Dashboard → host :9119: {recommendedDashboardServing
-                ? "HTTPS :443 active · recommended"
-                : legacyDashboardServing
-                  ? "HTTPS :443 off · old :9119 listener does not satisfy recommended setup"
+                ? `HTTPS :${dashboardState.recommendedPort} active · recommended`
+                : migration443Serving || migration9119Serving
+                  ? `HTTPS :${dashboardState.recommendedPort} off · old listeners do not satisfy recommended setup`
                   : "off"}
             </span>
           </div>
-          {legacyDashboardServing ? (
+          {migration443Serving ? (
+            <div className="flex items-center gap-2">
+              <Dot tone="warn" />
+              <span>Shared HTTPS listener :443: active · migration or explicit route</span>
+            </div>
+          ) : null}
+          {migration9119Serving ? (
             <div className="flex items-center gap-2">
               <Dot tone="warn" />
               <span>Old Dashboard listener :9119: active · migration compatibility</span>
@@ -179,7 +191,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
 
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={busy || !available || serving} onClick={() => onEnable()}>
-            {busy === "enable" ? "Enabling…" : "Enable HTTPS :443 ingress"}
+            {busy === "enable" ? "Enabling…" : `Enable HTTPS :${dashboardState.recommendedPort} ingress`}
           </Button>
           {recommendedDashboardServing && !apiServing ? (
             <Button
@@ -209,7 +221,17 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
               Disable legacy :8767 after re-pairing
             </Button>
           ) : null}
-          {legacyDashboardServing ? (
+          {migration443Serving ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onDisable(443)}
+            >
+              Disable old :443 listener after re-pairing
+            </Button>
+          ) : null}
+          {migration9119Serving ? (
             <Button
               size="sm"
               variant="outline"
@@ -223,8 +245,9 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
 
         <p className="text-xs text-muted-foreground">
           New pairing invites use the classified tailnet listener above — normally
-          HTTPS :443 — which proxies local Dashboard :9119 and its same-origin Relay
-          path. Keep :8767 active only until older devices have re-paired.
+          HTTPS :{dashboardState.recommendedPort} — which proxies local Dashboard
+          :9119 and its same-origin Relay path. Keep old :443, :9119, and :8767
+          listeners only until affected devices have re-paired.
         </p>
 
         {resultMessage ? (

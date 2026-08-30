@@ -43,9 +43,11 @@ test("remote access presents Dashboard ingress and keeps direct Relay explicitly
   assert.match(source, /Direct Relay → host :8767/);
   assert.match(source, /serve_services/);
   assert.match(source, /listen_ports/);
-  assert.match(source, /tailnet HTTPS :443 to local Dashboard :9119/);
-  assert.match(source, /Enable HTTPS :443 ingress/);
-  assert.match(source, /old :9119 listener does not satisfy recommended setup/);
+  assert.match(source, /recommended_listener_port/);
+  assert.match(source, /avoiding conflicts with Traefik, Caddy, nginx/);
+  assert.match(source, /Enable HTTPS :\$\{dashboardState\.recommendedPort\} ingress/);
+  assert.match(source, /old listeners do not satisfy recommended setup/);
+  assert.match(source, /Disable old :443 listener after re-pairing/);
   assert.match(source, /Disable old :9119 listener after re-pairing/);
   assert.match(source, /Enable optional API :8642/);
   assert.match(source, /Disable legacy :8767 after re-pairing/);

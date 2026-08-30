@@ -47,11 +47,11 @@ If a Tailscale route fails its probe:
   silently sign out or be paused by battery savers).
 - Verify the server appears in the phone's Tailscale device list and that its
   Dashboard/Gateway URL opens from the phone's browser.
-- The Tailscale helper (`hermes-relay-tailscale enable`) serves tailnet HTTPS
-  `:443` and proxies local Dashboard `:9119` plus the same-origin Relay path.
-  Open `https://<tailnet-host>/api/health` from the phone; do not append the
-  local target port. API fallback `:8642` is optional and direct Relay `:8767`
-  is legacy-only.
+- The Tailscale helper (`hermes-relay-tailscale enable`) serves dedicated
+  tailnet HTTPS `:10443` and proxies local Dashboard `:9119` plus the
+  same-origin Relay path. Open `https://<tailnet-host>:10443/api/health` from
+  the phone. Old `:443`/`:9119` listeners are migration or explicit routes;
+  API fallback `:8642` is optional and direct Relay `:8767` is legacy-only.
 
 ## Android Studio can't see a phone over Tailscale ADB
 

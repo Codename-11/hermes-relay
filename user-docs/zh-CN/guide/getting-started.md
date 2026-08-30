@@ -61,8 +61,8 @@ HTTPS 回调：`<公共-dashboard-origin>/auth/callback`。Hermes 通常从受�
 5. 在 **完成设置** 中，如需后台聊天提醒，请启用 Android 通知。相机、麦克风和其他功能仍为可选，并可逐项设置；选择 **暂不** 可直接继续。
 6. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
 
-`hermes-relay-tailscale enable` 会在 tailnet 的 `:443` 发布
-`https://host.ts.net`，并将它连同同源 Relay 路径代理到本地 Dashboard
+`hermes-relay-tailscale enable` 会在 tailnet 的专用 `:10443` 发布
+`https://host.ts.net:10443`，并将它连同同源 Relay 路径代理到本地 Dashboard
 `:9119`。也可以使用有意直接开放的 `http://100.x.y.z:9119` 路由，但它没有应用层 TLS。
 
 同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 API fallback 不可用都是正常状态。

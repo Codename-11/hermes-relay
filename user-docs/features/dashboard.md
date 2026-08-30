@@ -136,8 +136,10 @@ it keeps the server inside a private, authenticated tailnet with ACLs. A raw
 tailnet `http://` or `ws://` address has no application TLS, but Tailscale's
 WireGuard transport still encrypts traffic between tailnet devices. Public
 routes must use HTTPS/WSS and remain the automatic fallback when Tailscale is
-unavailable. Recommended Tailscale setup advertises HTTPS `:443`, which proxies
-the local Dashboard on `:9119`; the endpoint receipt shows that actual listener.
+unavailable. Recommended Tailscale setup advertises the helper-reported
+dedicated HTTPS listener (`:10443` by default), which proxies the local
+Dashboard on `:9119`; the endpoint receipt shows that actual listener. This
+avoids conflicts with Traefik, Caddy, or nginx on `:443`.
 
 ## The Six Tabs
 
@@ -209,8 +211,9 @@ the full backward-compatible wire format.
 
 **If a manually overridden QR does not pair**, clear the advanced override and
 mint again with **Auto**. Dashboard commonly listens locally on `:9119`; the
-recommended Tailscale route is external HTTPS `:443` → local `:9119`. Port
-`:8642` is the optional API fallback. The Relay process may still listen
+recommended Tailscale route is dedicated external HTTPS `:10443` → local
+`:9119`. Old `:443`/`:9119` routes remain explicit migration compatibility.
+Port `:8642` is the optional API fallback. The Relay process may still listen
 internally on `:8767`, but that direct port is legacy pairing compatibility and
 is not advertised in new QRs. Re-pair old clients before explicitly disabling
 a served `:8767` route.
