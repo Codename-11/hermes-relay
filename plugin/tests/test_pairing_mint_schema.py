@@ -644,6 +644,108 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
             "tls": True,
         })
 
+    def test_tailscale_prefers_recommended_443_during_mixed_listener_migration(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [443, 9119],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [443, 9119],
+                        "serve_routes": [{"proxy_target": "http://127.0.0.1:9119"}],
+                    },
+                },
+            },
+        )
+
+        tailscale = endpoints[0]
+        self.assertEqual(tailscale["dashboard"]["url"], "https://test.tail-xyz.ts.net")
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "wss://test.tail-xyz.ts.net/api/plugins/hermes-relay/transport",
+        )
+
+    def test_tailscale_retains_9119_when_it_is_the_only_dashboard_listener(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [9119],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [9119],
+                        "serve_routes": [{"proxy_target": "http://127.0.0.1:9119"}],
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            endpoints[0]["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:9119",
+        )
+
+    def test_funnel_auto_detection_prefers_recommended_443(self) -> None:
+        from plugin.pair import build_endpoint_candidates
+        from plugin.relay import tailscale as tailscale_helper
+
+        with mock.patch("plugin.pair._tailscale_status", return_value=None), mock.patch.object(
+            tailscale_helper,
+            "funnel_url",
+            return_value="https://public.tail-xyz.ts.net/",
+        ) as funnel_url:
+            endpoints = build_endpoint_candidates(
+                mode="auto",
+                api_host="10.0.0.42",
+                api_port=8642,
+                api_tls=False,
+                relay_host="10.0.0.42",
+                relay_port=8767,
+                relay_tls=False,
+            )
+
+        funnel_url.assert_called_once_with(port=443)
+        public = next(candidate for candidate in endpoints if candidate["role"] == "public")
+        self.assertEqual(public["dashboard"]["url"], "https://public.tail-xyz.ts.net")
+
+    def test_funnel_auto_detection_falls_back_to_old_9119_listener(self) -> None:
+        from plugin.pair import build_endpoint_candidates
+        from plugin.relay import tailscale as tailscale_helper
+
+        def funnel_url(port: int) -> str | None:
+            return "https://legacy.tail-xyz.ts.net/" if port == 9119 else None
+
+        with mock.patch("plugin.pair._tailscale_status", return_value=None), mock.patch.object(
+            tailscale_helper,
+            "funnel_url",
+            side_effect=funnel_url,
+        ) as funnel_probe:
+            endpoints = build_endpoint_candidates(
+                mode="auto",
+                api_host="10.0.0.42",
+                api_port=8642,
+                api_tls=False,
+                relay_host="10.0.0.42",
+                relay_port=8767,
+                relay_tls=False,
+            )
+
+        self.assertEqual(
+            [call.kwargs["port"] for call in funnel_probe.call_args_list],
+            [443, 9119],
+        )
+        public = next(candidate for candidate in endpoints if candidate["role"] == "public")
+        self.assertEqual(public["dashboard"]["url"], "https://legacy.tail-xyz.ts.net")
+
     def test_tailscale_uses_raw_ip_when_only_legacy_relay_serve_is_active(self) -> None:
         endpoints = self._build(
             mode="tailscale",

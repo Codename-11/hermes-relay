@@ -583,6 +583,7 @@ def build_pairing_invite_url(payload: str) -> str:
 
 _VALID_MODES = ("auto", "lan", "tailscale", "public")
 _DEFAULT_DASHBOARD_PORT = 9119
+_RECOMMENDED_DASHBOARD_LISTENER_PORT = 443
 
 
 def _lan_endpoint(
@@ -702,10 +703,10 @@ def _tailscale_endpoint(
             for port in (ports if isinstance(ports, list) else [])
             if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
         })
+        if name == "dashboard" and _RECOMMENDED_DASHBOARD_LISTENER_PORT in valid_ports:
+            return _RECOMMENDED_DASHBOARD_LISTENER_PORT
         if default_port in valid_ports:
             return default_port
-        if 443 in valid_ports:
-            return 443
         return valid_ports[0] if valid_ports else None
 
     dashboard_listener = _service_listener("dashboard", dashboard_port)
@@ -1089,12 +1090,21 @@ def build_endpoint_candidates(
         # None when the CLI is absent, nothing is funneled on this
         # port, or the JSON parse hits an unexpected shape.
         if not effective_public_url:
+            detected = None
+            _ts_helper = None
             try:
                 from .relay import tailscale as _ts_helper  # type: ignore
 
-                detected = _ts_helper.funnel_url(port=_DEFAULT_DASHBOARD_PORT)
+                detected = _ts_helper.funnel_url(
+                    port=_RECOMMENDED_DASHBOARD_LISTENER_PORT
+                )
             except Exception:  # noqa: BLE001 — any failure = no funnel
                 detected = None
+            if not detected and _ts_helper is not None:
+                try:
+                    detected = _ts_helper.funnel_url(port=_DEFAULT_DASHBOARD_PORT)
+                except Exception:  # noqa: BLE001 — old Funnel probe is optional
+                    detected = None
             if detected:
                 effective_public_url = detected
 
