@@ -721,6 +721,32 @@ class VoiceViewModelBargeInTest {
         )
     }
 
+    @Test
+    fun `failed barge-in capture stays failed instead of resuming stale audio`() = runTest {
+        every { recorder.startRecording() } throws
+            IllegalStateException("Microphone is in use by another voice feature")
+        val vm = buildViewModel(
+            BargeInPreferences(
+                enabled = true,
+                sensitivity = BargeInSensitivity.Default,
+                resumeAfterInterruption = true,
+            ),
+        )
+        vm.seedSpeakingStateForTest(
+            chunks = listOf("current.", "stale tail."),
+            currentIdx = 0,
+        )
+        vm.drainTtsQueueForTest()
+
+        vm.onBargeInDetected()
+        runCurrent()
+        advanceTimeBy(650)
+        runCurrent()
+
+        assertEquals(VoiceState.Error, vm.uiState.value.state)
+        assertTrue(vm.drainTtsQueueForTest().isEmpty())
+    }
+
     // -------------------------------------------------------------------
     // Test 4 — resumeAfterInterruption=false → silence still no re-enqueue
     // -------------------------------------------------------------------

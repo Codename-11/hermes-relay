@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Android wake-word detection now loads a compatible native ONNX Runtime.** Packaged sherpa and Java JNI consumers are checked against the shared runtime for every supported ABI before release.
 - **Android Continuous voice waits for barge-in microphone teardown before listening again.** Multi-turn hands-free conversations no longer lose the microphone after a response finishes with barge-in enabled. (#464)
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+- **Android Voice Focus keeps Stop and immediate spoken steering available across every interaction mode.** Hold-to-talk now interrupts Thinking and Transcribing turns before capturing the replacement direction, remains operable through TalkBack, Switch Access, and keyboard controls, preserves pointer press-and-release behavior across floating controls, and Google Play no longer offers the sideload-only system overlay action.
 
 ### Removed
 

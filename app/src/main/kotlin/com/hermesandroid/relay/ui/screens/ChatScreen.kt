@@ -169,6 +169,7 @@ import com.hermesandroid.relay.util.AttachmentTooLargeException
 import com.hermesandroid.relay.util.readBase64Bounded
 import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.LARGE_PASTE_THRESHOLD_CHARS
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
 import com.hermesandroid.relay.data.largePasteAttachment
@@ -1559,8 +1560,11 @@ fun ChatScreen(
         voiceOutputConfig?.enabled
     }
 
+    val voiceSystemOverlayAvailable = BuildFlavor.isSideload
     val showVoiceSystemOverlay: () -> Unit = {
-        if (assistantSessionActive) {
+        if (!voiceSystemOverlayAvailable) {
+            pendingVoiceOverlayPermission = false
+        } else if (assistantSessionActive) {
             voiceOverlayHost.hide()
         } else if (!voiceOverlayHost.hasOverlayPermission()) {
             pendingVoiceOverlayPermission = true
@@ -4656,6 +4660,7 @@ fun ChatScreen(
                             setVoicePresentationMode(VoicePresentationMode.Focus)
                         },
                         onOverlayRequest = showVoiceSystemOverlay,
+                        systemOverlayAvailable = voiceSystemOverlayAvailable,
                         onOpenSettings = onNavigateToVoiceSettings,
                         onExit = { voiceViewModel.exitVoiceMode() },
                     )
@@ -4812,6 +4817,7 @@ fun ChatScreen(
                 presentationMode = effectiveVoicePresentationMode,
                 onPresentationModeChange = setVoicePresentationMode,
                 onOverlayRequest = showVoiceSystemOverlay,
+                systemOverlayAvailable = voiceSystemOverlayAvailable,
                 // Gear button in the overlay's expanded controls. The overlay
                 // exits voice mode before invoking this, so navigation lands
                 // on Voice Settings with no overlay left on top.
