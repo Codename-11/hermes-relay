@@ -77,6 +77,15 @@ class ConnectionWizardDispatchPolicyTest {
                 url = "wss://agent.example.com/hermes/api/plugins/hermes-relay/transport",
                 code = "ABC123",
             ),
+            endpoints = listOf(
+                EndpointCandidate(
+                    role = "public",
+                    dashboard = DashboardEndpoint("https://agent.example.com/hermes"),
+                    relay = RelayEndpoint(
+                        "wss://agent.example.com/hermes/api/plugins/hermes-relay/transport",
+                    ),
+                ),
+            ),
         )
 
         assertEquals(SetupQrDispatch.Relay, setupQrDispatch(payload))
@@ -84,6 +93,84 @@ class ConnectionWizardDispatchPolicyTest {
             RelayPairStartOrder.DashboardSignInFirst,
             relayPairStartOrder(payload),
         )
+    }
+
+    @Test
+    fun dashboardIngressUsesSelectedPublicCandidateRatherThanLegacyTopLevelRoute() {
+        val grants = mapOf("terminal" to 3_600L)
+        val endpoints = listOf(
+            EndpointCandidate(
+                role = "tailscale",
+                priority = 0,
+                dashboard = DashboardEndpoint("http://100.71.8.56:9119"),
+                relay = RelayEndpoint(
+                    "ws://100.71.8.56:9119/api/plugins/hermes-relay/transport",
+                    transportHint = "ws",
+                ),
+            ),
+            EndpointCandidate(
+                role = "public",
+                priority = 1,
+                dashboard = DashboardEndpoint("https://hermes.example.com"),
+                relay = RelayEndpoint(
+                    "wss://hermes.example.com/api/plugins/hermes-relay/transport",
+                    transportHint = "wss",
+                ),
+            ),
+        )
+        val payload = HermesPairingPayload(
+            hermes = 3,
+            dashboardUrl = "https://hermes.example.com/",
+            relay = RelayPairing(
+                url = "ws://100.71.8.56:8767",
+                code = "ONE-TIME",
+                ttlSeconds = 86_400L,
+                grants = grants,
+                transportHint = "ws",
+            ),
+            endpoints = endpoints,
+        )
+
+        val resolved = resolvedDashboardIngressPairingPayload(payload)
+
+        assertEquals(RelayPairStartOrder.DashboardSignInFirst, relayPairStartOrder(payload))
+        assertEquals(
+            "wss://hermes.example.com/api/plugins/hermes-relay/transport",
+            resolved?.relay?.url,
+        )
+        assertEquals("wss", resolved?.relay?.transportHint)
+        assertEquals("ONE-TIME", resolved?.relay?.code)
+        assertEquals(86_400L, resolved?.relay?.ttlSeconds)
+        assertEquals(grants, resolved?.relay?.grants)
+        assertEquals(endpoints, resolved?.endpoints)
+    }
+
+    @Test
+    fun dashboardIngressFailsClosedWithoutExactDashboardCandidate() {
+        val payload = HermesPairingPayload(
+            dashboardUrl = "https://hermes.example.com",
+            relay = RelayPairing(
+                url = "ws://100.71.8.56:8767",
+                code = "ONE-TIME",
+            ),
+            endpoints = listOf(
+                EndpointCandidate(
+                    role = "tailscale",
+                    priority = 0,
+                    dashboard = DashboardEndpoint("http://100.71.8.56:9119"),
+                    relay = RelayEndpoint(
+                        "ws://100.71.8.56:9119/api/plugins/hermes-relay/transport",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(null, resolvedDashboardIngressPairingPayload(payload))
+        assertEquals(
+            RelayPairStartOrder.InvalidDashboardIngress,
+            relayPairStartOrder(payload),
+        )
+        assertFalse(shouldOfferDashboardSignInAfterRelayPair(payload))
     }
 
     @Test

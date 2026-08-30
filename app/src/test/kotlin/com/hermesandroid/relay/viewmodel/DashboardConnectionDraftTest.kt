@@ -6,6 +6,7 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.ui.components.HermesPairingPayload
 import com.hermesandroid.relay.ui.components.RelayPairing
+import com.hermesandroid.relay.ui.components.resolvedDashboardIngressPairingPayload
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -131,6 +132,55 @@ class DashboardConnectionDraftTest {
         assertEquals("https://hermes.example.com", materialized.dashboardUrl)
         assertEquals(payload.relay?.url, materialized.relayUrl)
         assertEquals(listOf("https"), materialized.routeCandidates.map { it.role })
+        assertFalse(materialized.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun `deferred public ingress keeps complete route topology and matching relay`() {
+        val current = Connection(
+            id = "onboarding",
+            label = ConnectionViewModel.PLACEHOLDER_LABEL,
+            apiServerUrl = "",
+            relayUrl = "",
+            tokenStoreKey = Connection.buildTokenStoreKey("onboarding"),
+        )
+        val endpoints = listOf(
+            EndpointCandidate(
+                role = "tailscale",
+                priority = 0,
+                dashboard = DashboardEndpoint("http://100.71.8.56:9119"),
+                relay = RelayEndpoint(
+                    "ws://100.71.8.56:9119/api/plugins/hermes-relay/transport",
+                ),
+            ),
+            EndpointCandidate(
+                role = "public",
+                priority = 1,
+                dashboard = DashboardEndpoint("https://hermes.example.com"),
+                relay = RelayEndpoint(
+                    "wss://hermes.example.com/api/plugins/hermes-relay/transport",
+                    "wss",
+                ),
+            ),
+        )
+        val payload = HermesPairingPayload(
+            dashboardUrl = "https://hermes.example.com",
+            relay = RelayPairing(
+                url = "ws://100.71.8.56:8767",
+                code = "SECRET",
+            ),
+            endpoints = endpoints,
+        )
+        val resolved = requireNotNull(resolvedDashboardIngressPairingPayload(payload))
+
+        val materialized = connectionWithDeferredDashboardRelayTopology(current, resolved)
+
+        assertEquals(
+            "wss://hermes.example.com/api/plugins/hermes-relay/transport",
+            materialized.relayUrl,
+        )
+        assertEquals(listOf("tailscale", "public"), materialized.routeCandidates.map { it.role })
+        assertEquals(listOf(0, 1), materialized.routeCandidates.map { it.priority })
         assertFalse(materialized.toString().contains("SECRET"))
     }
 }

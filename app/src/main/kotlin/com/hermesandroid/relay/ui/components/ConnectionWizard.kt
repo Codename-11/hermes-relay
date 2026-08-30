@@ -909,6 +909,14 @@ fun ConnectionWizard(
                                             )
                                         } else if (
                                             relayPairStartOrder(reorderedPayload) ==
+                                            RelayPairStartOrder.InvalidDashboardIngress
+                                        ) {
+                                            pairSubmissionStage = PairSubmissionStage.Idle
+                                            pairSubmissionError = context.getString(
+                                                R.string.cw_pairing_did_not_complete,
+                                            )
+                                        } else if (
+                                            relayPairStartOrder(reorderedPayload) ==
                                             RelayPairStartOrder.DashboardSignInFirst
                                         ) {
                                             if (onManageSignIn != null) {
@@ -1404,18 +1412,53 @@ internal fun setupQrDispatch(payload: HermesPairingPayload): SetupQrDispatch = w
     else -> SetupQrDispatch.StandardApi
 }
 
-internal enum class RelayPairStartOrder { DashboardSignInFirst, PairFirst }
+internal enum class RelayPairStartOrder {
+    DashboardSignInFirst,
+    PairFirst,
+    InvalidDashboardIngress,
+}
+
+/**
+ * Bind one-time Relay credentials to the ingress route owned by the selected
+ * Dashboard origin. Endpoint topology supplies URL/transport identity; the
+ * top-level Relay block supplies only the one-time secret and grant policy.
+ */
+internal fun resolvedDashboardIngressPairingPayload(
+    payload: HermesPairingPayload,
+): HermesPairingPayload? {
+    val dashboardUrl = payload.dashboardUrl?.trim()?.takeIf(String::isNotBlank)
+        ?: return null
+    val credentials = payload.relay ?: return null
+    val matchingCandidates = payload.endpoints.orEmpty().filter { candidate ->
+        val candidateDashboardUrl = candidate.dashboard?.url ?: return@filter false
+        val candidateRelay = candidate.relay ?: return@filter false
+        sameGatewayRouteBase(dashboardUrl, candidateDashboardUrl) &&
+            isDashboardRelayIngressUrl(candidateRelay.url)
+    }
+    val matchingRelay = matchingCandidates.singleOrNull()?.relay ?: return null
+    return payload.copy(
+        relay = RelayPairing(
+            url = matchingRelay.url,
+            code = credentials.code,
+            ttlSeconds = credentials.ttlSeconds,
+            grants = credentials.grants,
+            transportHint = matchingRelay.transportHint,
+        ),
+    )
+}
 
 /** Dashboard ingress needs Dashboard admission before its Relay socket can open. */
-internal fun relayPairStartOrder(payload: HermesPairingPayload): RelayPairStartOrder =
-    if (
-        !payload.dashboardUrl.isNullOrBlank() &&
-        isDashboardRelayIngressUrl(payload.relay?.url)
-    ) {
+internal fun relayPairStartOrder(payload: HermesPairingPayload): RelayPairStartOrder {
+    if (payload.dashboardUrl.isNullOrBlank()) return RelayPairStartOrder.PairFirst
+    val carriesDashboardIngress = isDashboardRelayIngressUrl(payload.relay?.url) ||
+        payload.endpoints.orEmpty().any { isDashboardRelayIngressUrl(it.relay?.url) }
+    if (!carriesDashboardIngress) return RelayPairStartOrder.PairFirst
+    return if (resolvedDashboardIngressPairingPayload(payload) != null) {
         RelayPairStartOrder.DashboardSignInFirst
     } else {
-        RelayPairStartOrder.PairFirst
+        RelayPairStartOrder.InvalidDashboardIngress
     }
+}
 
 /** Direct Relay can pair first, but a composite setup still completes Dashboard auth next. */
 internal fun shouldOfferDashboardSignInAfterRelayPair(payload: HermesPairingPayload): Boolean =

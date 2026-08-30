@@ -23,6 +23,7 @@ import com.hermesandroid.relay.ui.components.avatar.PetLoader
 import com.hermesandroid.relay.ui.components.avatar.SphereAvatar
 import com.hermesandroid.relay.ui.components.SphereSkinImportResult
 import com.hermesandroid.relay.ui.components.SphereSkinImporter
+import com.hermesandroid.relay.ui.components.resolvedDashboardIngressPairingPayload
 import com.hermesandroid.relay.ui.components.pet.PetLogicalEdge
 import com.hermesandroid.relay.ui.components.pet.PetPlacement
 import com.hermesandroid.relay.auth.PairedDeviceInfo
@@ -5845,12 +5846,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         payload: com.hermesandroid.relay.ui.components.HermesPairingPayload,
         ttlSeconds: Long,
     ) {
-        val relay = payload.relay
+        val resolvedPayload = resolvedDashboardIngressPairingPayload(payload)
+            ?: throw IllegalArgumentException(
+                "No Relay ingress route matches the supplied Dashboard origin",
+            )
+        val relay = resolvedPayload.relay
             ?: throw IllegalArgumentException("Dashboard ingress pairing has no Relay block")
         if (relay.code.isBlank()) {
             throw IllegalArgumentException("Dashboard ingress pairing code is empty")
         }
-        if (dashboardOriginForRelayIngress(payload.dashboardUrl, relay.url) == null) {
+        if (dashboardOriginForRelayIngress(resolvedPayload.dashboardUrl, relay.url) == null) {
             throw IllegalArgumentException("Relay route does not belong to the supplied Dashboard origin")
         }
 
@@ -5869,9 +5874,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // Preserve the complete non-secret route topology through the
                 // draft commit. The one-time code remains only in the deferred
                 // in-memory record below and is not handed to AuthManager yet.
-                draft.pairingPayload = payload
+                draft.pairingPayload = resolvedPayload
             } else if (ownerConnection != null) {
-                val next = connectionWithDeferredDashboardRelayTopology(ownerConnection, payload)
+                val next = connectionWithDeferredDashboardRelayTopology(ownerConnection, resolvedPayload)
                 connectionStore.updateConnection(next)
                 if (dashboardCredentialsMustBeRetired(ownerConnection, next)) {
                     upstreamTransport.clearDashboardAuthentication(ownerId)
@@ -5879,7 +5884,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             DeferredDashboardRelayPairing(
                 connectionId = ownerId,
-                payload = payload,
+                payload = resolvedPayload,
                 ttlSeconds = ttlSeconds,
                 preserveStandardConfig = shouldPreserveStandardConfigForDeferredPairing(
                     pendingDraftId = draft?.id,
