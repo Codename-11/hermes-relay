@@ -6,10 +6,10 @@ inspection, and remote-access setup. The build output (`dist/index.js`) is
 **committed to git** because the dashboard `<script src=...>` loads it verbatim
 — operators never run the build.
 
-The header's **Connect mobile app** action is intentionally independent of the
-Relay service. It renders a tokenless setup QR containing only
+The **Connect mobile app** action on Overview and Devices is intentionally
+independent of the Hermes-Relay service. It renders a tokenless setup QR containing only
 `{"dashboard_url":"<canonical dashboard base>"}` so Android can add and verify the
-standard Dashboard/Gateway connection. Relay pairing remains a separate,
+standard Dashboard/Gateway connection. Hermes-Relay pairing remains a separate,
 explicit **Pair new device** flow.
 
 ## Requirements
@@ -63,7 +63,7 @@ All runtime dependencies come from two globals the dashboard shell injects:
 |--------|----------|
 | `window.__HERMES_PLUGIN_SDK__.React` | React namespace (we never bundle React) |
 | `window.__HERMES_PLUGIN_SDK__.hooks` | `useState`, `useEffect`, `useCallback`, `useMemo` |
-| `window.__HERMES_PLUGIN_SDK__.components` | shadcn primitives — `Tabs*`, `Card*`, `Table*`, `Button`, `Badge`, `Alert*`, `Switch`, `Label` |
+| `window.__HERMES_PLUGIN_SDK__.components` | Nous primitives — `Tabs*`, `Dialog*`, `Card*`, `Button`, `Badge`, `ConfirmDialog`, `Input`, `Label`, `Toast` |
 | `window.__HERMES_PLUGIN_SDK__.fetchJSON` | Session-token-authenticated JSON fetch |
 | `window.__HERMES_PLUGINS__.register(name, Component)` | Registration hook |
 
@@ -94,7 +94,7 @@ where scan/read correctness requires them.
 
 All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 
-- `GET /overview` — relay version, uptime, counters
+- `GET /overview` — Hermes-Relay version, uptime, health, and compatibility counters
 - `GET /sessions` — paired device list
 - `GET /bridge-activity?limit=N` — ring buffer of recent bridge commands
 - `GET /media?include_expired=true|false` — MediaRegistry snapshot
@@ -111,20 +111,23 @@ All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 
 A representative set when showcasing the plugin:
 
-- Management tab with paired Android and desktop sessions
-- Pairing dialog with QR code and endpoint controls
-- Bridge Activity command stream
-- Media Inspector token list
+- Overview with service status, route summary, and recent Bridge activity
+- Devices with standard Dashboard setup and paired Hermes-Relay clients
+- Pairing dialog with QR-first layout and endpoint controls
+- Activity with Bridge command stream and Media tokens diagnostic view
 - Remote Access endpoint setup and probe results
+- Settings with Home Channel, Agent Context, and maintenance categories
 
-## Auto-refresh cadence
+## Live refresh cadence
 
 | Tab | Poll interval | Notes |
 |-----|---------------|-------|
-| Management | 10s | `/overview` + `/sessions` |
-| Activity | 5s | `/bridge-activity` |
-| Media | 15s | `/media`; TTL countdown ticks every 1s independently |
+| Overview | 10s | `/overview`, `/sessions`, `/bridge-activity`, and remote-access status load independently |
+| Devices | 10s | `/sessions` |
+| Activity → Bridge activity | 5s | `/bridge-activity` |
+| Activity → Media tokens | 15s | `/media`; TTL countdown ticks every 1s independently |
 | Remote Access | 15s | `/remote-access/status`; endpoint probes run on demand |
+| Settings | 15s | Home Channel and Agent Context refresh independently |
 
 Toggle persists to `localStorage['hermes-relay-autorefresh']` (default: on).
 When off, each tab surfaces a manual "Refresh" button.
@@ -132,8 +135,8 @@ When off, each tab surfaces a manual "Refresh" button.
 ## Notes
 
 - Session revocation calls the dashboard backend's
-  `DELETE /sessions/{token_prefix}` proxy route and asks for operator
-  confirmation before sending the destructive request.
+  `DELETE /sessions/{token_prefix}` proxy route through the host
+  `ConfirmDialog` before sending the destructive request.
 - Every tab handles loading / empty / error states. The error state shows the
   backend's 502 detail verbatim so "relay unreachable" is debuggable without
   opening devtools.

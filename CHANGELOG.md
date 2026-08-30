@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Hermes-Relay Dashboard management is organized around operator tasks.** Overview, Devices, Activity, Remote Access, Git, and Settings now have separate native Dashboard surfaces; pairing is QR-first, paired clients use responsive cards, and token-backed media is labeled as a bounded diagnostic instead of a health counter.
 - **Android What's New leads with one curated release highlight without interrupting startup.** A timed post-update toast can be swiped or closed, previews additional feature/fix counts when a release has meaningful secondary items, expands into the centered highlight view on request, and keeps the full technical history available. Each release can present one plain-language summary, up to three primary benefits, and up to two quieter improvements, while release checks keep the structured entry, fallback, Play copy, and public release records aligned.
 
 ### Fixed

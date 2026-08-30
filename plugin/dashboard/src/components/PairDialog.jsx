@@ -6,7 +6,16 @@ import QRCode from "qrcode";
 import { mintPairingWithMode } from "../lib/api.js";
 import { Button, Badge } from "../lib/ui-shims.jsx";
 
-const { Input, Label } = SDK.components;
+const {
+  Input,
+  Label,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} = SDK.components;
 
 // localStorage keys — per-browser, not per-user. Sensible defaults on first
 // open; stick with whatever the operator last used.
@@ -176,7 +185,15 @@ export default function PairDialog({ open, onClose }) {
     }).catch(() => { /* canvas failure non-fatal */ });
   }, [state.status, state.data]);
 
-  const updateSetting = useCallback((patch) => {
+  useEffect(() => {
+    if (open) return;
+    setState({ status: "idle" });
+    setCopyStatus("");
+    setAdvancedOpen(false);
+    setProxyConfirmed(false);
+  }, [open]);
+
+  const updateSetting = useCallback((patch, remint = true) => {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
       saveSettings(next);
@@ -189,7 +206,7 @@ export default function PairDialog({ open, onClose }) {
     }
     // Re-mint with the new settings. Debouncing isn't worth it — the
     // dropdowns only fire on user action, not typing.
-    setState({ status: "idle" });
+    if (remint) setState({ status: "idle" });
   }, []);
 
   const regenerate = useCallback(() => {
@@ -224,236 +241,205 @@ export default function PairDialog({ open, onClose }) {
   const blockForProxyConsent = hostLooksProxyFronted && !proxyConfirmed;
 
   return (
-    <div
-      className="hermes-relay-plugin hr-modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="hr-pair-dialog-title"
-    >
-      <div className="hr-modal-card">
-        <div className="hr-modal-header">
-          <div>
-            <h2 id="hr-pair-dialog-title" className="hr-modal-title">Pair new device</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Scan with Hermes-Relay Android, or copy the invite for Desktop CLI.
-            </p>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="hermes-relay-plugin hr-pair-dialog">
+        <DialogHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            <DialogTitle>Pair new device</DialogTitle>
+            <Badge variant="outline" className="text-xs">Hermes-Relay Plugin</Badge>
           </div>
-          <Button variant="ghost" size="sm" className="hr-modal-close" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-        <div className="hr-modal-body space-y-3">
-          {/* Mode + prefer controls — always visible, these are the
-              primary inputs now. Multi-endpoint candidates get derived
-              server-side from Tailscale + pinned Public URL. */}
-          <div className="space-y-2">
-            <div className="space-y-1">
-              <Label htmlFor="pair-mode">Mode</Label>
-              <select
-                id="pair-mode"
-                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-                value={settings.mode}
-                onChange={(e) => updateSetting({ mode: e.target.value })}
-              >
-                {MODES.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
+          <DialogDescription>
+            Scan with Hermes-Relay Android or copy the invite for Desktop CLI.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="hr-pair-body">
+          <section className="hr-pair-qr-column" aria-label="Hermes-Relay pairing code">
+            {blockForProxyConsent ? (
+              <div className="rounded-md border border-amber-500/60 bg-amber-500/15 p-3 text-sm space-y-2">
+                <div className="font-medium">Proxy-fronted host detected</div>
+                <p className="text-xs">
+                  <span className="font-mono">{settings.host}</span> appears to require browser
+                  authentication that Hermes-Relay Android cannot present to the API route.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={confirmProxyAndMint}>Mint anyway</Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => updateSetting({ host: "", port: 8642, tls: false })}
+                  >
+                    Clear override
+                  </Button>
+                </div>
+              </div>
+            ) : state.status === "loading" ? (
+              <div className="hr-pair-loading text-sm text-muted-foreground">Minting a secure code…</div>
+            ) : state.status === "error" ? (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                <div className="font-medium mb-1">Minting failed</div>
+                <div className="break-words">{state.error}</div>
+                <Button className="mt-2" size="sm" variant="outline" onClick={regenerate}>Retry</Button>
+              </div>
+            ) : state.status === "ok" ? (
+              <>
+                <div className="hr-qr-frame">
+                  <canvas ref={canvasRef} className="block" aria-label="Hermes-Relay pairing QR code" />
+                </div>
+                <div className="hr-pair-code-row">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Pairing code</div>
+                    <div className="font-mono text-2xl tracking-widest">{state.data.code}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">Expires in</div>
+                    <Badge variant={countdown === "expired" ? "destructive" : "outline"}>
+                      {countdown || "—"}
+                    </Badge>
+                  </div>
+                </div>
+                {state.data.pairing_url ? (
+                  <div className="space-y-2">
+                    <Button className="w-full" size="sm" variant="outline" onClick={copyInvite}>
+                      Copy invite
+                    </Button>
+                    {copyStatus ? <div className="text-center text-xs text-muted-foreground">{copyStatus}</div> : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </section>
+
+          <section className="hr-pair-options-column">
+            <div className="hr-pair-panel">
+              <div className="hr-pair-panel-title">What this adds</div>
+              <div className="hr-grant-list">
+                {['Terminal', 'Bridge', 'Media', 'Voice'].map((label) => (
+                  <Badge key={label} variant="outline" className="text-xs">{label}</Badge>
                 ))}
-              </select>
+              </div>
               <p className="text-xs text-muted-foreground">
-                <strong>Auto</strong> embeds every reachable endpoint so the phone
-                switches as networks change. Configure Tailscale + Public URL on
-                the <em>Remote Access</em> tab.
+                Extends an existing Hermes Dashboard connection with Hermes-Relay capabilities.
               </p>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="pair-prefer">Prefer role</Label>
-              <select
-                id="pair-prefer"
-                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-                value={settings.prefer}
-                onChange={(e) => updateSetting({ prefer: e.target.value })}
-              >
-                {PREFER_ROLES.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
 
-          {blockForProxyConsent && (
-            <div className="rounded-md border border-amber-500/60 bg-amber-500/15 p-3 text-sm space-y-2">
-              <div className="font-medium">Proxy-fronted host detected — confirm before minting</div>
-              <div className="text-xs">
-                <span className="font-mono">{settings.host}</span> looks like a reverse-proxy
-                or forward-auth gateway (Authelia, Cloudflare Access, Traefik, …). The relay
-                WSS will pair fine, but the phone's API calls will likely return 401/403
-                because it has no way to present the gateway's session cookie. Result: the
-                paired device shows up in Management but the app silently drops the config.
-              </div>
-              <div className="text-xs">
-                Prefer: leave this field blank (use <code className="font-mono">mode=auto</code>)
-                or switch to a non-gated endpoint (Tailscale Serve / direct LAN). See
-                <em>docs/remote-access.md</em> &rarr; &ldquo;Forward-auth gateways&rdquo;.
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" onClick={confirmProxyAndMint}>
-                  Mint anyway
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => updateSetting({ host: "", port: 8642, tls: false })}
-                >
-                  Clear override
-                </Button>
-              </div>
-            </div>
-          )}
-          {!blockForProxyConsent && state.status === "loading" && (
-            <div className="text-sm text-muted-foreground">Minting code…</div>
-          )}
-          {!blockForProxyConsent && state.status === "error" && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-              <div className="font-medium mb-1">Minting failed</div>
-              <div className="break-words">{state.error}</div>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="outline" onClick={regenerate}>Retry</Button>
-              </div>
-            </div>
-          )}
-          {!blockForProxyConsent && state.status === "ok" && (
-            <>
-              <div className="hr-qr-frame">
-                <canvas ref={canvasRef} className="block" />
-              </div>
-              <div className="flex items-center justify-between gap-2">
+            <div className="hr-pair-panel">
+              <div className="hr-pair-connection-header">
                 <div>
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Code</div>
-                  <div className="font-mono text-2xl tracking-widest">{state.data.code}</div>
+                  <div className="hr-pair-panel-title">Connection</div>
+                  <div className="text-xs text-muted-foreground">Best available route</div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Expires in</div>
-                  <Badge variant={countdown === "expired" ? "destructive" : "outline"}>
-                    {countdown || "—"}
-                  </Badge>
-                </div>
+                <select
+                  id="pair-mode"
+                  aria-label="Connection mode"
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  value={settings.mode}
+                  onChange={(event) => updateSetting({ mode: event.target.value })}
+                >
+                  {MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>{mode.label}</option>
+                  ))}
+                </select>
               </div>
-              {state.data.pairing_url ? (
-                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-2">
-                  <div className="uppercase tracking-wider text-muted-foreground">
-                    Copy/paste invite
-                  </div>
-                  <div className="font-mono break-all">{state.data.pairing_url}</div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={copyInvite}>
-                      Copy invite URL
-                    </Button>
-                    {copyStatus ? (
-                      <span className="text-muted-foreground">{copyStatus}</span>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-              {/* Compact endpoint receipt — full preview + probes live on
-                  the Remote Access tab. */}
               {endpoints && endpoints.length > 0 ? (
-                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-1">
-                  <div className="uppercase tracking-wider text-muted-foreground">
-                    Endpoints in this QR ({endpoints.length})
-                  </div>
-                  {endpoints.map((ep) => (
-                    <div key={`${ep.role}-${ep.priority}`} className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs capitalize">{ep.role}</Badge>
-                      <span className="font-mono">
-                        {ep.api.host}{ep.api.port ? `:${ep.api.port}` : ""}
+                <div className="hr-endpoint-list">
+                  {endpoints.map((endpoint) => (
+                    <div key={`${endpoint.role}-${endpoint.priority}`} className="hr-endpoint-row">
+                      <Badge variant="outline" className="text-xs capitalize">{endpoint.role}</Badge>
+                      <span className="font-mono text-xs hr-endpoint-address">
+                        {endpoint.api.host}{endpoint.api.port ? `:${endpoint.api.port}` : ""}
                       </span>
-                      <span className="text-muted-foreground ml-auto">p{ep.priority}</span>
+                      <span className="text-xs text-muted-foreground">p{endpoint.priority}</span>
                     </div>
                   ))}
                 </div>
-              ) : null}
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" variant="outline" onClick={regenerate}>
-                  New code
-                </Button>
-                <Button size="sm" onClick={onClose}>Done</Button>
-              </div>
-            </>
-          )}
+              ) : (
+                <div className="text-xs text-muted-foreground">Automatic route selection will use server configuration.</div>
+              )}
+            </div>
 
-          {/* Advanced — API server override. Most operators never need
-              this; it's kept for edge cases. Warn when the host looks
-              proxy-fronted (Authelia etc.) because the phone has no way
-              to present that auth material. */}
-          <div className="border-t border-border pt-3">
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {advancedOpen ? "▾ Hide advanced" : "▸ Advanced · API-server override"}
-            </button>
-            {advancedOpen && (
-              <div className="mt-3 space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Override the API-server host embedded in the QR (defaults to the
-                  relay's configured API host). Relay URL is auto-derived server-side —
-                  edit Tailscale / Public URL on the <em>Remote Access</em> tab instead.
-                </p>
-                {proxyWarning ? (
-                  <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-xs">
-                    <strong>Heads-up:</strong> <span className="font-mono">{settings.host}</span> looks
-                    like a reverse-proxy / forward-auth host. If it's fronted by
-                    Authelia, Cloudflare Access, or similar, the phone will fail
-                    to authenticate against the API even though the relay WSS
-                    pairs fine. Leave this blank and let <code className="font-mono">mode=auto</code> pick.
-                  </div>
-                ) : null}
-                <div className="space-y-1">
-                  <Label htmlFor="pair-host">API host (optional)</Label>
-                  <Input
-                    id="pair-host"
-                    value={settings.host}
-                    placeholder="leave blank to use server config"
-                    onChange={(e) => updateSetting({ host: e.target.value })}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+            <details className="hr-pair-advanced" open={advancedOpen}>
+              <summary onClick={(event) => { event.preventDefault(); setAdvancedOpen((value) => !value); }}>
+                Advanced connection options
+              </summary>
+              {advancedOpen ? (
+                <div className="hr-pair-advanced-content space-y-3">
                   <div className="space-y-1">
-                    <Label htmlFor="pair-port">API port</Label>
+                    <Label htmlFor="pair-prefer">Prefer role</Label>
+                    <select
+                      id="pair-prefer"
+                      className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                      value={settings.prefer}
+                      onChange={(event) => updateSetting({ prefer: event.target.value })}
+                    >
+                      {PREFER_ROLES.map((role) => (
+                        <option key={role.value} value={role.value}>{role.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="pair-host">API host override</Label>
                     <Input
-                      id="pair-port"
-                      type="number"
-                      min="1"
-                      max="65535"
-                      value={settings.port}
-                      onChange={(e) => updateSetting({ port: parseInt(e.target.value, 10) || 8642 })}
+                      id="pair-host"
+                      value={settings.host}
+                      placeholder="Use server configuration"
+                      onChange={(event) => updateSetting({ host: event.target.value }, false)}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="pair-tls">Scheme</Label>
-                    <div className="flex items-center gap-2 pt-1">
-                      <input
-                        id="pair-tls"
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={!!settings.tls}
-                        onChange={(e) => updateSetting({ tls: e.target.checked })}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="pair-port">API port</Label>
+                      <Input
+                        id="pair-port"
+                        type="number"
+                        min="1"
+                        max="65535"
+                        value={settings.port}
+                        onChange={(event) => updateSetting({ port: parseInt(event.target.value, 10) || 8642 }, false)}
                       />
-                      <Label htmlFor="pair-tls" className="text-sm font-normal">
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="pair-tls">Scheme</Label>
+                      <label className="hr-pair-checkbox text-sm" htmlFor="pair-tls">
+                        <input
+                          id="pair-tls"
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={!!settings.tls}
+                          onChange={(event) => updateSetting({ tls: event.target.checked }, false)}
+                        />
                         https://
-                      </Label>
+                      </label>
                     </div>
                   </div>
+                  {proxyWarning ? (
+                    <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-xs">
+                      This host appears proxy-fronted and may reject API requests from Hermes-Relay Android.
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={regenerate}>Apply and mint</Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => updateSetting({ host: "", port: 8642, tls: false })}
+                    >
+                      Clear override
+                    </Button>
+                  </div>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => updateSetting({ host: "", port: 8642, tls: false })}>
-                  Clear override
-                </Button>
-              </div>
-            )}
-          </div>
+              ) : null}
+            </details>
+          </section>
         </div>
-      </div>
-    </div>
+
+        <DialogFooter>
+          <Button size="sm" variant="outline" onClick={regenerate} disabled={state.status === "loading"}>
+            New code
+          </Button>
+          <Button size="sm" onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

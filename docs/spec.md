@@ -1225,16 +1225,18 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 
 ### 10.1 Dashboard plugin
 
-Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces relay-specific state in the gateway's web UI. The plugin subtree at `plugin/dashboard/` is discovered when `~/.hermes/plugins/hermes-relay` points at `<repo>/plugin` or when the upstream plugin manager installs `Codename-11/hermes-relay/plugin`. The gateway scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup. Manifest fields (`name: "hermes-relay"`, `label: "Relay"`, `icon: "Activity"`, `tab.path: "/relay"`, `tab.position: "after:skills"`) place the tab after Skills in the dashboard nav.
+Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces Hermes-Relay-specific state in the gateway's web UI. The plugin subtree at `plugin/dashboard/` is discovered when `~/.hermes/plugins/hermes-relay` points at `<repo>/plugin` or when the upstream plugin manager installs `Codename-11/hermes-relay/plugin`. The gateway scans `~/.hermes/plugins/<name>/dashboard/manifest.json` at startup. Manifest fields (`name: "hermes-relay"`, `label: "Hermes-Relay"`, `icon: "Activity"`, `tab.path: "/relay"`, `tab.position: "after:skills"`) place the tab after Skills in the dashboard nav.
 
-**Four internal tabs** render inside the single `/relay` route via a shadcn `Tabs` component:
+**Six internal tabs** render inside the single `/relay` route with the upstream Dashboard Tabs primitive:
 
 | Tab | Data source | What it shows |
 |-----|-------------|---------------|
-| **Relay Management** | `/api/plugins/hermes-relay/overview` + `/sessions` | Relay version + uptime + health, paired-device list (token prefix, device name, last-seen, expires-at, per-channel grants), per-row Revoke button (placeholder pending proxy route). |
-| **Bridge Activity** | `/api/plugins/hermes-relay/bridge-activity` | Ring buffer of the most recent 100 bridge commands (`method`, `path`, redacted `params`, `decision`, `sent_at`, `response_status`, `error`). Filter chips: All / Executed / Blocked / Confirmed / Timeout / Error. Polls every 5s; pausable via header Auto-refresh toggle (persisted to `localStorage`). |
-| **Push Console** | `/api/plugins/hermes-relay/push` | Stub — returns `{configured: false, reason: "FCM not yet wired; …"}`. Renders an FCM-not-configured banner + link to the deferred-items doc. Real data ships when FCM is wired. |
-| **Media Inspector** | `/api/plugins/hermes-relay/media` | Active `MediaRegistry` tokens (basename-only file name — absolute paths never leave the server — plus `content_type`, `size`, `created_at`, `expires_at`, `last_accessed`). TTL countdown decrements in real time (`setInterval(1000)`, cleaned up on unmount). Polls every 15s. |
+| **Overview** | `/overview`, `/sessions`, `/bridge-activity`, `/remote-access/status`, `/update-check` | Independently loaded service health, version, uptime, paired-device summary, primary remote route, latest Bridge activity, quick actions, and recent activity. Raw `pending_commands` and `media_entry_count` are not presented as health metrics. |
+| **Devices** | `/sessions`, `/pairing`, `DELETE /sessions/{prefix}` | Side-by-side standard Dashboard setup and Hermes-Relay pairing, followed by responsive paired-device cards with expiry, transport, grants, copy, and confirmed revocation. |
+| **Activity** | `/bridge-activity` + `/media` | Bridge activity and a nested **Media tokens** diagnostic view. Media tokens cover token-backed `MediaRegistry` entries only; bare-path delivery is explicitly outside this view. |
+| **Remote Access** | `/remote-access/*` | Tailscale, Secure Link, public URL, reachability probes, and endpoint-aware pairing previews. |
+| **Git** | `/git/*` | Opt-in repository state, diff, staging, commit, branch, and confirmed write operations. |
+| **Settings** | `/phone/config`, `/agent-context`, `/update-check` | Config-style General, Agent Context, and Maintenance categories, with independently scoped failures and host-native feedback. |
 
 **Three new loopback-gated relay routes** feed the plugin backend (plus a loopback-exempt branch on the existing `GET /sessions`). All are gated by a tiny `_require_loopback()` helper that rejects any `request.remote` other than `127.0.0.1` / `::1` with HTTP 403. Full wire-shape details in [`docs/relay-server.md`](relay-server.md#http-routes).
 
@@ -1247,7 +1249,7 @@ Hermes-Relay ships a hermes-agent Dashboard Plugin that surfaces relay-specific 
 
 **Auth model.** The dashboard plugin's FastAPI router mounts under `/api/plugins/hermes-relay/*` inside the gateway process (itself bound to localhost). It forwards to the relay at `http://127.0.0.1:{HERMES_RELAY_PORT}` (default 8767). Both hops are loopback-only — no bearer is minted and no new credentials are introduced. Media paths are sanitized to basename-only in `MediaRegistry.list_all()` so even a future decision to expose these routes externally wouldn't leak filesystem layout.
 
-**Frontend.** Source under `plugin/dashboard/src/` (JSX + esbuild), committed pre-built IIFE at `plugin/dashboard/dist/index.js` (~16 KB minified). Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + shadcn primitives + `fetchJSON()` — no external HTTP library, no bundled React. See ADR 19 in [`docs/decisions.md`](decisions.md) for the architectural rationale.
+**Frontend.** Source under `plugin/dashboard/src/` (JSX + esbuild), committed pre-built IIFE at `plugin/dashboard/dist/index.js` (about 110 KB minified). Uses the dashboard's `window.__HERMES_PLUGIN_SDK__` global for React + Nous primitives + `fetchJSON()` — no external HTTP library and no bundled React. See ADR 19 in [`docs/decisions.md`](decisions.md) for the architectural rationale.
 
 ### 10.2 Official Desktop plugin
 

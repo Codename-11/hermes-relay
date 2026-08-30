@@ -30,10 +30,10 @@ const POLL_MS = 15000;
 // (label, tone) for each derived state. Tone strings are the host Badge
 // contract; see web/node_modules/@nous-research/ui/.../badge.tsx.
 const STATES = {
-  loading: { label: "Relay · …", tone: "secondary" },
-  offline: { label: "Relay · offline", tone: "warning" },
-  unpaired: { label: "Relay · unpaired", tone: "secondary" },
-  connected: { label: "Relay · connected", tone: "success" },
+  loading: { label: "Hermes-Relay · …", tone: "secondary" },
+  offline: { label: "Hermes-Relay · offline", tone: "warning" },
+  unpaired: { label: "Hermes-Relay · unpaired", tone: "secondary" },
+  connected: { label: "Hermes-Relay · connected", tone: "success" },
 };
 
 function deriveState(overview) {
@@ -73,7 +73,7 @@ export default function RelayStatusSlot() {
     <Badge
       tone={tone}
       className="whitespace-nowrap text-xs"
-      title="hermes-relay status"
+      title="Hermes-Relay status"
     >
       {label}
     </Badge>

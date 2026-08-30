@@ -122,15 +122,19 @@ export const CardDescription = C.CardDescription || (({ children, className = ""
   <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>
 ));
 
-export const Switch = C.Switch || (({ checked, onCheckedChange, id, disabled }) => (
-  <input
+export const Switch = C.Switch || (({ checked, onCheckedChange, id, disabled, ...rest }) => (
+  <button
     id={id}
-    type="checkbox"
-    checked={!!checked}
+    type="button"
+    role="switch"
+    aria-checked={!!checked}
     disabled={!!disabled}
-    onChange={(e) => onCheckedChange && onCheckedChange(e.target.checked)}
-    className="h-4 w-4"
-  />
+    className={`hr-switch ${checked ? "checked" : ""}`}
+    onClick={() => onCheckedChange && onCheckedChange(!checked)}
+    {...rest}
+  >
+    <span className="hr-switch-thumb" aria-hidden="true" />
+  </button>
 ));
 
 export const Table = C.Table || (({ children, className = "" }) => (
