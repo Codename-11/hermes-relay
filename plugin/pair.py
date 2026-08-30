@@ -646,7 +646,8 @@ def build_pairing_invite_url(payload: str) -> str:
 
 _VALID_MODES = ("auto", "lan", "tailscale", "public")
 _DEFAULT_DASHBOARD_PORT = 9119
-_RECOMMENDED_DASHBOARD_LISTENER_PORT = 443
+_RECOMMENDED_DASHBOARD_LISTENER_PORT = 10443
+_LEGACY_DASHBOARD_LISTENER_PORT = 443
 
 
 def _lan_endpoint(
@@ -714,6 +715,14 @@ def _tailscale_status() -> Optional[dict[str, Any]]:
     return status
 
 
+def _recommended_tailscale_listener(status: Optional[dict[str, Any]]) -> int:
+    """Return the helper-owned recommended listener, with a safe new default."""
+    value = status.get("recommended_listener_port") if isinstance(status, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
+        return value
+    return _RECOMMENDED_DASHBOARD_LISTENER_PORT
+
+
 def _tailscale_endpoint(
     status: dict[str, Any],
     api_port: int,
@@ -755,6 +764,7 @@ def _tailscale_endpoint(
 
     serve_services = status.get("serve_services")
     serve_services_dict = serve_services if isinstance(serve_services, dict) else {}
+    recommended_listener = _recommended_tailscale_listener(status)
 
     def _service_listener(name: str, default_port: int) -> Optional[int]:
         service = serve_services_dict.get(name)
@@ -766,19 +776,33 @@ def _tailscale_endpoint(
             for port in (ports if isinstance(ports, list) else [])
             if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
         })
-        if name == "dashboard" and _RECOMMENDED_DASHBOARD_LISTENER_PORT in valid_ports:
-            return _RECOMMENDED_DASHBOARD_LISTENER_PORT
+        if name == "dashboard" and recommended_listener in valid_ports:
+            return recommended_listener
+        if name == "dashboard" and _LEGACY_DASHBOARD_LISTENER_PORT in valid_ports:
+            return _LEGACY_DASHBOARD_LISTENER_PORT
         if default_port in valid_ports:
             return default_port
         return valid_ports[0] if valid_ports else None
 
     dashboard_listener = _service_listener("dashboard", dashboard_port)
     api_listener = _service_listener("api", api_port)
+    if dashboard_listener is None and not serve_services_dict:
+        dashboard_listener = next(
+            (
+                port
+                for port in (
+                    recommended_listener,
+                    _LEGACY_DASHBOARD_LISTENER_PORT,
+                    dashboard_port,
+                )
+                if port in serve_ports
+            ),
+            None,
+        )
     # Compatibility with pre-classification helpers: only the well-known
     # Dashboard listener proves Dashboard Serve. Legacy Relay 8767 must not.
     dashboard_serve_tls = (
         dashboard_listener is not None
-        or (not serve_services_dict and dashboard_port in serve_ports)
     )
     if dashboard_serve_tls:
         if not hostname or not hostname.endswith(".ts.net"):
@@ -1138,13 +1162,14 @@ def build_endpoint_candidates(
     want_tailscale = mode in ("auto", "tailscale")
     want_public = mode in ("auto", "public")
     effective_public_url = public_url
+    tailscale_status: Optional[dict[str, Any]] = None
 
     if want_tailscale:
-        status = _tailscale_status()
-        if status is not None:
+        tailscale_status = _tailscale_status()
+        if tailscale_status is not None:
             _emit(
                 _tailscale_endpoint(
-                    status,
+                    tailscale_status,
                     api_port=api_port,
                     relay_port=relay_port,
                     api_tls=api_tls,
@@ -1171,16 +1196,21 @@ def build_endpoint_candidates(
             try:
                 from .relay import tailscale as _ts_helper  # type: ignore
 
-                detected = _ts_helper.funnel_url(
-                    port=_RECOMMENDED_DASHBOARD_LISTENER_PORT
-                )
-            except Exception:  # noqa: BLE001 — any failure = no funnel
-                detected = None
-            if not detected and _ts_helper is not None:
-                try:
-                    detected = _ts_helper.funnel_url(port=_DEFAULT_DASHBOARD_PORT)
-                except Exception:  # noqa: BLE001 — old Funnel probe is optional
-                    detected = None
+            except Exception:  # noqa: BLE001 — any failure = no helper
+                _ts_helper = None
+            if _ts_helper is not None:
+                probe_ports = dict.fromkeys((
+                    _recommended_tailscale_listener(tailscale_status),
+                    _LEGACY_DASHBOARD_LISTENER_PORT,
+                    _DEFAULT_DASHBOARD_PORT,
+                ))
+                for funnel_port in probe_ports:
+                    try:
+                        detected = _ts_helper.funnel_url(port=funnel_port)
+                    except Exception:  # noqa: BLE001 — each probe fails soft
+                        detected = None
+                    if detected:
+                        break
             if detected:
                 effective_public_url = detected
 
