@@ -3920,7 +3920,9 @@ class ChatViewModel : ViewModel() {
                 profileName = profileName,
             )
         }
-        if (requireProfileScope) return loadGatewaySessionHistory(sessionId, true, mode, profileName)
+        if (streamingEndpoint == "gateway" && requireProfileScope) {
+            return loadGatewaySessionHistory(sessionId, true, mode, profileName)
+        }
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
 
@@ -5207,6 +5209,7 @@ class ChatViewModel : ViewModel() {
         deferredGatewayPrewarm = null
         automaticGatewayPrewarmBlocked = false
         val client = gatewayClient ?: return
+        val handler = chatHandler ?: return
         viewModelScope.launch {
             if (
                 historyLoadGeneration.get() == pending.historyGeneration &&
@@ -5216,23 +5219,28 @@ class ChatViewModel : ViewModel() {
                 gatewayClient === client &&
                 streamingEndpoint == "gateway"
             ) {
-                client.prewarm(pending.sessionId)
+                // The Dashboard directory is the authoritative readiness
+                // barrier, but clearing it must not claim a runtime that may
+                // still belong to Desktop/TUI. Observe the exact stored
+                // session; an explicit Android action or owned checkpoint is
+                // responsible for session.activate/session.resume.
+                observeGatewaySession(client, handler, pending.sessionId)
             }
         }
         requestSessionActivityRefresh()
     }
 
     private fun automaticGatewayWorkDeferred(sessionId: String?): Boolean {
+        // The directory barrier exists only when this connection exposes a
+        // Dashboard-backed, profile-scoped session directory. Legacy/test
+        // Gateway bindings without that surface must retain socket readiness
+        // rather than waiting on a directory that can never report success.
+        if (streamingEndpoint != "gateway" || profileSessionLister == null) return false
         if (automaticGatewayPrewarmBlocked) return true
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
-        if (
-            streamingEndpoint == "gateway" &&
-            profileSessionLister != null
-        ) {
-            if (!conversationBinding.value.isBound) return true
-            if (lastSessionRefreshSuccessOwner != (contextKey to profileName)) return true
-        }
+        if (!conversationBinding.value.isBound) return true
+        if (lastSessionRefreshSuccessOwner != (contextKey to profileName)) return true
         if (sessionId == null) return false
         val pending = deferredGatewayPrewarm
         if (
@@ -5396,14 +5404,16 @@ class ChatViewModel : ViewModel() {
                             )
                             retryUnavailable = true
                             retryReadiness = retryReadiness || !e.isSessionReadTimeout()
-                            emitError(
-                                e,
-                                context = if (profileSessionLister != null) {
-                                    "load_profile_sessions"
-                                } else {
-                                    "load_sessions"
-                                },
-                            )
+                            if (!e.isDashboardSignInRequiredFailure()) {
+                                emitError(
+                                    e,
+                                    context = if (profileSessionLister != null) {
+                                        "load_profile_sessions"
+                                    } else {
+                                        "load_sessions"
+                                    },
+                                )
+                            }
                         }
                     }
                 } while (sessionRefreshPending && isCurrentRefresh())

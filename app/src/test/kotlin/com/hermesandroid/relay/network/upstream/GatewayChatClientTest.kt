@@ -850,7 +850,12 @@ class GatewayChatClientTest {
     ) {
         client.shutdown()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs, ticketTimeoutMs)
+        client = buildClient(
+            rpcTimeoutMs = rpcTimeoutMs,
+            promptSubmitTimeoutMs = promptSubmitTimeoutMs,
+            turnIdleTimeoutMs = turnIdleTimeoutMs,
+            ticketTimeoutMs = ticketTimeoutMs,
+        )
     }
 
     private fun waitUntil(timeoutMs: Long = 2_000L, condition: () -> Boolean) {

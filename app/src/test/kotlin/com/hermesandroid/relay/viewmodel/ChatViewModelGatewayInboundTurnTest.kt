@@ -675,7 +675,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun automaticProfileRestoreWaitsForExactDirectorySuccessBeforePrewarm() {
+    fun automaticProfileRestoreWaitsForExactDirectorySuccessBeforePassiveObservation() {
         val profile = Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel")
         val contextKey = AgentDisplay.profileContextKey("connection-a", profile.name)
         val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
@@ -687,22 +687,32 @@ class ChatViewModelGatewayInboundTurnTest {
             directoryStarted.complete(Unit)
             directoryResult.await()
         }
-        val resumesBefore = gatewayHarness.rpcLog.count { it.first == "session.resume" }
+        val ownershipMethods = setOf("session.resume", "session.activate", "session.interrupt")
+        val ownershipBefore = ownershipMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val activeListsBefore = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
 
         viewModel.activateGatewayProfile(profile)
         viewModel.setChatVisible(true)
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
         viewModel.switchProfileContext(contextKey, "sentinel-session")
         viewModel.refreshSessions()
 
         awaitCondition { directoryStarted.isCompleted }
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
 
         directoryResult.complete(Result.failure(java.io.InterruptedIOException("timeout")))
         awaitCondition { viewModel.sessionListUnavailable.value }
-        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
 
         viewModel.setProfileSessionLister {
             Result.success(listOf(SessionItem(id = "sentinel-session", title = "Sentinel session")))
@@ -710,17 +720,15 @@ class ChatViewModelGatewayInboundTurnTest {
         serverWs.send(gatewayHarness.eventFrame("sessions.changed", buildJsonObject {}, null))
 
         awaitCondition {
-            gatewayHarness.rpcLog.count { it.first == "session.resume" } == resumesBefore + 1
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" } > activeListsBefore
         }
-        val resume = gatewayHarness.rpcLog.last { it.first == "session.resume" }.second
-        assertEquals(
-            "sentinel-session",
-            (resume["session_id"] as? JsonPrimitive)?.content,
-        )
-        assertEquals(
-            profile.name,
-            (resume["profile"] as? JsonPrimitive)?.content,
-        )
+        ownershipMethods.forEach { method ->
+            assertEquals(
+                "directory release sent $method",
+                ownershipBefore.getValue(method),
+                gatewayHarness.rpcLog.count { it.first == method },
+            )
+        }
     }
 
     @Test
@@ -1159,6 +1167,24 @@ class ChatViewModelGatewayInboundTurnTest {
             !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
         }
         assertTrue(handler.sessions.value.isEmpty())
+    }
+
+    @Test
+    fun thrownSessionListSignInFailureDoesNotPublishGenericChatToast() {
+        viewModel.setProfileSessionLister {
+            throw DashboardHttpException(
+                401,
+                "Session failed - HTTP 401: {\"reason\":\"no_cookie\"}",
+            )
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertNull(viewModel.chatFailure.value)
+        assertNull(viewModel.error.value)
     }
 
     @Test

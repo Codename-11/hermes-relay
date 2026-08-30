@@ -210,6 +210,7 @@ class ConnectionManagerRouteTest {
     fun `failed Dashboard candidate is not probed again as Standard fallback`() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/health" -> MockResponse().setResponseCode(404)
                 "/api/status" -> MockResponse().setResponseCode(503)
                 "/health" -> MockResponse().setResponseCode(200)
                 else -> MockResponse().setResponseCode(404)
@@ -227,10 +228,11 @@ class ConnectionManagerRouteTest {
 
         assertNull("a failed Dashboard probe must not select the route", winner)
         assertEquals(
-            "Standard fallback must not repeat the same Dashboard /api/status probe",
-            1,
+            "Standard fallback must not repeat the Dashboard health/fallback probe pair",
+            2,
             server.requestCount,
         )
+        assertEquals("/api/health", server.takeRequest(1, TimeUnit.SECONDS)?.path)
         assertEquals("/api/status", server.takeRequest(1, TimeUnit.SECONDS)?.path)
     }
 
