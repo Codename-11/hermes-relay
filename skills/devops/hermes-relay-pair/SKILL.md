@@ -36,7 +36,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 
 1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.pair --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
 2. **Hermes API server reachable** on `API_SERVER_HOST:API_SERVER_PORT` (default `127.0.0.1:8642`). `plugin.pair` auto-reads this from `~/.hermes/config.yaml` → `~/.hermes/.env` → env vars → defaults.
-3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. Without a live relay, the QR will configure chat only.
+3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. The Relay may stay host-internal: current Android pairing normally reaches it through the Dashboard's same-origin plugin transport on Dashboard port `9119` (or the Dashboard's external HTTPS port). Without a live relay, the QR will configure chat only.
 4. **Host is Linux or macOS.** The relay uses a real PTY backend, which is POSIX-only. Windows hosts can generate API-only QRs but the terminal channel will not work.
 
 ## Procedure
@@ -49,6 +49,19 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    python -m plugin.pair
    ```
 
+   When the current Hermes surface exposes an exact Dashboard origin, pass it
+   rather than guessing from an API hostname. This is especially important for
+   an external HTTPS origin or a Dashboard mounted below a path prefix:
+
+   ```bash
+   python -m plugin.pair --dashboard-url https://hermes.example.com
+   ```
+
+   A trusted configured `HERMES_DASHBOARD_PUBLIC_URL` / Dashboard public URL is
+   also suitable. If no exact origin is available, omit the flag; the pair
+   backend will construct conventional LAN/Tailscale Dashboard candidates on
+   `9119`. Never substitute the API server URL or infer public port `8767`.
+
    If `python` resolves to the wrong interpreter (plugin not found), use the Hermes venv explicitly:
 
    ```bash
@@ -60,9 +73,11 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    - `--no-qr` — text only, no QR at all. Use when the agent is running in a non-TTY context and QR output would be wasted.
    - `--no-relay` — skip relay pre-pairing, render API-only QR. Use if the relay is intentionally offline.
    - `--host <ip>` / `--port <n>` — override the API server host or port when config auto-detection picks the wrong values.
-   - `--mode {auto,lan,tailscale,public}` — endpoint discovery mode (ADR 24). Default `auto` probes LAN + Tailscale (if the helper is installed) + `--public-url` (if passed) and bakes them into the QR as an ordered candidate list so the phone switches networks automatically. `lan` / `tailscale` / `public` emit just that role. Example: `python -m plugin.pair --mode auto --public-url https://hermes.example.com`.
-   - `--public-url <url>` — public hostname for a reverse proxy / Cloudflare Tunnel. Must be `http://` or `https://`. Added as a `role=public` endpoint candidate. Example: `python -m plugin.pair --public-url https://hermes.example.com`.
+   - `--dashboard-url <url>` — exact Dashboard origin to preserve in the pairing invite, including any path prefix. Prefer the current trusted Dashboard origin when the TUI/chat surface knows it; do not invent one from the API endpoint.
+   - `--mode {auto,lan,tailscale,public}` — endpoint discovery mode (ADR 24). Default `auto` probes LAN + Tailscale (if the helper is installed) + `--public-url` (if passed) and bakes them into the QR as an ordered candidate list so the phone switches networks automatically. Each normal candidate uses its Dashboard origin plus `/api/plugins/hermes-relay/transport`; `lan` / `tailscale` / `public` emit just that role. Example: `python -m plugin.pair --mode auto --public-url https://hermes.example.com`.
+   - `--public-url <url>` — public **Dashboard origin** for a reverse proxy / Cloudflare Tunnel. Must be `http://` or `https://`; an external HTTPS Dashboard such as `https://hermes.example.com` keeps Relay on that same authority and plugin transport path. It does not imply or expose public port `8767`.
    - `--prefer <role>` — promote the named role to priority 0 in the endpoint list. Open vocab — commonly `lan` / `tailscale` / `public`. Useful when the user wants to force a specific path during testing without re-ordering defaults. Example: `python -m plugin.pair --mode auto --prefer tailscale` emits all detected modes but with Tailscale as the first-probed endpoint. Warns (non-fatal) if the named role isn't detected.
+   - `--legacy-direct-relay` — also advertise the direct Relay port for older Hermes Relay Desktop CLI/UI clients, which cannot yet authenticate through Dashboard WebSocket ingress. Use only when pairing one of those clients and when that direct route is deliberately reachable; do not use it for normal Android pairing or infer it from a public Dashboard URL.
    - `--register-code <code>` — **manual fallback**. Skip QR rendering entirely and just pre-register a 6-char code the user is reading off the phone screen. See "Manual fallback" below.
 
 4. **Show the output verbatim.** `plugin.pair` prints, in order:
@@ -82,11 +97,17 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    5. Watch for the success toast and the status summary.
 
    For Desktop pairing, tell the user to copy the `hermes-relay://pair?...`
-   invite URL into **Hermes Relay Desktop → Pair → Paste invite**, or run:
+   invite URL into **Hermes Relay Desktop → Pair → Paste invite**, or run the
+   host mint with the explicit compatibility route and then paste its invite:
 
    ```bash
+   hermes pair --legacy-direct-relay
    hermes-relay pair --pair-qr 'hermes-relay://pair?payload=...'
    ```
+
+   The current Desktop client does not yet obtain Dashboard WebSocket tickets,
+   so a default Android-focused invite containing only same-origin Dashboard
+   transport routes is intentionally not sufficient for Desktop pairing.
 
 6. **Time constraint.** The relay pairing code expires 10 minutes after generation and is single-use. If the user won't scan within that window, re-run the skill to mint a fresh code.
 
