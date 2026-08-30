@@ -159,6 +159,19 @@ class GatewayChatClient(
         private const val ASK_SUDO_TIMEOUT_MS = 150_000L
         private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
 
+        /**
+         * Server-side context compaction summarizes the transcript through a
+         * (possibly slow) model with NO deltas or tool events flowing until it
+         * finishes — near the context ceiling that silence routinely exceeds
+         * [TURN_TIMEOUT_MS], so the idle watchdog would `session.interrupt` a
+         * healthy compression, roll back its work, and retrigger on the next
+         * prompt forever. A `status.update` event with kind `compacting`
+         * (emitted at compaction start, and periodically by newer gateways)
+         * arms this longer leash instead; any regular event rearms
+         * [TURN_TIMEOUT_MS].
+         */
+        private const val COMPACTING_TIMEOUT_MS = 600_000L
+
         private const val RPC_TIMEOUT_MS = 15_000L
         const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
 
@@ -4226,10 +4239,12 @@ class GatewayChatClient(
     // ------------------------------------------------------------------
 
     /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
-    private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
-        "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
-        "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+    private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
+        eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
+        eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
+        eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+        eventType == "status.update" &&
+            payload?.stringField("kind") == "compacting" -> COMPACTING_TIMEOUT_MS
         else -> turnIdleTimeoutMs
     }
 
@@ -4348,7 +4363,7 @@ class GatewayChatClient(
             // Reset on every event — long tool runs keep the turn alive.
             // Ask requests block with no further events, so they arm with
             // their own (longer) duration via watchdogTimeoutFor.
-            armWatchdog(watchdogTimeoutFor(type))
+            armWatchdog(watchdogTimeoutFor(type, payload))
             // Queue this immediately before the terminal callbacks. Both are
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
