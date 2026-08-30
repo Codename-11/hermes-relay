@@ -66,6 +66,122 @@ class AssistantSessionProtocolTest {
     }
 
     @Test
+    fun idleNoSpeech_isAVisibleRetryNotice() {
+        val snapshot = AssistantSessionProtocol.snapshotFromVoiceState(
+            VoiceUiState(
+                voiceMode = true,
+                state = VoiceState.Idle,
+                assistantNotice = AssistantSessionNotice.NoSpeech,
+            )
+        )
+
+        assertEquals(AssistantSessionPhase.Idle, snapshot.phase)
+        assertEquals(AssistantSessionNotice.NoSpeech, snapshot.notice)
+        assertNull(snapshot.error)
+    }
+
+    @Test
+    fun lockedPresentation_redactsConversationButKeepsGenericNotice() {
+        val presented = assistantSnapshotForPresentation(
+            AssistantSessionSnapshot(
+                phase = AssistantSessionPhase.Error,
+                transcript = "private request",
+                response = "private response",
+                notice = AssistantSessionNotice.NoSpeech,
+                error = "private route detail",
+            ),
+            locked = true,
+        )
+
+        assertNull(presented.transcript)
+        assertEquals("", presented.response)
+        assertNull(presented.error)
+        assertEquals(AssistantSessionNotice.NoSpeech, presented.notice)
+    }
+
+    @Test
+    fun unlockedPresentation_restoresConversationContent() {
+        val snapshot = AssistantSessionSnapshot(
+            phase = AssistantSessionPhase.Speaking,
+            transcript = "request",
+            response = "response",
+        )
+
+        assertEquals(snapshot, assistantSnapshotForPresentation(snapshot, locked = false))
+    }
+
+    @Test
+    fun liveKeyguardState_overridesLaunchFallbackInBothDirections() {
+        assertTrue(
+            assistantPresentationLocked(
+                currentKeyguardLocked = true,
+                fallbackLocked = false,
+            )
+        )
+        assertFalse(
+            assistantPresentationLocked(
+                currentKeyguardLocked = false,
+                fallbackLocked = true,
+            )
+        )
+    }
+
+    @Test
+    fun statusSnapshots_areFencedToTheCurrentActivation() {
+        assertTrue(assistantSnapshotMatchesActivation("activation-b", "activation-b"))
+        assertFalse(assistantSnapshotMatchesActivation("activation-b", "activation-a"))
+        assertFalse(assistantSnapshotMatchesActivation("activation-b", null))
+        assertFalse(assistantSnapshotMatchesActivation(null, "activation-b"))
+    }
+
+    @Test
+    fun voiceStateRetainsItsOwningActivationAcrossLaterRuntimeChanges() {
+        val activationA = VoiceUiState(
+            voiceMode = true,
+            state = VoiceState.Listening,
+            assistantActivationId = "activation-a",
+        )
+        val currentRuntimeActivation = "activation-b"
+
+        assertEquals("activation-a", activationA.assistantActivationId)
+        assertFalse(
+            assistantSnapshotMatchesActivation(
+                expectedActivationId = currentRuntimeActivation,
+                receivedActivationId = activationA.assistantActivationId,
+            )
+        )
+    }
+
+    @Test
+    fun terminalVoiceStateRetainsActivationForClosedPublication() {
+        val exited = com.hermesandroid.relay.viewmodel.voiceSessionExitState(
+            VoiceUiState(
+                voiceMode = true,
+                state = VoiceState.Speaking,
+                assistantActivationId = "activation-a",
+            )
+        )
+
+        assertFalse(exited.voiceMode)
+        assertEquals("activation-a", exited.assistantActivationId)
+        assertEquals(
+            AssistantSessionPhase.Closed,
+            AssistantSessionProtocol.snapshotFromVoiceState(exited).phase,
+        )
+    }
+
+    @Test
+    fun subsequentOrdinaryVoiceEntryClearsPreviousAssistantOwner() {
+        val ordinaryEntry = VoiceUiState(
+            voiceMode = true,
+            state = VoiceState.Idle,
+            assistantActivationId = null,
+        )
+
+        assertNull(ordinaryEntry.assistantActivationId)
+    }
+
+    @Test
     fun persistedSessionMarker_expiresAfterBoundedRecoveryWindow() {
         val now = 2_000_000L
         assertTrue(AssistantSessionPersistence.isFresh(now - 1_000L, now))

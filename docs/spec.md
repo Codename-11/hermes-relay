@@ -1015,7 +1015,10 @@ utilities.
   application-lifetime owner, allowing assistant activation to start cold
   without constructing or foregrounding `MainActivity`; full Voice later binds
   that same runtime. Cancel, error, app/process recreation, and session finish
-  use the same scoped protocol. The
+  use the same scoped protocol. Recreated session UI requests an
+  activation-fenced snapshot from the app runtime, and capture/no-speech exits
+  retain a generic retry notice instead of collapsing to an unexplained Ready
+  state. The
   wake recorder is released before the established voice recorder opens, and
   assistant listening resumes only after the session exits. This mode is
   mutually exclusive with the experimental notification-based foreground
@@ -1046,6 +1049,8 @@ utilities.
   Realtime Agent sessions do not claim inclusion. The mic control follows the
   active voice state, close remains separate, and **Open full voice** explicitly
   transfers ownership so assistant-process cleanup cannot cancel the main-app flow.
+  While keyguard is active, the surface keeps only generic phase and retry copy;
+  transcript, response, route-specific errors, and screen context remain hidden.
 - Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an
