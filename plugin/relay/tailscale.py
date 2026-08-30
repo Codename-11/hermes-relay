@@ -1,11 +1,10 @@
 """Thin wrappers around the ``tailscale`` CLI.
 
 Implements ADR 25 — first-class Tailscale helper as optional hermes
-enhancement. The relay stays loopback-bound on ``127.0.0.1:8767`` and
-the Hermes API server commonly stays on ``127.0.0.1:8642``; this module
-lets operators front both with ``tailscale serve`` so pair-once routing
-works for relay WSS, chat/API, and voice HTTP calls over the tailnet with
-managed TLS + ACL-based identity.
+enhancement. The relay stays loopback-bound on ``127.0.0.1:8767``. The
+recommended tailnet ingress publishes Dashboard on ``127.0.0.1:9119``;
+Relay rides its same-origin plugin transport path. The optional Hermes API
+server on 8642 remains available for headless compatibility.
 
 All public functions are **safe to call unconditionally** — they shell
 out to the ``tailscale`` CLI via ``subprocess.run(..., check=False)``
@@ -26,6 +25,7 @@ import logging
 import shutil
 import subprocess
 from typing import Any
+from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
 
@@ -37,8 +37,9 @@ _TIMEOUT_SECONDS = 5
 # Default ports — relay matches plugin/relay/server.py, API matches
 # hermes-agent's API server default used by plugin/pair.py.
 DEFAULT_RELAY_PORT = 8767
+DEFAULT_DASHBOARD_PORT = 9119
 DEFAULT_API_PORT = 8642
-DEFAULT_PORT = DEFAULT_RELAY_PORT
+DEFAULT_PORT = DEFAULT_DASHBOARD_PORT
 
 
 def _valid_port(port: Any) -> bool:
@@ -95,9 +96,14 @@ def status() -> dict[str, Any] | None:
     - ``available`` (bool): CLI is present and responded successfully.
     - ``hostname`` (str | None): Tailscale-assigned short hostname.
     - ``tailscale_ip`` (str | None): First IPv4 in ``Self.TailscaleIPs``.
-    - ``serve_ports`` (list[int]): Ports currently fronted by
+    - ``serve_ports`` (list[int]): Listener ports currently fronted by
       ``tailscale serve`` (best-effort — second subprocess call;
       empty list on failure).
+    - ``serve_services`` (dict): Dashboard, API, and legacy direct Relay
+      activity classified by loopback target, including non-matching listener
+      ports such as an HTTPS 443 listener proxying Dashboard on 9119.
+    - ``serve_routes`` (list[dict]): Parsed listener/path/proxy details from
+      the live Serve JSON for operator diagnostics.
     """
     if not _tailscale_available():
         return None
@@ -138,11 +144,14 @@ def status() -> dict[str, Any] | None:
                 if isinstance(first, str):
                     tailscale_ip = first
 
+    serve_state = _serve_state()
     return {
         "available": True,
         "hostname": hostname,
         "tailscale_ip": tailscale_ip,
-        "serve_ports": _serve_ports(),
+        "serve_ports": serve_state["ports"],
+        "serve_services": _classify_serve_services(serve_state["routes"]),
+        "serve_routes": serve_state["routes"],
     }
 
 
@@ -154,42 +163,143 @@ def _serve_ports() -> list[int]:
     don't recognize). Used only as an informational field on
     :func:`status`; nothing should branch on it.
     """
+    return _serve_state()["ports"]
+
+
+def _endpoint_port(value: Any) -> int | None:
+    """Extract a valid port from a Serve key or proxy URL."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    candidate = value.strip()
+    if candidate.isdecimal():
+        port = int(candidate)
+        return port if _valid_port(port) else None
+    try:
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        port = parsed.port
+    except ValueError:
+        return None
+    return port if _valid_port(port) else None
+
+
+def _serve_state() -> dict[str, Any]:
+    """Parse current Serve listeners and Web proxy routes best-effort.
+
+    Tailscale reports the tailnet listener in ``TCP``/``Web`` keys and the
+    loopback destination separately in each Web handler's ``Proxy`` value.
+    Keeping both avoids mistaking ``https://host:443 -> 127.0.0.1:9119`` for
+    an unrelated service, while ``serve_ports`` remains backward-compatible
+    as the list of ports the tailnet client actually dials.
+    """
+    empty: dict[str, Any] = {"ports": [], "routes": []}
     if not _tailscale_available():
-        return []
+        return empty
 
     rc, out, _ = _run(["tailscale", "serve", "status", "--json"])
     if rc != 0 or not out.strip():
-        return []
+        return empty
 
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        return []
-
+        return empty
     if not isinstance(data, dict):
-        return []
+        return empty
 
     ports: set[int] = set()
+    routes: list[dict[str, Any]] = []
 
-    # ``tailscale serve status --json`` shape (as of 2026-04):
-    #   { "TCP": { "443": { ... } }, "Web": { "hostname:443": { "Handlers": { "/": {...} } } } }
-    # We walk both TCP and Web sections — keys are either bare ports or
-    # "host:port" strings. Any integer-parseable tail is captured.
-    for section_key in ("TCP", "Web"):
-        section = data.get(section_key)
-        if not isinstance(section, dict):
+    tcp = data.get("TCP")
+    if isinstance(tcp, dict):
+        for key, config in tcp.items():
+            listen_port = _endpoint_port(key)
+            if listen_port is None:
+                continue
+            ports.add(listen_port)
+            https = bool(config.get("HTTPS")) if isinstance(config, dict) else False
+            routes.append(
+                {
+                    "listen_port": listen_port,
+                    "https": https,
+                    "path": None,
+                    "proxy": None,
+                    "target_port": None,
+                }
+            )
+
+    web = data.get("Web")
+    if isinstance(web, dict):
+        for key, config in web.items():
+            listen_port = _endpoint_port(key)
+            if listen_port is None:
+                continue
+            ports.add(listen_port)
+            handlers = config.get("Handlers") if isinstance(config, dict) else None
+            if not isinstance(handlers, dict):
+                continue
+            for path, handler in handlers.items():
+                if not isinstance(path, str) or not isinstance(handler, dict):
+                    continue
+                proxy = handler.get("Proxy")
+                proxy_value = proxy if isinstance(proxy, str) else None
+                routes.append(
+                    {
+                        "listen_port": listen_port,
+                        "https": _listener_uses_https(tcp, listen_port),
+                        "path": path,
+                        "proxy": proxy_value,
+                        "target_port": _endpoint_port(proxy_value),
+                    }
+                )
+
+    routes.sort(
+        key=lambda item: (
+            item["listen_port"],
+            item["path"] is None,
+            item["path"] or "",
+            item["proxy"] or "",
+        )
+    )
+    return {"ports": sorted(ports), "routes": routes}
+
+
+def _listener_uses_https(tcp: Any, listen_port: int) -> bool:
+    """Return the TCP section's HTTPS flag for ``listen_port``."""
+    if not isinstance(tcp, dict):
+        return False
+    for key, config in tcp.items():
+        if _endpoint_port(key) != listen_port or not isinstance(config, dict):
             continue
-        for key in section.keys():
-            if not isinstance(key, str):
-                continue
-            # Take the tail after the last ':' so "hostname:443" → "443".
-            tail = key.rsplit(":", 1)[-1]
-            try:
-                ports.add(int(tail))
-            except ValueError:
-                continue
+        return bool(config.get("HTTPS"))
+    return False
 
-    return sorted(ports)
+
+def _classify_serve_services(routes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Classify recommended and legacy services without hiding listeners."""
+    definitions = (
+        ("dashboard", DEFAULT_DASHBOARD_PORT),
+        ("api", DEFAULT_API_PORT),
+        ("legacy_relay", DEFAULT_RELAY_PORT),
+    )
+    services: dict[str, Any] = {}
+    for name, target_port in definitions:
+        listeners = sorted(
+            {
+                int(route["listen_port"])
+                for route in routes
+                if route.get("target_port") == target_port
+                or (
+                    route.get("target_port") is None
+                    and route.get("listen_port") == target_port
+                )
+            }
+        )
+        services[name] = {
+            "port": target_port,
+            "active": bool(listeners),
+            "listen_ports": listeners,
+        }
+    return services
 
 
 def enable(port: int = DEFAULT_PORT, https: bool = True) -> dict[str, Any]:
@@ -226,27 +336,24 @@ def enable(port: int = DEFAULT_PORT, https: bool = True) -> dict[str, Any]:
 
 
 def enable_stack(
-    relay_port: int = DEFAULT_RELAY_PORT,
+    relay_port: int = DEFAULT_DASHBOARD_PORT,
     api_port: int | None = DEFAULT_API_PORT,
     https: bool = True,
 ) -> dict[str, Any]:
-    """Publish the relay and Hermes API ports via ``tailscale serve``.
+    """Publish Dashboard and the optional Hermes API via Tailscale Serve.
 
-    The pairing payload's Tailscale candidate contains both halves:
-    relay WSS on ``relay_port`` and direct Hermes API HTTP/SSE on
-    ``api_port``. Serving only the relay makes bridge/terminal work but
-    leaves chat, voice-with-API-key, and resolver ``/health`` probes pinned
-    to an unreachable API URL. This helper is the default CLI path; the
-    single-port :func:`enable` function remains available for explicit
-    relay-only deployments.
+    ``relay_port`` retains its historical parameter name for compatibility,
+    but defaults to Dashboard's 9119 listener. Passing 8767 is an explicit
+    legacy-direct action. Recommended setup does not disable an existing
+    8767 publication because paired clients may still depend on it.
     """
     if not _valid_port(relay_port):
         result = _invalid_port_result(relay_port)
         return {
             "ok": False,
-            "message": f"relay: {result['message']}",
+            "message": f"dashboard: {result['message']}",
             "commands": [],
-            "relay": result,
+            "dashboard": result,
             "api": None,
         }
     if api_port is not None and not _valid_port(api_port):
@@ -255,12 +362,12 @@ def enable_stack(
             "ok": False,
             "message": f"api: {result['message']}",
             "commands": [],
-            "relay": None,
+            "dashboard": None,
             "api": result,
         }
 
     results: dict[str, dict[str, Any] | None] = {
-        "relay": enable(port=relay_port, https=https),
+        "dashboard": enable(port=relay_port, https=https),
         "api": None,
     }
     if api_port is not None and api_port != relay_port:
@@ -323,17 +430,17 @@ def disable(port: int = DEFAULT_PORT) -> dict[str, Any]:
 
 
 def disable_stack(
-    relay_port: int = DEFAULT_RELAY_PORT,
+    relay_port: int = DEFAULT_DASHBOARD_PORT,
     api_port: int | None = DEFAULT_API_PORT,
 ) -> dict[str, Any]:
-    """Remove relay and API ``tailscale serve`` publications."""
+    """Remove Dashboard and API publications, leaving legacy 8767 intact."""
     if not _valid_port(relay_port):
         result = _invalid_port_result(relay_port)
         return {
             "ok": False,
-            "message": f"relay: {result['message']}",
+            "message": f"dashboard: {result['message']}",
             "commands": [],
-            "relay": result,
+            "dashboard": result,
             "api": None,
         }
     if api_port is not None and not _valid_port(api_port):
@@ -342,12 +449,12 @@ def disable_stack(
             "ok": False,
             "message": f"api: {result['message']}",
             "commands": [],
-            "relay": None,
+            "dashboard": None,
             "api": result,
         }
 
     results: dict[str, dict[str, Any] | None] = {
-        "relay": disable(port=relay_port),
+        "dashboard": disable(port=relay_port),
         "api": None,
     }
     if api_port is not None and api_port != relay_port:
@@ -521,6 +628,7 @@ def canonical_upstream_present() -> bool:
 
 __all__ = [
     "DEFAULT_API_PORT",
+    "DEFAULT_DASHBOARD_PORT",
     "DEFAULT_PORT",
     "DEFAULT_RELAY_PORT",
     "canonical_upstream_present",

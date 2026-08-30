@@ -3,9 +3,13 @@
 Invoked via the ``hermes-relay-tailscale`` shim installed to
 ``~/.local/bin``. Subcommands::
 
-    hermes-relay-tailscale status [--json] [--port N]
-    hermes-relay-tailscale enable [--port N] [--api-port N] [--relay-only] [--no-https] [--json]
-    hermes-relay-tailscale disable [--port N] [--api-port N] [--relay-only] [--json]
+    hermes-relay-tailscale status [--json]
+    hermes-relay-tailscale enable [--dashboard-port N] [--api-port N] [--no-https] [--json]
+    hermes-relay-tailscale disable [--dashboard-port N] [--api-port N] [--json]
+
+The legacy direct-Relay form remains available deliberately as
+``enable|disable --relay-only [--port N]``. New recommended setup publishes
+Dashboard on 9119 so Relay uses its same-origin plugin transport.
 
 All subcommands exit 0 on success, 1 on structured failure. ``--json``
 prints the raw structured dict for scripting.
@@ -49,11 +53,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_enable(args: argparse.Namespace) -> int:
-    if args.relay_only:
-        result = tailscale.enable(port=args.port, https=not args.no_https)
+    if args.relay_only or args.port is not None:
+        port = args.port if args.port is not None else tailscale.DEFAULT_RELAY_PORT
+        result = tailscale.enable(port=port, https=not args.no_https)
     else:
         result = tailscale.enable_stack(
-            relay_port=args.port,
+            relay_port=args.dashboard_port,
             api_port=args.api_port,
             https=not args.no_https,
         )
@@ -61,11 +66,12 @@ def _cmd_enable(args: argparse.Namespace) -> int:
 
 
 def _cmd_disable(args: argparse.Namespace) -> int:
-    if args.relay_only:
-        result = tailscale.disable(port=args.port)
+    if args.relay_only or args.port is not None:
+        port = args.port if args.port is not None else tailscale.DEFAULT_RELAY_PORT
+        result = tailscale.disable(port=port)
     else:
         result = tailscale.disable_stack(
-            relay_port=args.port,
+            relay_port=args.dashboard_port,
             api_port=args.api_port,
         )
     return _print_result(result, as_json=args.json)
@@ -75,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes-relay-tailscale",
         description="Thin wrapper around the tailscale CLI for publishing "
-                    "Hermes-Relay relay + API ports over the tailnet.",
+                    "Dashboard + optional API ports over the tailnet.",
     )
     parser.add_argument(
         "--json",
@@ -89,14 +95,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enable = sub.add_parser(
         "enable",
-        help="Publish relay + API loopback ports via tailscale serve.",
+        help="Publish Dashboard + optional API via tailscale serve.",
     )
-    p_enable.add_argument("--port", type=int, default=tailscale.DEFAULT_RELAY_PORT)
+    p_enable.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=tailscale.DEFAULT_DASHBOARD_PORT,
+        help="Dashboard listener used by the recommended stack (default: 9119).",
+    )
+    p_enable.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Deprecated: publish one explicit legacy/direct port.",
+    )
     p_enable.add_argument("--api-port", type=int, default=tailscale.DEFAULT_API_PORT)
     p_enable.add_argument(
         "--relay-only",
         action="store_true",
-        help="Publish only the relay port, preserving the older helper behavior.",
+        help="Deprecated: publish direct Relay only (default port: 8767).",
     )
     p_enable.add_argument(
         "--no-https",
@@ -107,14 +124,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_disable = sub.add_parser(
         "disable",
-        help="Stop publishing relay + API ports via tailscale serve.",
+        help="Stop the recommended Dashboard + optional API publications.",
     )
-    p_disable.add_argument("--port", type=int, default=tailscale.DEFAULT_RELAY_PORT)
+    p_disable.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=tailscale.DEFAULT_DASHBOARD_PORT,
+        help="Dashboard listener managed by the recommended stack (default: 9119).",
+    )
+    p_disable.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Deprecated: disable one explicit legacy/direct port.",
+    )
     p_disable.add_argument("--api-port", type=int, default=tailscale.DEFAULT_API_PORT)
     p_disable.add_argument(
         "--relay-only",
         action="store_true",
-        help="Disable only the relay port, preserving the older helper behavior.",
+        help="Deprecated: disable direct Relay only (default port: 8767).",
     )
     p_disable.set_defaults(func=_cmd_disable)
 

@@ -13,10 +13,13 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from plugin.relay import tailscale
+from plugin.relay import tailscale_cli
 
 
 def _mk_completed(returncode: int, stdout: str = "", stderr: str = "") -> SimpleNamespace:
@@ -74,6 +77,60 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(result["hostname"], "mybox.tail1234.ts.net")
         self.assertEqual(result["tailscale_ip"], "100.64.1.2")
         self.assertEqual(result["serve_ports"], [443])
+
+    def test_classifies_services_by_proxy_target_from_live_serve_shape(self) -> None:
+        status_fixture = {
+            "Self": {
+                "DNSName": "docker-server.tail6f460.ts.net.",
+                "TailscaleIPs": ["100.71.8.56"],
+            },
+        }
+        serve_fixture = {
+            "TCP": {
+                "443": {"HTTPS": True},
+                "8642": {"HTTPS": True},
+                "8767": {"HTTPS": True},
+            },
+            "Web": {
+                "docker-server.tail6f460.ts.net:443": {
+                    "Handlers": {"/": {"Proxy": "http://127.0.0.1:9119"}},
+                },
+                "docker-server.tail6f460.ts.net:8642": {
+                    "Handlers": {"/": {"Proxy": "http://127.0.0.1:8642"}},
+                },
+                "docker-server.tail6f460.ts.net:8767": {
+                    "Handlers": {"/": {"Proxy": "http://127.0.0.1:8767"}},
+                },
+            },
+        }
+
+        def run_side_effect(argv, **kwargs):
+            if argv[:3] == ["tailscale", "status", "--json"]:
+                return _mk_completed(0, stdout=json.dumps(status_fixture))
+            if argv[:4] == ["tailscale", "serve", "status", "--json"]:
+                return _mk_completed(0, stdout=json.dumps(serve_fixture))
+            return _mk_completed(1, stderr="unexpected argv")
+
+        with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
+             patch("plugin.relay.tailscale.subprocess.run", side_effect=run_side_effect):
+            result = tailscale.status()
+
+        assert result is not None
+        self.assertEqual(result["serve_ports"], [443, 8642, 8767])
+        self.assertEqual(
+            result["serve_services"],
+            {
+                "dashboard": {"port": 9119, "active": True, "listen_ports": [443]},
+                "api": {"port": 8642, "active": True, "listen_ports": [8642]},
+                "legacy_relay": {"port": 8767, "active": True, "listen_ports": [8767]},
+            },
+        )
+        dashboard_route = next(
+            route for route in result["serve_routes"]
+            if route["target_port"] == 9119
+        )
+        self.assertEqual(dashboard_route["proxy"], "http://127.0.0.1:9119")
+        self.assertTrue(dashboard_route["https"])
 
     def test_status_nonzero_returns_none(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
@@ -178,20 +235,23 @@ class EnableDisableTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("permission denied", result["message"])
 
-    def test_enable_stack_publishes_relay_and_api(self) -> None:
+    def test_enable_stack_defaults_to_dashboard_and_api(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout="ok")) as mock_run:
-            result = tailscale.enable_stack(relay_port=8767, api_port=8642)
+            result = tailscale.enable_stack()
 
         self.assertTrue(result["ok"])
         self.assertEqual(
             result["commands"],
             [
-                ["tailscale", "serve", "--bg", "--https=8767", "http://127.0.0.1:8767"],
+                ["tailscale", "serve", "--bg", "--https=9119", "http://127.0.0.1:9119"],
                 ["tailscale", "serve", "--bg", "--https=8642", "http://127.0.0.1:8642"],
             ],
         )
+        self.assertIn("dashboard", result)
+        self.assertNotIn("relay", result)
+        self.assertNotIn("8767", json.dumps(result["commands"]))
         calls = [call.args[0] for call in mock_run.call_args_list]
         self.assertEqual(calls, result["commands"])
 
@@ -229,20 +289,21 @@ class EnableDisableTests(unittest.TestCase):
         self.assertIsNone(result["command"])
         mock_run.assert_not_called()
 
-    def test_disable_stack_revokes_relay_and_api(self) -> None:
+    def test_disable_stack_revokes_dashboard_and_api_but_not_legacy_relay(self) -> None:
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/tailscale"), \
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout="ok")) as mock_run:
-            result = tailscale.disable_stack(relay_port=8767, api_port=8642)
+            result = tailscale.disable_stack()
 
         self.assertTrue(result["ok"])
         self.assertEqual(
             result["commands"],
             [
-                ["tailscale", "serve", "--https=8767", "off"],
+                ["tailscale", "serve", "--https=9119", "off"],
                 ["tailscale", "serve", "--https=8642", "off"],
             ],
         )
+        self.assertNotIn("8767", json.dumps(result["commands"]))
         calls = [call.args[0] for call in mock_run.call_args_list]
         self.assertEqual(calls, result["commands"])
 
@@ -268,6 +329,7 @@ class CanonicalUpstreamPresentTests(unittest.TestCase):
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout=help_output)):
             self.assertTrue(tailscale.canonical_upstream_present())
+
     def test_false_when_flag_absent(self) -> None:
         help_output = "Usage: hermes gateway run [OPTIONS]\n  --config PATH\n"
         with patch("plugin.relay.tailscale.shutil.which", return_value="/usr/bin/hermes"), \
@@ -291,6 +353,62 @@ class CanonicalUpstreamPresentTests(unittest.TestCase):
              patch("plugin.relay.tailscale.subprocess.run",
                    return_value=_mk_completed(0, stdout="", stderr="--tailscale  Serve via tailnet")):
             self.assertTrue(tailscale.canonical_upstream_present())
+
+
+class CliTests(unittest.TestCase):
+    def _run(self, argv: list[str]) -> int:
+        parser = tailscale_cli.build_parser()
+        args = parser.parse_args(argv)
+        with redirect_stdout(StringIO()):
+            return args.func(args)
+
+    def test_enable_default_uses_recommended_dashboard_stack(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "enable_stack",
+            return_value={"ok": True},
+        ) as enable_stack, patch.object(tailscale_cli.tailscale, "enable") as enable:
+            self.assertEqual(self._run(["enable"]), 0)
+
+        enable_stack.assert_called_once_with(
+            relay_port=9119,
+            api_port=8642,
+            https=True,
+        )
+        enable.assert_not_called()
+
+    def test_enable_relay_only_preserves_legacy_8767(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "enable",
+            return_value={"ok": True},
+        ) as enable, patch.object(tailscale_cli.tailscale, "enable_stack") as enable_stack:
+            self.assertEqual(self._run(["enable", "--relay-only"]), 0)
+
+        enable.assert_called_once_with(port=8767, https=True)
+        enable_stack.assert_not_called()
+
+    def test_explicit_port_is_deliberate_legacy_single_port(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "enable",
+            return_value={"ok": True},
+        ) as enable, patch.object(tailscale_cli.tailscale, "enable_stack") as enable_stack:
+            self.assertEqual(self._run(["enable", "--port", "9000"]), 0)
+
+        enable.assert_called_once_with(port=9000, https=True)
+        enable_stack.assert_not_called()
+
+    def test_disable_default_leaves_legacy_relay_untouched(self) -> None:
+        with patch.object(
+            tailscale_cli.tailscale,
+            "disable_stack",
+            return_value={"ok": True},
+        ) as disable_stack, patch.object(tailscale_cli.tailscale, "disable") as disable:
+            self.assertEqual(self._run(["disable"]), 0)
+
+        disable_stack.assert_called_once_with(relay_port=9119, api_port=8642)
+        disable.assert_not_called()
 
 
 class FunnelUrlTests(unittest.TestCase):
