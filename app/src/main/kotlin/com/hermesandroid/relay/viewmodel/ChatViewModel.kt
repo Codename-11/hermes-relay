@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.prepareTextTransportAttachments
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
@@ -663,6 +664,7 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+    var onFreshDraftSelected: ((String?, SessionTransport) -> Unit)? = null
 
     /**
      * Send a user message into an agent **Thread** (a `source=phone` session)
@@ -681,6 +683,7 @@ class ChatViewModel : ViewModel() {
      */
     private data class PendingThread(val chatId: String, val name: String)
     private var pendingThread: PendingThread? = null
+    private val threadNavigationGeneration = AtomicLong(0L)
 
     /**
      * A "+ New Thread" whose first message has been sent — we're now polling for
@@ -695,6 +698,17 @@ class ChatViewModel : ViewModel() {
         val knownIds: Set<String>,
     )
     private var creatingThread: CreatingThread? = null
+
+    /**
+     * Provisional phone Threads are route-owned drafts, not transferable chat
+     * drafts. Leaving that surface retires only the pending local route; durable
+     * inbox/session rows and learned session-to-chat-id mappings stay intact.
+     */
+    private fun exitProvisionalThread() {
+        threadNavigationGeneration.incrementAndGet()
+        pendingThread = null
+        creatingThread = null
+    }
 
     /**
      * `sessionId` → phone-platform `chat_id`, learned for threads this app
@@ -4373,6 +4387,7 @@ class ChatViewModel : ViewModel() {
                 sessionRefreshJob?.cancel()
                 _isLoadingSessions.value = false
                 conversationBindingController.reset()
+                exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
                 _reasoningCapabilityRevision.value += 1L
@@ -4420,6 +4435,7 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
         // Detach the old live gateway session without reading launch/global
         // model options: session.info for the resumed owner is authoritative.
         activateGatewayProfile(profile, refreshModelOptions = false)
@@ -4429,6 +4445,7 @@ class ChatViewModel : ViewModel() {
             sessionId = sessionId,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
         return true
     }
@@ -4439,11 +4456,15 @@ class ChatViewModel : ViewModel() {
      * `default` profile wins over the server's sticky active profile everywhere.
      */
     fun createProfileChat(
-        profileName: String,
+        profileName: String?,
         profile: Profile?,
         contextKey: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        // A provisional phone Thread belongs to its original connection/chat_id
+        // and cannot transfer to another profile. Exit it before binding or
+        // persisting the destination draft so the next send uses session.create.
+        exitProvisionalThread()
         activateGatewayProfile(profile, refreshModelOptions = false)
         refreshActiveAgentName(profile, relabelGenericMessages = true)
         switchProfileContextInternal(
@@ -4451,9 +4472,47 @@ class ChatViewModel : ViewModel() {
             sessionId = null,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
+        // Selection has already moved persistence to the target profile, so
+        // clear that profile/transport's stored last-session slot as part of
+        // the same draft transfer. A restart must reopen the draft, not the
+        // target profile's previous conversation.
+        persistFreshDraft(profileName)
         AppAnalytics.onSessionCreated()
         return true
+    }
+
+    /**
+     * Atomic owner switch for the Chat header.
+     *
+     * Empty ordinary drafts and provisional phone Threads both become a fresh
+     * destination-profile draft, but only after provisional routing is retired.
+     * Durable sessions keep the established profile-selection lifecycle, whose
+     * binder may restore the destination profile's compatible last session.
+     */
+    fun selectProfileFromHeader(
+        profileName: String?,
+        profile: Profile?,
+        contextKey: String,
+    ): Boolean {
+        val handler = chatHandler ?: return false
+        val currentSessionId = handler.currentSessionId.value
+        val activeSession = handler.sessions.value.firstOrNull {
+            it.sessionId == currentSessionId
+        }
+        if (currentSessionId == null || activeSession?.source == "phone") {
+            return createProfileChat(profileName, profile, contextKey)
+        }
+        if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
+        activateGatewayProfile(profile)
+        return true
+    }
+
+    private fun persistFreshDraft(profileName: String?) {
+        val transport = SessionTransport.forEndpoint(streamingEndpoint)
+        onFreshDraftSelected?.invoke(profileName, transport) ?: onSessionChanged?.invoke(null)
     }
 
     fun switchProfileContext(contextKey: String, sessionId: String?) {
@@ -4478,14 +4537,19 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         explicitProfileName: String? = null,
         explicitDisplayProfile: Profile? = null,
+        explicitBinding: Boolean = false,
         reconciliation: Boolean = false,
     ) {
         val handler = chatHandler ?: return
         dismissChatFailure()
         val previousBinding = conversationBinding.value
         val isInitialContextBinding = !previousBinding.isBound
-        val targetProfileName = explicitProfileName ?: sessionProfileNameProvider()
-        if (explicitProfileName != null) {
+        val targetProfileName = if (explicitBinding) {
+            explicitProfileName
+        } else {
+            sessionProfileNameProvider()
+        }
+        if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
                 profileName = explicitProfileName,
@@ -4845,9 +4909,12 @@ class ChatViewModel : ViewModel() {
         if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.newChat) return
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
-        clearOpenedSessionOwner()
-        pendingThread = null
-        creatingThread = null
+        // A new chat clears only the durable session identity. Keep the bound
+        // profile/context so an All Profiles conversation becomes a fresh
+        // draft for that same owner instead of falling back to the globally
+        // restored default profile.
+        conversationBindingController.startFreshDraft()
+        exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
         releaseTurnForNavigation(handler)
@@ -4877,7 +4944,7 @@ class ChatViewModel : ViewModel() {
             _fastEnabled.value = null
             approvalModeRevision.incrementAndGet()
             pendingYolo = null
-            onSessionChanged?.invoke(null)
+            persistFreshDraft(currentSessionProfileName())
             AppAnalytics.onSessionCreated()
             onReady?.invoke(null)
             return
@@ -4947,6 +5014,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "new_thread")
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
@@ -4983,6 +5051,7 @@ class ChatViewModel : ViewModel() {
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
 
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "open_proactive_thread")
 
         releaseTurnForNavigation(handler)
@@ -4992,7 +5061,6 @@ class ChatViewModel : ViewModel() {
             chatId = normalizedChatId,
             name = ordered.last().title.ifBlank { "Hermes" },
         )
-        creatingThread = null
         gatewayClient?.clearSession()
         handler.setSessionId(null)
         selectBackgroundProcessSession(null)
@@ -5045,11 +5113,20 @@ class ChatViewModel : ViewModel() {
      */
     private fun switchToCreatedThread() {
         val creating = creatingThread ?: return
+        val generation = threadNavigationGeneration.get()
         viewModelScope.launch {
             for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L, 4500L)) {
                 delay(delayMs)
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 refreshSessions()
                 delay(400L) // let the refresh job land in the sessions flow
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 val match = chatHandler?.sessions?.value?.firstOrNull {
                     it.source == "phone" && it.sessionId !in creating.knownIds
                 }
@@ -5079,8 +5156,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         dismissChatFailure()
         if (streamingEndpoint != "gateway" && apiClient == null) return
-        pendingThread = null
-        creatingThread = null
+        exitProvisionalThread()
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.

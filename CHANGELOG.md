@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
 - **Android Voice Focus keeps Stop and immediate spoken steering available across every interaction mode.** Hold-to-talk now interrupts Thinking and Transcribing turns before capturing the replacement direction, remains operable through TalkBack, Switch Access, and keyboard controls, preserves pointer press-and-release behavior across floating controls, and Google Play no longer offers the sideload-only system overlay action.
 - **Android Assistant sessions explain when no speech was captured instead of appearing stuck at Ready.** Retry feedback survives the separate system overlay process, recreated session UI requests the current turn state, and locked sessions keep transcript, response, and technical error text private.
+- **Android New Chat keeps the current profile and stays fresh across profile switches.** Starting from All Profiles no longer forces the literal default profile, choosing another profile from an empty draft no longer reopens that profile's previous session after route settlement or restart, and leaving a provisional phone Thread cannot route the next turn to its old chat under the new profile.
 
 ### Removed
 

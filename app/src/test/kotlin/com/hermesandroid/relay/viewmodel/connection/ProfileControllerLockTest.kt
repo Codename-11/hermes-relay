@@ -4,6 +4,7 @@ import android.content.Context
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -365,5 +366,43 @@ class ProfileControllerLockTest {
         // selectProfile to a different target is now honored.
         controller.selectProfile(coder)
         assertEquals(coder, controller.selectedProfile.value)
+    }
+
+    @Test
+    fun freshDraftFencesRestoreAndClearsOnlyItsConnectionProfileTransport() = runBlocking {
+        val sessions = controller.profileSessionStore
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "old-sse")
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.GATEWAY, "old-gateway")
+        sessions.setSessionId("other-connection", mizu.name, SessionTransport.SSE, "other-sse")
+        controller.selectProfile(mizu)
+        awaitSelected(mizu.name)
+
+        controller.markFreshDraft(connectionId, mizu.name, SessionTransport.SSE)
+        withTimeout(5_000) {
+            sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.SSE)
+                .first { it == null }
+        }
+
+        // Simulate an older read observing the pre-clear value: the live intent
+        // fence still wins until a real session supersedes the draft.
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "stale-sse")
+        controller.refreshLastSessionForProfile(connectionId, mizu.name)
+        assertNull(lastSessionIds.last())
+
+        assertEquals(
+            "old-gateway",
+            sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.GATEWAY).first(),
+        )
+        assertEquals(
+            "other-sse",
+            sessions.sessionIdFlow("other-connection", mizu.name, SessionTransport.SSE).first(),
+        )
+
+        controller.markSessionPersisted(connectionId, mizu.name, SessionTransport.SSE)
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "new-sse")
+        controller.refreshLastSessionForProfile(connectionId, mizu.name)
+        withTimeout(5_000) {
+            while (lastSessionIds.lastOrNull() != "new-sse") Thread.sleep(10)
+        }
     }
 }

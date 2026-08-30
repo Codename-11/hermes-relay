@@ -6884,6 +6884,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     // ground truth about which transport can resume it, robust to a
                     // turn that fell back from gateway to SSE.
                     val transport = SessionTransport.forSessionId(sessionId)
+                    profileController.markSessionPersisted(connectionId, profileName, transport)
                     profileController.profileSessionStore.setSessionId(
                         connectionId,
                         profileName,
@@ -6915,6 +6916,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     } else {
                         preferences.remove(KEY_LAST_SESSION_ID)
                     }
+                }
+            }
+        }
+    }
+
+    /** Persist an intentional empty draft without conflating it with transient null state. */
+    fun saveFreshDraft(profileName: String?, transport: SessionTransport) {
+        _lastSessionId.value = null
+        val connectionId = activeConnectionId.value ?: return
+        profileController.markFreshDraft(connectionId, profileName, transport)
+        if (profileName == null) {
+            viewModelScope.launch {
+                getApplication<Application>().relayDataStore.edit { preferences ->
+                    preferences.remove(KEY_LAST_SESSION_ID)
                 }
             }
         }

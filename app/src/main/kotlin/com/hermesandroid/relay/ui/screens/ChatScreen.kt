@@ -2393,8 +2393,15 @@ fun ChatScreen(
     }
     val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
         if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
-            connectionViewModel.selectProfile(profile)
-            chatViewModel.activateGatewayProfile(profile)
+            val profileName = profile?.name
+            chatViewModel.selectProfileFromHeader(
+                profileName = profileName,
+                profile = profile,
+                contextKey = AgentDisplay.profileContextKey(
+                    connectionId = activeConnection?.id,
+                    profileName = profileName,
+                ),
+            )
         }
     }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
@@ -2476,25 +2483,6 @@ fun ChatScreen(
                         chatViewModel.createNewChat()
                         scope.launch { drawerState.close() }
                     }
-                },
-                onNewDefaultChat = {
-                    if (isProfileLocked) return@SessionDrawerContent
-                    val defaultProfile = agentProfiles.firstOrNull {
-                        it.name.equals("default", ignoreCase = true)
-                    } ?: com.hermesandroid.relay.data.Profile(
-                        name = "default",
-                        model = "",
-                        description = "Default",
-                    )
-                    val opened = chatViewModel.createProfileChat(
-                        profileName = "default",
-                        profile = defaultProfile,
-                        contextKey = AgentDisplay.profileContextKey(
-                            connectionId = activeConnection?.id,
-                            profileName = "default",
-                        ),
-                    )
-                    if (opened) scope.launch { drawerState.close() }
                 },
                 onSelectSession = { sessionId ->
                     chatViewModel.switchSession(sessionId)

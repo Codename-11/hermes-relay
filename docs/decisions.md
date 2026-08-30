@@ -2841,6 +2841,20 @@ session or starts a draft, never hot-swaps a live session. Model/provider,
 personality, reasoning, approval, Fast, and YOLO state reset at the ViewModel
 context boundary before destination session truth can repopulate them.
 
+New Chat retains the current concrete conversation owner even when the drawer is
+browsing All Profiles. A profile choice made from that empty draft transfers an
+explicit fresh-draft intent rather than restoring the destination's previous
+session. Android persists and generation-fences that intent by exact
+connection/profile/transport; it clears only the resumable pointer, leaving the
+stored conversation, transcript, and per-owner composer drafts intact.
+
+Phone Threads keep their connection/chat-id ownership when leaving that surface.
+They are never transferred into a different profile binding: the atomic header
+switch retires provisional or in-progress promotion state before creating the
+destination profile draft, while durable inbox rows, promoted sessions,
+notification ownership, and session-to-chat-id indexes remain untouched. A
+generation fence prevents a delayed promotion from replacing the new draft.
+
 **Consequences.** The hamburger remains exclusively the Session Drawer. Agent
 Passport stays focused on inspection and configuration. The drawer may widen
 its read-only browse scope to all profiles and organize that combined set by

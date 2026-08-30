@@ -155,6 +155,14 @@ class ProfileController(
     private val avatarRefreshGeneration = AtomicLong(0L)
     private val petRefreshGeneration = AtomicLong(0L)
     private val petGalleryGeneration = AtomicLong(0L)
+    private val sessionRestoreGeneration = AtomicLong(0L)
+    private val freshDraftScopes = ConcurrentHashMap.newKeySet<SessionScopeKey>()
+
+    private data class SessionScopeKey(
+        val connectionId: String,
+        val profileName: String?,
+        val transport: SessionTransport,
+    )
     private val petThumbnailRequests = ConcurrentHashMap.newKeySet<String>()
 
     val agentProfiles: StateFlow<List<Profile>> = combine(
@@ -1463,10 +1471,48 @@ class ProfileController(
         }
     }
 
+    /**
+     * Persist a user-requested empty draft for one exact conversation scope.
+     *
+     * The in-memory marker fences any stored-session read that was already in
+     * flight, while clearing the exact transport slot makes the draft survive a
+     * process restart. Other profiles, connections, transports, and the server's
+     * actual session/history rows are untouched.
+     */
+    fun markFreshDraft(
+        connectionId: String,
+        profileName: String?,
+        transport: SessionTransport,
+    ) {
+        val scopeKey = SessionScopeKey(connectionId, profileName, transport)
+        freshDraftScopes += scopeKey
+        sessionRestoreGeneration.incrementAndGet()
+        if (
+            activeConnectionId.value == connectionId &&
+            _selectedProfile.value?.name == profileName
+        ) {
+            setLastSessionId(null)
+        }
+        scope.launch {
+            profileSessionStore.setSessionId(connectionId, profileName, transport, null)
+        }
+    }
+
+    /** A real session supersedes the fresh-draft marker for its exact scope. */
+    fun markSessionPersisted(
+        connectionId: String,
+        profileName: String?,
+        transport: SessionTransport,
+    ) {
+        freshDraftScopes -= SessionScopeKey(connectionId, profileName, transport)
+        sessionRestoreGeneration.incrementAndGet()
+    }
+
     fun refreshLastSessionForProfile(
         connectionId: String?,
         profileName: String?,
     ) {
+        val generation = sessionRestoreGeneration.incrementAndGet()
         setLastSessionId(null)
         if (connectionId == null) return
         // Defer until the active transport is known — restoring an id the
@@ -1478,6 +1524,8 @@ class ProfileController(
         // `default` (or any other name), but its last-session slot must remain
         // distinct from explicitly selecting that named profile.
         val sessionProfileName = profileName
+        val scopeKey = SessionScopeKey(connectionId, sessionProfileName, transport)
+        if (scopeKey in freshDraftScopes) return
         scope.launch {
             val profileScoped = profileSessionStore
                 .sessionIdFlow(connectionId, sessionProfileName, transport)
@@ -1493,6 +1541,8 @@ class ProfileController(
                 null
             }
             if (
+                sessionRestoreGeneration.get() == generation &&
+                scopeKey !in freshDraftScopes &&
                 activeConnectionId.value == connectionId &&
                 _selectedProfile.value?.name == profileName &&
                 activeSessionTransport() == transport

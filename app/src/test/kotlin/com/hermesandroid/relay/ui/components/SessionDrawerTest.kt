@@ -304,9 +304,8 @@ class SessionDrawerTest {
     }
 
     @Test
-    fun `new chat from all profiles requests an explicit default draft`() {
+    fun `new chat from all profiles keeps the current conversation owner`() {
         var scopedNewChats = 0
-        var defaultNewChats = 0
         compose.setContent {
             MaterialTheme {
                 SessionDrawerContent(
@@ -319,7 +318,6 @@ class SessionDrawerTest {
                     onRefreshAllProfiles = {},
                     onSelectProfileSession = { _, _ -> },
                     onNewChat = { scopedNewChats++ },
-                    onNewDefaultChat = { defaultNewChats++ },
                     onSelectSession = {},
                     onDeleteSession = {},
                     onRenameSession = { _, _ -> },
@@ -332,8 +330,7 @@ class SessionDrawerTest {
         compose.onNodeWithText("New Chat").performClick()
 
         compose.runOnIdle {
-            assertEquals(0, scopedNewChats)
-            assertEquals(1, defaultNewChats)
+            assertEquals(1, scopedNewChats)
         }
     }
 

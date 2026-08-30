@@ -59,6 +59,33 @@ class ConversationBindingControllerTest {
     }
 
     @Test
+    fun newDraftKeepsExplicitAllProfilesOwnerAndRejectsStaleRestore() {
+        val alpha = Profile("alpha", "model-a", "Alpha")
+        controller.openExplicit("c::alpha", alpha.name, "a1", alpha, null)
+
+        controller.startFreshDraft()
+
+        assertEquals("c::alpha", controller.state.value.contextKey)
+        assertEquals("alpha", controller.state.value.profileName)
+        assertNull(controller.state.value.sessionId)
+        assertEquals(alpha, controller.state.value.displayProfile)
+        assertTrue(controller.state.value.hasExplicitOwner)
+        assertFalse(controller.reconcileGlobal("c::alpha", "alpha", "a1"))
+        assertNull(controller.state.value.sessionId)
+    }
+
+    @Test
+    fun newDraftPromotesGlobalOwnerAndRejectsItsStoredSession() {
+        controller.forceGlobal("c::alpha", "alpha", "a1")
+
+        controller.startFreshDraft()
+
+        assertTrue(controller.state.value.hasExplicitOwner)
+        assertNull(controller.state.value.sessionId)
+        assertFalse(controller.reconcileGlobal("c::alpha", "alpha", "a1"))
+    }
+
+    @Test
     fun profileLockRejectsOtherOwnersAndAllowsTheLockedOwner() {
         val locked = AgentDisplay.profileSessionKey("beta")
         assertFalse(controller.openExplicit("c::alpha", "alpha", "a1", null, locked))
