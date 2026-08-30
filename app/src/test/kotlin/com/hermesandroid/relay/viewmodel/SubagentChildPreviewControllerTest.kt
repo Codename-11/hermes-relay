@@ -66,15 +66,54 @@ class SubagentChildPreviewControllerTest {
         assertNull(controller.state.value)
     }
 
-    private fun activity() = SubagentActivity(
-        laneId = 0,
+    @Test
+    fun `stale open generation closes late watch and cannot replace newer profile`() = runTest {
+        val client = mockk<GatewayChatClient>()
+        val oldAcknowledgement = CompletableDeferred<GatewayChildWatch>()
+        val closed = mutableListOf<GatewayChildWatch>()
+        val controller = SubagentChildPreviewController(
+            scope = this,
+            openWatch = { _, sessionId, profile, _ ->
+                if (sessionId == "child-old") {
+                    Result.success(oldAcknowledgement.await())
+                } else {
+                    Result.success(watch(sessionId, "live-new", profile))
+                }
+            },
+            closeWatch = { _, watch ->
+                closed += watch
+                Result.success(Unit)
+            },
+        )
+
+        controller.open(activity("child-old", "old", laneId = 0), client, "parent", "scope", true) { true }
+        runCurrent()
+        controller.open(activity("child-new", "default", laneId = 1), client, "parent", "scope", true) { true }
+        advanceUntilIdle()
+        assertEquals("default", controller.state.value?.status)
+
+        val late = watch("child-old", "live-old", "old")
+        oldAcknowledgement.complete(late)
+        advanceUntilIdle()
+
+        assertTrue(late in closed)
+        assertEquals("default", controller.state.value?.status)
+        assertEquals("turn:1", controller.state.value?.activityKey)
+    }
+
+    private fun activity(
+        childSessionId: String = "child-stored",
+        profile: String = "default",
+        laneId: Long = 0,
+    ) = SubagentActivity(
+        laneId = laneId,
         turnId = "turn",
         taskIndex = 0,
         taskCount = 1,
         goal = "Inspect",
         phase = SubagentActivityPhase.PROGRESS,
-        childSessionId = "child-stored",
-        profile = "default",
+        childSessionId = childSessionId,
+        profile = profile,
     )
 
     private fun message(text: String) = MessageItem(
@@ -94,5 +133,20 @@ class SubagentChildPreviewControllerTest {
         historyTruncated = false,
         running = running,
         status = if (running) "streaming" else "idle",
+    )
+
+    private fun watch(
+        storedSessionId: String,
+        liveSessionId: String,
+        status: String?,
+    ) = GatewayChildWatch(
+        storedSessionId = storedSessionId,
+        liveSessionId = liveSessionId,
+        profile = status,
+        generation = if (storedSessionId == "child-old") 1 else 2,
+        messages = emptyList(),
+        historyTruncated = false,
+        running = true,
+        status = status,
     )
 }

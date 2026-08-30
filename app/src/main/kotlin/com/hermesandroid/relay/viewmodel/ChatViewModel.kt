@@ -419,10 +419,8 @@ class ChatViewModel : ViewModel() {
         _sessionDirectoryRefreshRequests.asSharedFlow()
 
     private fun activityScope(contextKey: String? = activeProfileContextKey): SessionActivityScope? {
-        val raw = contextKey?.trim().orEmpty()
-        val separator = raw.lastIndexOf("::")
-        if (separator <= 0 || separator >= raw.lastIndex) return null
-        return SessionActivityScope.of(raw.substring(0, separator), raw.substring(separator + 2))
+        val identity = AgentDisplay.parseProfileContextKey(contextKey) ?: return null
+        return SessionActivityScope.of(identity.connectionId, identity.profileKey)
     }
 
     private fun activityOwner(
@@ -534,7 +532,8 @@ class ChatViewModel : ViewModel() {
     private fun backgroundTurnKey(sessionId: String, profile: String?): TurnCheckpointKey? {
         val profileKey = AgentDisplay.profileSessionKey(profile)
         return backgroundTurnCheckpoints.keys.firstOrNull { key ->
-            key.sessionId == sessionId && key.contextKey.substringAfterLast("::") == profileKey
+            key.sessionId == sessionId &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey
         }
     }
     private var checkpointWriteJob: Job? = null
@@ -547,6 +546,7 @@ class ChatViewModel : ViewModel() {
 
     private data class ActiveTurnCheckpointSeed(
         var contextKey: String?,
+        val profileKey: String?,
         var sessionId: String,
         var liveSessionId: String?,
         var transport: String,
@@ -2637,7 +2637,7 @@ class ChatViewModel : ViewModel() {
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
             val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
-                key.contextKey.substringAfterLast("::") == profileKey &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey &&
                 checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
@@ -6329,6 +6329,16 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = activeProfileContextKey,
+            // Persist the explicit UI selection, not the effective sticky
+            // server profile used to bind the current live session. Server
+            // Default must survive restart as the sentinel even when Hermes
+            // currently resolves it to a named profile such as `victor`.
+            profileKey = AgentDisplay.profileSessionKey(
+                conversationBinding.value.let { binding ->
+                    if (binding.hasExplicitOwner) binding.profileName
+                    else selectedProfileProvider()?.name
+                },
+            ),
             sessionId = sessionId,
             liveSessionId = null,
             transport = transport,
@@ -6369,6 +6379,7 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = checkpoint.contextKey,
+            profileKey = checkpoint.profileKey,
             sessionId = checkpoint.sessionId,
             liveSessionId = checkpoint.liveSessionId,
             transport = checkpoint.transport,
@@ -6429,6 +6440,7 @@ class ChatViewModel : ViewModel() {
         val now = System.currentTimeMillis()
         return ChatTurnCheckpoint(
             contextKey = contextKey,
+            profileKey = seed.profileKey,
             sessionId = sessionId,
             liveSessionId = gatewayClient?.currentLiveSessionId(sessionId) ?: seed.liveSessionId,
             transport = seed.transport,
@@ -6999,7 +7011,12 @@ class ChatViewModel : ViewModel() {
                         eventScopeKey = checkpoint.contextKey,
                         turnId = messageId,
                         event = event,
-                        profile = checkpoint.contextKey.substringAfterLast("::").takeIf(String::isNotBlank),
+                        profile = if (checkpoint.profileKey != null) {
+                            AgentDisplay.profileRequestName(checkpoint.profileKey)
+                        } else {
+                            AgentDisplay.parseProfileContextKey(checkpoint.contextKey)
+                                ?.requestProfileName
+                        },
                     )
                     handler.onSubagentEvent(messageId, event)
                     scheduleCheckpointWrite(immediate = true)
