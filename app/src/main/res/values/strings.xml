@@ -537,6 +537,17 @@
     <string name="endpoints_preferred">Preferred</string>
     <string name="endpoints_automatic">Automatic</string>
     <string name="endpoints_current_route">Selected candidate: %1$s · %2$s</string>
+    <string name="endpoints_no_active_fallback">No fallback route is currently selected.</string>
+    <string name="endpoints_selection_reason">Priority %1$d (0 is highest) · %2$s</string>
+    <string name="endpoints_reachable_now">Reachable now</string>
+    <string name="endpoints_last_check_failed">Last check failed</string>
+    <string name="endpoints_reachability_not_checked">Reachability not checked</string>
+    <string name="endpoints_security_application_tls">Application TLS</string>
+    <string name="endpoints_security_tailscale_overlay">Encrypted by Tailscale · no application TLS</string>
+    <string name="endpoints_security_wireguard_overlay">Encrypted by WireGuard · no application TLS</string>
+    <string name="endpoints_security_secure_link">Encrypted by Hermes Secure Link</string>
+    <string name="endpoints_security_private_plain">Private network · no application TLS</string>
+    <string name="endpoints_security_public_plain">Public route is not encrypted</string>
     <string name="endpoints_cancel_manual_switch">Cancel manual switch — back to %1$s</string>
     <string name="endpoints_stop_preferring">Stop preferring — back to automatic</string>
     <string name="endpoints_checking">Checking…</string>
@@ -2665,6 +2676,8 @@
     <string name="active_section_no_response_from_relay">No response from relay</string>
     <string name="active_section_no_route_reachable">No route reachable</string>
     <string name="active_section_no_routes_answered_probe">No routes answered the probe</string>
+    <string name="active_section_no_reachable_route_title">No reachable Gateway route</string>
+    <string name="active_section_no_reachable_route_body">None of the configured Gateway routes responded. Turn on Tailscale, Wi-Fi, or mobile data, then recheck. Expand a route below for Dashboard, API, and Relay results.</string>
     <string name="active_section_not_advertised">Not advertised</string>
     <string name="active_section_not_checked">Not checked</string>
     <string name="active_section_not_checked_separately">Not checked separately</string>

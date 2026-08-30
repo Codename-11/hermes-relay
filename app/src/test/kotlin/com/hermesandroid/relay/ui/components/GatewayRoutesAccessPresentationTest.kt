@@ -4,6 +4,7 @@ import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.network.shared.EndpointSurface
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -106,5 +107,46 @@ class GatewayRoutesAccessPresentationTest {
         assertTrue(plainRelay.hasPlainRelayTransport())
         assertFalse(tlsRelay.hasPlainRelayTransport())
         assertFalse(tailscaleRelay.hasPlainRelayTransport())
+    }
+
+    @Test
+    fun `surface security distinguishes tailnet encryption from public plaintext`() {
+        val tailscale = EndpointCandidate(
+            role = "tailscale",
+            dashboard = DashboardEndpoint("http://100.64.0.2:9119"),
+            relay = RelayEndpoint("ws://100.64.0.2:9119/api/plugins/hermes-relay/transport/ws"),
+        )
+        val publicPlain = EndpointCandidate(
+            role = "public",
+            dashboard = DashboardEndpoint("http://hermes.example.test:9119"),
+        )
+        val publicTls = publicPlain.copy(
+            dashboard = DashboardEndpoint("https://hermes.example.test"),
+        )
+
+        assertEquals(
+            RouteSurfaceSecurityPresentation.TailscaleOverlay,
+            routeSurfaceSecurityPresentation(tailscale, EndpointSurface.Dashboard, tailscale.dashboard?.url),
+        )
+        assertEquals(
+            RouteSurfaceSecurityPresentation.TailscaleOverlay,
+            routeSurfaceSecurityPresentation(tailscale, EndpointSurface.Relay, tailscale.relay?.url),
+        )
+        assertEquals(
+            RouteSurfaceSecurityPresentation.PublicPlain,
+            routeSurfaceSecurityPresentation(
+                publicPlain,
+                EndpointSurface.Dashboard,
+                publicPlain.dashboard?.url,
+            ),
+        )
+        assertEquals(
+            RouteSurfaceSecurityPresentation.ApplicationTls,
+            routeSurfaceSecurityPresentation(
+                publicTls,
+                EndpointSurface.Dashboard,
+                publicTls.dashboard?.url,
+            ),
+        )
     }
 }

@@ -57,6 +57,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.SurfaceSecurityKind
+import com.hermesandroid.relay.data.classifySurfaceSecurity
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.data.hasSecureProxy
@@ -135,11 +137,11 @@ fun EndpointsCard(
     // Pre-resolve strings
     val noRoutesStoredText = stringResource(R.string.endpoints_no_routes_stored)
     val addRouteText = stringResource(R.string.endpoints_add_route)
-    val resolvingText = stringResource(R.string.endpoints_resolving)
     val manualUntilDisconnectText = stringResource(R.string.endpoints_manual_until_disconnect)
     val preferredText = stringResource(R.string.endpoints_preferred)
     val automaticText = stringResource(R.string.endpoints_automatic)
     val currentRouteText = stringResource(R.string.endpoints_current_route)
+    val noActiveFallbackText = stringResource(R.string.endpoints_no_active_fallback)
 
     if (endpoints.isEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -168,18 +170,41 @@ fun EndpointsCard(
     val stopPreferringText = stringResource(R.string.endpoints_stop_preferring)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = currentRouteText.format(
-                activeEndpoint?.displayLabel() ?: resolvingText,
-                when {
-                    manualSwitchActive -> manualUntilDisconnectText
-                    manualOverrideRole != null -> preferredText
-                    else -> automaticText
-                }
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        val activeOutcome = activeEndpoint?.let(outcomeFor)
+        if (activeEndpoint == null) {
+            Text(
+                text = noActiveFallbackText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = currentRouteText.format(
+                    activeEndpoint.displayLabel(),
+                    when {
+                        manualSwitchActive -> manualUntilDisconnectText
+                        manualOverrideRole != null -> preferredText
+                        else -> automaticText
+                    }
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = stringResource(
+                    R.string.endpoints_selection_reason,
+                    activeEndpoint.priority,
+                    when (routeReachabilityPresentation(isProbing, activeOutcome)) {
+                        RouteReachabilityPresentation.Checking -> stringResource(R.string.endpoints_checking)
+                        RouteReachabilityPresentation.Reachable -> stringResource(R.string.endpoints_reachable_now)
+                        RouteReachabilityPresentation.Unreachable -> stringResource(R.string.endpoints_last_check_failed)
+                        RouteReachabilityPresentation.NotChecked -> stringResource(R.string.endpoints_reachability_not_checked)
+                    },
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         endpoints.forEachIndexed { index, candidate ->
             if (index > 0) HorizontalDivider()
             EndpointRow(
@@ -562,8 +587,6 @@ private fun RouteSurfaceMap(
     val dashboardOutcome = outcomeFor(EndpointSurface.Dashboard)
     val apiOutcome = outcomeFor(EndpointSurface.Api)
     val relayOutcome = outcomeFor(EndpointSurface.Relay)
-    val plainRelayTransport = candidate.hasPlainRelayTransport()
-
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
         shape = appearanceRoundedCornerShape(10.dp),
@@ -582,22 +605,25 @@ private fun RouteSurfaceMap(
                     else -> routeSurfaceRuntimeStatus(dashboardUrl, dashboardOutcome)
                 },
                 warning = dashboardSignInRequired || dashboardOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(
+                    candidate,
+                    EndpointSurface.Dashboard,
+                    dashboardUrl,
+                ),
             )
             RouteSurfaceRow(
                 label = stringResource(R.string.active_section_api_server),
                 url = apiUrl,
                 status = routeSurfaceRuntimeStatus(apiUrl, apiOutcome),
                 warning = apiOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(candidate, EndpointSurface.Api, apiUrl),
             )
             RouteSurfaceRow(
                 label = stringResource(R.string.active_section_relay),
                 url = relayUrl,
-                status = if (plainRelayTransport) {
-                    stringResource(R.string.active_section_not_encrypted)
-                } else {
-                    routeSurfaceRuntimeStatus(relayUrl, relayOutcome)
-                },
-                warning = plainRelayTransport || relayOutcome.isDefinitiveFailure(),
+                status = routeSurfaceRuntimeStatus(relayUrl, relayOutcome),
+                warning = relayOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(candidate, EndpointSurface.Relay, relayUrl),
             )
         }
     }
@@ -609,6 +635,7 @@ private fun RouteSurfaceRow(
     url: String?,
     status: String,
     warning: Boolean = false,
+    security: RouteSurfaceSecurityPresentation = RouteSurfaceSecurityPresentation.NotConfigured,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -629,6 +656,31 @@ private fun RouteSurfaceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (security != RouteSurfaceSecurityPresentation.NotConfigured) {
+                Text(
+                    text = when (security) {
+                        RouteSurfaceSecurityPresentation.ApplicationTls ->
+                            stringResource(R.string.endpoints_security_application_tls)
+                        RouteSurfaceSecurityPresentation.TailscaleOverlay ->
+                            stringResource(R.string.endpoints_security_tailscale_overlay)
+                        RouteSurfaceSecurityPresentation.WireGuardOverlay ->
+                            stringResource(R.string.endpoints_security_wireguard_overlay)
+                        RouteSurfaceSecurityPresentation.SecureLink ->
+                            stringResource(R.string.endpoints_security_secure_link)
+                        RouteSurfaceSecurityPresentation.PrivatePlain ->
+                            stringResource(R.string.endpoints_security_private_plain)
+                        RouteSurfaceSecurityPresentation.PublicPlain ->
+                            stringResource(R.string.endpoints_security_public_plain)
+                        RouteSurfaceSecurityPresentation.NotConfigured -> ""
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (security == RouteSurfaceSecurityPresentation.PublicPlain) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
         Text(
             text = status,
@@ -751,6 +803,75 @@ internal enum class RouteSurfaceProbePresentation {
     NotChecked,
     Reachable,
     Unreachable,
+}
+
+internal enum class RouteReachabilityPresentation {
+    Checking,
+    Reachable,
+    Unreachable,
+    NotChecked,
+}
+
+/** Honest selection context: a selected route is not proof of a fresh probe. */
+internal fun routeReachabilityPresentation(
+    isProbing: Boolean,
+    outcome: RouteProbeOutcome?,
+): RouteReachabilityPresentation = when {
+    isProbing -> RouteReachabilityPresentation.Checking
+    outcome == null || outcome.isSupersededProbeFailure() -> RouteReachabilityPresentation.NotChecked
+    outcome.reachable -> RouteReachabilityPresentation.Reachable
+    else -> RouteReachabilityPresentation.Unreachable
+}
+
+internal enum class RouteSurfaceSecurityPresentation {
+    ApplicationTls,
+    TailscaleOverlay,
+    WireGuardOverlay,
+    SecureLink,
+    PrivatePlain,
+    PublicPlain,
+    NotConfigured,
+}
+
+/**
+ * Separates application TLS from private overlay encryption. An HTTP/WS
+ * Tailscale route is WireGuard-encrypted in transit, but it does not have
+ * application-layer TLS; public plaintext remains an error.
+ */
+internal fun routeSurfaceSecurityPresentation(
+    candidate: EndpointCandidate,
+    surface: EndpointSurface,
+    url: String?,
+): RouteSurfaceSecurityPresentation {
+    if (url.isNullOrBlank()) return RouteSurfaceSecurityPresentation.NotConfigured
+    val label = when (surface) {
+        EndpointSurface.Standard,
+        EndpointSurface.Dashboard -> "Dashboard & Gateway"
+        EndpointSurface.Api -> "API fallback"
+        EndpointSurface.Relay -> "Relay tools"
+    }
+    val securityVerdict = classifySurfaceSecurity(
+        label = label,
+        url = url,
+        activeEndpoint = candidate,
+        isTailscaleDetected = false,
+    )
+    val role = candidate.role.trim().lowercase()
+    return when (securityVerdict.kind) {
+        SurfaceSecurityKind.Tls -> when (securityVerdict.mechanism) {
+            "Hermes Secure Link", "Hermes Reach" -> RouteSurfaceSecurityPresentation.SecureLink
+            else -> RouteSurfaceSecurityPresentation.ApplicationTls
+        }
+        SurfaceSecurityKind.Overlay -> when (securityVerdict.mechanism) {
+            "Tailscale" -> RouteSurfaceSecurityPresentation.TailscaleOverlay
+            else -> RouteSurfaceSecurityPresentation.WireGuardOverlay
+        }
+        SurfaceSecurityKind.Plain -> if (role == "public" || role == "https") {
+            RouteSurfaceSecurityPresentation.PublicPlain
+        } else {
+            RouteSurfaceSecurityPresentation.PrivatePlain
+        }
+    }
 }
 
 internal fun routeSurfaceProbePresentation(

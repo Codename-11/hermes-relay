@@ -62,4 +62,38 @@ class EndpointProbePresentationTest {
                 RouteSurfaceProbePresentation.NotConfigured,
         )
     }
+
+    @Test
+    fun `selected route does not claim fresh reachability without a probe`() {
+        val superseded = RouteProbeOutcome(
+            reachable = false,
+            detail = "superseded",
+            atMillis = 1L,
+        )
+
+        assertTrue(
+            routeReachabilityPresentation(isProbing = false, outcome = null) ==
+                RouteReachabilityPresentation.NotChecked,
+        )
+        assertTrue(
+            routeReachabilityPresentation(isProbing = false, outcome = superseded) ==
+                RouteReachabilityPresentation.NotChecked,
+        )
+        assertTrue(
+            routeReachabilityPresentation(isProbing = true, outcome = null) ==
+                RouteReachabilityPresentation.Checking,
+        )
+        assertTrue(
+            routeReachabilityPresentation(
+                isProbing = false,
+                outcome = RouteProbeOutcome(reachable = true, atMillis = 1L),
+            ) == RouteReachabilityPresentation.Reachable,
+        )
+        assertTrue(
+            routeReachabilityPresentation(
+                isProbing = false,
+                outcome = RouteProbeOutcome(reachable = false, detail = "timeout", atMillis = 1L),
+            ) == RouteReachabilityPresentation.Unreachable,
+        )
+    }
 }
