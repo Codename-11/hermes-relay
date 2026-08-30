@@ -2,7 +2,7 @@
 
 Implements ADR 25 — first-class Tailscale helper as optional hermes
 enhancement. The relay stays loopback-bound on ``127.0.0.1:8767``. The
-recommended tailnet ingress listens on Tailscale HTTPS 443 and proxies the
+recommended tailnet ingress listens on Tailscale HTTPS 10443 and proxies the
 Dashboard on ``127.0.0.1:9119``; Relay rides its same-origin plugin transport
 path. The optional Hermes API server on 8642 remains available for headless
 compatibility.
@@ -38,7 +38,7 @@ _TIMEOUT_SECONDS = 5
 # Default ports — relay matches plugin/relay/server.py, API matches
 # hermes-agent's API server default used by plugin/pair.py.
 DEFAULT_RELAY_PORT = 8767
-DEFAULT_DASHBOARD_LISTENER_PORT = 443
+DEFAULT_DASHBOARD_LISTENER_PORT = 10443
 DEFAULT_DASHBOARD_PORT = 9119
 DEFAULT_API_PORT = 8642
 DEFAULT_PORT = DEFAULT_DASHBOARD_PORT
@@ -103,9 +103,11 @@ def status() -> dict[str, Any] | None:
       empty list on failure).
     - ``serve_services`` (dict): Dashboard, API, and legacy direct Relay
       activity classified by loopback target, including non-matching listener
-      ports such as an HTTPS 443 listener proxying Dashboard on 9119.
+      ports such as an HTTPS 10443 listener proxying Dashboard on 9119.
     - ``serve_routes`` (list[dict]): Parsed listener/path/proxy details from
       the live Serve JSON for operator diagnostics.
+    - ``recommended_listener_port`` (int): Dedicated listener used by the
+      recommended stack. Consumers should not hard-code this value.
     """
     if not _tailscale_available():
         return None
@@ -151,6 +153,7 @@ def status() -> dict[str, Any] | None:
         "available": True,
         "hostname": hostname,
         "tailscale_ip": tailscale_ip,
+        "recommended_listener_port": DEFAULT_DASHBOARD_LISTENER_PORT,
         "serve_ports": serve_state["ports"],
         "serve_services": _classify_serve_services(serve_state["routes"]),
         "serve_routes": serve_state["routes"],
@@ -189,7 +192,7 @@ def _serve_state() -> dict[str, Any]:
 
     Tailscale reports the tailnet listener in ``TCP``/``Web`` keys and the
     loopback destination separately in each Web handler's ``Proxy`` value.
-    Keeping both avoids mistaking ``https://host:443 -> 127.0.0.1:9119`` for
+    Keeping both avoids mistaking ``https://host:10443 -> 127.0.0.1:9119`` for
     an unrelated service, while ``serve_ports`` remains backward-compatible
     as the list of ports the tailnet client actually dials.
     """
@@ -370,7 +373,7 @@ def enable_stack(
 
     ``relay_port`` retains its historical parameter name for compatibility,
     but is the loopback Dashboard target (9119), not the tailnet listener.
-    Recommended setup listens on HTTPS 443 and never disables an existing
+    Recommended setup listens on HTTPS 10443 and never disables an existing
     direct 8767 publication because paired clients may still depend on it.
     """
     if not _valid_port(dashboard_listener_port):
@@ -484,7 +487,7 @@ def disable_stack(
     api_port: int | None = DEFAULT_API_PORT,
     dashboard_listener_port: int = DEFAULT_DASHBOARD_LISTENER_PORT,
 ) -> dict[str, Any]:
-    """Remove Dashboard listener and API, leaving legacy 8767 intact."""
+    """Remove recommended 10443 and API, leaving old 443/8767 intact."""
     if not _valid_port(dashboard_listener_port):
         result = _invalid_port_result(dashboard_listener_port)
         return {

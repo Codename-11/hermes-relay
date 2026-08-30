@@ -9,7 +9,7 @@ Invoked via the ``hermes-relay-tailscale`` shim installed to
 
 The legacy direct-Relay form remains available deliberately as
 ``enable|disable --relay-only [--port N]``. New recommended setup publishes
-Tailscale HTTPS 443 and proxies Dashboard on loopback 9119 so Relay uses its
+Tailscale HTTPS 10443 and proxies Dashboard on loopback 9119 so Relay uses its
 same-origin plugin transport.
 
 All subcommands exit 0 on success, 1 on structured failure. ``--json``
@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dashboard-listener-port",
         type=int,
         default=tailscale.DEFAULT_DASHBOARD_LISTENER_PORT,
-        help="Tailnet HTTPS listener for Dashboard (default: 443).",
+        help="Tailnet HTTPS listener for Dashboard (default: 10443).",
     )
     enable_target = p_enable.add_mutually_exclusive_group()
     enable_target.add_argument(
@@ -166,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dashboard-listener-port",
         type=int,
         default=tailscale.DEFAULT_DASHBOARD_LISTENER_PORT,
-        help="Tailnet Dashboard listener to disable (default: 443).",
+        help="Tailnet Dashboard listener to disable (default: 10443).",
     )
     disable_target = p_disable.add_mutually_exclusive_group()
     disable_target.add_argument(
