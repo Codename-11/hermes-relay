@@ -585,6 +585,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         build_relay_pairing_block,
         normalize_endpoint_candidates,
         normalize_dashboard_url,
+        endpoint_role_for_url,
         read_server_config,
         _relay_lan_base_url,
         _resolve_lan_ip,
@@ -658,6 +659,17 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
             api_key = str(api_key_raw) if api_key_raw is not None else ""
         else:
             api_key = str(local_api_config.get("key") or "")
+        api_role = endpoint_role_for_url(
+            f"{'https' if api_tls else 'http'}://{api_host}:{api_port}"
+        )
+        if api_role == "public" and api_tls is not True:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "public API routes must enable TLS",
+                },
+                status=400,
+            )
     dashboard_url = (
         str(dashboard_url_raw).strip().rstrip("/")
         if dashboard_url_raw is not None
@@ -800,14 +812,24 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
                   if str(candidate.get("role", "")).lower() == "public"]
         lan = [candidate for candidate in existing
                if str(candidate.get("role", "")).lower() == "lan"]
+        legacy = [candidate for candidate in existing
+                  if candidate.get("legacy") is True
+                  or str(candidate.get("role", "")).lower()
+                  in {"legacy_direct", "public_legacy"}]
         other = [candidate for candidate in existing
                  if str(candidate.get("role", "")).lower()
-                 not in {"tailscale", "public", "lan"}]
+                 not in {
+                     "tailscale", "public", "lan",
+                     "legacy_direct", "public_legacy",
+                 }
+                 and candidate.get("legacy") is not True]
         direct = [candidate for candidate in secure_link_candidates
                   if str(candidate.get("role", "")).lower() == "plugin_proxy"]
         reach = [candidate for candidate in secure_link_candidates
                  if str(candidate.get("role", "")).lower() == "outbound_broker"]
-        endpoints_list = [*tailscale, *public, *direct, *other, *lan, *reach]
+        endpoints_list = [
+            *tailscale, *public, *direct, *other, *lan, *legacy, *reach,
+        ]
         for priority, candidate in enumerate(endpoints_list):
             candidate["priority"] = priority
             if str(candidate.get("role", "")).lower() == "tailscale":

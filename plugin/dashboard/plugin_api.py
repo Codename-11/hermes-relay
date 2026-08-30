@@ -207,7 +207,7 @@ def _validate_public_url(url: str) -> str:
     if not trimmed:
         return ""
     try:
-        return _plugin_module("pair").normalize_dashboard_url(trimmed)
+        return _plugin_module("pair").normalize_public_url(trimmed)
     except ValueError as exc:
         raise ValueError(f"invalid public Dashboard URL: {exc}") from exc
 

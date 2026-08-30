@@ -170,6 +170,15 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["port"], 443)
         self.assertTrue(qr["tls"])
 
+    async def test_public_api_override_rejects_plaintext(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint",
+            json={"host": "api.public.example", "port": 8642, "tls": False},
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("TLS", (await response.json())["error"])
+
     async def test_dashboard_url_flows_into_response_and_qr_payload(self) -> None:
         result = await self._mint({
             "dashboard_url": "https://dash.example.com/hermes/",
@@ -203,6 +212,52 @@ class PairingMintSchemaTests(AioHTTPTestCase):
                     "/pairing/mint", json={"dashboard_url": dashboard_url}
                 )
                 self.assertEqual(response.status, 400)
+
+    async def test_public_dashboard_url_rejects_plaintext_but_private_http_remains_valid(self) -> None:
+        rejected = await self.client.post(
+            "/pairing/mint", json={"dashboard_url": "http://public.example"}
+        )
+        self.assertEqual(rejected.status, 400)
+        self.assertIn("https", (await rejected.json())["error"])
+
+        accepted = await self.client.post(
+            "/pairing/mint", json={"dashboard_url": "http://192.168.1.20:9119"}
+        )
+        self.assertEqual(accepted.status, 200, await accepted.text())
+
+    async def test_public_endpoint_candidates_reject_every_plaintext_surface(self) -> None:
+        candidates = (
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "http://public.example"},
+                "relay": {"url": "wss://public.example/relay"},
+            },
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {"url": "ws://public.example:8767"},
+            },
+            {
+                "role": "public",
+                "priority": 0,
+                "api": {"host": "public.example", "port": 8642, "tls": False},
+                "relay": {"url": "wss://public.example/relay"},
+            },
+            {
+                "role": "public_legacy",
+                "priority": 0,
+                "legacy": True,
+                "relay": {"url": "ws://public.example:8767"},
+            },
+        )
+        for candidate in candidates:
+            with self.subTest(candidate=candidate):
+                response = await self.client.post(
+                    "/pairing/mint", json={"endpoints": [candidate]}
+                )
+                self.assertEqual(response.status, 400, await response.text())
 
     async def test_legacy_direct_relay_requires_explicit_boolean_opt_in(self) -> None:
         invalid = await self.client.post(
@@ -492,6 +547,16 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
             },
         }])
         self.assertNotIn(":8767", json.dumps(endpoints))
+
+    def test_public_mode_rejects_plaintext_even_for_private_or_tailnet_hosts(self) -> None:
+        for public_url in (
+            "http://public.example",
+            "http://192.168.1.20:9119",
+            "http://100.64.0.20:9119",
+        ):
+            with self.subTest(public_url=public_url):
+                with self.assertRaisesRegex(ValueError, "https"):
+                    self._build(mode="public", public_url=public_url)
 
     def test_explicit_public_relay_path_requires_legacy_opt_in(self) -> None:
         with self.assertRaisesRegex(ValueError, "legacy-direct-relay"):

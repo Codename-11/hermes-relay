@@ -789,6 +789,24 @@ class PairingRouteTests(PluginApiTestCase):
             "wss://legacy.example/relay",
         )
 
+    def test_dashboard_pairing_rejects_plaintext_public_url_before_proxy(self) -> None:
+        proxy = AsyncMock(return_value={"ok": True})
+        with patch.object(plugin_api, "_proxy", proxy), patch(
+            "plugin.pair.read_server_config",
+            return_value={"enabled": False, "host": "127.0.0.1", "port": 8642, "tls": False},
+        ), patch(
+            "plugin.pair.read_relay_config",
+            return_value={"host": "0.0.0.0", "port": 8767, "tls": False},
+        ):
+            response = self.client.post("/pairing", json={
+                "mode": "public",
+                "public_url": "http://public.example",
+            })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("https", response.json()["detail"])
+        proxy.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Remote Access tab — tailscale helper, public URL state, /probe
@@ -843,6 +861,19 @@ class RemoteAccessStateTests(PluginApiTestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("http", resp.json()["detail"])
+
+    def test_put_public_url_rejects_plaintext_even_for_private_hosts(self) -> None:
+        for url in (
+            "http://public.example",
+            "http://192.168.1.20:9119",
+            "http://100.64.0.20:9119",
+        ):
+            with self.subTest(url=url):
+                response = self.client.put(
+                    "/remote-access/public-url", json={"url": url}
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("https", response.json()["detail"])
 
     def test_put_public_url_rejects_non_string(self) -> None:
         resp = self.client.put("/remote-access/public-url", json={"url": 42})

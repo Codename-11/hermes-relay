@@ -255,6 +255,9 @@ def build_payload(
     If ``sign`` is true the payload is signed with the host-local QR
     secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
+    for candidate in endpoints or []:
+        if isinstance(candidate, dict):
+            validate_endpoint_candidate_security(candidate)
     normalized_dashboard_url = (
         normalize_dashboard_url(dashboard_url) if dashboard_url else None
     )
@@ -323,7 +326,7 @@ def build_payload(
     return json.dumps(payload, separators=(",", ":"))
 
 
-def _endpoint_role_for_url(url: str) -> str:
+def endpoint_role_for_url(url: str) -> str:
     """Return the existing route role that best describes an origin."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -333,9 +336,18 @@ def _endpoint_role_for_url(url: str) -> str:
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
-    if address is not None and (address.is_private or address.is_loopback):
-        return "lan"
-    if host in {"localhost", "localhost.localdomain"}:
+    if address is not None:
+        tailnet_v4 = ipaddress.ip_network("100.64.0.0/10")
+        tailnet_v6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+        if address in tailnet_v4 or address in tailnet_v6:
+            return "tailscale"
+        if address.is_private or address.is_loopback or address.is_link_local:
+            return "lan"
+    if (
+        host in {"localhost", "localhost.localdomain"}
+        or host.endswith(".local")
+        or (host and "." not in host)
+    ):
         return "lan"
     return "public"
 
@@ -356,7 +368,10 @@ def normalize_dashboard_url(dashboard_url: str) -> str:
         parsed.port
     except ValueError as exc:
         raise ValueError("dashboard_url contains an invalid port") from exc
-    return parsed._replace(scheme=parsed.scheme.lower()).geturl().rstrip("/")
+    normalized = parsed._replace(scheme=parsed.scheme.lower()).geturl().rstrip("/")
+    if endpoint_role_for_url(normalized) == "public" and parsed.scheme.lower() != "https":
+        raise ValueError("public Dashboard URLs must use https://")
+    return normalized
 
 
 def configured_dashboard_url(explicit: Optional[str] = None) -> Optional[str]:
@@ -373,6 +388,14 @@ def configured_dashboard_url(explicit: Optional[str] = None) -> Optional[str]:
         if value:
             return normalize_dashboard_url(value)
     return None
+
+
+def normalize_public_url(public_url: str) -> str:
+    """Return a canonical HTTPS public Dashboard or explicit Relay URL."""
+    normalized = normalize_dashboard_url(public_url)
+    if urlparse(normalized).scheme.lower() != "https":
+        raise ValueError("public_url must use https://")
+    return normalized
 
 
 def dashboard_relay_ingress_url(dashboard_url: str) -> str:
@@ -414,7 +437,7 @@ def add_dashboard_ingress_candidate(
 
     ingress_url = dashboard_relay_ingress_url(dashboard)
     transport_hint = "wss" if ingress_url.startswith("wss://") else "ws"
-    ingress_role = _endpoint_role_for_url(dashboard)
+    ingress_role = endpoint_role_for_url(dashboard)
     ingress: dict[str, Any] = {
         "role": ingress_role,
         "priority": 0,
@@ -745,6 +768,26 @@ def _tailscale_endpoint(
     }
 
 
+def validate_endpoint_candidate_security(candidate: dict[str, Any]) -> None:
+    """Reject plaintext on candidates explicitly labeled as public."""
+    role = str(candidate.get("role") or "").strip().lower()
+    if role not in {"public", "public_legacy"}:
+        return
+    candidate_dashboard = candidate.get("dashboard")
+    if isinstance(candidate_dashboard, dict) and candidate_dashboard.get("url"):
+        public_dashboard = normalize_public_url(str(candidate_dashboard["url"]))
+        if urlparse(public_dashboard).scheme.lower() != "https":  # pragma: no cover
+            raise ValueError("role=public Dashboard routes must use https://")
+    candidate_relay = candidate.get("relay")
+    if isinstance(candidate_relay, dict) and candidate_relay.get("url"):
+        relay_scheme = urlparse(str(candidate_relay["url"])).scheme.lower()
+        if relay_scheme != "wss":
+            raise ValueError("role=public Relay routes must use wss://")
+    candidate_api = candidate.get("api")
+    if isinstance(candidate_api, dict) and candidate_api.get("tls") is not True:
+        raise ValueError("role=public API routes must enable TLS")
+
+
 def normalize_endpoint_candidates(
     endpoints: Optional[list[Any]],
     *,
@@ -780,10 +823,11 @@ def normalize_endpoint_candidates(
             normalized.append(candidate)
             continue
         candidate = dict(candidate)
+        role = str(candidate.get("role") or "").strip().lower()
+        validate_endpoint_candidate_security(candidate)
         if candidate.get("legacy") is True:
             normalized.append(candidate)
             continue
-        role = str(candidate.get("role") or "").strip().lower()
         candidate_dashboard = candidate.get("dashboard")
         if isinstance(candidate_dashboard, dict) and candidate_dashboard.get("url"):
             dashboard_dict = dict(candidate_dashboard)
@@ -919,7 +963,7 @@ def _public_endpoint(
     """
     if not public_url:
         raise ValueError("public_url is required for role=public")
-    dashboard_url = normalize_dashboard_url(public_url)
+    dashboard_url = normalize_public_url(public_url)
     relay_url = dashboard_relay_ingress_url(dashboard_url)
     relay_scheme = "wss" if relay_url.startswith("wss://") else "ws"
     return {
@@ -940,7 +984,7 @@ def _legacy_public_relay_endpoint(
     priority: int,
 ) -> dict[str, Any]:
     """Build the old public direct-Relay route after explicit opt-in."""
-    dashboard_url = normalize_dashboard_url(public_url)
+    dashboard_url = normalize_public_url(public_url)
     parsed = urlparse(dashboard_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     host = parsed.hostname or ""
@@ -1056,7 +1100,7 @@ def build_endpoint_candidates(
 
         if effective_public_url:
             explicit_relay_url = is_explicit_relay_url(
-                normalize_dashboard_url(effective_public_url)
+                normalize_public_url(effective_public_url)
             )
             if explicit_relay_url and not legacy_direct_relay:
                 raise ValueError(

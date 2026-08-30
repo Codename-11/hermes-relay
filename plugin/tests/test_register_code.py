@@ -272,6 +272,33 @@ class PairCommandTests(unittest.TestCase):
         decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
         self.assertEqual(json.loads(decoded), json.loads(payload))
 
+    def test_pair_command_rejects_plaintext_public_url_before_mint(self) -> None:
+        with patch.object(
+            pair,
+            "read_server_config",
+            return_value={
+                "enabled": True,
+                "host": "10.0.0.42",
+                "port": 8642,
+                "key": "api-key",
+                "tls": False,
+            },
+        ), patch.object(
+            pair,
+            "read_relay_config",
+            return_value={"host": "0.0.0.0", "port": 8767, "tls": False},
+        ), patch.object(
+            pair, "probe_relay", return_value={"status": "ok"}
+        ), patch.object(pair, "mint_relay_pairing") as mint:
+            with self.assertRaises(SystemExit) as raised:
+                pair.pair_command(_pair_args(
+                    mode="public",
+                    public_url="http://public.example",
+                ))
+
+        self.assertEqual(raised.exception.code, 2)
+        mint.assert_not_called()
+
     def test_qr_payload_keeps_api_key_separate_from_relay_pair_code(self) -> None:
         captured: dict[str, object] = {}
 
