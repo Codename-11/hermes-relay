@@ -188,6 +188,107 @@ class DashboardIngressPairingTests(unittest.TestCase):
         )
         self.assertEqual(payload["endpoints"][0]["priority"], 0)
 
+    def test_top_level_relay_matches_selected_dashboard_not_route_priority(self) -> None:
+        relay = {"url": "ws://192.168.1.20:8767", "code": "ABC123"}
+        tailscale = {
+            "role": "tailscale",
+            "priority": 0,
+            "dashboard": {"url": "https://host.tailnet.ts.net"},
+            "relay": {
+                "url": "wss://host.tailnet.ts.net/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }
+        public = {
+            "role": "public",
+            "priority": 1,
+            "dashboard": {"url": "https://PUBLIC.EXAMPLE:443/base/"},
+            "relay": {
+                "url": "wss://public.example:443/base/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }
+        payload = json.loads(pair.build_pairing_qr_payload(
+            host=None,
+            port=None,
+            key=None,
+            tls=None,
+            relay=relay,
+            endpoints=[tailscale, public],
+            dashboard_url="https://public.example/base",
+            sign=False,
+        ))
+
+        self.assertEqual([item["priority"] for item in payload["endpoints"]], [0, 1])
+        self.assertEqual(payload["endpoints"][0]["role"], "tailscale")
+        self.assertEqual(
+            payload["relay"]["url"],
+            "wss://public.example:443/base/api/plugins/hermes-relay/transport",
+        )
+
+    def test_top_level_relay_matches_public_or_lan_selected_origin(self) -> None:
+        relay = {"url": "ws://192.168.1.20:8767", "code": "ABC123"}
+        lan = {
+            "role": "lan",
+            "priority": 0,
+            "dashboard": {"url": "http://192.168.1.20:9119"},
+            "relay": {
+                "url": "ws://192.168.1.20:9119/api/plugins/hermes-relay/transport",
+                "transport_hint": "ws",
+            },
+        }
+        public = {
+            "role": "public",
+            "priority": 1,
+            "dashboard": {"url": "https://public.example"},
+            "relay": {
+                "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }
+        cases = (
+            ("https://public.example", [lan, public], public["relay"]["url"]),
+            ("http://192.168.1.20:9119", [public, lan], lan["relay"]["url"]),
+        )
+        for dashboard_url, endpoints, expected_relay in cases:
+            with self.subTest(dashboard_url=dashboard_url):
+                payload = json.loads(pair.build_pairing_qr_payload(
+                    host=None,
+                    port=None,
+                    key=None,
+                    tls=None,
+                    relay=relay,
+                    endpoints=endpoints,
+                    dashboard_url=dashboard_url,
+                    sign=False,
+                ))
+                self.assertEqual(payload["relay"]["url"], expected_relay)
+                self.assertEqual(
+                    [item["role"] for item in payload["endpoints"]],
+                    [item["role"] for item in endpoints],
+                )
+
+    def test_top_level_relay_rejects_cross_origin_dashboard_candidate(self) -> None:
+        with self.assertRaisesRegex(ValueError, "same-origin Relay ingress"):
+            pair.build_pairing_qr_payload(
+                host=None,
+                port=None,
+                key=None,
+                tls=None,
+                relay={"url": "ws://192.168.1.20:8767", "code": "ABC123"},
+                endpoints=[{
+                    "role": "public",
+                    "priority": 0,
+                    "dashboard": {"url": "https://public.example"},
+                    "relay": {
+                        "url": "wss://other.example/api/plugins/hermes-relay/transport",
+                        "transport_hint": "wss",
+                    },
+                }],
+                dashboard_url="https://public.example",
+                sign=False,
+            )
+
 # ── register_code_command ───────────────────────────────────────────────────
 
 

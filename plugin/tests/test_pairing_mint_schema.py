@@ -193,6 +193,62 @@ class PairingMintSchemaTests(AioHTTPTestCase):
             "wss://dash.example.com/hermes/api/plugins/hermes-relay/transport",
         )
 
+    async def test_dashboard_mint_binds_top_level_relay_to_public_origin_not_tailscale_priority(self) -> None:
+        endpoints = [
+            {
+                "role": "tailscale",
+                "priority": 0,
+                "dashboard": {"url": "https://host.tailnet.ts.net"},
+                "relay": {
+                    "url": "wss://host.tailnet.ts.net/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        with mock.patch("plugin.pair._tailscale_status", return_value=None):
+            result = await self._mint({
+                "dashboard_url": "https://public.example",
+                "endpoints": endpoints,
+            })
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual([item["role"] for item in qr["endpoints"]], ["tailscale", "public"])
+        self.assertEqual([item["priority"] for item in qr["endpoints"]], [0, 1])
+        self.assertEqual(
+            qr["relay"]["url"],
+            "wss://public.example/api/plugins/hermes-relay/transport",
+        )
+        self.assertEqual(result["relay_url"], qr["relay"]["url"])
+
+    async def test_dashboard_mint_rejects_cross_origin_relay_for_selected_dashboard(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint",
+            json={
+                "dashboard_url": "https://public.example",
+                "endpoints": [{
+                    "role": "public",
+                    "priority": 0,
+                    "dashboard": {"url": "https://public.example"},
+                    "relay": {
+                        "url": "wss://other.example/api/plugins/hermes-relay/transport",
+                        "transport_hint": "wss",
+                    },
+                }],
+            },
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("same-origin Relay ingress", (await response.json())["error"])
+
     async def test_dashboard_url_camel_alias_is_accepted(self) -> None:
         result = await self._mint({
             "dashboardUrl": "https://dash.example.com",

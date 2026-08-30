@@ -843,17 +843,20 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         transport_hint=transport_hint,
     )
 
-    qr_payload = build_pairing_qr_payload(
-        host=api_host,
-        port=api_port,
-        key=api_key,
-        tls=api_tls,
-        relay=relay_block,
-        sign=True,
-        endpoints=endpoints_list or None,
-        dashboard_url=dashboard_url,
-        legacy_direct_relay=legacy_direct_relay,
-    )
+    try:
+        qr_payload = build_pairing_qr_payload(
+            host=api_host,
+            port=api_port,
+            key=api_key,
+            tls=api_tls,
+            relay=relay_block,
+            sign=True,
+            endpoints=endpoints_list or None,
+            dashboard_url=dashboard_url,
+            legacy_direct_relay=legacy_direct_relay,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
     pairing_url = build_pairing_invite_url(qr_payload)
 
     # This is the pairing-code expiry (how long the user has to scan),

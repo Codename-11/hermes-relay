@@ -289,16 +289,46 @@ def build_payload(
     if relay is not None:
         advertised_relay = dict(relay)
         if not legacy_direct_relay:
-            ingress_relay = next(
-                (
-                    candidate.get("relay")
-                    for candidate in (endpoints or [])
-                    if isinstance(candidate, dict)
-                    and isinstance(candidate.get("dashboard"), dict)
-                    and isinstance(candidate.get("relay"), dict)
-                ),
-                None,
-            )
+            ingress_relay: Optional[dict] = None
+            if normalized_dashboard_url:
+                expected_dashboard_key = _dashboard_origin_key(normalized_dashboard_url)
+                expected_relay_key = _relay_ingress_key(
+                    dashboard_relay_ingress_url(normalized_dashboard_url)
+                )
+                for candidate in endpoints or []:
+                    if not isinstance(candidate, dict):
+                        continue
+                    candidate_dashboard = candidate.get("dashboard")
+                    candidate_relay = candidate.get("relay")
+                    if not isinstance(candidate_dashboard, dict) or not isinstance(candidate_relay, dict):
+                        continue
+                    try:
+                        dashboard_matches = _dashboard_origin_key(
+                            str(candidate_dashboard.get("url") or "")
+                        ) == expected_dashboard_key
+                        relay_matches = _relay_ingress_key(
+                            str(candidate_relay.get("url") or "")
+                        ) == expected_relay_key
+                    except ValueError:
+                        continue
+                    if dashboard_matches and relay_matches:
+                        ingress_relay = candidate_relay
+                        break
+                if ingress_relay is None:
+                    raise ValueError(
+                        "dashboard_url has no exact same-origin Relay ingress candidate"
+                    )
+            else:
+                ingress_relay = next(
+                    (
+                        candidate.get("relay")
+                        for candidate in (endpoints or [])
+                        if isinstance(candidate, dict)
+                        and isinstance(candidate.get("dashboard"), dict)
+                        and isinstance(candidate.get("relay"), dict)
+                    ),
+                    None,
+                )
             if isinstance(ingress_relay, dict) and ingress_relay.get("url"):
                 advertised_relay["url"] = ingress_relay["url"]
                 if ingress_relay.get("transport_hint"):
@@ -409,6 +439,30 @@ def dashboard_relay_ingress_url(dashboard_url: str) -> str:
     )
 
 
+def _route_url_key(url: str, *, expected_schemes: set[str]) -> tuple[str, str, int, str]:
+    """Canonical scheme/host/effective-port/path identity for route matching."""
+    parsed = urlparse(url.strip().rstrip("/"))
+    scheme = parsed.scheme.lower()
+    if scheme not in expected_schemes or not parsed.hostname:
+        raise ValueError(f"route URL must use {sorted(expected_schemes)}")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("route URL contains an invalid port") from exc
+    effective_port = port or (443 if scheme in {"https", "wss"} else 80)
+    return scheme, parsed.hostname.lower().rstrip("."), effective_port, parsed.path.rstrip("/")
+
+
+def _dashboard_origin_key(dashboard_url: str) -> tuple[str, str, int, str]:
+    return _route_url_key(
+        normalize_dashboard_url(dashboard_url), expected_schemes={"http", "https"}
+    )
+
+
+def _relay_ingress_key(relay_url: str) -> tuple[str, str, int, str]:
+    return _route_url_key(relay_url, expected_schemes={"ws", "wss"})
+
+
 def add_dashboard_ingress_candidate(
     *,
     endpoints: Optional[list[dict]],
@@ -455,13 +509,20 @@ def add_dashboard_ingress_candidate(
         for candidate in existing
         if isinstance(candidate.get("relay"), dict)
     }
-    dashboard_urls = {
-        str(candidate.get("dashboard", {}).get("url") or "").rstrip("/")
-        for candidate in existing
-        if isinstance(candidate.get("dashboard"), dict)
-    }
+    dashboard_origins: set[tuple[str, str, int, str]] = set()
+    for candidate in existing:
+        candidate_dashboard = candidate.get("dashboard")
+        if not isinstance(candidate_dashboard, dict) or not candidate_dashboard.get("url"):
+            continue
+        try:
+            dashboard_origins.add(_dashboard_origin_key(str(candidate_dashboard["url"])))
+        except ValueError:
+            continue
     combined: list[dict] = []
-    if ingress_url.rstrip("/") not in relay_urls and dashboard not in dashboard_urls:
+    if (
+        ingress_url.rstrip("/") not in relay_urls
+        and _dashboard_origin_key(dashboard) not in dashboard_origins
+    ):
         rank = {"tailscale": 0, "public": 1, "lan": 2}.get(ingress_role, 1)
         inserted = False
         for candidate in existing:
@@ -836,6 +897,19 @@ def normalize_endpoint_candidates(
             dashboard_dict["url"] = dashboard_url
             candidate["dashboard"] = dashboard_dict
             if candidate.get("legacy") is not True:
+                existing_relay = candidate.get("relay")
+                existing_relay_url = (
+                    str(existing_relay.get("url") or "")
+                    if isinstance(existing_relay, dict)
+                    else ""
+                )
+                if existing_relay_url:
+                    dashboard_host = (urlparse(dashboard_url).hostname or "").lower().rstrip(".")
+                    relay_host = (urlparse(existing_relay_url).hostname or "").lower().rstrip(".")
+                    if not relay_host or relay_host != dashboard_host:
+                        raise ValueError(
+                            "dashboard_url has no exact same-origin Relay ingress candidate"
+                        )
                 ingress_url = dashboard_relay_ingress_url(dashboard_url)
                 relay_dict = (
                     dict(candidate["relay"])
