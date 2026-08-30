@@ -40,7 +40,9 @@ class PairCliSurfaceTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("--dashboard-url", skill)
-        self.assertIn("Dashboard candidates on\n   `9119`", skill)
+        self.assertIn("Tailscale Serve normally exposes HTTPS `443`", skill)
+        self.assertIn("local Dashboard on `9119`", skill)
+        self.assertIn("LAN/raw-tailnet Dashboard candidates on\n   `9119`", skill)
         self.assertIn("--legacy-direct-relay", skill)
         self.assertIn("does not imply or expose public port `8767`", skill)
 

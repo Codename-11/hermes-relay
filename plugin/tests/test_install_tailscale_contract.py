@@ -22,11 +22,15 @@ class InstallTailscaleContractTests(unittest.TestCase):
             'plugin.relay.tailscale_cli enable --port 8767 --api-port 8642',
             self.script,
         )
-        self.assertIn("Dashboard :9119 and optional API :8642", self.script)
+        self.assertIn(
+            "HTTPS :443 for local Dashboard :9119, plus optional API :8642",
+            self.script,
+        )
 
     def test_installed_shim_marks_direct_relay_as_explicit_legacy(self) -> None:
         self.assertIn(
-            "hermes-relay-tailscale enable [--dashboard-port N] [--api-port N]",
+            "hermes-relay-tailscale enable [--dashboard-listener-port 443] "
+            "[--dashboard-target-port 9119] [--api-port 8642] [--no-api]",
             self.script,
         )
         self.assertIn(
@@ -44,9 +48,10 @@ class InstallTailscaleContractTests(unittest.TestCase):
         )[1].split(
             '${C_BOLD}${C_CYAN}Self-setup / troubleshoot${C_RESET}', 1
         )[0]
-        self.assertIn("publish Dashboard :9119 + optional API :8642", remote_access)
+        self.assertIn("HTTPS :443 → Dashboard :9119 + optional API :8642", remote_access)
         self.assertIn("legacy/direct Relay only", remote_access)
         self.assertNotIn("publish relay :8767", remote_access.lower())
+        self.assertNotIn("--https=9119", remote_access)
 
 
 if __name__ == "__main__":
