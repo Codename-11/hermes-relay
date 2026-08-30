@@ -38,6 +38,8 @@ data class ProactiveInboxEntry(
     val connectionId: String? = null,
     /** Relay proved this row came from its bounded offline queue. */
     val arrivedWhileAway: Boolean = false,
+    /** Exact Android notification slot, when recorded by the receiving build. */
+    val notificationId: Int? = null,
 )
 
 private val Context.proactiveInboxStore: DataStore<Preferences> by
@@ -58,15 +60,19 @@ private const val MAX_ENTRIES = 100
  * bounded store also backs the provisional Thread until the user's first reply
  * promotes it to a real `source=phone` session.
  */
-class ProactiveInboxRepository(private val context: Context) {
+class ProactiveInboxRepository internal constructor(
+    private val store: DataStore<Preferences>,
+) {
+
+    constructor(context: Context) : this(context.proactiveInboxStore)
 
     private val json = Json { ignoreUnknownKeys = true }
 
     val entries: Flow<List<ProactiveInboxEntry>> =
-        context.proactiveInboxStore.data.map { prefs -> decode(prefs[INBOX_JSON]) }
+        store.data.map { prefs -> decode(prefs[INBOX_JSON]) }
 
     suspend fun add(entry: ProactiveInboxEntry) {
-        context.proactiveInboxStore.edit { prefs ->
+        store.edit { prefs ->
             val current = decode(prefs[INBOX_JSON]).toMutableList()
             current.removeAll { it.id == entry.id }
             current.add(0, entry)
@@ -76,7 +82,40 @@ class ProactiveInboxRepository(private val context: Context) {
     }
 
     suspend fun clear() {
-        context.proactiveInboxStore.edit { it.remove(INBOX_JSON) }
+        store.edit { it.remove(INBOX_JSON) }
+    }
+
+    /**
+     * Remove one provisional Thread owned by one saved connection.
+     *
+     * This only edits the bounded local inbox. A promoted Thread is server
+     * history and is deliberately outside this repository, so this operation
+     * can never delete it. Legacy entries without a connection owner are
+     * removed with the active row because they are rendered in that row; rows
+     * explicitly owned by another connection remain isolated.
+     */
+    suspend fun removeThread(
+        chatId: String,
+        connectionId: String,
+    ): List<ProactiveInboxEntry> {
+        val normalizedChatId = chatId.ifBlank { "phone" }
+        var removed = emptyList<ProactiveInboxEntry>()
+        store.edit { prefs ->
+            val current = decode(prefs[INBOX_JSON])
+            removed = current.filter {
+                (it.connectionId == null || it.connectionId == connectionId) &&
+                    (it.chatId ?: "phone") == normalizedChatId
+            }
+            if (removed.isNotEmpty()) {
+                val retained = current.filterNot { it in removed }
+                if (retained.isEmpty()) {
+                    prefs.remove(INBOX_JSON)
+                } else {
+                    prefs[INBOX_JSON] = json.encodeToString(retained)
+                }
+            }
+        }
+        return removed
     }
 
     private fun decode(raw: String?): List<ProactiveInboxEntry> {

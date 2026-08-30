@@ -960,6 +960,8 @@
     <string name="drawer_delete_session_title">删除会话？</string>
     <string name="drawer_delete_session_prefix">这将永久删除\"</string>
     <string name="drawer_delete_session_suffix">\"及其消息历史。</string>
+    <string name="drawer_remove_provisional_thread_title">移除话题？</string>
+    <string name="drawer_remove_provisional_thread_message">这会从此设备移除“%1$s”，不会删除已提升或服务器端的历史记录。</string>
     <string name="drawer_untitled">未命名</string>
     <string name="drawer_delete">删除</string>
     <string name="drawer_thread">话题</string>

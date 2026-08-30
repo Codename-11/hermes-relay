@@ -2446,6 +2446,26 @@ fun ChatScreen(
                 activeConnectionId = activeConnection?.id,
                 realThreadChatIds = phoneThreadChatIds.values,
             )
+            val realPhoneSessionIds = remember(sessions) {
+                sessions.asSequence()
+                    .filter { it.source.equals("phone", ignoreCase = true) }
+                    .map { it.sessionId }
+                    .toSet()
+            }
+            val provisionalThreadChatIds = provisionalThreadEntries.keys
+            LaunchedEffect(
+                activeConnection?.id,
+                realPhoneSessionIds,
+                provisionalThreadChatIds,
+            ) {
+                // A reply promotes the local provisional row to a real Gateway
+                // source=phone session. Refresh the relay-owned chat_id index at
+                // that boundary so the local duplicate disappears immediately,
+                // without guessing a chat_id from the opaque session id.
+                if (realPhoneSessionIds.isNotEmpty() && provisionalThreadChatIds.isNotEmpty()) {
+                    connectionViewModel.refreshPhoneThreadChatIds()
+                }
+            }
             val provisionalThreads = provisionalThreadEntries.map { (chatId, entries) ->
                 val latest = entries.maxBy { it.receivedAt }
                 ProvisionalThreadRow(
@@ -2544,6 +2564,11 @@ fun ChatScreen(
                         provisionalThreadEntries[chatId].orEmpty(),
                     )
                     scope.launch { drawerState.close() }
+                },
+                onDeleteProvisionalThread = { chatId ->
+                    activeConnection?.id?.let { connectionId ->
+                        connectionViewModel.removeProvisionalThread(chatId, connectionId)
+                    }
                 },
                 hiddenSources = hiddenSources,
                 onToggleSourceHidden = { source, hidden ->

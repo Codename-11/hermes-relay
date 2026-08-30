@@ -746,6 +746,7 @@ class ChatViewModel : ViewModel() {
      * including one this app didn't create, or any Thread after a restart.
      */
     fun seedThreadChatIds(map: Map<String, String>) {
+        threadChatIds.clear()
         threadChatIds.putAll(map)
     }
 

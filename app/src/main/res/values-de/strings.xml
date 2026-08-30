@@ -965,6 +965,8 @@
     <string name="drawer_delete_session_title">Sitzung löschen?</string>
     <string name="drawer_delete_session_prefix">Dadurch werden \"</string>
     <string name="drawer_delete_session_suffix">\" und der Nachrichtenverlauf dauerhaft gelöscht.</string>
+    <string name="drawer_remove_provisional_thread_title">Thread entfernen?</string>
+    <string name="drawer_remove_provisional_thread_message">Dadurch wird „%1$s“ von diesem Gerät entfernt. Hochgestufte oder serverseitige Verläufe werden nicht gelöscht.</string>
     <string name="drawer_untitled">Ohne Titel</string>
     <string name="drawer_delete">Löschen</string>
     <string name="drawer_thread">Thread</string>

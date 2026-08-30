@@ -116,6 +116,7 @@ import com.hermesandroid.relay.accessibility.BridgeStatusReporter
 import com.hermesandroid.relay.accessibility.ScreenCapture
 import com.hermesandroid.relay.network.relay.BridgeCommandHandler
 import com.hermesandroid.relay.network.relay.ProactiveMessageHandler
+import com.hermesandroid.relay.notifications.ProactiveMessageNotifier
 import com.hermesandroid.relay.network.relay.models.Envelope
 // === END PHASE3-accessibility ===
 import com.hermesandroid.relay.util.AppForegroundTracker
@@ -162,6 +163,33 @@ internal data class RelayUiInputs(
     val conn: ConnectionState,
     val url: String,
     val configured: Boolean,
+)
+
+internal data class PhoneThreadChatIdIndex(
+    val connectionId: String? = null,
+    val values: Map<String, String> = emptyMap(),
+)
+
+internal fun visiblePhoneThreadChatIds(
+    activeConnectionId: String?,
+    index: PhoneThreadChatIdIndex,
+): Map<String, String> =
+    index.values.takeIf { index.connectionId == activeConnectionId }.orEmpty()
+
+internal fun reconcilePhoneThreadChatIdIndex(
+    current: PhoneThreadChatIdIndex,
+    requestedConnectionId: String,
+    activeConnectionId: String?,
+    fetched: Result<Map<String, String>>,
+): PhoneThreadChatIdIndex = fetched.fold(
+    onSuccess = { values ->
+        if (requestedConnectionId == activeConnectionId) {
+            PhoneThreadChatIdIndex(requestedConnectionId, values)
+        } else {
+            current
+        }
+    },
+    onFailure = { current },
 )
 
 data class HostResourcePressureStatus(
@@ -2568,6 +2596,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val inboxMessages: StateFlow<List<ProactiveInboxEntry>> =
         proactiveInbox.entries.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Delete one connection-scoped provisional Thread from local storage only. */
+    fun removeProvisionalThread(chatId: String, connectionId: String) {
+        viewModelScope.launch {
+            proactiveInbox.removeThread(chatId = chatId, connectionId = connectionId)
+                .mapNotNull(ProactiveInboxEntry::notificationId)
+                .distinct()
+                .forEach { notificationId ->
+                    ProactiveMessageNotifier.cancel(getApplication(), notificationId)
+                }
+        }
+    }
+
     // The handler centralizes surfacing (notification / inbox / session). The
     // inbox sink persists messages here; the session sink lands in Phase 2b.
     val proactiveMessageHandler = ProactiveMessageHandler(
@@ -2583,6 +2623,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         chatId = msg.chatId,
                         connectionId = connectionStore.activeConnectionId.value,
                         arrivedWhileAway = msg.arrivedWhileAway,
+                        notificationId = msg.notificationId,
                     ),
                 )
             }
@@ -2620,16 +2661,30 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // composer's reply routing so a Thread the app didn't create — or any Thread
     // after restart — routes to the right conversation. Fail-soft: empty on an
     // older relay / fetch error, and the client's learned map still applies.
-    private val _phoneThreadChatIds = MutableStateFlow<Map<String, String>>(emptyMap())
-    val phoneThreadChatIds: StateFlow<Map<String, String>> = _phoneThreadChatIds.asStateFlow()
+    private val _phoneThreadChatIdIndex = MutableStateFlow(PhoneThreadChatIdIndex())
+    private val phoneThreadChatIdRefreshMutex = Mutex()
+    val phoneThreadChatIds: StateFlow<Map<String, String>> = combine(
+        connectionStore.activeConnectionId,
+        _phoneThreadChatIdIndex,
+    ) { activeConnectionId, index ->
+        visiblePhoneThreadChatIds(activeConnectionId, index)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     fun refreshPhoneThreadChatIds() {
+        val connectionId = connectionStore.activeConnectionId.value ?: return
         viewModelScope.launch {
-            relayHttpClient.fetchPhoneThreads().onSuccess { threads ->
-                val map = threads
-                    .filter { it.sessionId.isNotBlank() && it.chatId.isNotBlank() }
-                    .associate { it.sessionId to it.chatId }
-                if (map.isNotEmpty()) _phoneThreadChatIds.value = map
+            phoneThreadChatIdRefreshMutex.withLock {
+                val fetched = relayHttpClient.fetchPhoneThreads().map { threads ->
+                    threads
+                        .filter { it.sessionId.isNotBlank() && it.chatId.isNotBlank() }
+                        .associate { it.sessionId to it.chatId }
+                }
+                _phoneThreadChatIdIndex.value = reconcilePhoneThreadChatIdIndex(
+                    current = _phoneThreadChatIdIndex.value,
+                    requestedConnectionId = connectionId,
+                    activeConnectionId = connectionStore.activeConnectionId.value,
+                    fetched = fetched,
+                )
             }
         }
     }

@@ -880,6 +880,8 @@
     <string name="drawer_delete_session_title">¿Eliminar sesión?</string>
     <string name="drawer_delete_session_prefix">Esto eliminará permanentemente \"</string>
     <string name="drawer_delete_session_suffix">\" y su historial de mensajes.</string>
+    <string name="drawer_remove_provisional_thread_title">¿Quitar hilo?</string>
+    <string name="drawer_remove_provisional_thread_message">Esto quita «%1$s» de este dispositivo. No elimina el historial promocionado ni el del servidor.</string>
     <string name="drawer_untitled">Intitulado</string>
     <string name="drawer_delete">Borrar</string>
     <string name="drawer_thread">Hilo</string>

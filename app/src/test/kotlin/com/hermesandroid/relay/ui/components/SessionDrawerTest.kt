@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
 import org.junit.Rule
 import org.junit.Test
@@ -42,6 +43,72 @@ class SessionDrawerTest {
         assertTrue(sessionPinIcon(pinned = true).name.contains("Star"))
         assertTrue(sessionPinIcon(pinned = false).name.contains("StarBorder"))
         assertEquals(0.45f, UNPINNED_STAR_ALPHA, 0.0f)
+    }
+
+    @Test
+    fun `provisional thread exposes local delete only`() {
+        var deletedProvisional: String? = null
+        var deletedServerSession: String? = null
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    threadsCapabilityActive = true,
+                    provisionalThreads = listOf(
+                        ProvisionalThreadRow(
+                            chatId = "reminders",
+                            title = "Reminder",
+                            messageCount = 1,
+                            lastActivityAt = 1L,
+                        ),
+                    ),
+                    onDeleteProvisionalThread = { deletedProvisional = it },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = { deletedServerSession = it },
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Session actions").performClick()
+        compose.onNodeWithText("Pin session").assertDoesNotExist()
+        compose.onNodeWithText("Rename").assertDoesNotExist()
+        compose.onNodeWithText("Delete").performClick()
+        compose.onNodeWithText("Remove Thread?").assertIsDisplayed()
+        compose.onNodeWithText(
+            "This removes \"Reminder\" from this device. It does not delete promoted or server history.",
+        ).assertIsDisplayed()
+        compose.onNodeWithText("Delete").performClick()
+
+        compose.runOnIdle {
+            assertEquals("reminders", deletedProvisional)
+            assertEquals(null, deletedServerSession)
+        }
+    }
+
+    @Test
+    fun `provisional thread hides actions when supervised deletion is disabled`() {
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    supervisedSessionActions = SupervisedSessionActions(delete = false),
+                    provisionalThreads = listOf(
+                        ProvisionalThreadRow("reminders", "Reminder", 1, 1L),
+                    ),
+                    onDeleteProvisionalThread = {},
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Session actions").assertDoesNotExist()
     }
 
     @Test

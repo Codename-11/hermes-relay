@@ -2217,9 +2217,12 @@ fun RelayApp() {
                                 (it.connectionId == null || it.connectionId == activeConnectionId) &&
                                     (it.chatId ?: "phone") == chatId
                             }
-                            if (entries.isEmpty()) return@LaunchedEffect
-                            chatViewModel.openProactiveThread(chatId, entries)
+                            if (entries.isNotEmpty()) {
+                                chatViewModel.openProactiveThread(chatId, entries)
+                            }
                         }
+                        // Consume the request even when deletion removed its
+                        // local row before a stale notification tap arrived.
                         backStackEntry.arguments?.putString(
                             Screen.Chat.ARG_PROACTIVE_CHAT_ID,
                             null,
