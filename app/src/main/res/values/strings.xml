@@ -3756,6 +3756,7 @@
     <string name="card_send_answer_a11y">Send answer</string>
     <string name="card_submit">Submit</string>
     <string name="card_answer_placeholder">Type an answer…</string>
+    <string name="card_other_answer_placeholder">Other (type your answer)…</string>
     <string name="session_ttl_title">Keep this pairing for…</string>
     <string name="session_ttl_intro">Your phone will reconnect automatically during this window. You can revoke the pairing at any time.</string>
     <string name="session_ttl_stays_paired">This device will stay paired until you revoke it.</string>

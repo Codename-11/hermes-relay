@@ -3365,6 +3365,7 @@
     <string name="card_send_answer_a11y">发送回答</string>
     <string name="card_submit">提交</string>
     <string name="card_answer_placeholder">输入回答…</string>
+    <string name="card_other_answer_placeholder">其他（输入自定义回答）…</string>
     <string name="session_ttl_title">保持配对的时长…</string>
     <string name="session_ttl_intro">在此时间内，手机会自动重新连接。您可以随时撤销配对。</string>
     <string name="session_ttl_stays_paired">此设备会保持配对，直到您主动撤销。</string>

@@ -3441,6 +3441,7 @@
     <string name="card_send_answer_a11y">回答を送信する</string>
     <string name="card_submit">提出する</string>
     <string name="card_answer_placeholder">答えを入力してください…</string>
+    <string name="card_other_answer_placeholder">その他（自由回答を入力）…</string>
     <string name="session_ttl_title">このペアリングをしばらく保持してください…</string>
     <string name="session_ttl_intro">この期間中に電話は自動的に再接続します。ペアリングはいつでも取り消すことができます。</string>
     <string name="session_ttl_stays_paired">このデバイスは、取り消すまでペアリングされたままになります。</string>
