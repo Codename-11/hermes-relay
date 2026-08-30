@@ -16,6 +16,7 @@ import { relativeTime } from "../lib/formatters.js";
 import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
 import {
   classifyPublicRouteInput,
+  dashboardServeState,
   pairingEndpointReceipt,
   pairingProbeKey,
   pairingSurfaceProbes,
@@ -74,12 +75,15 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
   const servePorts = (status && status.serve_ports) || [];
   const services = (status && status.serve_services) || {};
   const dashboardService = services.dashboard || {};
+  const dashboardState = dashboardServeState(dashboardService);
   const apiService = services.api || {};
   const legacyRelayService = services.legacy_relay || {};
-  const dashboardServing = dashboardService.active === true;
+  const dashboardServing = dashboardState.active;
+  const recommendedDashboardServing = dashboardState.recommended443;
+  const legacyDashboardServing = dashboardState.legacy9119;
   const apiServing = apiService.active === true;
   const legacyRelayServing = legacyRelayService.active === true;
-  const serving = dashboardServing;
+  const serving = recommendedDashboardServing;
   const hostname = (status && status.hostname) || null;
   const ip = (status && status.tailscale_ip) || null;
   const reason = status && status.reason;
@@ -113,13 +117,21 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
             <span>CLI: {available ? "installed" : "not installed"}</span>
           </div>
           <div className="flex items-center gap-2">
-            <Dot tone={dashboardServing ? "ok" : available ? "warn" : "muted"} />
+            <Dot tone={recommendedDashboardServing ? "ok" : available ? "warn" : "muted"} />
             <span>
-              Dashboard → host :9119: {dashboardServing
-                ? `active on ${listenerLabel(dashboardService)} · recommended`
-                : "off"}
+              Dashboard → host :9119: {recommendedDashboardServing
+                ? "HTTPS :443 active · recommended"
+                : legacyDashboardServing
+                  ? "HTTPS :443 off · old :9119 listener does not satisfy recommended setup"
+                  : "off"}
             </span>
           </div>
+          {legacyDashboardServing ? (
+            <div className="flex items-center gap-2">
+              <Dot tone="warn" />
+              <span>Old Dashboard listener :9119: active · migration compatibility</span>
+            </div>
+          ) : null}
           <div className="flex items-center gap-2">
             <Dot tone={apiServing ? "ok" : "muted"} />
             <span>
@@ -169,7 +181,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
           <Button size="sm" disabled={busy || !available || serving} onClick={() => onEnable()}>
             {busy === "enable" ? "Enabling…" : "Enable HTTPS :443 ingress"}
           </Button>
-          {dashboardServing && !apiServing ? (
+          {recommendedDashboardServing && !apiServing ? (
             <Button
               size="sm"
               variant="outline"
@@ -195,6 +207,16 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
               onClick={() => onDisable(8767)}
             >
               Disable legacy :8767 after re-pairing
+            </Button>
+          ) : null}
+          {legacyDashboardServing ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onDisable(9119)}
+            >
+              Disable old :9119 listener after re-pairing
             </Button>
           ) : null}
         </div>

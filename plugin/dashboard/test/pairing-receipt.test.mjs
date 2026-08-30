@@ -3,9 +3,29 @@ import assert from "node:assert/strict";
 
 import {
   classifyPublicRouteInput,
+  dashboardServeState,
   pairingEndpointReceipt,
   pairingSurfaceProbes,
 } from "../src/lib/pairing-receipt.mjs";
+
+test("Dashboard Serve migration requires listener 443", () => {
+  assert.deepEqual(
+    dashboardServeState({ active: true, listen_ports: [9119] }),
+    { active: true, listenPorts: [9119], recommended443: false, legacy9119: true },
+  );
+  assert.deepEqual(
+    dashboardServeState({ active: true, listen_ports: [9119, 443, 443] }),
+    { active: true, listenPorts: [443, 9119], recommended443: true, legacy9119: true },
+  );
+  assert.deepEqual(
+    dashboardServeState({ active: true, listen_ports: [443] }),
+    { active: true, listenPorts: [443], recommended443: true, legacy9119: false },
+  );
+  assert.equal(
+    dashboardServeState({ active: false, listen_ports: [443, 9119] }).recommended443,
+    false,
+  );
+});
 
 test("pairing receipt exposes every route surface without credentials", () => {
   const receipt = pairingEndpointReceipt(JSON.stringify({

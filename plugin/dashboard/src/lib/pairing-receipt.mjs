@@ -137,6 +137,20 @@ export function pairingProbeKey(entry) {
   return [entry.role, entry.priority, entry.surface, entry.url].join("|");
 }
 
+/** Classify the recommended and old Dashboard Serve listeners independently. */
+export function dashboardServeState(service) {
+  const active = !!(service && service.active === true);
+  const listenPorts = Array.isArray(service && service.listen_ports)
+    ? [...new Set(service.listen_ports.filter((port) => Number.isInteger(port)))].sort((a, b) => a - b)
+    : [];
+  return {
+    active,
+    listenPorts,
+    recommended443: active && listenPorts.includes(443),
+    legacy9119: active && listenPorts.includes(9119),
+  };
+}
+
 /** Classify the public route field without accepting credentials or URL fragments. */
 export function classifyPublicRouteInput(raw) {
   if (typeof raw !== "string" || !raw.trim()) return { kind: "empty", url: null };
