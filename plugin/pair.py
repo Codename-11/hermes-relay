@@ -48,8 +48,10 @@ version bit when it's actually emitting endpoints::
       "relay": { "url": "ws://<ip>:<port>", "code": "<6-char>" }
     }
 
-Top-level fields configure the direct-chat Hermes API server (port 8642 by
-default) and mirror the priority-0 endpoint candidate for backward compat.
+Top-level fields configure the optional direct-chat Hermes API server (port
+8642 by default) when it is enabled. New Dashboard-first payloads may omit
+them and advertise independently optional Dashboard, Relay, and API surfaces
+inside ``endpoints``.
 The optional ``relay`` block configures the Hermes-Relay WSS connection
 used by the terminal and bridge channels. The normal CLI flow obtains the
 fully signed invite from the local Relay via ``POST /pairing/mint`` so
@@ -61,6 +63,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import random
 import socket
@@ -106,11 +109,14 @@ def read_server_config() -> dict:
     """Read API server config with fallback chain.
 
     Priority: hermes config.yaml → ~/.hermes/.env → environment vars → defaults.
-    Returns dict with keys: host, port, key, tls.
+    Returns dict with keys: host, port, key, tls, enabled. ``enabled`` follows
+    Hermes' API-server rule: an explicit boolean wins; otherwise a configured
+    API key enables the compatibility surface.
     """
     host: Optional[str] = None
     port: Optional[int] = None
     key: Optional[str] = None
+    enabled: Optional[bool] = None
     tls = False
 
     # 1. Try hermes_cli.config.load_config()
@@ -120,6 +126,7 @@ def read_server_config() -> dict:
         config = load_config()
         api = config.get("platforms", {}).get("api_server", {}) or {}
         extra = api.get("extra", {}) or {}
+        enabled = _parse_optional_bool(api.get("enabled"))
         key = extra.get("key") or api.get("api_key")
         port_val = extra.get("port") or api.get("port")
         if port_val is not None:
@@ -140,10 +147,14 @@ def read_server_config() -> dict:
                 port = int(env_vals["API_SERVER_PORT"])
             except ValueError:
                 pass
+        if enabled is None:
+            enabled = _parse_optional_bool(env_vals.get("API_SERVER_ENABLED"))
 
     # 3. Fall back to process environment
     if key is None:
         key = os.getenv("API_SERVER_KEY", "")
+    if enabled is None:
+        enabled = _parse_optional_bool(os.getenv("API_SERVER_ENABLED"))
     if host is None:
         host = os.getenv("API_SERVER_HOST", "127.0.0.1")
     if port is None:
@@ -152,7 +163,29 @@ def read_server_config() -> dict:
         except ValueError:
             port = 8642
 
-    return {"host": host, "port": port, "key": key or "", "tls": tls}
+    if enabled is None:
+        enabled = bool(key)
+
+    return {
+        "host": host,
+        "port": port,
+        "key": key or "",
+        "tls": tls,
+        "enabled": enabled,
+    }
+
+
+def _parse_optional_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    return None
 
 
 def _resolve_lan_ip(host: str) -> str:
@@ -185,10 +218,10 @@ def _relay_has_v2_fields(relay: Optional[dict]) -> bool:
 
 
 def build_payload(
-    host: str,
-    port: int,
-    key: str,
-    tls: bool,
+    host: Optional[str],
+    port: Optional[int],
+    key: Optional[str],
+    tls: Optional[bool],
     relay: Optional[dict] = None,
     sign: bool = True,
     endpoints: Optional[list[dict]] = None,
@@ -209,10 +242,9 @@ def build_payload(
     ``priority`` before passing the list in; ``build_endpoint_candidates``
     does this for the CLI path.
 
-    The top-level ``host`` / ``port`` / ``key`` / ``tls`` / ``relay``
-    fields are always emitted and should mirror the priority-0 candidate
-    for backward compat — phones on v1 / v2 parsers synthesize a single
-    candidate from those fields and ignore ``endpoints``.
+    Configured top-level ``host`` / ``port`` / ``key`` / ``tls`` fields are
+    retained for API compatibility. API-less Dashboard-first payloads omit
+    them; direct Relay remains top-level for v1/v2 clients.
 
     ``dashboard_url`` is optional. When present, Android stores it as the
     Manage/dashboard URL instead of deriving the conventional same-host
@@ -221,19 +253,30 @@ def build_payload(
     If ``sign`` is true the payload is signed with the host-local QR
     secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
+    endpoints = add_dashboard_ingress_candidate(
+        endpoints=endpoints,
+        dashboard_url=dashboard_url,
+        relay=relay,
+        api_host=host,
+        api_port=port,
+        api_tls=tls,
+    )
     if endpoints:
         version = 3
     elif _relay_has_v2_fields(relay):
         version = 2
     else:
         version = 1
-    payload: dict = {
-        "hermes": version,
-        "host": host,
-        "port": port,
-        "key": key,
-        "tls": tls,
-    }
+    payload: dict = {"hermes": version}
+    if host is not None and str(host).strip():
+        payload.update(
+            {
+                "host": str(host).strip(),
+                "port": int(port) if port is not None else 8642,
+                "key": key or "",
+                "tls": bool(tls),
+            }
+        )
     if relay is not None:
         payload["relay"] = relay
     if endpoints:
@@ -258,6 +301,113 @@ def build_payload(
     return json.dumps(payload, separators=(",", ":"))
 
 
+def _endpoint_role_for_url(url: str) -> str:
+    """Return the existing route role that best describes an origin."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".ts.net"):
+        return "tailscale"
+    if parsed.scheme.lower() == "https":
+        return "https"
+    return "lan"
+
+
+def dashboard_relay_ingress_url(dashboard_url: str) -> str:
+    """Build the same-origin Relay transport base mounted by Hermes Dashboard."""
+    parsed = urlparse(dashboard_url.strip().rstrip("/"))
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("dashboard_url must be an absolute http(s) URL")
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    prefix = (parsed.path or "").rstrip("/")
+    return (
+        f"{scheme}://{parsed.netloc}{prefix}"
+        "/api/plugins/hermes-relay/transport"
+    )
+
+
+def add_dashboard_ingress_candidate(
+    *,
+    endpoints: Optional[list[dict]],
+    dashboard_url: Optional[str],
+    relay: Optional[dict],
+    api_host: Optional[str] = None,
+    api_port: Optional[int] = None,
+    api_tls: Optional[bool] = None,
+) -> Optional[list[dict]]:
+    """Advertise Dashboard's same-origin Relay ingress with direct fallbacks.
+
+    The candidate uses the normal network role (``https``, ``tailscale``, or
+    ``lan``), not a service-specific role.  API is intentionally optional.
+    Existing direct candidates and the top-level direct Relay URL remain as
+    later compatibility fallbacks for clients without Dashboard WS auth.
+    """
+    dashboard = (dashboard_url or "").strip().rstrip("/")
+    if not dashboard:
+        return endpoints
+
+    relay_code = str((relay or {}).get("code") or "").strip()
+    if relay is None or not relay_code:
+        return endpoints
+
+    ingress_url = dashboard_relay_ingress_url(dashboard)
+    transport_hint = "wss" if ingress_url.startswith("wss://") else "ws"
+    ingress: dict[str, Any] = {
+        "role": _endpoint_role_for_url(dashboard),
+        "priority": 0,
+        "recommended": True,
+        "dashboard": {"url": dashboard},
+    }
+    ingress["relay"] = {
+        "url": ingress_url,
+        "transport_hint": transport_hint,
+    }
+
+    existing = [dict(candidate) for candidate in (endpoints or []) if isinstance(candidate, dict)]
+    relay_urls = {
+        str(candidate.get("relay", {}).get("url") or "").rstrip("/")
+        for candidate in existing
+        if isinstance(candidate.get("relay"), dict)
+    }
+    dashboard_urls = {
+        str(candidate.get("dashboard", {}).get("url") or "").rstrip("/")
+        for candidate in existing
+        if isinstance(candidate.get("dashboard"), dict)
+    }
+    combined: list[dict] = []
+    if ingress_url.rstrip("/") not in relay_urls and dashboard not in dashboard_urls:
+        combined.append(ingress)
+
+    combined.extend(existing)
+
+    direct_url = str((relay or {}).get("url") or "").strip()
+    if direct_url and direct_url.rstrip("/") not in relay_urls and direct_url.rstrip("/") != ingress_url.rstrip("/"):
+        direct: dict[str, Any] = {
+            "role": _endpoint_role_for_url(
+                direct_url.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
+            ),
+            "priority": len(combined),
+            "relay": {
+                "url": direct_url,
+                **(
+                    {"transport_hint": relay["transport_hint"]}
+                    if isinstance(relay, dict) and relay.get("transport_hint")
+                    else {}
+                ),
+            },
+        }
+        if api_host is not None and str(api_host).strip():
+            direct["api"] = {
+                "host": str(api_host).strip(),
+                "port": int(api_port) if api_port is not None else 8642,
+                "tls": bool(api_tls),
+            }
+        combined.append(direct)
+
+    for priority, candidate in enumerate(combined):
+        candidate["priority"] = priority
+    return combined or None
+
+
 def build_relay_pairing_block(
     *,
     relay_url: str,
@@ -267,14 +417,22 @@ def build_relay_pairing_block(
     transport_hint: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build the nested ``relay`` block used by all QR emitters."""
+    def wire_seconds(value: Any) -> Any:
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return int(value)
+        return value
+
     relay_block: dict[str, Any] = {
         "url": relay_url,
         "code": code,
     }
     if ttl_seconds is not None:
-        relay_block["ttl_seconds"] = ttl_seconds
+        relay_block["ttl_seconds"] = wire_seconds(ttl_seconds)
     if grants is not None:
-        relay_block["grants"] = grants
+        relay_block["grants"] = {
+            channel: wire_seconds(duration)
+            for channel, duration in grants.items()
+        }
     if transport_hint is not None:
         relay_block["transport_hint"] = transport_hint
     return relay_block
@@ -282,10 +440,10 @@ def build_relay_pairing_block(
 
 def build_pairing_qr_payload(
     *,
-    host: str,
-    port: int,
-    key: str,
-    tls: bool,
+    host: Optional[str],
+    port: Optional[int],
+    key: Optional[str],
+    tls: Optional[bool],
     relay: Optional[dict] = None,
     endpoints: Optional[list[dict]] = None,
     dashboard_url: Optional[str] = None,
@@ -960,6 +1118,7 @@ def mint_relay_pairing(
     transport_hint: str,
     endpoints: list[dict] | None,
     dashboard_url: str | None,
+    api_enabled: bool = True,
     timeout_s: float = 5.0,
 ) -> dict[str, Any] | None:
     """Ask the running Relay to mint the authoritative signed invite.
@@ -969,13 +1128,17 @@ def mint_relay_pairing(
     response because both may contain pairing and route credentials.
     """
     body: dict[str, Any] = {
-        "host": host,
-        "port": port,
-        "api_key": api_key,
-        "tls": tls,
+        "api_enabled": api_enabled,
         "ttl_seconds": ttl_seconds,
         "transport_hint": transport_hint,
     }
+    if api_enabled:
+        body.update({
+            "host": host,
+            "port": port,
+            "api_key": api_key,
+            "tls": tls,
+        })
     if grants:
         body["grants"] = grants
     if endpoints:
@@ -1061,6 +1224,7 @@ def render_text_block(
     relay: Optional[dict] = None,
     invite_url: Optional[str] = None,
     dashboard_url: Optional[str] = None,
+    api_enabled: bool = True,
 ) -> str:
     """Return formatted connection details — always shown (works in any terminal).
 
@@ -1072,21 +1236,22 @@ def render_text_block(
     url = f"{scheme}://{host}:{port}"
     auth_status = "Bearer token configured" if key else "NO AUTH (open access)"
 
-    lines = [
+    lines: list[Optional[str]] = [
         "",
         "  Hermes Android Pairing",
         "  " + "-" * 40,
         "",
-        f"  Server : {url}",
         f"  Dashboard: {dashboard_url}" if dashboard_url else None,
-        f"  API Key: {_mask_key(key)}",
-        f"  Auth   : {auth_status}",
+        f"  API Server: {url}" if api_enabled else None,
+        f"  API Key: {_mask_key(key)}" if api_enabled else None,
+        f"  API Auth: {auth_status}" if api_enabled else None,
         "",
         "  Enter manually in the app if QR won't scan:",
-        f"    URL: {url}",
+        f"    Dashboard: {dashboard_url}" if dashboard_url else None,
+        f"    API: {url}" if api_enabled else None,
     ]
     lines = [line for line in lines if line is not None]
-    if key:
+    if api_enabled and key:
         lines.append(f"    Key: {key}")
 
     if relay is not None:
@@ -1302,6 +1467,7 @@ def pair_command(args) -> None:
     port = config["port"]
     key = config["key"]
     tls = config["tls"]
+    api_enabled = bool(config.get("enabled", True))
     dashboard_url = (
         str(getattr(args, "dashboard_url", "") or "").strip().rstrip("/") or None
     )
@@ -1389,6 +1555,11 @@ def pair_command(args) -> None:
                 public_url=public_url,
                 prefer=prefer,
             )
+            if not api_enabled:
+                endpoints = [
+                    {k: v for k, v in candidate.items() if k != "api"}
+                    for candidate in endpoints
+                ]
         except ValueError as exc:
             print(f"  [error] --mode/--public-url: {exc}", file=sys.stderr)
             sys.exit(2)
@@ -1416,6 +1587,7 @@ def pair_command(args) -> None:
             transport_hint=transport_hint,
             endpoints=endpoints or None,
             dashboard_url=dashboard_url,
+            api_enabled=api_enabled,
         )
         if minted is not None:
             payload = str(minted["qr_payload"])
@@ -1444,7 +1616,10 @@ def pair_command(args) -> None:
                     transport_hint=transport_hint,
                 )
                 payload = build_pairing_qr_payload(
-                    host=host, port=port, key=key, tls=tls,
+                    host=host if api_enabled else None,
+                    port=port if api_enabled else None,
+                    key=key if api_enabled else None,
+                    tls=tls if api_enabled else None,
                     relay=relay_block, endpoints=endpoints or None,
                     dashboard_url=dashboard_url,
                 )
@@ -1453,7 +1628,10 @@ def pair_command(args) -> None:
                 relay_block = None
                 print("  [warn] Relay pairing mint was rejected — QR will configure chat only.\n")
                 payload = build_pairing_qr_payload(
-                    host=host, port=port, key=key, tls=tls,
+                    host=host if api_enabled else None,
+                    port=port if api_enabled else None,
+                    key=key if api_enabled else None,
+                    tls=tls if api_enabled else None,
                     dashboard_url=dashboard_url,
                 )
                 invite_url = build_pairing_invite_url(payload)
@@ -1465,13 +1643,19 @@ def pair_command(args) -> None:
                 file=sys.stderr,
             )
             payload = build_pairing_qr_payload(
-                host=host, port=port, key=key, tls=tls,
+                host=host if api_enabled else None,
+                port=port if api_enabled else None,
+                key=key if api_enabled else None,
+                tls=tls if api_enabled else None,
                 dashboard_url=dashboard_url,
             )
             invite_url = build_pairing_invite_url(payload)
     else:
         payload = build_pairing_qr_payload(
-            host=host, port=port, key=key, tls=tls,
+            host=host if api_enabled else None,
+            port=port if api_enabled else None,
+            key=key if api_enabled else None,
+            tls=tls if api_enabled else None,
             dashboard_url=dashboard_url,
         )
         invite_url = build_pairing_invite_url(payload)
@@ -1505,7 +1689,7 @@ def pair_command(args) -> None:
             print(f"  PNG: {png_path}")
         print("  Scan with the Hermes-Relay Android app.")
 
-    if key or relay_block is not None:
+    if (api_enabled and key) or relay_block is not None:
         print(
             "  WARNING: This QR contains credentials "
             "(API key and/or relay pairing code). Do not share screenshots.\n"

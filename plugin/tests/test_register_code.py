@@ -88,6 +88,86 @@ class NormalizePairingCodeTests(unittest.TestCase):
             pair.normalize_pairing_code("ABCDé2")
 
 
+class DashboardIngressPairingTests(unittest.TestCase):
+    def test_dashboard_ingress_is_first_and_direct_relay_is_retained(self) -> None:
+        payload = json.loads(pair.build_pairing_qr_payload(
+            host="192.168.1.20",
+            port=8642,
+            key="api-key",
+            tls=False,
+            relay={
+                "url": "ws://192.168.1.20:8767",
+                "code": "ABC123",
+                "transport_hint": "ws",
+            },
+            dashboard_url="https://hermes.example.test/base/",
+            sign=False,
+        ))
+
+        self.assertEqual(payload["hermes"], 3)
+        self.assertEqual(payload["dashboard_url"], "https://hermes.example.test/base/")
+        self.assertEqual(payload["endpoints"][0], {
+            "role": "https",
+            "priority": 0,
+            "recommended": True,
+            "dashboard": {"url": "https://hermes.example.test/base"},
+            "relay": {
+                "url": "wss://hermes.example.test/base/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        })
+        self.assertEqual(
+            payload["endpoints"][1]["relay"]["url"],
+            "ws://192.168.1.20:8767",
+        )
+        self.assertEqual(payload["relay"]["url"], "ws://192.168.1.20:8767")
+
+    def test_api_less_payload_omits_legacy_api_fields(self) -> None:
+        payload = json.loads(pair.build_pairing_qr_payload(
+            host=None,
+            port=None,
+            key=None,
+            tls=None,
+            relay={"url": "ws://192.168.1.20:8767", "code": "ABC123"},
+            dashboard_url="http://192.168.1.20:9119",
+            sign=False,
+        ))
+
+        self.assertNotIn("host", payload)
+        self.assertNotIn("port", payload)
+        self.assertNotIn("key", payload)
+        self.assertNotIn("tls", payload)
+        self.assertNotIn("api", payload["endpoints"][0])
+        self.assertNotIn("api", payload["endpoints"][1])
+        self.assertEqual(payload["endpoints"][0]["role"], "lan")
+
+    def test_dashboard_ingress_does_not_duplicate_existing_candidate(self) -> None:
+        ingress = {
+            "role": "tailscale",
+            "priority": 4,
+            "dashboard": {"url": "https://host.tailnet.ts.net"},
+            "relay": {
+                "url": "wss://host.tailnet.ts.net/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }
+        payload = json.loads(pair.build_pairing_qr_payload(
+            host=None,
+            port=None,
+            key=None,
+            tls=None,
+            relay={"url": "ws://100.64.0.10:8767", "code": "ABC123"},
+            endpoints=[ingress],
+            dashboard_url="https://host.tailnet.ts.net",
+            sign=False,
+        ))
+
+        self.assertEqual(
+            sum(1 for candidate in payload["endpoints"] if candidate.get("dashboard")),
+            1,
+        )
+        self.assertEqual(payload["endpoints"][0]["priority"], 0)
+
 # ── register_code_command ───────────────────────────────────────────────────
 
 
@@ -531,6 +611,48 @@ class MintRelayPairingTests(unittest.TestCase):
         body = captured["body"]
         self.assertEqual(body["api_key"], "api-secret")
         self.assertEqual(body["endpoints"], [{"role": "lan", "priority": 0}])
+
+    def test_api_disabled_mint_omits_legacy_api_request_fields(self) -> None:
+        signed = json.dumps({
+            "hermes": 3,
+            "relay": {"url": "ws://10.0.0.42:8767", "code": "ABC123"},
+            "endpoints": [{
+                "role": "lan", "priority": 0,
+                "relay": {"url": "ws://10.0.0.42:8767"},
+            }],
+        })
+        response_body = json.dumps({
+            "ok": True,
+            "qr_payload": signed,
+            "pairing_url": "hermes-relay://pair?payload=server",
+        }).encode()
+        captured: dict[str, object] = {}
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+            def read(self): return response_body
+
+        def urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode())
+            return Response()
+
+        with patch("plugin.pair.urllib.request.urlopen", side_effect=urlopen):
+            result = pair.mint_relay_pairing(
+                8767, host="10.0.0.42", port=8642,
+                api_key="stale-key", tls=False, ttl_seconds=3600,
+                grants=None, transport_hint="ws", endpoints=None,
+                dashboard_url="https://dash.example", api_enabled=False,
+            )
+
+        self.assertIsNotNone(result)
+        body = captured["body"]
+        self.assertFalse(body["api_enabled"])
+        self.assertNotIn("host", body)
+        self.assertNotIn("port", body)
+        self.assertNotIn("api_key", body)
+        self.assertNotIn("tls", body)
 
     def test_pair_command_uses_server_minted_reach_invite_without_legacy_register(self) -> None:
         signed = json.dumps({

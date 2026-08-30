@@ -15,7 +15,7 @@ separate decision.
 
 | Layer | What it proves | Expected use |
 |---|---|---|
-| JVM/state tests | Event mapping, identity fences, queue ownership, and history merging | Every relevant implementation change |
+| JVM/state tests | Event mapping, identity fences, queue ownership, REST-directory refresh policy, and history merging | Every relevant implementation change |
 | Vanilla Gateway fixture | Real HTTP/WebSocket JSON-RPC, deterministic event ordering, socket gaps, and persisted history | On demand during client changes and incidents |
 | Android instrumentation | Production `GatewayChatClient`, `ChatViewModel`, `ChatHandler`, main-looper dispatch, lifecycle-aware Compose collection, and rendered transcript state | On emulator or attached sideload device |
 | Upstream conformance | The scenario requirements still exist in an unmodified current upstream checkout | On demand before integration or release certification |
@@ -24,6 +24,40 @@ separate decision.
 The deterministic fixture is the normal regression authority. Physical-device
 results are additional lifecycle/runtime evidence, not a replacement for
 hermetic tests.
+
+## Session directory boundary
+
+The Gateway fixture proves live chat transport, activity, reconnect, and
+authoritative post-turn history reconciliation. It is not the route authority
+for the session drawer. On the standard path, profile-scoped session browsing
+and stored transcript reads are authenticated Dashboard REST operations and may
+run while the independent Gateway socket is not ready.
+
+Android state tests for this boundary must prove that:
+
+- a bound Dashboard route can refresh recents without `chatReady`;
+- a normal profile switch does not issue `model.options` before the independent
+  Dashboard recents read;
+- automatic stored-session restoration cannot issue `session.resume` before a
+  fresh exact-owner directory success, while an explicit row open remains
+  immediate;
+- the initial request uses a bounded, Desktop-like recent window;
+- an existing exact-owner cache stays rendered while refresh is in flight;
+- a timeout produces retryable **Unavailable**, not an empty list or another
+  automatic long request; and
+- a connection/profile switch or newer refresh generation rejects the old
+  completion before it can publish rows.
+
+Gateway startup/reconnect tests must also keep Dashboard availability separate
+from socket truth: Chat is Ready only after `gateway.ready` from the current
+connection and route. Timeout/DNS/reset/5xx/429 failures may retry within the
+bounded cold-start budget; auth, unsupported, malformed-protocol, and access
+policy failures may not. A delayed retry must retain the exact profile/session
+generation that scheduled it.
+
+Physical-device evidence is still required for claims about first-row latency
+against a real large session database. A fixture or JVM pass proves ownership
+and presentation invariants, not server-query performance.
 
 ## Scenario catalog
 

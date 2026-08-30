@@ -167,4 +167,109 @@ class ConnectionSecurityTest {
         assertEquals(true, result.isEncrypted)
         assertEquals(setOf("Hermes Secure Link"), result.surfaces.map { it.mechanism }.toSet())
     }
+
+    @Test
+    fun healthyPlainApiFallback_doesNotMakeActiveHttpsDashboardMixed() {
+        val result = computeConnectionSecurity(
+            apiUrl = "http://h:8642",
+            dashboardUrl = "https://h:9119",
+            relayUrl = "",
+            relayConfigured = false,
+            activeEndpoint = endpoint("lan"),
+            isTailscaleDetected = false,
+            dashboardInUse = true,
+            apiInUse = false,
+            apiAvailable = true,
+        )
+
+        assertEquals(ConnectionSecurityLevel.Tls, result.level)
+        assertEquals(SurfaceUseState.InUse, result.surfaces.single { it.label == "Dashboard & Gateway" }.useState)
+        assertEquals(SurfaceUseState.Available, result.surfaces.single { it.label == "API fallback" }.useState)
+    }
+
+    @Test
+    fun activePlainApiFallback_countsWhenGatewayIsUnavailable() {
+        val result = computeConnectionSecurity(
+            apiUrl = "http://h:8642",
+            dashboardUrl = "https://h:9119",
+            relayUrl = "",
+            relayConfigured = false,
+            activeEndpoint = endpoint("lan"),
+            isTailscaleDetected = false,
+            dashboardInUse = false,
+            apiInUse = true,
+            apiAvailable = true,
+        )
+
+        assertEquals(ConnectionSecurityLevel.Plain, result.level)
+        assertEquals(SurfaceUseState.Unavailable, result.surfaces.single { it.label == "Dashboard & Gateway" }.useState)
+        assertEquals(SurfaceUseState.InUse, result.surfaces.single { it.label == "API fallback" }.useState)
+    }
+
+    @Test
+    fun unavailableApiAndRelay_stayNeutralWhileDashboardHttpsIsActive() {
+        val result = computeConnectionSecurity(
+            apiUrl = "http://h:8642",
+            dashboardUrl = "https://h:9119",
+            relayUrl = "ws://h:8767",
+            relayConfigured = true,
+            activeEndpoint = endpoint("lan"),
+            isTailscaleDetected = false,
+            dashboardInUse = true,
+            apiInUse = false,
+            apiAvailable = false,
+            relayInUse = false,
+        )
+
+        assertEquals(ConnectionSecurityLevel.Tls, result.level)
+        assertEquals(
+            listOf(SurfaceUseState.InUse, SurfaceUseState.Unavailable, SurfaceUseState.Unavailable),
+            result.surfaces.map { it.useState },
+        )
+    }
+
+    @Test
+    fun distinctSurfaceOwners_classifyDashboardApiAndRelayIndependently() {
+        val result = computeConnectionSecurity(
+            apiUrl = "http://100.64.0.10:8642",
+            dashboardUrl = "https://hermes.example.com",
+            relayUrl = "ws://192.168.1.10:8767",
+            relayConfigured = true,
+            activeEndpoint = endpoint("public"),
+            apiEndpoint = endpoint("tailscale"),
+            relayEndpoint = endpoint("lan"),
+            isTailscaleDetected = false,
+            dashboardInUse = true,
+            apiInUse = true,
+            relayInUse = true,
+        )
+
+        assertEquals(ConnectionSecurityLevel.Mixed, result.level)
+        assertEquals(
+            listOf("TLS", "Tailscale", "Plain"),
+            result.surfaces.map { it.mechanism },
+        )
+    }
+
+    @Test
+    fun relaySecurityUsesRelayWinnerNotDashboardWinner() {
+        val result = computeConnectionSecurity(
+            apiUrl = "",
+            dashboardUrl = "http://192.168.1.10:9119",
+            relayUrl = "ws://100.71.0.1:8767",
+            relayConfigured = true,
+            activeEndpoint = endpoint("lan"),
+            relayEndpoint = endpoint("tailscale"),
+            isTailscaleDetected = false,
+            dashboardInUse = false,
+            apiInUse = false,
+            relayInUse = true,
+        )
+
+        assertEquals(
+            "Tailscale",
+            result.surfaces.single { it.label == "Relay tools" }.mechanism,
+        )
+        assertEquals(ConnectionSecurityLevel.Overlay, result.level)
+    }
 }

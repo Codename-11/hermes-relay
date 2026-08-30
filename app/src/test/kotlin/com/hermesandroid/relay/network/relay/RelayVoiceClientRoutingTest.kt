@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -298,6 +299,74 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun dashboardIngressVoiceOutputMintsFreshTicketForInitialAndResume() = runTest {
+        val ingress = dashboardIngressUrl(lanServer)
+        val openedRequests = Collections.synchronizedList(mutableListOf<Request>())
+        val ticketMints = AtomicInteger(0)
+        val failureCallbackElapsedMs = AtomicLong(Long.MAX_VALUE)
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/api/plugins/hermes-relay/transport/voice/output/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "voice-output-ingress-ticket-test",
+                  "websocket_path": "/voice/output/session-test",
+                  "resume_token": "voice-ingress-resume-token",
+                  "resume_supported": true,
+                  "provider": "stub",
+                  "model": "local-tone",
+                  "voice": "sine",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { ingress },
+            sessionTokenProvider = { "relay-session" },
+            dashboardHttpClientProvider = { httpClient },
+            dashboardIngressWebSocketRequestProvider = { url ->
+                val mint = ticketMints.incrementAndGet()
+                if (mint == 2) Thread.sleep(400L)
+                Request.Builder().url("$url?ticket=voice-ticket-$mint").build()
+            },
+            webSocketFactory = { request, listener ->
+                val index = openedRequests.size
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    if (index == 1 && message.contains("session.resume")) {
+                        listener.onMessage(socket, """{"type":"voice.response.done"}""")
+                    }
+                }
+                openedRequests.add(request)
+                listener.onOpen(socket, mockk(relaxed = true))
+                if (index == 0) {
+                    val callbackStartedAt = System.nanoTime()
+                    listener.onFailure(socket, IOException("retry ingress"), null)
+                    failureCallbackElapsedMs.set(
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - callbackStartedAt),
+                    )
+                }
+                socket
+            },
+        )
+
+        val result = client.runVoiceOutput("Ticket every voice dial") {}
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        assertEquals(2, ticketMints.get())
+        assertEquals(listOf("voice-ticket-1", "voice-ticket-2"), openedRequests.map {
+            it.url.queryParameter("ticket")
+        })
+        assertTrue(
+            "callback-triggered reconnect admission must not wait for the slow ticket mint",
+            failureCallbackElapsedMs.get() < 150L,
+        )
+        assertTrue(openedRequests.all { it.header(RELAY_SESSION_HEADER) == "relay-session" })
+    }
+
+    @Test
     fun voiceOutputRouteChangeProactivelyResumesBeforeSocketFailure() = runBlocking {
         var activeRelayUrl = relayUrl(lanServer)
         val routeSwitch = CompletableDeferred<String>()
@@ -443,6 +512,121 @@ class RelayVoiceClientRoutingTest {
         )
         assertTrue(sentMessages.any { it.contains("session.resume") && it.contains("realtime-resume-token-1") })
         assertEquals(1, routeProbeRequests.get())
+    }
+
+    @Test
+    fun dashboardIngressRealtimeAgentMintsFreshTicketForInitialAndResume() = runTest {
+        val ingress = dashboardIngressUrl(lanServer)
+        val openedRequests = Collections.synchronizedList(mutableListOf<Request>())
+        val ticketMints = AtomicInteger(0)
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/api/plugins/hermes-relay/transport/voice/realtime-agent/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-ingress-ticket-test",
+                  "websocket_path": "/voice/realtime-agent/session-test",
+                  "resume_token": "realtime-ingress-resume-token",
+                  "resume_supported": true,
+                  "provider": "xai_realtime",
+                  "model": "grok-voice-latest",
+                  "voice": "leo",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { ingress },
+            sessionTokenProvider = { "relay-session" },
+            dashboardHttpClientProvider = { httpClient },
+            dashboardIngressWebSocketRequestProvider = { url ->
+                val mint = ticketMints.incrementAndGet()
+                Request.Builder().url("$url?ticket=realtime-ticket-$mint").build()
+            },
+            webSocketFactory = { request, listener ->
+                val index = openedRequests.size
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    if (index == 1 && message.contains("session.resume")) {
+                        listener.onMessage(
+                            socket,
+                            """{"type":"voice.response.done","provider":"xai_realtime"}""",
+                        )
+                    }
+                }
+                openedRequests.add(request)
+                listener.onOpen(socket, mockk(relaxed = true))
+                if (index == 0) listener.onFailure(socket, IOException("retry ingress"), null)
+                socket
+            },
+        )
+
+        val result = client.runRealtimeAgent(
+            prompt = "Ticket every realtime dial",
+            inputPcm = ByteArray(0),
+        ) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        assertEquals(2, ticketMints.get())
+        assertEquals(listOf("realtime-ticket-1", "realtime-ticket-2"), openedRequests.map {
+            it.url.queryParameter("ticket")
+        })
+        assertTrue(openedRequests.all { it.header(RELAY_SESSION_HEADER) == "relay-session" })
+    }
+
+    @Test
+    fun dashboardIngressRealtimeDemoMintsTicketBeforeAddingRelaySessionHeader() = runTest {
+        val ingress = dashboardIngressUrl(lanServer)
+        val openedRequests = Collections.synchronizedList(mutableListOf<Request>())
+        val ticketMints = AtomicInteger(0)
+        lanServer.dispatcher = sessionOnlyDispatcher(
+            path = "/api/plugins/hermes-relay/transport/voice/realtime/session",
+            body = """
+                {
+                  "success": true,
+                  "session_id": "realtime-demo-ingress-ticket-test",
+                  "websocket_path": "/voice/realtime/session-test",
+                  "provider": "stub",
+                  "model": "local-tone",
+                  "voice": "sine",
+                  "sample_rate": 24000
+                }
+            """.trimIndent(),
+        )
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient,
+            relayUrlProvider = { ingress },
+            sessionTokenProvider = { "relay-session" },
+            dashboardHttpClientProvider = { httpClient },
+            dashboardIngressWebSocketRequestProvider = { url ->
+                val mint = ticketMints.incrementAndGet()
+                Request.Builder().url("$url?ticket=realtime-demo-ticket-$mint").build()
+            },
+            webSocketFactory = { request, listener ->
+                lateinit var socket: ScriptedWebSocket
+                socket = ScriptedWebSocket(request, listener) { message ->
+                    if (message.contains("response.create")) {
+                        listener.onMessage(socket, """{"type":"voice.response.done"}""")
+                    }
+                }
+                openedRequests.add(request)
+                listener.onOpen(socket, mockk(relaxed = true))
+                socket
+            },
+        )
+
+        val result = client.runRealtimeDemo(
+            prompt = "Ticket this realtime demo dial",
+            inputPcm = ByteArray(0),
+        ) { }
+
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        assertEquals(1, ticketMints.get())
+        assertEquals("realtime-demo-ticket-1", openedRequests.single().url.queryParameter("ticket"))
+        assertEquals("relay-session", openedRequests.single().header(RELAY_SESSION_HEADER))
     }
 
     @Test
@@ -1977,9 +2161,9 @@ class RelayVoiceClientRoutingTest {
     @Test
     fun realtimeAgentResumeCursorIgnoresReplayControlEventsDuringRouteChurn() = runBlocking {
         var activeRelayUrl = relayUrl(lanServer)
-        val routeSwitch = CompletableDeferred<String>()
         val routeWatcherStarted = CountDownLatch(1)
         val firstReplayInterrupted = CountDownLatch(1)
+        val socketAttempts = AtomicInteger(0)
         val openedUrls = Collections.synchronizedList(mutableListOf<String>())
         val sentMessages = Collections.synchronizedList(mutableListOf<String>())
         lanServer.dispatcher = sessionOnlyDispatcher(
@@ -2007,12 +2191,14 @@ class RelayVoiceClientRoutingTest {
                 flow {
                     emit(activeRelayUrl)
                     routeWatcherStarted.countDown()
-                    emit(routeSwitch.await())
+                    while (firstReplayInterrupted.count > 0L) delay(10L)
+                    activeRelayUrl = relayUrl(tailscaleServer)
+                    emit(activeRelayUrl)
                 }
             },
             sessionTokenProvider = { "session-token" },
             webSocketFactory = { request, listener ->
-                val index = openedUrls.size
+                val index = socketAttempts.getAndIncrement()
                 lateinit var socket: ScriptedWebSocket
                 socket = ScriptedWebSocket(request, listener) { message ->
                     sentMessages.add(message)
@@ -2056,19 +2242,20 @@ class RelayVoiceClientRoutingTest {
             },
         )
 
-        val deferred = async(Dispatchers.IO) {
-            client.runRealtimeAgent(
-                prompt = "Realtime replay cursor test",
-                inputPcm = ByteArray(0),
-            ) { _, _ -> }
+        val resultAttempt = runCatching {
+            withTimeout(10_000) {
+                client.runRealtimeAgent(
+                    prompt = "Realtime replay cursor test",
+                    inputPcm = ByteArray(0),
+                ) { _, _ -> }
+            }
         }
-        assertTrue(firstReplayInterrupted.await(2, TimeUnit.SECONDS))
-        assertTrue(routeWatcherStarted.await(2, TimeUnit.SECONDS))
-        val nextRelayUrl = relayUrl(tailscaleServer)
-        routeSwitch.complete(nextRelayUrl)
-
-        val result = withTimeout(5_000) { deferred.await() }
-        activeRelayUrl = nextRelayUrl
+        assertTrue(
+            "realtime replay churn did not settle; opened=$openedUrls sent=$sentMessages",
+            resultAttempt.isSuccess,
+        )
+        val result = resultAttempt.getOrThrow()
+        assertEquals(0L, routeWatcherStarted.count)
         val resumeMessages = sentMessages.filter { it.contains("session.resume") }
 
         assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
@@ -2239,6 +2426,9 @@ class RelayVoiceClientRoutingTest {
 
     private fun relayUrl(server: MockWebServer): String =
         "ws://${server.hostName}:${server.port}"
+
+    private fun dashboardIngressUrl(server: MockWebServer): String =
+        "ws://${server.hostName}:${server.port}/api/plugins/hermes-relay/transport"
 
     private fun requestUrl(server: MockWebServer): String =
         "http://${server.hostName}:${server.port}"

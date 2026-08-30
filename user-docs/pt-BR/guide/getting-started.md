@@ -48,8 +48,16 @@ Não exponha diretamente uma porta de Dashboard, API ou Relay sem criptografia �
 para acesso remoto, use Tailscale, VPN ou HTTPS.
 :::
 
-O login do dashboard usa cookies e tickets temporários do Gateway. A chave de
-API é separada e não autentica no dashboard.
+O login do dashboard usa um bearer nativo em gateways atuais ou cookies da
+origem exata em gateways de compatibilidade, junto com tickets temporários do
+Gateway. A chave de API é separada.
+
+A rota salva no Android pode ser um endereço LAN, Tailscale ou público. O OIDC
+ainda precisa de um callback HTTPS acessível em
+`<origem-publica-do-dashboard>/auth/callback`. O Hermes normalmente deriva essa
+origem de cabeçalhos confiáveis do proxy. Configure upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` somente se essa detecção
+não for confiável; o Android verifica uma origem de login diferente antes de salvá-la.
 
 ## 3. Conecte e converse
 

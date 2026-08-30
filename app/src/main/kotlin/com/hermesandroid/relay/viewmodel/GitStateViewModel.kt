@@ -109,6 +109,8 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
 
     private val _selectedRepoId = MutableStateFlow<String?>(null)
     val selectedRepoId: StateFlow<String?> = _selectedRepoId.asStateFlow()
+    private val _scanningEnabled = MutableStateFlow(false)
+    val scanningEnabled: StateFlow<Boolean> = _scanningEnabled.asStateFlow()
 
     private var api: GitStateApiClient? = null
     private var reposJob: Job? = null
@@ -118,31 +120,33 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     private var messageJob: Job? = null
     private var scopeKey: String? = null
     private var targetGeneration: Long = 0
+
     fun selectedRepoIdForDisplay(): String? = _selectedRepoId.value
 
     fun currentTarget(): GitTarget? {
+        if (!_scanningEnabled.value) return null
         val owner = scopeKey ?: return null
         val repo = _selectedRepoId.value ?: return null
         return GitTarget(owner, repo, targetGeneration)
     }
 
-    fun configure(dashboard: DashboardApiClient?, ownerKey: String?) {
-        reposJob?.cancel()
-        detailJob?.cancel()
-        contentJob?.cancel()
-        mutationJob?.cancel()
-        messageJob?.cancel()
+    fun configure(
+        dashboard: DashboardApiClient?,
+        ownerKey: String?,
+        scanningEnabled: Boolean,
+    ) {
+        clearWorkspaceState()
         targetGeneration += 1
         scopeKey = ownerKey
-        _selectedRepoId.value = null
+        _scanningEnabled.value = scanningEnabled
         _writeGrant.value = false
-        _detail.value = GitRepoDetailState.Idle
-        _content.value = GitContentViewState.Idle
-        _mutation.value = GitMutationState.Idle
-        _messageGeneration.value = GitMessageGenerationState.Idle
-        _stashNotice.value = null
         api = dashboard?.let(::GitStateApiClient)
-        loadRepos()
+    }
+
+    fun setScanningEnabled(enabled: Boolean) {
+        if (_scanningEnabled.value == enabled) return
+        _scanningEnabled.value = enabled
+        if (!enabled) clearWorkspaceState()
     }
 
     /** Grants the plugin.api.write capability for this connection/profile. */
@@ -154,6 +158,7 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     fun hasWriteGrant(): Boolean = _writeGrant.value
 
     fun loadRepos() {
+        if (!_scanningEnabled.value) return
         val client = api ?: run {
             _repos.value = GitStateUiState.Error("Dashboard connection unavailable")
             return
@@ -187,7 +192,23 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun clearWorkspaceState() {
+        reposJob?.cancel()
+        detailJob?.cancel()
+        contentJob?.cancel()
+        mutationJob?.cancel()
+        messageJob?.cancel()
+        _repos.value = GitStateUiState.Loading
+        _detail.value = GitRepoDetailState.Idle
+        _content.value = GitContentViewState.Idle
+        _mutation.value = GitMutationState.Idle
+        _messageGeneration.value = GitMessageGenerationState.Idle
+        _stashNotice.value = null
+        _selectedRepoId.value = null
+    }
+
     fun selectRepo(repoId: String) {
+        if (!_scanningEnabled.value) return
         val client = api ?: return
         targetGeneration += 1
         _selectedRepoId.value = repoId

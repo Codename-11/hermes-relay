@@ -30,6 +30,11 @@ export interface ApiEndpoint {
   tls: boolean
 }
 
+/** Dashboard/Gateway half of a pairing candidate. */
+export interface DashboardEndpoint {
+  url: string
+}
+
 /** Build the full API URL — mirrors Kotlin's `ApiEndpoint.url` getter. */
 export function apiUrl(e: ApiEndpoint): string {
   return `${e.tls ? 'https' : 'http'}://${e.host}:${e.port}`
@@ -55,8 +60,11 @@ export interface EndpointCandidate {
   /** Raw role string from the wire — preserved verbatim for HMAC canonicalization. */
   role: string
   priority: number
-  api: ApiEndpoint
+  /** Optional legacy API-server surface. Dashboard-first routes omit it. */
+  api?: ApiEndpoint
   relay: RelayEndpoint
+  /** Optional standard Dashboard/Gateway origin. */
+  dashboard?: DashboardEndpoint
   /** Native plugin secure-proxy advertisement. Preserved even when the
    * desktop currently consumes only its relay WSS path. */
   proxy?: {
@@ -118,7 +126,7 @@ export function parseRawRole(raw: string): EndpointRole {
  * `EndpointCandidate.isKnownRole()`.
  */
 export function isKnownRole(role: string): boolean {
-  return parseRawRole(role) !== 'custom'
+  return role.toLowerCase() === 'https' || parseRawRole(role) !== 'custom'
 }
 
 /**
@@ -128,6 +136,7 @@ export function isKnownRole(role: string): boolean {
  */
 export function displayLabel(role: string): string {
   const normalized = role.toLowerCase()
+  if (normalized === 'https') return 'HTTPS'
   if (normalized === 'plugin_proxy') return 'Hermes Secure Link'
   if (normalized === 'outbound_broker' || normalized === 'relay_broker' || normalized === 'broker') return 'Hermes Reach (experimental)'
   switch (parseRawRole(role)) {

@@ -2,6 +2,8 @@ package com.hermesandroid.relay.network.relay
 
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertEquals
+import okhttp3.Request
 import org.junit.Test
 
 /**
@@ -35,5 +37,22 @@ class ConnectionManagerUrlGuardTest {
         )) {
             assertNull("expected null for malformed relay url '$bad'", buildRelayRequestOrNull(bad))
         }
+    }
+
+    @Test
+    fun `relay credential uses a separate header only for dashboard ingress`() {
+        val ingress = Request.Builder()
+            .url("https://dashboard.example.test/api/plugins/hermes-relay/transport/health")
+            .relaySessionCredential("relay-session", dashboardIngress = true)
+            .build()
+        val direct = Request.Builder()
+            .url("https://relay.example.test/health")
+            .relaySessionCredential("relay-session", dashboardIngress = false)
+            .build()
+
+        assertEquals("relay-session", ingress.header(RELAY_SESSION_HEADER))
+        assertNull(ingress.header("Authorization"))
+        assertEquals("Bearer relay-session", direct.header("Authorization"))
+        assertNull(direct.header(RELAY_SESSION_HEADER))
     }
 }

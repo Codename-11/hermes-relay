@@ -7,6 +7,7 @@ import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,7 +90,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class RelayVoiceClient(
     private val context: Context,
-    private val okHttpClient: OkHttpClient,
+    okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
     private val profileNameProvider: () -> String? = { null },
@@ -100,7 +101,25 @@ class RelayVoiceClient(
     private val realtimeResumeRetryIntervalMs: Long = REALTIME_RESUME_RETRY_INTERVAL_MS,
     private val realtimeResumeRetryWindowMs: Long = REALTIME_RESUME_RETRY_WINDOW_MS,
     private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
+    /** Dashboard-authenticated transport for same-origin plugin ingress. */
+    private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
+    /** Fresh Dashboard ticket request for every ingress voice socket dial. */
+    private val dashboardIngressWebSocketRequestProvider:
+        (suspend (String) -> Request?)? = null,
 ) {
+
+    private val directOkHttpClient: OkHttpClient = okHttpClient
+
+    /** Resolve lazily so a Dashboard route/client handoff is observed. */
+    private val okHttpClient: OkHttpClient
+        get() {
+            val relayUrl = relayUrlProvider()?.trim().orEmpty()
+            return if (isDashboardRelayIngressUrl(relayUrl)) {
+                dashboardHttpClientProvider?.invoke(relayUrl) ?: directOkHttpClient
+            } else {
+                directOkHttpClient
+            }
+        }
 
     companion object {
         private const val TAG = "RelayVoiceClient"
@@ -144,13 +163,36 @@ class RelayVoiceClient(
         }
     }
 
+    private fun callClient(url: String): OkHttpClient =
+        if (isDashboardRelayIngressUrl(url)) {
+            dashboardHttpClientProvider?.invoke(url) ?: directOkHttpClient
+        } else {
+            directOkHttpClient
+        }
+
     private fun sessionClient(): OkHttpClient =
         okHttpClient.newBuilder()
             .callTimeout(SESSION_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
 
     private fun openWebSocket(request: Request, listener: WebSocketListener): WebSocket =
-        webSocketFactory?.invoke(request, listener) ?: okHttpClient.newWebSocket(request, listener)
+        webSocketFactory?.invoke(request, listener)
+            ?: callClient(request.url.toString()).newWebSocket(request, listener)
+
+    private suspend fun voiceWebSocketRequest(url: String, relayToken: String): Request {
+        val dashboardIngress = isDashboardRelayIngressUrl(url)
+        val outerRequest = if (dashboardIngress) {
+            val provider = dashboardIngressWebSocketRequestProvider
+                ?: throw IOException("Dashboard Relay voice authorization is unavailable")
+            provider(url)
+                ?: throw IOException("Dashboard Relay voice ticket could not be minted")
+        } else {
+            Request.Builder().url(url).build()
+        }
+        return outerRequest.newBuilder()
+            .relaySessionCredential(relayToken, dashboardIngress)
+            .build()
+    }
 
     private fun requestRouteProbeOnce(
         surface: String,
@@ -196,7 +238,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/transcribe"))
             .post(body)
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -278,7 +320,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/synthesize")
             .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "audio/mpeg")
             .build()
 
@@ -333,7 +375,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -375,7 +417,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -414,7 +456,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -462,7 +504,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/providers/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -515,7 +557,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -618,7 +660,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/realtime-agent/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -650,7 +692,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/config"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -689,7 +731,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -741,7 +783,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/providers/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -812,7 +854,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase/voice/output/config"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
 
@@ -845,6 +887,7 @@ class RelayVoiceClient(
         onHandoff: (VoiceHandoffEvent) -> Unit = {},
         onEvent: (RealtimeVoiceEvent) -> Unit,
     ): Result<VoiceOutputSummary> = withContext(Dispatchers.IO) {
+        val owningScope = this
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
         val token = resolveBearerToken()
@@ -869,6 +912,7 @@ class RelayVoiceClient(
         val completed = AtomicBoolean(false)
         val resumeAttempted = AtomicBoolean(false)
         val routeProbeRequested = AtomicBoolean(false)
+        val resumeDialPending = AtomicBoolean(false)
         val currentSocket = AtomicReference<WebSocket?>()
         val firstAudioSeen = AtomicBoolean(false)
         val socketGeneration = AtomicLong(0L)
@@ -907,14 +951,14 @@ class RelayVoiceClient(
             }
         }
 
-        fun openSocket(resume: Boolean, overrideWsBase: String? = null): WebSocket {
+        suspend fun openSocket(resume: Boolean, overrideWsBase: String? = null): WebSocket {
             val generation = socketGeneration.incrementAndGet()
             val currentWsBase = overrideWsBase ?: resolveWebSocketBase()
                 ?: throw IOException("Relay URL not configured")
-            val request = Request.Builder()
-                .url("$currentWsBase${session.websocketPath}")
-                .header("Authorization", "Bearer $token")
-                .build()
+            val request = voiceWebSocketRequest(
+                "$currentWsBase${session.websocketPath}",
+                token,
+            )
             Log.i(
                 TAG,
                 "Voice output websocket opening resume=$resume url=${request.url}",
@@ -1044,23 +1088,28 @@ class RelayVoiceClient(
                         return
                     }
                     if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.compareAndSet(false, true)) {
-                        try {
-                            Log.i(TAG, "Voice output websocket failed; attempting resume: ${t.message}")
-                            requestRouteProbeOnce("Voice output", t.message, routeProbeRequested)
-                            onHandoff(
-                                VoiceHandoffEvent(
-                                    label = context.getString(R.string.voice_diag_connection_changed),
-                                    detail = t.message,
-                                    route = routeLabel(webSocket.request().url.toString()),
-                                    active = true,
-                                )
+                        Log.i(TAG, "Voice output websocket failed; scheduling resume: ${t.message}")
+                        requestRouteProbeOnce("Voice output", t.message, routeProbeRequested)
+                        onHandoff(
+                            VoiceHandoffEvent(
+                                label = context.getString(R.string.voice_diag_connection_changed),
+                                detail = t.message,
+                                route = routeLabel(webSocket.request().url.toString()),
+                                active = true,
                             )
-                            openSocket(resume = true)
-                            return
-                        } catch (e: Exception) {
-                            completeFailure("Voice output resume failed: ${e.message ?: "network error"}", e)
-                            return
+                        )
+                        if (resumeDialPending.compareAndSet(false, true)) {
+                            owningScope.launch {
+                                try {
+                                    openSocket(resume = true)
+                                } catch (e: Exception) {
+                                    completeFailure("Voice output resume failed: ${e.message ?: "network error"}", e)
+                                } finally {
+                                    resumeDialPending.set(false)
+                                }
+                            }
                         }
+                        return
                     }
                     completeFailure("Voice output websocket failed: ${t.message}", t)
                 }
@@ -1090,23 +1139,28 @@ class RelayVoiceClient(
                         return
                     }
                     if (session.resumeSupported && !session.resumeToken.isNullOrBlank() && resumeAttempted.compareAndSet(false, true)) {
-                        try {
-                            Log.i(TAG, "Voice output websocket closed code=$code; attempting resume")
-                            requestRouteProbeOnce("Voice output", "Closed $code $reason", routeProbeRequested)
-                            onHandoff(
-                                VoiceHandoffEvent(
-                                    label = context.getString(R.string.voice_diag_connection_changed),
-                                    detail = "Closed $code $reason",
-                                    route = routeLabel(webSocket.request().url.toString()),
-                                    active = true,
-                                )
+                        Log.i(TAG, "Voice output websocket closed code=$code; scheduling resume")
+                        requestRouteProbeOnce("Voice output", "Closed $code $reason", routeProbeRequested)
+                        onHandoff(
+                            VoiceHandoffEvent(
+                                label = context.getString(R.string.voice_diag_connection_changed),
+                                detail = "Closed $code $reason",
+                                route = routeLabel(webSocket.request().url.toString()),
+                                active = true,
                             )
-                            openSocket(resume = true)
-                            return
-                        } catch (e: Exception) {
-                            completeFailure("Voice output resume failed: ${e.message ?: "network error"}", e)
-                            return
+                        )
+                        if (resumeDialPending.compareAndSet(false, true)) {
+                            owningScope.launch {
+                                try {
+                                    openSocket(resume = true)
+                                } catch (e: Exception) {
+                                    completeFailure("Voice output resume failed: ${e.message ?: "network error"}", e)
+                                } finally {
+                                    resumeDialPending.set(false)
+                                }
+                            }
                         }
+                        return
                     }
                     completeFailure("Voice output websocket closed before completion: $code $reason")
                 }
@@ -1178,10 +1232,7 @@ class RelayVoiceClient(
         var audioChunks = 0
         var audioBytes = 0
 
-        val request = Request.Builder()
-            .url("$wsBase${session.websocketPath}")
-            .header("Authorization", "Bearer $token")
-            .build()
+        val request = voiceWebSocketRequest("$wsBase${session.websocketPath}", token)
 
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -1306,6 +1357,7 @@ class RelayVoiceClient(
         prewarm: Boolean = false,
         onEvent: (RealtimeVoiceEvent, RealtimeAgentSessionControl) -> Unit,
     ): Result<RealtimeVoiceSummary> = withContext(Dispatchers.IO) {
+        val owningScope = this
         val persistent = turnInputs != null
         val httpBase = resolveHttpBase()
             ?: return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
@@ -1649,7 +1701,7 @@ class RelayVoiceClient(
             }
         }
 
-        fun openSocket(
+        suspend fun openSocket(
             resume: Boolean,
             overrideWsBase: String? = null,
             expectedResumeEpisode: Long? = null,
@@ -1673,10 +1725,10 @@ class RelayVoiceClient(
             val (currentWsBase, request) = try {
                 val base = overrideWsBase ?: resolveWebSocketBase()
                     ?: throw IOException("Relay URL not configured")
-                val socketRequest = Request.Builder()
-                    .url("$base${session.websocketPath}")
-                    .header("Authorization", "Bearer $token")
-                    .build()
+                val socketRequest = voiceWebSocketRequest(
+                    "$base${session.websocketPath}",
+                    token,
+                )
                 Log.i(
                     TAG,
                     "Realtime agent websocket opening resume=$resume url=${socketRequest.url}",
@@ -1765,12 +1817,20 @@ class RelayVoiceClient(
                                 // A synchronous failure callback can replace this
                                 // socket while setup sends are still unwinding. A
                                 // stale attempt must not terminate the newer route.
-                                if (currentSocket.get() !== webSocket || completed.get()) return
+                                if (
+                                    terminalCallbackSeen.get() ||
+                                    currentSocket.get() !== webSocket ||
+                                    completed.get()
+                                ) return
                                 completeFailure("Realtime agent websocket rejected session setup")
                                 webSocket.close(1011, "session setup failed")
                                 return
                             }
-                            if (currentSocket.get() !== webSocket || completed.get()) return
+                            if (
+                                terminalCallbackSeen.get() ||
+                                currentSocket.get() !== webSocket ||
+                                completed.get()
+                            ) return
                             if (resume) {
                                 Log.i(TAG, "Realtime agent resume sent; awaiting relay confirmation")
                             } else {
@@ -1984,16 +2044,17 @@ class RelayVoiceClient(
                             )
                         )
                         if (!claim.openImmediately) return
-                        try {
-                            openSocket(
-                                resume = true,
-                                expectedResumeEpisode = claim.waiting.episode,
-                            )
-                            return
-                        } catch (e: Exception) {
-                            completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
-                            return
+                        owningScope.launch {
+                            try {
+                                openSocket(
+                                    resume = true,
+                                    expectedResumeEpisode = claim.waiting.episode,
+                                )
+                            } catch (e: Exception) {
+                                completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
+                            }
                         }
+                        return
                     }
                     val transitionRevision = claimTerminalSocket(
                         webSocket,
@@ -2097,16 +2158,17 @@ class RelayVoiceClient(
                             )
                         )
                         if (!claim.openImmediately) return
-                        try {
-                            openSocket(
-                                resume = true,
-                                expectedResumeEpisode = claim.waiting.episode,
-                            )
-                            return
-                        } catch (e: Exception) {
-                            completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
-                            return
+                        owningScope.launch {
+                            try {
+                                openSocket(
+                                    resume = true,
+                                    expectedResumeEpisode = claim.waiting.episode,
+                                )
+                            } catch (e: Exception) {
+                                completeFailure("Realtime agent resume failed: ${e.message ?: "network error"}", e)
+                            }
                         }
+                        return
                     }
                     val transitionRevision = claimTerminalSocket(
                         webSocket,
@@ -2294,9 +2356,7 @@ class RelayVoiceClient(
             null
         }
 
-        val socket = openSocket(resume = false)
-            ?: currentSocket.get()
-            ?: throw IOException("Realtime agent websocket handshake was already pending")
+        val initialSocket = openSocket(resume = false) ?: currentSocket.get()
         val routeWatcherResumeEpisode = AtomicLong(0L)
         val routeWatcher = startRouteResumeWatcher(
             surface = "Realtime agent",
@@ -2378,7 +2438,7 @@ class RelayVoiceClient(
             awaitRealtimeAgentCompletion()
         } catch (e: Exception) {
             currentSocket.get()?.close(1001, "timeout")
-            socket.close(1001, "timeout")
+            initialSocket?.close(1001, "timeout")
             Result.failure(IOException(e.message ?: "Realtime agent timed out", e))
         } finally {
             routeWatcher?.cancel()
@@ -2394,7 +2454,7 @@ class RelayVoiceClient(
         resumeSupported: Boolean,
         resumeToken: String?,
         currentSocket: AtomicReference<WebSocket?>,
-        openResumeSocket: (String?) -> WebSocket?,
+        openResumeSocket: suspend (String?) -> WebSocket?,
         onHandoff: (VoiceHandoffEvent) -> Unit,
         completeFailure: (String, Throwable?) -> Unit,
     ): Job? {
@@ -2454,7 +2514,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$path"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2493,7 +2553,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/options"))
             .get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2541,7 +2601,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$pathPrefix/${pathSegment(provider)}/validate"))
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2593,7 +2653,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url(urlWithProfile("$httpBase$path"))
             .patch(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         try {
@@ -2678,7 +2738,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/realtime/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {
@@ -2763,7 +2823,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/realtime-agent/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {
@@ -2804,7 +2864,7 @@ class RelayVoiceClient(
         val request = Request.Builder()
             .url("$httpBase/voice/output/session")
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(httpBase))
             .header("Accept", "application/json")
             .build()
         return try {

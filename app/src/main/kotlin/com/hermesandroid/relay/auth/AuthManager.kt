@@ -994,7 +994,7 @@ class AuthManager(
                     val serverSource = if (serverIssuedCode != null) "QR" else "local-fallback"
                     Log.i(
                         TAG,
-                        "authenticate: sending pairing_code=$codeToSend source=$serverSource " +
+                        "authenticate: sending pairing credential source=$serverSource " +
                             "ttl=$pendingTtlSeconds grants=${pendingGrants?.keys}"
                     )
                     buildJsonObject {
@@ -1063,7 +1063,8 @@ class AuthManager(
         _currentPairedSession.value = null
         Log.i(
             TAG,
-            "applyServerIssuedCodeAndReset: code=$normalized relayUrl=$relayUrl " +
+            "applyServerIssuedCodeAndReset: credential=present " +
+                "relayConfigured=${!relayUrl.isNullOrBlank()} " +
                 "prevState=${prevState::class.simpleName} → Unpaired"
         )
         scope.launch {

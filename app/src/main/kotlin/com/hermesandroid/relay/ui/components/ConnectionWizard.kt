@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -72,11 +73,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,6 +94,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -107,6 +111,7 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.hasHermesReach
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.presentationRouteUrl
 import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.secureLinkServices
@@ -120,13 +125,15 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import java.net.URI
 
 /**
- * Shared connection wizard used by both onboarding (first run) and
- * Settings → Connections. Hermes setup is the default path:
- * save the API URL/key, derive the dashboard URL, and verify sessions.
- * Relay pairing remains available for power tools such as Terminal,
- * Bridge, Relay sessions, channel grants, and relay-backed media routes.
+ * Shared Gateway wizard used by both onboarding (first run) and
+ * Settings → Gateways. Hermes setup starts with the one Dashboard address
+ * the phone can open, probes public `/api/status`, and lets advertised
+ * capabilities select authentication. A separate public sign-in URL is never
+ * universally required. API fallback, Relay pairing, and extra LAN/Tailscale
+ * routes remain explicit advanced paths.
  *
  * Steps:
  *
@@ -185,7 +192,7 @@ fun ConnectionWizard(
      * Currently only `"scan"` is honored — jumps directly into camera-
      * permission-request → scanner, skipping the Method chooser. Null
      * keeps the default Method step so users can still pick Scan / Enter
-     * code / Show code manually. The "Add connection" FAB sets this to
+     * code / Show code manually. The "Add gateway" FAB sets this to
      * `"scan"` because the single-purpose entry deserves a single-purpose
      * flow; re-pair surfaces leave it null so the chooser stays available.
      */
@@ -196,8 +203,8 @@ fun ConnectionWizard(
      * Optional "Try the demo" affordance shown atop the Method step. When
      * non-null, the wizard surfaces an offline Demo / Explore entry point so a
      * first-run user (or a Play reviewer with no server) can see the app work
-     * with zero setup. Null hides it — Settings → Connections passes null
-     * because there's nothing to "first-run" there; onboarding + the Connect
+     * with zero setup. Null hides it — Settings → Gateways passes null
+     * because there's nothing to "first-run" there; onboarding + the Add Gateway
      * screen pass a callback that enters demo and routes to Chat.
      */
     onTryDemo: (() -> Unit)? = null,
@@ -211,33 +218,55 @@ fun ConnectionWizard(
     val currentRelayUrl by connectionViewModel.relayUrl.collectAsState()
     val currentDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     val activeConnection by connectionViewModel.activeConnection.collectAsState()
+    val connectionDraftId by connectionViewModel.connectionDraftId.collectAsState()
+    var wizardOwnerId by rememberSaveable { mutableStateOf(activeConnection?.id) }
+    LaunchedEffect(connectionDraftId) {
+        wizardOwnerId = resolveConnectionWizardOwner(wizardOwnerId, connectionDraftId)
+    }
+    val wizardDraftIdentity = resolveConnectionWizardOwner(wizardOwnerId, null)
     val accessibleMotion = rememberAccessibleMotionState()
     val animateWizardTransitions = shouldAnimateWizardTransitions(accessibleMotion)
 
-    var step by remember { mutableStateOf(WizardStep.Nearby) }
-    var chosenMethod by remember { mutableStateOf(PairMethod.Standard) }
+    var step by rememberSaveable(wizardDraftIdentity, stateSaver = WizardStepSaver) {
+        mutableStateOf(WizardStep.Nearby)
+    }
+    var chosenMethod by rememberSaveable(wizardDraftIdentity, stateSaver = PairMethodSaver) {
+        mutableStateOf(PairMethod.Standard)
+    }
     var pendingPayload by remember { mutableStateOf<HermesPairingPayload?>(null) }
-    var ttlSeconds by remember { mutableStateOf(PairingPreferencesDefault) }
+    var ttlSeconds by rememberSaveable(wizardDraftIdentity) {
+        mutableStateOf(PairingPreferencesDefault)
+    }
     var showQrScanner by remember { mutableStateOf(false) }
+    var qrScanGeneration by rememberSaveable(wizardDraftIdentity) { mutableStateOf(0) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyAttempt by remember { mutableStateOf(0) }
     var standardBusy by remember { mutableStateOf(false) }
+    var pairSubmissionStage by remember { mutableStateOf(PairSubmissionStage.Idle) }
+    var pairSubmissionError by remember { mutableStateOf<String?>(null) }
     var standardError by remember { mutableStateOf<String?>(null) }
     var standardSuccess by remember { mutableStateOf<ConnectionViewModel.StandardApiSetupResult?>(null) }
     var nearbyBusy by remember { mutableStateOf(false) }
     var nearbyResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
     var nearbyMessage by remember { mutableStateOf<String?>(null) }
-    var dashboardAddress by remember(currentDashboardUrl) { mutableStateOf(currentDashboardUrl) }
+    var dashboardAddress by rememberSaveable(wizardDraftIdentity, currentDashboardUrl) {
+        mutableStateOf(currentDashboardUrl)
+    }
     var dashboardProbeBusy by remember { mutableStateOf(false) }
     var dashboardProbeError by remember { mutableStateOf<String?>(null) }
     var dashboardProbeResult by remember {
         mutableStateOf<ConnectionViewModel.DashboardSetupResult?>(null)
     }
-    var dashboardSuggestedHostname by remember { mutableStateOf<String?>(null) }
-    var dashboardEntryIntent by rememberSaveable { mutableStateOf(DashboardEntryIntent.Server) }
+    var dashboardSuggestedHostname by rememberSaveable(wizardDraftIdentity) {
+        mutableStateOf<String?>(null)
+    }
+    var dashboardEntryIntent by rememberSaveable(
+        wizardDraftIdentity,
+        stateSaver = DashboardEntryIntentSaver,
+    ) { mutableStateOf(DashboardEntryIntent.Server) }
     var pendingDashboardDraft by remember { mutableStateOf<DashboardConnectionDraft?>(null) }
     val relayScopedFlow = autoStart == "relay"
-    val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Method
+    val pairingHome = if (relayScopedFlow) WizardStep.RelayChoice else WizardStep.Nearby
 
     // Pre-pair duplicate detection. When the user is about to pair to an
     // API URL that already has a connection in the store, we stop the
@@ -259,9 +288,15 @@ fun ConnectionWizard(
     val wizardScope = rememberCoroutineScope()
 
     // Standard API/dashboard fields. Pre-fill from the active connection.
-    var standardApiUrl by remember(currentApiUrl) { mutableStateOf(currentApiUrl) }
+    var standardApiUrl by rememberSaveable(wizardDraftIdentity, currentApiUrl) {
+        mutableStateOf(currentApiUrl)
+    }
     var standardApiKey by remember { mutableStateOf("") }
-    var standardDashboardUrl by remember(currentApiUrl, currentDashboardUrl) {
+    var standardDashboardUrl by rememberSaveable(
+        wizardDraftIdentity,
+        currentApiUrl,
+        currentDashboardUrl,
+    ) {
         val derived = Connection.deriveDefaultDashboardUrl(currentApiUrl)
         mutableStateOf(
             currentDashboardUrl
@@ -269,14 +304,32 @@ fun ConnectionWizard(
                 .orEmpty(),
         )
     }
-    var standardTailscaleApiUrl by remember { mutableStateOf("") }
+    var standardTailscaleApiUrl by rememberSaveable(wizardDraftIdentity) { mutableStateOf("") }
     var standardApiKeyVisible by remember { mutableStateOf(false) }
 
     // Manual-path field state. Pre-fill from whatever the VM already knows
     // so re-pair from Settings keeps the previously-configured URLs.
-    var manualApiUrl by remember(currentApiUrl) { mutableStateOf(currentApiUrl) }
-    var manualRelayUrl by remember(currentRelayUrl) { mutableStateOf(currentRelayUrl) }
+    var manualApiUrl by rememberSaveable(wizardDraftIdentity, currentApiUrl) {
+        mutableStateOf(currentApiUrl)
+    }
+    var manualRelayUrl by rememberSaveable(wizardDraftIdentity, currentRelayUrl) {
+        mutableStateOf(currentRelayUrl)
+    }
     var manualCode by remember { mutableStateOf("") }
+
+    // Restore only non-secret draft state. Steps that depend on a QR payload,
+    // API key, pairing code, or in-flight verification return to the nearest
+    // safe entry surface after Activity/process recreation.
+    LaunchedEffect(wizardDraftIdentity) {
+        step = restorableWizardStep(
+            saved = step,
+            method = chosenMethod,
+            relayScoped = relayScopedFlow,
+            hasPayload = pendingPayload != null,
+            verifyAttempt = verifyAttempt,
+            hasDashboardProbe = dashboardProbeResult != null,
+        )
+    }
 
     // Camera permission gate. We don't keep the launcher result around — the
     // showQrScanner flag is the persistent state.
@@ -298,8 +351,55 @@ fun ConnectionWizard(
         }
     }
 
+    val launchCleanQrScan: () -> Unit = {
+        // A scan is a new transaction. Never leave a prior QR confirmation,
+        // verification result, duplicate prompt, or secret behind it.
+        val reset = resetQrScanTransaction(
+            previous = QrScanTransactionState(
+                pendingPayload = pendingPayload,
+                pendingManualCode = pendingManualCode,
+                hasPendingStandardDraft = pendingStandardDraft != null,
+                hasPendingDashboardDraft = pendingDashboardDraft != null,
+                hasDuplicatePrompt = duplicatePrompt != null,
+                hasStandardSuccess = standardSuccess != null,
+                standardError = standardError,
+                hasDashboardProbeResult = dashboardProbeResult != null,
+                dashboardProbeError = dashboardProbeError,
+                dashboardSuggestedHostname = dashboardSuggestedHostname,
+                verifyError = verifyError,
+                verifyAttempt = verifyAttempt,
+                standardApiKey = standardApiKey,
+                manualCode = manualCode,
+                ttlSeconds = ttlSeconds,
+                step = step,
+                chosenMethod = chosenMethod,
+                generation = qrScanGeneration,
+            ),
+            pairingHome = pairingHome,
+        )
+        pendingPayload = reset.pendingPayload
+        pendingManualCode = reset.pendingManualCode
+        pendingStandardDraft = pendingStandardDraft.takeIf { reset.hasPendingStandardDraft }
+        pendingDashboardDraft = pendingDashboardDraft.takeIf { reset.hasPendingDashboardDraft }
+        duplicatePrompt = duplicatePrompt.takeIf { reset.hasDuplicatePrompt }
+        standardSuccess = standardSuccess.takeIf { reset.hasStandardSuccess }
+        standardError = reset.standardError
+        dashboardProbeResult = dashboardProbeResult.takeIf { reset.hasDashboardProbeResult }
+        dashboardProbeError = reset.dashboardProbeError
+        dashboardSuggestedHostname = reset.dashboardSuggestedHostname
+        verifyError = reset.verifyError
+        verifyAttempt = reset.verifyAttempt
+        standardApiKey = reset.standardApiKey
+        manualCode = reset.manualCode
+        ttlSeconds = reset.ttlSeconds
+        step = reset.step
+        chosenMethod = reset.chosenMethod
+        qrScanGeneration = reset.generation
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
     // Deep-link: when the caller passed autoStart="scan" (currently only the
-    // "Add connection" FAB does), fire the permission launcher on first
+    // "Add gateway" FAB does), fire the permission launcher on first
     // composition. Equivalent to the user tapping the Scan tile in the
     // Method step — sets chosenMethod and bounces through the camera
     // permission gate into the scanner. Only runs once per wizard mount
@@ -311,7 +411,7 @@ fun ConnectionWizard(
         nearbyResults = emptyList()
         nearbyMessage = null
         wizardScope.launch {
-            runCatching { HermesLanDiscovery.scan(context) }
+            runCatching { HermesLanDiscovery.scan(context, dashboardOnly = true) }
                 .onSuccess { found ->
                     // Dashboard/Gateway is the normal Hermes path. API-only
                     // discoveries remain available under Other ways.
@@ -347,8 +447,7 @@ fun ConnectionWizard(
         if (!setupReady) return@LaunchedEffect
         when (autoStart) {
             "scan" -> {
-                chosenMethod = PairMethod.Scan
-                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                launchCleanQrScan()
             }
             "relay" -> step = WizardStep.RelayChoice
             else -> launchNearbyScan()
@@ -394,9 +493,16 @@ fun ConnectionWizard(
                 is AuthState.Paired -> {
                     android.util.Log.i(
                         "ConnectionWizard",
-                        "verify[$verifyAttempt] terminal=Paired → onComplete()"
+                        "verify[$verifyAttempt] terminal=Paired"
                     )
-                    onComplete()
+                    if (
+                        pendingPayload?.let(::shouldOfferDashboardSignInAfterRelayPair) == true &&
+                        onManageSignIn != null
+                    ) {
+                        onManageSignIn()
+                    } else {
+                        onComplete()
+                    }
                 }
                 is AuthState.Failed -> {
                     android.util.Log.w(
@@ -427,9 +533,9 @@ fun ConnectionWizard(
     }
 
     // Look up an existing connection pointing at [serverUrl] — excluding
-    // the active one, which during the Add-connection flow is the blank
+    // the active one, which during the Add-gateway flow is the blank
     // placeholder we pre-created in [ConnectionViewModel.beginAddConnection].
-    // Re-pair flows from Settings → Connections switch to the target BEFORE
+    // Re-pair flows from Settings → Gateways switch to the target BEFORE
     // entering the wizard, so during those the active id IS the target
     // and the filter correctly returns null (no pointless self-prompt).
     val findDuplicateFor:
@@ -471,6 +577,8 @@ fun ConnectionWizard(
         standardBusy = true
         standardError = null
         standardSuccess = null
+        pairSubmissionStage = PairSubmissionStage.Idle
+        pairSubmissionError = null
         connectionViewModel.saveStandardApiConnection(
             apiUrl = trimmedApi,
             apiKey = apiKey,
@@ -586,8 +694,7 @@ fun ConnectionWizard(
                         step = WizardStep.DashboardManual
                     },
                     onPairRelayQr = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        launchCleanQrScan()
                     },
                     onPairRelayCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -646,8 +753,7 @@ fun ConnectionWizard(
                     connectionLabel = activeConnection?.label.orEmpty(),
                     dashboardUrl = currentDashboardUrl,
                     onPickScan = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        launchCleanQrScan()
                     },
                     onPickEnterCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -661,14 +767,11 @@ fun ConnectionWizard(
                 )
 
                 WizardStep.Method -> MethodStep(
+                    onBack = { step = WizardStep.Nearby },
                     onPickStandard = {
                         chosenMethod = PairMethod.Standard
                         standardError = null
                         step = WizardStep.StandardEntry
-                    },
-                    onPickScan = {
-                        chosenMethod = PairMethod.Scan
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                     },
                     onPickEnterCode = {
                         chosenMethod = PairMethod.EnterCode
@@ -679,8 +782,6 @@ fun ConnectionWizard(
                         chosenMethod = PairMethod.ShowCode
                         step = WizardStep.ShowCode
                     },
-                    onSkip = if (showSkip) onCancel else null,
-                    onTryDemo = onTryDemo,
                 )
 
                 WizardStep.StandardEntry -> StandardEntryStep(
@@ -742,6 +843,9 @@ fun ConnectionWizard(
                             onTtlChange = { ttlSeconds = it },
                             isTailscaleDetected = isTailscaleDetected,
                             standardBusy = standardBusy,
+                            pairSubmissionStage = pairSubmissionStage,
+                            pairSubmissionError = pairSubmissionError,
+                            animateStatusChanges = animateWizardTransitions,
                             standardSuccess = standardSuccess,
                             onBack = {
                                 pendingPayload = null
@@ -756,6 +860,10 @@ fun ConnectionWizard(
                                 // "Prefer" choice on every failure.
                                 pendingPayload = reorderedPayload
                                 val dispatch = setupQrDispatch(reorderedPayload)
+                                if (dispatch == SetupQrDispatch.Relay) {
+                                    pairSubmissionStage = PairSubmissionStage.PreparingGateway
+                                    pairSubmissionError = null
+                                }
                                 when (dispatch) {
                                     SetupQrDispatch.Dashboard -> {
                                         // Dashboard-only setup belongs to the same
@@ -789,6 +897,7 @@ fun ConnectionWizard(
                                             )
                                         }
                                         if (existing != null) {
+                                            pairSubmissionStage = PairSubmissionStage.Idle
                                             duplicatePrompt = existing
                                         } else if (dispatch == SetupQrDispatch.StandardApi) {
                                             launchStandardConnect(
@@ -798,20 +907,59 @@ fun ConnectionWizard(
                                                 reorderedPayload.dashboardUrl.orEmpty(),
                                                 reorderedPayload.endpoints,
                                             )
-                                        } else {
-                                            wizardScope.launch {
-                                                connectionViewModel.ensureActiveConnectionForSetup(
-                                                    apiServerUrl = reorderedPayload.serverUrl,
-                                                    relayUrl = reorderedPayload.relay?.url.orEmpty(),
-                                                    routeCandidates = reorderedPayload.endpoints,
-                                                )
-                                                connectionViewModel.applyPairingPayload(
-                                                    reorderedPayload,
-                                                    ttlSeconds,
-                                                    preserveStandardConfig = relayScopedFlow,
+                                        } else if (
+                                            relayPairStartOrder(reorderedPayload) ==
+                                            RelayPairStartOrder.DashboardSignInFirst
+                                        ) {
+                                            if (onManageSignIn != null) {
+                                                wizardScope.launch {
+                                                    runCatching {
+                                                        connectionViewModel.ensureActiveConnectionForSetup(
+                                                            apiServerUrl = reorderedPayload.serverUrl,
+                                                            relayUrl = reorderedPayload.relay?.url.orEmpty(),
+                                                            routeCandidates = reorderedPayload.endpoints,
+                                                        )
+                                                        connectionViewModel.stageDashboardIngressPairingForSignIn(
+                                                            reorderedPayload,
+                                                            ttlSeconds,
+                                                        )
+                                                    }.onSuccess {
+                                                        pairSubmissionStage = PairSubmissionStage.OpeningSignIn
+                                                        onManageSignIn()
+                                                    }.onFailure { error ->
+                                                        pairSubmissionStage = PairSubmissionStage.Idle
+                                                        pairSubmissionError = error.message
+                                                            ?: context.getString(R.string.cw_pairing_did_not_complete)
+                                                    }
+                                                }
+                                            } else {
+                                                verifyError = context.getString(
+                                                    R.string.cw_dashboard_sign_in_required,
                                                 )
                                                 step = WizardStep.Verify
-                                                verifyAttempt += 1
+                                            }
+                                        } else {
+                                            wizardScope.launch {
+                                                runCatching {
+                                                    connectionViewModel.ensureActiveConnectionForSetup(
+                                                        apiServerUrl = reorderedPayload.serverUrl,
+                                                        relayUrl = reorderedPayload.relay?.url.orEmpty(),
+                                                        routeCandidates = reorderedPayload.endpoints,
+                                                    )
+                                                }.onSuccess {
+                                                    pairSubmissionStage = PairSubmissionStage.PairingRelay
+                                                    connectionViewModel.applyPairingPayload(
+                                                        reorderedPayload,
+                                                        ttlSeconds,
+                                                        preserveStandardConfig = relayScopedFlow,
+                                                    )
+                                                    step = WizardStep.Verify
+                                                    verifyAttempt += 1
+                                                }.onFailure { error ->
+                                                    pairSubmissionStage = PairSubmissionStage.Idle
+                                                    pairSubmissionError = error.message
+                                                        ?: context.getString(R.string.cw_pairing_did_not_complete)
+                                                }
                                             }
                                         }
                                     }
@@ -887,27 +1035,34 @@ fun ConnectionWizard(
     }
 
     if (showQrScanner) {
-        QrPairingScanner(
-            onPairingDetected = { payload ->
-                showQrScanner = false
-                pendingPayload = payload
-                if (payload.relay == null) {
-                    standardApiUrl = payload.serverUrl
-                    standardApiKey = payload.key
-                    standardDashboardUrl = payload.dashboardUrl.orEmpty()
-                    standardError = null
-                    standardSuccess = null
-                }
-                ttlSeconds = defaultTtlSeconds(
-                    qrTtlSeconds = payload.relay?.ttlSeconds,
-                    transportHint = payload.relay?.transportHint,
-                    isTailscaleDetected = isTailscaleDetected,
-                )
-                step = WizardStep.Confirm
-            },
-            onDismiss = { showQrScanner = false },
-            relayOnly = relayScopedFlow,
-        )
+        key(qrScanGeneration) {
+            QrPairingScanner(
+                onPairingDetected = { payload ->
+                    val fingerprint = pairingPayloadFingerprint(payload)
+                    android.util.Log.i("ConnectionWizard", "QR accepted: $fingerprint")
+                    showQrScanner = false
+                    pendingPayload = payload
+                    if (payload.relay == null) {
+                        standardApiUrl = payload.serverUrl
+                        standardApiKey = payload.key
+                        standardDashboardUrl = payload.dashboardUrl.orEmpty()
+                        standardError = null
+                        standardSuccess = null
+                    }
+                    ttlSeconds = defaultTtlSeconds(
+                        qrTtlSeconds = payload.relay?.ttlSeconds,
+                        transportHint = payload.relay?.transportHint,
+                        isTailscaleDetected = isTailscaleDetected,
+                    )
+                    step = WizardStep.Confirm
+                },
+                onDismiss = {
+                    showQrScanner = false
+                    step = pairingHome
+                },
+                relayOnly = relayScopedFlow,
+            )
+        }
     }
 
     // Pre-pair duplicate prompt. Renders over whichever wizard step is
@@ -1122,7 +1277,7 @@ private fun DuplicateConnectionDialog(
 private val PairingPreferencesDefault: Long =
     com.hermesandroid.relay.data.PairingPreferences.DEFAULT_TTL_SECONDS
 
-private enum class WizardStep {
+internal enum class WizardStep {
     Nearby,
     DashboardManual,
     DashboardFound,
@@ -1144,9 +1299,101 @@ private enum class WizardStep {
         }
 }
 
-private enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
+internal enum class PairMethod { Standard, Scan, EnterCode, ShowCode }
+
+private const val NewConnectionWizardOwner = "new-dashboard-connection"
+
+/** A setup session keeps one owner while its transient draft becomes active. */
+internal fun resolveConnectionWizardOwner(
+    latchedOwnerId: String?,
+    pendingDraftId: String?,
+): String = pendingDraftId ?: latchedOwnerId ?: NewConnectionWizardOwner
+
+internal data class QrScanTransactionState(
+    val pendingPayload: HermesPairingPayload?,
+    val pendingManualCode: String?,
+    val hasPendingStandardDraft: Boolean,
+    val hasPendingDashboardDraft: Boolean,
+    val hasDuplicatePrompt: Boolean,
+    val hasStandardSuccess: Boolean,
+    val standardError: String?,
+    val hasDashboardProbeResult: Boolean,
+    val dashboardProbeError: String?,
+    val dashboardSuggestedHostname: String?,
+    val verifyError: String?,
+    val verifyAttempt: Int,
+    val standardApiKey: String,
+    val manualCode: String,
+    val ttlSeconds: Long,
+    val step: WizardStep,
+    val chosenMethod: PairMethod,
+    val generation: Int,
+)
+
+/** Invalidates every transient value that can make a new scan reuse an old confirmation. */
+internal fun resetQrScanTransaction(
+    previous: QrScanTransactionState,
+    pairingHome: WizardStep,
+): QrScanTransactionState = previous.copy(
+    pendingPayload = null,
+    pendingManualCode = null,
+    hasPendingStandardDraft = false,
+    hasPendingDashboardDraft = false,
+    hasDuplicatePrompt = false,
+    hasStandardSuccess = false,
+    standardError = null,
+    hasDashboardProbeResult = false,
+    dashboardProbeError = null,
+    dashboardSuggestedHostname = null,
+    verifyError = null,
+    verifyAttempt = 0,
+    standardApiKey = "",
+    manualCode = "",
+    ttlSeconds = PairingPreferencesDefault,
+    step = pairingHome,
+    chosenMethod = PairMethod.Scan,
+    generation = previous.generation + 1,
+)
 
 private enum class DashboardEntryIntent { Cloud, Server }
+
+private val WizardStepSaver = Saver<WizardStep, String>(
+    save = { it.name },
+    restore = { saved -> WizardStep.entries.firstOrNull { it.name == saved } },
+)
+
+private val PairMethodSaver = Saver<PairMethod, String>(
+    save = { it.name },
+    restore = { saved -> PairMethod.entries.firstOrNull { it.name == saved } },
+)
+
+private val DashboardEntryIntentSaver = Saver<DashboardEntryIntent, String>(
+    save = { it.name },
+    restore = { saved -> DashboardEntryIntent.entries.firstOrNull { it.name == saved } },
+)
+
+/** Never restore a step whose required credential or probe state was intentionally not saved. */
+internal fun restorableWizardStep(
+    saved: WizardStep,
+    method: PairMethod,
+    relayScoped: Boolean,
+    hasPayload: Boolean,
+    verifyAttempt: Int,
+    hasDashboardProbe: Boolean,
+): WizardStep = when {
+    saved == WizardStep.DashboardFound && !hasDashboardProbe -> WizardStep.DashboardManual
+    saved == WizardStep.Confirm && !hasPayload -> {
+        if (relayScoped) WizardStep.RelayChoice else WizardStep.Nearby
+    }
+    saved == WizardStep.Verify && verifyAttempt == 0 -> when (method) {
+        PairMethod.Standard -> WizardStep.StandardEntry
+        PairMethod.EnterCode -> WizardStep.ManualEntry
+        PairMethod.Scan, PairMethod.ShowCode -> {
+            if (relayScoped) WizardStep.RelayChoice else WizardStep.Nearby
+        }
+    }
+    else -> saved
+}
 
 internal enum class SetupQrDispatch { Dashboard, StandardApi, Relay }
 
@@ -1155,6 +1402,50 @@ internal fun setupQrDispatch(payload: HermesPairingPayload): SetupQrDispatch = w
     payload.relay != null -> SetupQrDispatch.Relay
     !payload.hasApiServer && !payload.dashboardUrl.isNullOrBlank() -> SetupQrDispatch.Dashboard
     else -> SetupQrDispatch.StandardApi
+}
+
+internal enum class RelayPairStartOrder { DashboardSignInFirst, PairFirst }
+
+/** Dashboard ingress needs Dashboard admission before its Relay socket can open. */
+internal fun relayPairStartOrder(payload: HermesPairingPayload): RelayPairStartOrder =
+    if (
+        !payload.dashboardUrl.isNullOrBlank() &&
+        isDashboardRelayIngressUrl(payload.relay?.url)
+    ) {
+        RelayPairStartOrder.DashboardSignInFirst
+    } else {
+        RelayPairStartOrder.PairFirst
+    }
+
+/** Direct Relay can pair first, but a composite setup still completes Dashboard auth next. */
+internal fun shouldOfferDashboardSignInAfterRelayPair(payload: HermesPairingPayload): Boolean =
+    relayPairStartOrder(payload) == RelayPairStartOrder.PairFirst &&
+        !payload.dashboardUrl.isNullOrBlank()
+
+/** Secret-free evidence that a newly accepted QR replaced the prior scan. */
+internal fun pairingPayloadFingerprint(payload: HermesPairingPayload): String {
+    fun port(url: String?): Int? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        return uri.port.takeIf { it > 0 } ?: when (uri.scheme?.lowercase()) {
+            "https", "wss" -> 443
+            "http", "ws" -> 80
+            else -> null
+        }
+    }
+    fun safeRole(role: String): String = when (role.lowercase()) {
+        "https", "tailscale", "lan" -> role.lowercase()
+        else -> "other"
+    }
+    val endpoints = payload.endpoints.orEmpty()
+    return buildString {
+        append("hermes=").append(payload.hermes)
+        append(" relay=").append(payload.relay != null)
+        append(" api=").append(payload.hasApiServer)
+        append(" sig=").append(payload.sig?.take(8) ?: "none")
+        append(" roles=").append(endpoints.joinToString(",") { safeRole(it.role) })
+        append(" dashboardPorts=").append(endpoints.joinToString(",") { port(it.dashboard?.url).toString() })
+        append(" relayPorts=").append(endpoints.joinToString(",") { port(it.relay?.url).toString() })
+    }
 }
 
 /** Wizard motion follows the shared OS-animation and touch-exploration policy. */
@@ -1345,55 +1636,6 @@ private fun NewNearbyHermesStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = setupReady, role = Role.Button, onClick = onScanQr),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-            ),
-            shape = appearanceRoundedCornerShape(18.dp),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.QrCodeScanner,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(34.dp),
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.cw_scan_setup_qr_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_recommended),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_scan_setup_qr_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-        }
-
         Text(
             text = stringResource(R.string.cw_other_ways_to_connect),
             style = MaterialTheme.typography.titleMedium,
@@ -1406,25 +1648,12 @@ private fun NewNearbyHermesStep(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                ConnectionChooserRow(
-                    icon = Icons.Filled.Cloud,
-                    title = stringResource(R.string.cw_cloud_title),
-                    subtitle = stringResource(R.string.cw_cloud_subtitle),
-                    onClick = onCloud,
-                    enabled = setupReady,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ConnectionChooserRow(
-                    icon = Icons.Filled.Dns,
-                    title = stringResource(R.string.cw_server_vps_title),
-                    subtitle = stringResource(R.string.cw_server_vps_subtitle),
-                    onClick = onManualServer,
-                    enabled = setupReady,
-                )
                 if (results.isNotEmpty()) {
-                    results.forEach { candidate ->
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        ConnectionChooserRow(
+                    results.forEachIndexed { index, candidate ->
+                        if (index > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                        GatewayChooserRow(
                             icon = Icons.Filled.Wifi,
                             title = stringResource(R.string.cw_nearby_heading),
                             subtitle = candidate.dashboardUrl.orEmpty(),
@@ -1434,8 +1663,7 @@ private fun NewNearbyHermesStep(
                         )
                     }
                 } else {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    ConnectionChooserRow(
+                    GatewayChooserRow(
                         icon = Icons.Filled.Wifi,
                         title = stringResource(R.string.cw_nearby_heading),
                         subtitle = when {
@@ -1448,6 +1676,22 @@ private fun NewNearbyHermesStep(
                         showProgress = busy,
                     )
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                GatewayChooserRow(
+                    icon = Icons.Filled.Cloud,
+                    title = stringResource(R.string.cw_cloud_title),
+                    subtitle = stringResource(R.string.cw_cloud_subtitle),
+                    onClick = onCloud,
+                    enabled = setupReady,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                GatewayChooserRow(
+                    icon = Icons.Filled.Dns,
+                    title = stringResource(R.string.cw_server_vps_title),
+                    subtitle = stringResource(R.string.cw_server_vps_subtitle),
+                    onClick = onManualServer,
+                    enabled = setupReady,
+                )
             }
         }
 
@@ -1456,6 +1700,20 @@ private fun NewNearbyHermesStep(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+            shape = appearanceRoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            GatewayChooserRow(
+                icon = Icons.Filled.QrCodeScanner,
+                title = stringResource(R.string.cw_scan_setup_qr_title),
+                subtitle = stringResource(R.string.cw_scan_setup_qr_subtitle),
+                onClick = onScanQr,
+                enabled = setupReady,
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1489,7 +1747,7 @@ private fun NewNearbyHermesStep(
 }
 
 @Composable
-private fun ConnectionChooserRow(
+private fun GatewayChooserRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
@@ -1945,12 +2203,10 @@ private fun RelayChoiceStep(
 
 @Composable
 private fun MethodStep(
+    onBack: () -> Unit,
     onPickStandard: () -> Unit,
-    onPickScan: () -> Unit,
     onPickEnterCode: () -> Unit,
     onPickShowCode: () -> Unit,
-    onSkip: (() -> Unit)?,
-    onTryDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -1958,7 +2214,7 @@ private fun MethodStep(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            text = stringResource(R.string.cw_connect_to_hermes),
+            text = stringResource(R.string.cw_other_connection_methods),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
@@ -1966,39 +2222,6 @@ private fun MethodStep(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-
-        // Offline "Try the demo" entry point — only surfaced where a first-run
-        // user benefits (onboarding + the Connect screen). Lets a reviewer or
-        // curious user see the app work with zero setup and zero network
-        // before committing to connecting a real server.
-        if (onTryDemo != null) {
-            OutlinedButton(
-                onClick = onTryDemo,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(vertical = 4.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.cw_try_demo),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = stringResource(R.string.cw_try_demo_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                )
-            }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2036,13 +2259,6 @@ private fun MethodStep(
             subtitle = stringResource(R.string.cw_method_hermes_subtitle),
             onClick = onPickStandard,
             isPrimary = true,
-        )
-
-        MethodTile(
-            icon = Icons.Filled.QrCodeScanner,
-            title = stringResource(R.string.cw_method_scan_title),
-            subtitle = stringResource(R.string.cw_method_scan_subtitle),
-            onClick = onPickScan,
         )
 
         HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
@@ -2088,13 +2304,11 @@ private fun MethodStep(
             onClick = onPickShowCode,
         )
 
-        if (onSkip != null) {
-            TextButton(
-                onClick = onSkip,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.cw_skip_for_now))
-            }
+        TextButton(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.cw_back))
         }
     }
 }
@@ -3155,6 +3369,9 @@ private fun ConfirmStep(
     onTtlChange: (Long) -> Unit,
     isTailscaleDetected: Boolean,
     standardBusy: Boolean,
+    pairSubmissionStage: PairSubmissionStage,
+    pairSubmissionError: String?,
+    animateStatusChanges: Boolean,
     standardSuccess: ConnectionViewModel.StandardApiSetupResult?,
     onBack: () -> Unit,
     onComplete: () -> Unit,
@@ -3521,7 +3738,7 @@ private fun ConfirmStep(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = stringResource(R.string.cw_mixed_route_secure, secureLabel, plainLabel),
+                                text = stringResource(R.string.cw_mixed_route_secure, secureLabel),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -3595,7 +3812,7 @@ private fun ConfirmStep(
             ) {
                 OutlinedButton(
                     onClick = onBack,
-                    enabled = !standardBusy,
+                    enabled = !standardBusy && !pairSubmissionStage.inProgress,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(stringResource(R.string.cw_back))
@@ -3619,21 +3836,71 @@ private fun ConfirmStep(
                             ?: payload
                         onConfirm(effective)
                     },
-                    enabled = gateIsSatisfied && !standardBusy,
+                    enabled = gateIsSatisfied && !standardBusy && !pairSubmissionStage.inProgress,
                     modifier = Modifier.weight(1f),
                 ) {
-                    if (relayUrl == null && standardBusy) {
+                    if (standardBusy || pairSubmissionStage.inProgress) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
                         )
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(R.string.cw_pair_in_progress))
                     } else {
                         Text(if (relayUrl == null) stringResource(R.string.cw_connect_button) else stringResource(R.string.cw_pair_button))
                     }
                 }
             }
+            if (relayUrl != null && pairSubmissionStage.inProgress) {
+                val pairStatusDescription = stringResource(pairSubmissionStage.statusTextRes)
+                AnimatedContent(
+                    targetState = pairSubmissionStage,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            stateDescription = pairStatusDescription
+                        },
+                    transitionSpec = {
+                        if (animateStatusChanges) {
+                            loadedContentTransform()
+                        } else {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                    },
+                    label = "pairSubmissionStatus",
+                ) { stage ->
+                    Text(
+                        text = stringResource(stage.statusTextRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            if (!pairSubmissionError.isNullOrBlank()) {
+                Text(
+                    text = pairSubmissionError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
+}
+
+internal enum class PairSubmissionStage(@StringRes val statusTextRes: Int) {
+    Idle(R.string.cw_pair_button),
+    PreparingGateway(R.string.cw_pair_status_preparing_gateway),
+    OpeningSignIn(R.string.cw_pair_status_opening_sign_in),
+    PairingRelay(R.string.cw_pair_status_pairing_relay),
+    ;
+
+    val inProgress: Boolean get() = this != Idle
 }
 
 @Composable

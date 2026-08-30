@@ -249,13 +249,26 @@ internal fun resolvePairSetupReady(
     authorizedHandoffId: String?,
     activeConnectionId: String?,
     connectionIds: Set<String>,
-): Boolean = connectionId == null || storeHydrated && activeConnectionId != null &&
-    activeConnectionId in connectionIds &&
-    (activeConnectionId == connectionId || activeConnectionId == authorizedHandoffId)
+    draftConnectionId: String? = null,
+): Boolean = connectionId == null || connectionId == draftConnectionId ||
+    storeHydrated && activeConnectionId != null && (
+        activeConnectionId == connectionId ||
+            activeConnectionId == authorizedHandoffId && activeConnectionId in connectionIds
+        )
 
 /** A user retry replaces even a still-active preparation attempt. */
 internal fun shouldStartPairPreparation(hasActiveJob: Boolean, retryRequested: Boolean): Boolean =
     retryRequested || !hasActiveJob
+
+internal fun shouldCommitPairDraftBeforeDashboardSignIn(
+    connectionId: String?,
+    draftConnectionId: String?,
+): Boolean = connectionId != null && connectionId == draftConnectionId
+
+/** Pair-origin sign-in must finish the staged Dashboard-ingress Relay handshake. */
+internal fun shouldResumePairingAfterDashboardAuthentication(source: String): Boolean =
+    source == Screen.DashboardSignIn.SOURCE_PAIR ||
+        source == Screen.DashboardSignIn.SOURCE_ONBOARDING
 
 /** A replaced/canceled attempt must not evict the newer job from the route map. */
 internal fun isCurrentPairPreparation(mappedJob: Any?, completingJob: Any): Boolean =
@@ -286,6 +299,28 @@ internal fun resolveAppChatRuntimeStatus(
     }
     return resolveChatRuntimeStatus(gateway = gateway, apiSse = api)
 }
+
+internal fun shouldSettleStartupUnreachable(
+    hasConfiguredChat: Boolean,
+    runtimeStatus: ChatRuntimeStatus,
+): Boolean =
+    hasConfiguredChat &&
+        runtimeStatus is ChatRuntimeStatus.Unavailable
+
+internal fun startupShellCanRender(
+    appReady: Boolean,
+    hasStartupConnection: Boolean,
+    endpointSelected: Boolean,
+    chatUp: Boolean,
+    narrationStage: Int,
+    unreachableConfirmed: Boolean,
+    timedOut: Boolean,
+): Boolean = appReady && (
+    !hasStartupConnection ||
+        ((endpointSelected || chatUp) && narrationStage >= 2) ||
+        unreachableConfirmed ||
+        timedOut
+    )
 
 /** Route represented by the app footer's currently usable chat transport. */
 internal fun resolveFooterRouteCandidate(
@@ -318,6 +353,40 @@ internal fun resolveFooterRouteCandidate(
             ?: connection?.routeCandidates?.firstOrNull { it.api != null }
     }
 }
+
+/**
+ * Compact, surface-aware label for the persistent chat footer.
+ *
+ * Endpoint roles are operator and wire metadata, so an internal role such as
+ * `authenticated_dashboard` must never leak into this constrained surface.
+ * Gateway labels describe how the Dashboard is reached; API fallback keeps
+ * the route's ordinary transport label.
+ */
+internal fun resolveFooterRouteLabel(
+    runtimeStatus: ChatRuntimeStatus,
+    route: EndpointCandidate?,
+    fallbackLabel: String,
+): String {
+    val connected = runtimeStatus as? ChatRuntimeStatus.Connected ?: return ""
+    if (route == null) return fallbackLabel
+    if (connected.transport == ChatTransportPath.ApiSse) return route.displayLabel()
+
+    return when (route.role.trim().lowercase()) {
+        "lan" -> "LAN"
+        "tailscale" -> "Tailscale"
+        else -> if (
+            route.dashboard?.url?.startsWith("https://", ignoreCase = true) == true
+        ) {
+            "HTTP"
+        } else {
+            route.displayLabel()
+        }
+    }
+}
+
+/** Keep the footer's model identity compact; context-window suffixes belong in model details. */
+internal fun compactFooterModelLabel(model: String): String =
+    model.substringAfterLast('/').replace(Regex("-\\d+[kKmM]$"), "")
 
 /**
  * Conversation voice remains part of chat, so its persistent connection
@@ -484,10 +553,8 @@ sealed class Screen(
     //
     // Multi-connection: accepts an optional `connectionId` query arg —
     // the ConnectionsSettings "Re-pair" button targets a specific
-    // connection. The "Add connection" path pre-creates a placeholder
-    // via `ConnectionViewModel.beginAddConnection()` and routes here
-    // with that id, so the wizard's standard connect / applyPairingPayload lands in the
-    // new connection's auth store instead of the outgoing one's.
+    // connection. The "Add connection" path creates a transient id-scoped
+    // auth draft; it is persisted and activated only after setup succeeds.
     data object Pair : Screen(
         "pair?connectionId={connectionId}&autoStart={autoStart}",
         "Connect",
@@ -511,7 +578,7 @@ sealed class Screen(
             return if (params.isEmpty()) "pair" else "pair?${params.joinToString("&")}"
         }
     }
-    data object ConnectionsSettings : Screen("settings/connections", "Connections", Icons.Filled.Settings)
+    data object ConnectionsSettings : Screen("settings/connections", "Gateways", Icons.Filled.Settings)
     // Level-2 detail for a single connection (tabbed: Overview / Routes /
     // Advanced / Security). Drilled into from the Connections list. The
     // `connectionId` path segment survives process death via SavedStateHandle;
@@ -750,6 +817,7 @@ fun RelayApp() {
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionStoreHydrated by
         connectionViewModel.connectionStore.isHydrated.collectAsState()
     val supervisedModeStore = remember(applicationContext) {
@@ -771,18 +839,14 @@ fun RelayApp() {
     }
     val ownedSupervisedPolicyState = supervisedPolicyState.value
         ?.takeIf { (ownerConnectionId, _) -> ownerConnectionId == activeConnectionId }
-    // Fail closed across process restoration. activeConnectionId starts as
-    // null while ConnectionStore reads DataStore, so null alone cannot prove
-    // this is a fresh install with no supervised policy to restore.
-    if (!isRelayNavigationHydrated(
-            connectionStoreHydrated = connectionStoreHydrated,
-            activeConnectionId = activeConnectionId,
-            supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
-        )
-    ) {
-        SupervisedStartupLoadingScreen()
-        return
-    }
+    // Keep navigation mounted while the new connection owner's supervised
+    // policy loads. Protected destinations are covered later in the NavHost
+    // box; returning here would dispose the controller and replay cold start.
+    val relayNavigationHydrated = isRelayNavigationHydrated(
+        connectionStoreHydrated = connectionStoreHydrated,
+        activeConnectionId = activeConnectionId,
+        supervisedPolicyHydrated = ownedSupervisedPolicyState != null,
+    )
     val supervisedPolicy = ownedSupervisedPolicyState?.second ?: SupervisedModePolicy()
     val supervisedPinnedProfile = supervisedPolicy.pinnedProfileName?.let { name ->
         agentProfiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
@@ -798,12 +862,14 @@ fun RelayApp() {
     var parentAccessUnlocked by remember(activeConnectionId) { mutableStateOf(false) }
 
     LaunchedEffect(
+        relayNavigationHydrated,
         activeConnectionId,
         supervisedPolicy,
         agentProfiles,
         selectedProfile,
         profileSelectionSettled,
     ) {
+        if (!relayNavigationHydrated) return@LaunchedEffect
         chatViewModel.updateSupervisedModePolicy(chatSupervisedPolicy)
         connectionViewModel.authManager.updateSupervisedMode(chatSupervisedPolicy)
         if (!supervisedPolicy.enabled) {
@@ -862,6 +928,7 @@ fun RelayApp() {
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val gitRepoScanningEnabled = activeConnection?.gitRepoScanningEnabled == true
     val gitOwnerKey = activeConnectionId?.takeIf { it.isNotBlank() }?.let { connectionId ->
         effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { dashboardUrl ->
             "$connectionId\u0000${effectiveSessionProfileName.orEmpty()}\u0000$dashboardUrl"
@@ -881,11 +948,15 @@ fun RelayApp() {
             sessionId = currentChatSessionId,
         )
     }
-    LaunchedEffect(gitOwnerKey) {
+    LaunchedEffect(gitOwnerKey, gitRepoScanningEnabled) {
         val dashboard = effectiveDashboardUrl
             .takeIf { it.isNotBlank() }
             ?.let { connectionViewModel.dashboardClientForActive(it) }
-        gitStateViewModel.configure(dashboard, gitOwnerKey)
+        gitStateViewModel.configure(
+            dashboard = dashboard,
+            ownerKey = gitOwnerKey,
+            scanningEnabled = gitRepoScanningEnabled,
+        )
     }
 
     // Mirror the plugin.api.write grant into the Git view model so write
@@ -928,7 +999,8 @@ fun RelayApp() {
         }
     }
 
-    val gitWorkspaceAvailable = gitReposState is GitStateUiState.Ready
+    val gitWorkspaceAvailable = gitRepoScanningEnabled &&
+        (gitReposState as? GitStateUiState.Ready)?.repos?.isNotEmpty() == true
     val gitWorkspaceSummary = remember(
         gitReposState,
         gitDetailState,
@@ -1251,10 +1323,12 @@ fun RelayApp() {
         // ineffective even before the state-clearing effect runs.
         LaunchedEffect(
             navController,
+            relayNavigationHydrated,
             supervisedPolicy.enabled,
             parentAccessForCurrentRoute,
         ) {
             com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
+                if (!relayNavigationHydrated) return@collect
                 if (
                     supervisedPolicy.enabled &&
                     !isSupervisedRouteAllowed(route, parentAccessForCurrentRoute)
@@ -1265,10 +1339,12 @@ fun RelayApp() {
             }
         }
         LaunchedEffect(
+            relayNavigationHydrated,
             supervisedPolicy.enabled,
             parentAccessForCurrentRoute,
             currentRoute,
         ) {
+            if (!relayNavigationHydrated) return@LaunchedEffect
             val redirect = shouldRedirectSupervisedRoute(
                 supervisedEnabled = supervisedPolicy.enabled,
                 parentAccessUnlocked = parentAccessForCurrentRoute,
@@ -1312,11 +1388,12 @@ fun RelayApp() {
             lifecycleOwner.lifecycle.addObserver(relockObserver)
             onDispose { lifecycleOwner.lifecycle.removeObserver(relockObserver) }
         }
-        val suppressGlobalChrome = shouldSuppressGlobalChrome(
-            onboardingCompleted = onboardingCompleted,
-            isDemoMode = isDemoMode,
-            currentRoute = currentRoute,
-        )
+        val suppressGlobalChrome = !relayNavigationHydrated ||
+            shouldSuppressGlobalChrome(
+                onboardingCompleted = onboardingCompleted,
+                isDemoMode = isDemoMode,
+                currentRoute = currentRoute,
+            )
 
         // Safety net: landing on a real connect surface (onboarding or the
         // Connect/Pair wizard) while demo is still active — via the banner's
@@ -1435,13 +1512,13 @@ fun RelayApp() {
         }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-        val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        val startupSessionsLoading by chatViewModel.isLoadingSessions.collectAsState()
         val shareConnectionId by rememberUpdatedState(
             activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline"
         )
@@ -1528,15 +1605,24 @@ fun RelayApp() {
         // first verdict was what flashed the disconnected chat UI at users
         // who were connected-just-waiting. The keyed effect restarts on
         // every health flip, cancelling a pending settle.
-        LaunchedEffect(appChatRuntimeStatus, startupGateReleased) {
+        LaunchedEffect(appChatRuntimeStatus, activeEndpoint, startupGateReleased) {
             if (startupGateReleased) return@LaunchedEffect
-            if (hasStartupConnection && appChatRuntimeStatus is ChatRuntimeStatus.Unavailable) {
+            if (shouldSettleStartupUnreachable(
+                    hasConfiguredChat = hasStartupConnection,
+                    runtimeStatus = appChatRuntimeStatus,
+                )
+            ) {
                 delay(3_000L)
                 startupUnreachableSettled = true
             } else {
                 startupUnreachableSettled = false
             }
         }
+        val startupUnreachableConfirmed = startupUnreachableSettled &&
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = hasStartupConnection,
+                runtimeStatus = appChatRuntimeStatus,
+            )
 
         // ---- Startup narration: real states the checklist verifies ----
         val startupEndpoint = activeEndpoint
@@ -1563,8 +1649,14 @@ fun RelayApp() {
                 when {
                     startupChatUp ->
                         StartupCheck(StartupCheckState.Done, "hermes online")
-                    appChatRuntimeStatus is ChatRuntimeStatus.Unavailable ->
+                    startupUnreachableConfirmed ->
                         StartupCheck(StartupCheckState.Failed, "hermes unreachable")
+                    appChatRuntimeStatus is ChatRuntimeStatus.Unavailable && startupEndpoint != null ->
+                        StartupCheck(StartupCheckState.Active, "gateway retrying")
+                    startupEndpoint != null -> StartupCheck(
+                        StartupCheckState.Active,
+                        "waking ${effectiveDisplayProfile?.name?.replaceFirstChar { it.uppercase() } ?: "Hermes"}",
+                    )
                     appReady ->
                         StartupCheck(StartupCheckState.Active, "contacting hermes")
                     else -> StartupCheck(StartupCheckState.Pending, "hermes")
@@ -1573,10 +1665,12 @@ fun RelayApp() {
                 // renders from — so this row can never tick while the chat
                 // surface would still show its connect CTA.
                 when {
-                    chatReady && initialChatSettled ->
-                        StartupCheck(StartupCheckState.Done, "conversation ready")
+                    initialChatSettled && !startupSessionsLoading ->
+                        StartupCheck(StartupCheckState.Done, "sessions ready")
+                    startupSessionsLoading ->
+                        StartupCheck(StartupCheckState.Active, "loading sessions")
                     startupChatUp ->
-                        StartupCheck(StartupCheckState.Active, "loading conversation")
+                        StartupCheck(StartupCheckState.Active, "restoring conversation")
                     else -> StartupCheck(StartupCheckState.Pending, "conversation")
                 },
             )
@@ -1600,25 +1694,22 @@ fun RelayApp() {
                 startupNarrationStage += 1
             }
         }
+        // Full-screen startup owns only process state + route selection. The
+        // mounted Chat surface owns Gateway wake and session hydration so the
+        // user can see cached rows and accurate inline progress instead of a
+        // global sphere that appears hung for the server's entire wake budget.
         val startupNarrationComplete =
-            startupNarrationStage >= startupCheckTargets.size
+            startupNarrationStage >= minOf(2, startupCheckTargets.size)
 
-        val startupConnectionResolved = appReady && (
-            !hasStartupConnection ||
-                // Happy path: the chat surface's OWN readiness signal is
-                // true (client built + reachable verdict — what its connect
-                // CTA renders from), the last conversation has been restored
-                // (or there was none), and the checklist has visibly
-                // finished ticking. Anything weaker (e.g. the resolver's
-                // earlier health evidence) reveals a chat screen that still
-                // shows "Connect Vanilla Hermes" for the few hundred ms
-                // until the client-based verdict catches up.
-                (chatReady && initialChatSettled && startupNarrationComplete) ||
-                // Error path: a settled unreachable reveals the normal UI,
-                // which owns offline presentation (status pill, retry).
-                startupUnreachableSettled ||
-                startupGateTimedOut
-            )
+        val startupConnectionResolved = startupShellCanRender(
+            appReady = appReady,
+            hasStartupConnection = hasStartupConnection,
+            endpointSelected = startupEndpoint != null,
+            chatUp = startupChatUp,
+            narrationStage = startupNarrationStage,
+            unreachableConfirmed = startupUnreachableConfirmed,
+            timedOut = startupGateTimedOut,
+        )
         LaunchedEffect(
             onboardingCompleted,
             startupGateMinElapsed,
@@ -1640,7 +1731,7 @@ fun RelayApp() {
                 if (
                     hasStartupConnection &&
                     !happyPathReady &&
-                    !startupUnreachableSettled &&
+                    !startupUnreachableConfirmed &&
                     startupGateTimedOut
                 ) {
                     DiagnosticsLog.record(
@@ -2000,19 +2091,20 @@ fun RelayApp() {
                         connection = activeConnection,
                         effectiveDashboardUrl = effectiveDashboardUrl,
                     )
-                    val routeLabel = footerRoute?.displayLabel()
-                        ?: activeConnection?.label
-                        ?: stringResource(R.string.status_no_route)
+                    val routeLabel = resolveFooterRouteLabel(
+                        runtimeStatus = appChatRuntimeStatus,
+                        route = footerRoute,
+                        fallbackLabel = activeConnection?.label
+                            ?: stringResource(R.string.status_no_route),
+                    )
                     val transportStatus = resolveChatTransportStatus(
                         streamingEndpoint = streamingEndpoint,
                         gatewayAvailability = gatewayAvailability,
                         serverCapabilities = serverCapabilities,
                     )
-                    val transportRouteLabel = if (transportStatus.tier == ChatTransportTier.Offline) {
-                        ""
-                    } else {
-                        routeLabel
-                    }
+                    val transportRouteLabel = if (
+                        transportStatus.tier == ChatTransportTier.Offline
+                    ) "" else routeLabel
                     val profileLabel = AgentDisplay.profileDisplayName(effectiveDisplayProfile)
                         ?: stringResource(R.string.status_profile_default)
                     val displayProfile = effectiveDisplayProfile
@@ -2020,12 +2112,7 @@ fun RelayApp() {
                         ?: AgentDisplay.displayModelName(displayProfile?.model)
                         ?: AgentDisplay.displayModelName(serverModelName)
                         ?: stringResource(R.string.status_model_pending)
-                    val safetyLabel = if (BuildFlavor.isSideload && masterEnabled) {
-                        if (unattendedEnabled && timedScreenControlActive) stringResource(R.string.status_safety_unattended)
-                        else stringResource(R.string.status_safety_on)
-                    } else {
-                        stringResource(R.string.status_profile_format, profileLabel)
-                    }
+                    val footerModelLabel = compactFooterModelLabel(modelLabel)
                     val openConnections = {
                         navController.navigate(Screen.ConnectionsSettings.route) {
                             launchSingleTop = true
@@ -2039,7 +2126,7 @@ fun RelayApp() {
                             )
                         },
                         routeLabel = transportRouteLabel,
-                        trailing = "$modelLabel / $safetyLabel",
+                        trailing = "$footerModelLabel / $profileLabel",
                         // Tap the persistent status/route readout to open
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
@@ -2078,6 +2165,7 @@ fun RelayApp() {
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 composable(Screen.Onboarding.route) {
+                    val onboardingDraftId by connectionViewModel.connectionDraftId.collectAsState()
                     // The wizard inside OnboardingScreen now owns credential
                     // application via ConnectionViewModel.applyPairingPayload,
                     // so the callback collapses to "mark complete + navigate
@@ -2096,19 +2184,69 @@ fun RelayApp() {
                     OnboardingScreen(
                         connectionViewModel = connectionViewModel,
                         onComplete = {
-                            connectionViewModel.completeOnboarding()
-                            // Concrete bare-"chat" URI — the Screen.Chat.route
-                            // field is the route TEMPLATE (contains
-                            // `{openAgentSheet}`) and must not be navigated
-                            // to directly; build the URI via Screen.Chat.route(...).
-                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
-                                popUpTo(Screen.Onboarding.route) { inclusive = true }
+                            val draftId = onboardingDraftId
+                            connectionSwitchScope.launch {
+                                val prepared = runCatching {
+                                    if (draftId != null) {
+                                        connectionViewModel.commitConnectionDraft(draftId)
+                                    }
+                                }
+                                if (prepared.isFailure) {
+                                    val error = prepared.exceptionOrNull()
+                                    android.util.Log.e(
+                                        "GatewayPairFlow",
+                                        "Could not commit onboarding gateway",
+                                        error,
+                                    )
+                                    snackbarHostState.showSnackbar(
+                                        error?.message ?: "Could not finish gateway setup",
+                                    )
+                                    return@launch
+                                }
+                                connectionViewModel.completeOnboarding()
+                                // Concrete bare-"chat" URI — the Screen.Chat.route
+                                // field is the route TEMPLATE (contains
+                                // `{openAgentSheet}`) and must not be navigated
+                                // to directly; build the URI via Screen.Chat.route(...).
+                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                    popUpTo(Screen.Onboarding.route) { inclusive = true }
+                                }
                             }
                         },
                         onManageSignIn = {
-                            navController.navigate(
-                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_ONBOARDING),
-                            )
+                            val draftId = onboardingDraftId
+                            connectionSwitchScope.launch {
+                                android.util.Log.i(
+                                    "GatewayPairFlow",
+                                    "Preparing onboarding gateway for Dashboard sign-in",
+                                )
+                                val prepared = runCatching {
+                                    if (draftId != null) {
+                                        connectionViewModel.commitConnectionDraft(draftId)
+                                    }
+                                }
+                                if (prepared.isFailure) {
+                                    val error = prepared.exceptionOrNull()
+                                    android.util.Log.e(
+                                        "GatewayPairFlow",
+                                        "Could not prepare onboarding Dashboard sign-in",
+                                        error,
+                                    )
+                                    snackbarHostState.showSnackbar(
+                                        error?.message ?: "Could not prepare Dashboard sign-in",
+                                    )
+                                    return@launch
+                                }
+                                android.util.Log.i(
+                                    "GatewayPairFlow",
+                                    "Opening Dashboard sign-in from onboarding",
+                                )
+                                navController.navigate(
+                                    Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_ONBOARDING),
+                                ) {
+                                    launchSingleTop = true
+                                }
+                            }
                         },
                         onOpenPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
@@ -2293,7 +2431,7 @@ fun RelayApp() {
                         },
                         // AgentInfoSheet footer jumps straight into the full
                         // Connections CRUD screen — saves a detour through
-                        // Settings → Connections.
+                        // Settings → Gateways.
                         onNavigateToConnections = {
                             navController.navigate(Screen.ConnectionsSettings.route)
                         },
@@ -2317,13 +2455,9 @@ fun RelayApp() {
                         // without leaving Chat. Safe here — this state only shows when
                         // nothing is configured, so there's no placeholder in flight.
                         onTryDemo = enterDemo,
-                        onNavigateToManage = {
-                            navController.navigate(Screen.Manage.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                        onNavigateToDashboardSignIn = {
+                            navController.navigate(Screen.DashboardSignIn.route()) {
                                 launchSingleTop = true
-                                restoreState = true
                             }
                         },
                         onNavigateToBridge = {
@@ -2541,6 +2675,13 @@ fun RelayApp() {
                     DashboardSignInScreen(
                         connectionViewModel = connectionViewModel,
                         onBack = { navController.popBackStack() },
+                        onAuthenticationReady = if (
+                            shouldResumePairingAfterDashboardAuthentication(source)
+                        ) {
+                            { connectionViewModel.resumeDeferredDashboardRelayPairing() }
+                        } else {
+                            null
+                        },
                         onAuthenticated = {
                             when (source) {
                                 Screen.DashboardSignIn.SOURCE_ONBOARDING -> {
@@ -2690,6 +2831,7 @@ fun RelayApp() {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
+                        gitRepoScanningEnabled = gitRepoScanningEnabled,
                         supervisedPolicy = supervisedPolicy,
                         parentAccessUnlocked = parentAccessForCurrentRoute,
                         onRequestParentAccess = { parentAccessUnlocked = true },
@@ -2865,6 +3007,7 @@ fun RelayApp() {
                 composable(Screen.GitState.route) {
                     GitStateScreen(
                         viewModel = gitStateViewModel,
+                        onScanningEnabledChange = connectionViewModel::setGitRepoScanningEnabled,
                         onBack = { navController.popBackStack() },
                     )
                 }
@@ -3057,14 +3200,20 @@ fun RelayApp() {
                         onOpenConnection = { id ->
                             navController.navigate(Screen.ConnectionDetail.route(id))
                         },
+                        addConnectionEnabled = mayStartAddConnection(
+                            supervisedEnabled = supervisedPolicy.enabled,
+                            parentAccessUnlocked = parentAccessForCurrentRoute,
+                        ),
                         onAddConnection = {
                             val id = java.util.UUID.randomUUID().toString()
-                            // Draw step 1 immediately. Placeholder persistence
-                            // and the heavy connection-context switch continue
-                            // underneath the discovery UI instead of blocking
-                            // navigation on encrypted-store/client setup.
-                            navController.navigate(Screen.Pair.route(connectionId = id))
-                            prepareAddConnection(id, false)
+                            runAddConnectionAction(
+                                supervisedEnabled = supervisedPolicy.enabled,
+                                parentAccessUnlocked = parentAccessForCurrentRoute,
+                                navigateToPair = {
+                                    navController.navigate(Screen.Pair.route(connectionId = id))
+                                },
+                                prepareConnection = { prepareAddConnection(id, false) },
+                            )
                         },
                         onBack = { navController.popBackStack() },
                         // Pass the VM so the list cards can read live status
@@ -3158,6 +3307,7 @@ fun RelayApp() {
                         ?.getString(Screen.Pair.ARG_AUTO_START)
                     val pairConnections by connectionViewModel.connections.collectAsState()
                     val pairActiveId by connectionViewModel.activeConnectionId.collectAsState()
+                    val pairDraftId by connectionViewModel.connectionDraftId.collectAsState()
                     val pairStoreHydrated by connectionViewModel.connectionStore.isHydrated.collectAsState()
                     // Duplicate Renew authorizes one explicit route handoff
                     // before switching away from the placeholder. Persist the
@@ -3173,6 +3323,7 @@ fun RelayApp() {
                         authorizedHandoffId = authorizedPairHandoffId,
                         activeConnectionId = pairActiveId,
                         connectionIds = pairConnections.mapTo(mutableSetOf()) { it.id },
+                        draftConnectionId = pairDraftId,
                     )
                     com.hermesandroid.relay.ui.screens.PairScreen(
                         connectionViewModel = connectionViewModel,
@@ -3202,22 +3353,57 @@ fun RelayApp() {
                         // flight that enterDemo would leave un-discarded.
                         onTryDemo = if (connectionIdArg == null) enterDemo else null,
                         onComplete = {
-                            // Both "add new" and "re-pair in place" now
-                            // route to this screen with connectionIdArg
-                            // set — add-new goes through
-                            // ConnectionViewModel.beginAddConnection()
-                            // which pre-creates the placeholder + switches
-                            // to it before navigating here, so
-                            // applyPairingPayload lands on the correct
-                            // auth store. Nothing extra to do on success
-                            // beyond popping the backstack.
-                            navController.popBackStack()
+                            if (connectionIdArg != null && pairDraftId == connectionIdArg) {
+                                connectionSwitchScope.launch {
+                                    connectionViewModel.commitConnectionDraft(connectionIdArg)
+                                    navController.popBackStack()
+                                }
+                            } else {
+                                navController.popBackStack()
+                            }
                         },
                         onManageSignIn = {
-                            navController.navigate(
-                                Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                            val targetId = connectionIdArg
+                            if (
+                                shouldCommitPairDraftBeforeDashboardSignIn(
+                                    connectionId = targetId,
+                                    draftConnectionId = pairDraftId,
+                                ) && targetId != null
                             ) {
-                                launchSingleTop = true
+                                connectionSwitchScope.launch {
+                                    android.util.Log.i(
+                                        "GatewayPairFlow",
+                                        "Committing staged gateway before Dashboard sign-in",
+                                    )
+                                    runCatching {
+                                        connectionViewModel.commitConnectionDraft(targetId)
+                                    }.onSuccess {
+                                        android.util.Log.i(
+                                            "GatewayPairFlow",
+                                            "Opening Dashboard sign-in for staged gateway",
+                                        )
+                                        navController.navigate(
+                                            Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                                        ) {
+                                            launchSingleTop = true
+                                        }
+                                    }.onFailure { error ->
+                                        android.util.Log.e(
+                                            "GatewayPairFlow",
+                                            "Could not commit staged gateway before sign-in",
+                                            error,
+                                        )
+                                        snackbarHostState.showSnackbar(
+                                            error.message ?: "Could not prepare Dashboard sign-in",
+                                        )
+                                    }
+                                }
+                            } else {
+                                navController.navigate(
+                                    Screen.DashboardSignIn.route(Screen.DashboardSignIn.SOURCE_PAIR),
+                                ) {
+                                    launchSingleTop = true
+                                }
                             }
                         },
                         onCancel = {
@@ -3405,6 +3591,8 @@ fun RelayApp() {
                                         okHttpClient = profileInspectorHttpClient,
                                         relayUrlProvider = { relayUrl },
                                         sessionTokenProvider = { relayToken },
+                                        dashboardHttpClientProvider =
+                                            connectionViewModel::dashboardHttpClientForRelayIngress,
                                     ),
                                     gatewayClient = inspectorGatewayClient,
                                     savedStateHandle = ssh,
@@ -3433,9 +3621,15 @@ fun RelayApp() {
                     )
                 }
             }
-                if (!routeContentAllowed) {
+                if (shouldCoverRelayNavigation(
+                        navigationHydrated = relayNavigationHydrated,
+                        routeContentAllowed = routeContentAllowed,
+                        currentRoute = currentRoute,
+                    )
+                ) {
                     // Keep the graph mounted so the redirect can complete, but
-                    // cover restored parent-only content with an opaque fail-closed surface.
+                    // cover restored parent-only content and policy-owner
+                    // hydration with an opaque fail-closed surface.
                     SupervisedStartupLoadingScreen()
                 }
                 }

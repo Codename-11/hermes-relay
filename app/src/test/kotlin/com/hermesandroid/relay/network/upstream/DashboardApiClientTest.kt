@@ -2,7 +2,13 @@ package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.network.upstream.models.SessionPruneFilters
 import com.hermesandroid.relay.network.upstream.models.SessionPrunePreview
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -21,6 +27,7 @@ import okio.Buffer
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class DashboardApiClientTest {
 
@@ -380,78 +387,193 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun mirrorDashboardSessionCookies_reusesEncryptedSessionOnTrustedRoute() {
+    fun dashboardCookieJar_doesNotCopyBasicSessionAcrossHttpHosts() {
         val store = InMemoryDashboardCookieStore()
         store.save(
             listOf(
-                storedCookie("hermes_session_at", "access", "192.168.1.20"),
-                storedCookie("hermes_session_rt", "refresh", "192.168.1.20"),
-                storedCookie("hermes_session_provider", "basic", "192.168.1.20"),
+                storedCookie("hermes_session", "basic-session", "192.168.1.20"),
             ),
         )
 
-        val mirrored = mirrorDashboardSessionCookies(
-            store = store,
-            targetUrl = "http://100.64.0.20:9119",
-            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-        )
-        val cookies = DashboardCookieJar(store).loadForRequest(
+        val jar = DashboardCookieJar(store)
+        val foreignHostCookies = jar.loadForRequest(
             "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
         )
+        val exactHostCookies = jar.loadForRequest(
+            "http://192.168.1.20:9119/api/auth/me".toHttpUrl(),
+        )
 
-        assertEquals(3, mirrored)
+        assertTrue(foreignHostCookies.isEmpty())
+        assertEquals(listOf("hermes_session"), exactHostCookies.map { it.name })
+        assertEquals(setOf("192.168.1.20"), store.load().mapTo(mutableSetOf()) { it.domain })
+    }
+
+    @Test
+    fun dashboardCookieJar_keepsHostPrefixedSecureCookieOnExactHttpsOrigin() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie(
+                    name = "__Host-hermes_session_at",
+                    value = "secure-session",
+                    domain = "hermes.example.test",
+                    secure = true,
+                ),
+            ),
+        )
+
+        val jar = DashboardCookieJar(store)
+        val exactOrigin = jar.loadForRequest(
+            "https://hermes.example.test/api/auth/me".toHttpUrl(),
+        )
+        val otherHttpsHost = jar.loadForRequest(
+            "https://tailscale.example.test/api/auth/me".toHttpUrl(),
+        )
+        val cleartextSameHost = jar.loadForRequest(
+            "http://hermes.example.test/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(listOf("__Host-hermes_session_at"), exactOrigin.map { it.name })
+        assertTrue(otherHttpsHost.isEmpty())
+        assertTrue(cleartextSameHost.isEmpty())
+        assertEquals("hermes.example.test", store.load().single().domain)
+    }
+
+    @Test
+    fun importingNewProviderSessionReplacesOldCookiePrefixVariants() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("__Host-hermes_session_at", "old-access", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_rt", "old-refresh", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_provider", "nous", "hermes.example.test", secure = true),
+            ),
+        )
+
+        importDashboardCookieHeader(
+            store = store,
+            url = "https://hermes.example.test/auth/callback",
+            cookieHeader =
+                "hermes_session_at=new-access; " +
+                    "hermes_session_rt=new-refresh; " +
+                    "hermes_session_provider=self-hosted",
+        )
+
         assertEquals(
             listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
-            cookies.map { it.name },
+            store.load().map { it.name },
+        )
+        assertEquals(
+            listOf("new-access", "new-refresh", "self-hosted"),
+            store.load().map { it.value },
         )
     }
 
     @Test
-    fun mirrorDashboardSessionCookies_doesNotCopyPkceOrToUnknownHost() {
+    fun existingCookiePrefixDuplicatesCollapseToNewestVariantBeforeRequest() {
         val store = InMemoryDashboardCookieStore()
         store.save(
             listOf(
-                storedCookie("hermes_session_at", "access", "192.168.1.20"),
-                storedCookie("hermes_session_pkce", "verifier", "192.168.1.20"),
+                storedCookie("__Host-hermes_session_at", "old-access", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_provider", "nous", "hermes.example.test", secure = true),
+                storedCookie("hermes_session_at", "new-access", "hermes.example.test", secure = true),
+                storedCookie("hermes_session_provider", "self-hosted", "hermes.example.test", secure = true),
             ),
         )
 
-        assertEquals(
-            0,
-            mirrorDashboardSessionCookies(
-                store = store,
-                targetUrl = "http://attacker.example:9119",
-                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-            ),
+        val cookies = DashboardCookieJar(store).loadForRequest(
+            "https://hermes.example.test/api/auth/me".toHttpUrl(),
         )
-        assertEquals(
-            1,
-            mirrorDashboardSessionCookies(
-                store = store,
-                targetUrl = "http://100.64.0.20:9119",
-                trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
-            ),
-        )
-        val mirroredNames = DashboardCookieJar(store).loadForRequest(
-            "http://100.64.0.20:9119/api/auth/me".toHttpUrl(),
-        ).map { it.name }
 
-        assertEquals(listOf("hermes_session_at"), mirroredNames)
+        assertEquals(listOf("hermes_session_at", "hermes_session_provider"), cookies.map { it.name })
+        assertEquals(listOf("new-access", "self-hosted"), cookies.map { it.value })
+        assertEquals(listOf("hermes_session_at", "hermes_session_provider"), store.load().map { it.name })
     }
 
     @Test
-    fun mirrorDashboardSessionCookies_explicitSignOutClearsEveryRoute() {
+    fun explicitSignInClearsOnlyMatchingHermesSessionCookies() {
         val store = InMemoryDashboardCookieStore()
-        store.save(listOf(storedCookie("hermes_session", "session", "192.168.1.20")))
-        mirrorDashboardSessionCookies(
-            store = store,
-            targetUrl = "http://100.64.0.20:9119",
-            trustedHosts = setOf("192.168.1.20", "100.64.0.20"),
+        store.save(
+            listOf(
+                StoredDashboardCookie(
+                    "__Host-hermes_session_at", "old-access", Long.MAX_VALUE,
+                    "hermes.example.test", "/", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "__Secure-hermes_session_rt", "old-refresh", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_provider", "nous", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session", "legacy", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "theme", "dark", Long.MAX_VALUE,
+                    "hermes.example.test", "/", true, false, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_at", "foreign", Long.MAX_VALUE,
+                    "other.example.test", "/", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_at", "other-path", Long.MAX_VALUE,
+                    "hermes.example.test", "/other", true, true, true, true,
+                ),
+            ),
         )
 
-        store.clear()
+        val cleared = clearDashboardSessionCookiesForRequest(
+            store,
+            "https://hermes.example.test/base/auth/login",
+        )
 
-        assertTrue(store.load().isEmpty())
+        assertEquals(4, cleared)
+        assertEquals(
+            listOf("theme", "hermes_session_at", "hermes_session_at"),
+            store.load().map { it.name },
+        )
+        assertEquals(
+            listOf("hermes.example.test", "other.example.test", "hermes.example.test"),
+            store.load().map { it.domain },
+        )
+    }
+
+    @Test
+    fun providerUnavailableClassifierRejectsGeneric503() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(503)
+                .setBody("""{"detail":"Auth provider 'nous' unreachable"}"""),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(503)
+                .setBody("""{"detail":"Service unavailable"}"""),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        val providerFailure = client.getStatus().exceptionOrNull()
+        val genericFailure = client.getStatus().exceptionOrNull()
+
+        assertTrue(providerFailure?.isDashboardAuthProviderUnavailable() == true)
+        assertFalse(genericFailure?.isDashboardAuthProviderUnavailable() == true)
+    }
+
+    @Test
+    fun signInRequiredClassifierAcceptsNoCookieButRejectsForbidden() {
+        val noCookie = DashboardHttpException(
+            401,
+            "Session failed - HTTP 401: {\"reason\":\"no_cookie\",\"detail\":\"Unauthorized\"}",
+        )
+        val forbidden = DashboardHttpException(
+            403,
+            "Session failed - HTTP 403: forbidden",
+        )
+
+        assertTrue(noCookie.isDashboardSignInRequiredFailure())
+        assertFalse(forbidden.isDashboardSignInRequiredFailure())
     }
 
     @Test
@@ -515,13 +637,14 @@ class DashboardApiClientTest {
         name: String,
         value: String,
         domain: String,
+        secure: Boolean = false,
     ) = StoredDashboardCookie(
         name = name,
         value = value,
         expiresAt = Long.MAX_VALUE,
         domain = domain,
         path = "/",
-        secure = false,
+        secure = secure,
         httpOnly = true,
         hostOnly = true,
         persistent = true,
@@ -941,6 +1064,30 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun listSessions_carriesProgressiveOffsetAndHiddenSourceExclusions() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[],"total":120,"limit":50,"offset":50}"""),
+        )
+
+        DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions(
+                profile = "victor",
+                limit = 50,
+                offset = 50,
+                excludeSources = setOf("Webhook", "cron", "cron"),
+            )
+            .getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("50", url.queryParameter("limit"))
+        assertEquals("50", url.queryParameter("offset"))
+        assertEquals("victor", url.queryParameter("profile"))
+        assertEquals("cron,webhook", url.queryParameter("exclude_sources"))
+    }
+
+    @Test
     fun listSessions_enrichesWorkspaceRowsWithTranscriptBackedPullRequest() = runTest {
         server.enqueue(
             MockResponse().setHeader("Content-Type", "application/json").setBody(
@@ -1193,6 +1340,102 @@ class DashboardApiClientTest {
         val request = server.takeRequest()
         // No profile → omit the param so upstream reads the launch (default) DB.
         assertEquals(null, request.requestUrl!!.queryParameter("profile"))
+    }
+
+    @Test
+    fun listSessions_cancellationCancelsTheActiveHttpCall() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val httpClient = DashboardApiClient.defaultClient()
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            okHttpClient = httpClient,
+        )
+
+        val read = async(Dispatchers.IO) { client.listSessions(profile = "mizu") }
+        assertTrue(server.takeRequest(5, TimeUnit.SECONDS) != null)
+        read.cancelAndJoin()
+
+        withTimeout(2_000L) {
+            while (httpClient.dispatcher.runningCallsCount() != 0) delay(10L)
+        }
+        assertEquals(0, httpClient.dispatcher.runningCallsCount())
+    }
+
+    @Test
+    fun listSessions_returnsRowsAndRetriesOptionalEnrichmentAfterItsBudgetExpires() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"sessions":[{"id":"sess-a","profile":"mizu","cwd":"/work/repo"}]}""",
+                ),
+        )
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionEnrichmentBudgetMillis = 500L,
+        )
+
+        val sessions = client.listSessions(profile = "mizu").getOrThrow()
+
+        assertEquals(listOf("sess-a"), sessions.map { it.id })
+        assertEquals(null, sessions.single().pullRequest)
+        assertEquals("/api/sessions", server.takeRequest().requestUrl!!.encodedPath)
+        assertEquals("/api/profiles/sessions/pull-requests", server.takeRequest().requestUrl!!.encodedPath)
+
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"sessions":[{"id":"sess-a","profile":"mizu","cwd":"/work/repo","git_branch":"fix/latency"}]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"pull_requests":{"sess-a":{"number":399,"url":"https://github.com/example/repo/pull/399"}},"scanned":["sess-a"]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"ghReady":true,"prs":[{"branch":"fix/latency","draft":false,"number":399,"state":"open","title":"Latency","url":"https://github.com/example/repo/pull/399"}]}""",
+            ),
+        )
+
+        val retried = client.listSessions(profile = "mizu").getOrThrow()
+
+        assertEquals(399, retried.single().pullRequest?.number)
+    }
+
+    @Test
+    fun listSessions_failsWithinTheBoundedSessionReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.listSessions(profile = "mizu").isFailure)
+    }
+
+    @Test
+    fun getSessionMessages_failsWithinTheBoundedSessionReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.getSessionMessages("sess-a", profile = "mizu").isFailure)
+    }
+
+    @Test
+    fun requestWsTicket_failsWithinTheBoundedReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = DashboardApiClient(
+            baseUrl = server.url("/").toString(),
+            sessionReadTimeoutMillis = 5_000L,
+            controlReadTimeoutMillis = 100L,
+        )
+
+        assertTrue(client.requestWsTicket().isFailure)
     }
 
     @Test

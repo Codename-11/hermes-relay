@@ -50,8 +50,28 @@ class GitStateViewModelTest {
 
     private fun viewModel(): GitStateViewModel {
         val vm = GitStateViewModel(application)
-        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.loadRepos()
         return vm
+    }
+
+    @Test
+    fun `disabled configuration does not discover repositories until enabled`() = runBlocking {
+        enqueueJson("""{"repos":[]}""")
+        val vm = GitStateViewModel(application)
+        vm.configure(
+            DashboardApiClient(server.url("/").toString()),
+            ownerKey,
+            scanningEnabled = false,
+        )
+
+        vm.loadRepos()
+        assertEquals(0, server.requestCount)
+
+        vm.setScanningEnabled(true)
+        vm.loadRepos()
+        withTimeout(5_000) { vm.repos.filterIsInstance<GitStateUiState.Ready>().first() }
+        assertEquals("/api/plugins/hermes-relay/git/repos", server.takeRequest().path)
     }
 
     private fun enqueueJson(body: String) {

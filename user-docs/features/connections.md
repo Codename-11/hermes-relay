@@ -51,9 +51,10 @@ The detail screen is organized into tabs:
   configured. LAN, Tailscale (`100.x` or `.ts.net`), and public Dashboard routes
   can be added and tested without API configuration. Optional API routes are
   only for direct chat fallback on the same networks.
-- **Advanced** — manual Dashboard, API, and Relay endpoints; API credentials;
-  the insecure-connection toggle; and the manual pairing-code fallback. Most
-  people never need this.
+- **Advanced** — optional direct API fallback credentials, an explicit direct
+  Relay endpoint override, and the development-only insecure-connection toggle.
+  Dashboard addresses stay under **Routes**. **Pair Relay** opens the same shared
+  QR / enter-code / show-code flow used everywhere else.
 - **Security** — transport posture, Dashboard authentication, credential storage,
   and **Relay sessions**, where you can review and revoke phones paired with that
   server or sign out of the Dashboard session.
@@ -126,6 +127,13 @@ sanitized API, route, relay, session, and voice events such as health timeouts,
 selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
 strings, and token-like values are hidden. The same consolidated log is available
 from **Settings -> Diagnostics**, where you can clear the in-app buffer.
+Native Dashboard sign-in adds an Auth timeline covering browser launch,
+configured-versus-alternate authorization origin, validated callback, Continue
+or cancel, completion, elapsed time, and a typed failure stage. It records only
+provider class and route role—not provider-specific names, hostnames, callback
+parameters, codes, cookies, or tokens. **Review support information** shows the
+exact combined reliability reports and recent diagnostics before the user copies
+or shares anything; nothing uploads automatically.
 
 Diagnostics also reports the optional Relay plugin separately from basic relay
 reachability. When the plugin exposes version metadata, the row shows the

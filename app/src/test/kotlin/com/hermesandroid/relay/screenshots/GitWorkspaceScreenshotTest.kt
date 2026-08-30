@@ -68,12 +68,20 @@ class GitWorkspaceScreenshotTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = GitStateViewModel(app)
         val owner = "visual-owner"
-        viewModel.configure(DashboardApiClient(server.url("/").toString()), owner)
+        viewModel.configure(
+            DashboardApiClient(server.url("/").toString()),
+            owner,
+            scanningEnabled = true,
+        )
         viewModel.setWriteGrant(owner, true)
 
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
-                GitStateScreen(viewModel = viewModel, onBack = {})
+                GitStateScreen(
+                    viewModel = viewModel,
+                    onScanningEnabledChange = {},
+                    onBack = {},
+                )
             }
         }
 

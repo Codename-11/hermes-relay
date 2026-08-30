@@ -6,17 +6,26 @@ Uses FastAPI's ``TestClient`` + ``httpx.MockTransport`` patched over
 
 from __future__ import annotations
 
+import asyncio
+import os
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+from aiohttp import web
 from fastapi import FastAPI
+from fastapi import WebSocket
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from plugin.dashboard import plugin_api
+from plugin.relay.config import RelayConfig
+from plugin.relay.server import RelayServer, handle_ws
 
 
 # ---------------------------------------------------------------------------
@@ -52,16 +61,496 @@ def _install_mock_transport(
     return captured
 
 
-def _build_client() -> TestClient:
+def _build_client(*, prefix: str = "") -> TestClient:
     app = FastAPI()
-    app.include_router(plugin_api.router)
+    app.include_router(plugin_api.router, prefix=prefix)
     return TestClient(app)
+
+
+class _EphemeralRelay:
+    """Run a real aiohttp Relay WebSocket on an OS-assigned loopback port."""
+
+    def __init__(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.port = 0
+        self.error: BaseException | None = None
+        self.runner: web.AppRunner | None = None
+        self.server = RelayServer(
+            RelayConfig(
+                host="127.0.0.1",
+                port=0,
+                profile_discovery_enabled=False,
+                session_persistence_path=None,
+                secure_proxy_enabled=False,
+                experimental_reach_enabled=False,
+            )
+        )
+
+    async def _echo_ws(self, request: web.Request) -> web.WebSocketResponse:
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for message in socket:
+            if message.type == web.WSMsgType.TEXT:
+                await socket.send_str(message.data)
+            elif message.type == web.WSMsgType.BINARY:
+                await socket.send_bytes(message.data)
+                await socket.close(code=1001, message=b"echo complete")
+        return socket
+
+    async def _start(self) -> None:
+        app = web.Application()
+        app["server"] = self.server
+        app.router.add_get("/ws", handle_ws)
+        app.router.add_get("/echo", self._echo_ws)
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, "127.0.0.1", 0)
+        await site.start()
+        sockets = getattr(site, "_server").sockets
+        self.port = int(sockets[0].getsockname()[1])
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self._start())
+        except BaseException as exc:  # pragma: no cover - startup diagnostics
+            self.error = exc
+            self.ready.set()
+            return
+        self.ready.set()
+        self.loop.run_forever()
+
+    def start(self) -> None:
+        self.thread.start()
+        if not self.ready.wait(timeout=10):
+            raise TimeoutError("ephemeral Relay did not start")
+        if self.error is not None:
+            raise RuntimeError("ephemeral Relay failed to start") from self.error
+
+    def stop(self) -> None:
+        async def _stop() -> None:
+            await self.server.close()
+            if self.runner is not None:
+                await self.runner.cleanup()
+
+        future = asyncio.run_coroutine_threadsafe(_stop(), self.loop)
+        future.result(timeout=10)
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=10)
+        self.loop.close()
 
 
 class PluginApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = _build_client()
 
+
+class TransportIngressTests(PluginApiTestCase):
+    def test_health_is_the_only_route_without_relay_session_header(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            self.assertNotIn("Authorization", request.headers)
+            return httpx.Response(200, json={"status": "ok"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get("/transport/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(
+            response.json()["dashboard_ingress"]["path"],
+            "/api/plugins/hermes-relay/transport",
+        )
+
+    def test_get_transport_does_not_wait_for_a_request_body(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            self.assertEqual(request.content, b"")
+            return httpx.Response(200, json={"status": "ok"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(
+            plugin_api.Request,
+            "body",
+            new=AsyncMock(side_effect=AssertionError("GET body must not be read")),
+        ), patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get("/transport/health")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_client_route_requires_separate_relay_session_header(self) -> None:
+        response = self.client.get("/transport/sessions")
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("relay session", response.json()["detail"])
+
+    def test_session_header_is_rewritten_and_dashboard_auth_is_not_forwarded(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/usage/providers")
+            self.assertEqual(request.url.params["profile"], "victor")
+            self.assertEqual(request.headers["Authorization"], "Bearer relay-token")
+            self.assertEqual(
+                request.headers[plugin_api._DASHBOARD_PROXY_SECRET_HEADER],
+                "proxy-secret",
+            )
+            self.assertNotIn(plugin_api._TRANSPORT_SESSION_HEADER, request.headers)
+            self.assertNotIn("Cookie", request.headers)
+            return httpx.Response(200, json={"providers": []})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get(
+                "/transport/usage/providers?profile=victor",
+                headers={
+                    plugin_api._TRANSPORT_SESSION_HEADER: "relay-token",
+                    "Authorization": "Bearer dashboard-token",
+                    "Cookie": "session=dashboard-cookie",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_binary_body_status_and_safe_response_headers_are_preserved(self) -> None:
+        payload = b"\x00voice-bytes\xff"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/voice/transcribe")
+            self.assertEqual(request.content, payload)
+            return httpx.Response(
+                206,
+                content=b"partial",
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Range": "bytes 0-6/7",
+                    "Set-Cookie": "must-not-escape=1",
+                    "Connection": "close",
+                },
+            )
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.post(
+                "/transport/voice/transcribe",
+                content=payload,
+                headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+            )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.content, b"partial")
+        self.assertEqual(response.headers["content-range"], "bytes 0-6/7")
+        self.assertNotIn("set-cookie", response.headers)
+
+    def test_dynamic_profile_path_is_encoded_for_fixed_loopback_hop(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.host, "127.0.0.1")
+            self.assertEqual(request.url.port, plugin_api.RELAY_PORT)
+            self.assertEqual(request.url.path, "/api/profiles/my profile/soul")
+            self.assertEqual(request.url.raw_path, b"/api/profiles/my%20profile/soul")
+            return httpx.Response(200, json={"content": "soul"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get(
+                "/transport/api/profiles/my%20profile/soul",
+                headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_and_wildcard_routes_are_not_mounted(self) -> None:
+        headers = {plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"}
+        for method, path in (
+            ("POST", "/transport/pairing/register"),
+            ("GET", "/transport/media/inspect"),
+            ("GET", "/transport/bridge/activity"),
+            ("POST", "/transport/desktop/android_tap"),
+            ("PATCH", "/transport/relay/security"),
+            ("POST", "/transport/phone/message"),
+        ):
+            with self.subTest(path=path):
+                response = self.client.request(method, path, headers=headers)
+                self.assertEqual(response.status_code, 404)
+
+    def test_wrong_method_does_not_fall_through_to_loopback(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise AssertionError("disallowed method must not reach Relay")
+
+        _install_mock_transport(self, handler)
+        response = self.client.delete(
+            "/transport/media/upload",
+            headers={plugin_api._TRANSPORT_SESSION_HEADER: "relay-token"},
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_oversized_relay_response_is_rejected_from_content_length(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"12345")
+
+        _install_mock_transport(self, handler)
+        with patch.object(plugin_api, "_TRANSPORT_RESPONSE_LIMIT", 4), patch.object(
+            plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"
+        ):
+            response = self.client.get("/transport/health")
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("size limit", response.json()["detail"])
+
+
+class TransportWebSocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    class _Socket:
+        def __init__(self) -> None:
+            self.closed: tuple[int, str] | None = None
+            self.headers: dict[str, str] = {}
+
+        async def close(self, code: int, reason: str) -> None:
+            self.closed = (code, reason)
+
+    async def test_missing_upstream_private_helpers_fails_closed(self) -> None:
+        socket = self._Socket()
+        with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=True), patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=None
+        ):
+            selected = await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertIsNone(selected)
+        self.assertEqual(socket.closed[0], 1011)  # type: ignore[index]
+
+    async def test_request_and_auth_guards_run_before_admission(self) -> None:
+        socket = self._Socket()
+        socket._hermes_ws_subprotocol = "hermes-gateway-v1"  # type: ignore[attr-defined]
+        socket.headers["sec-websocket-protocol"] = "hermes-gateway-v1"
+        request_allowed = Mock(return_value=True)
+        auth_ok = Mock(return_value=True)
+        with patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        ), patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ):
+            selected = await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(selected, "hermes-gateway-v1")
+        self.assertIsNone(socket.closed)
+        request_allowed.assert_called_once_with(socket)
+        auth_ok.assert_called_once_with(socket)
+
+    async def test_failed_dashboard_ticket_is_policy_close(self) -> None:
+        socket = self._Socket()
+        with patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        ), patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(lambda _ws: True, lambda _ws: False),
+        ):
+            await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
+
+    async def test_disabled_plugin_is_rejected_before_dashboard_ticket_consumption(self) -> None:
+        socket = self._Socket()
+        guards = Mock()
+        with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=False), patch.object(
+            plugin_api, "_dashboard_ws_guards", guards
+        ):
+            await plugin_api._admit_transport_websocket(socket)  # type: ignore[arg-type]
+        self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
+        guards.assert_not_called()
+
+
+class TransportWebSocketIntegrationTests(unittest.TestCase):
+    """Exercise the complete FastAPI -> aiohttp Relay WebSocket path."""
+
+    prefix = "/base/api/plugins/hermes-relay"
+
+    def setUp(self) -> None:
+        self.relay = _EphemeralRelay()
+        self.relay.start()
+        self.addCleanup(self.relay.stop)
+
+        environment = patch.dict(
+            os.environ,
+            {"HERMES_RELAY_DASHBOARD_PROXY_SECRET": "integration-test-secret"},
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+
+        relay_port = patch.object(plugin_api, "RELAY_PORT", self.relay.port)
+        relay_port.start()
+        self.addCleanup(relay_port.stop)
+
+        enabled = patch.object(
+            plugin_api, "_dashboard_plugin_is_enabled", return_value=True
+        )
+        enabled.start()
+        self.addCleanup(enabled.stop)
+
+    @staticmethod
+    def _auth_payload(**payload: str) -> dict[str, object]:
+        return {
+            "channel": "system",
+            "type": "auth",
+            "id": "auth-1",
+            "payload": {
+                "device_name": "Hermetic phone",
+                "device_id": "hermetic-phone-1",
+                **payload,
+            },
+        }
+
+    def _client(self, *, include_echo: bool = False) -> TestClient:
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix=self.prefix)
+        if include_echo:
+            path = f"{self.prefix}/transport/echo-test"
+
+            @app.websocket(path)
+            async def echo_transport(websocket: WebSocket) -> None:
+                await plugin_api._proxy_transport_websocket(
+                    websocket,
+                    "/echo",
+                    require_session_header=False,
+                )
+
+        return TestClient(app)
+
+    def test_prefixed_ingress_pairs_reconnects_and_runs_guards_before_accept(self) -> None:
+        pairing_code = "ABC123"
+        self.assertTrue(self.relay.server.pairing.register_code(pairing_code))
+        guard_events: list[tuple[str, str]] = []
+
+        def request_allowed(websocket: WebSocket) -> bool:
+            guard_events.append(("request", websocket.application_state.name))
+            return True
+
+        def auth_ok(websocket: WebSocket) -> bool:
+            guard_events.append(("auth", websocket.application_state.name))
+            return True
+
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ), self._client() as client:
+            with client.websocket_connect(path) as socket:
+                socket.send_json(self._auth_payload(pairing_code=pairing_code))
+                paired = socket.receive_json()
+                self.assertEqual(paired["type"], "auth.ok")
+                session_token = paired["payload"]["session_token"]
+
+                socket.send_bytes(b"relay-binary-frame")
+                socket.send_json(
+                    {
+                        "channel": "system",
+                        "type": "ping",
+                        "id": "ping-1",
+                        "payload": {"ts": 42},
+                    }
+                )
+                pong = socket.receive_json()
+                self.assertEqual(pong["type"], "pong")
+                self.assertEqual(pong["id"], "ping-1")
+                self.assertEqual(pong["payload"]["ts"], 42)
+
+            with client.websocket_connect(path) as socket:
+                socket.send_json(self._auth_payload(session_token=session_token))
+                reconnected = socket.receive_json()
+                self.assertEqual(reconnected["type"], "auth.ok")
+                self.assertEqual(
+                    reconnected["payload"]["session_token"], session_token
+                )
+
+        self.assertEqual(
+            guard_events,
+            [
+                ("request", "CONNECTING"),
+                ("auth", "CONNECTING"),
+                ("request", "CONNECTING"),
+                ("auth", "CONNECTING"),
+            ],
+        )
+        deadline = time.monotonic() + 2
+        while self.relay.server.client_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.relay.server.client_count, 0)
+
+    def test_binary_and_relay_close_are_forwarded_bidirectionally(self) -> None:
+        guards = (lambda _ws: True, lambda _ws: True)
+        path = f"{self.prefix}/transport/echo-test"
+        with patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=guards
+        ), self._client(include_echo=True) as client:
+            with client.websocket_connect(path) as socket:
+                socket.send_bytes(b"\x00relay\xff")
+                self.assertEqual(socket.receive_bytes(), b"\x00relay\xff")
+                close = socket.receive()
+                self.assertEqual(close["type"], "websocket.close")
+                self.assertEqual(close["code"], 1001)
+
+    def test_single_use_ticket_replay_is_denied_before_relay_connect(self) -> None:
+        tickets = {"fresh-ticket"}
+        guard_events: list[str] = []
+
+        def request_allowed(_websocket: WebSocket) -> bool:
+            guard_events.append("request")
+            return True
+
+        def auth_ok(websocket: WebSocket) -> bool:
+            guard_events.append("auth")
+            protocols = {
+                item.strip()
+                for item in websocket.headers.get(
+                    "sec-websocket-protocol", ""
+                ).split(",")
+            }
+            credential = next(
+                (
+                    item.removeprefix("hermes-gateway-ticket.")
+                    for item in protocols
+                    if item.startswith("hermes-gateway-ticket.")
+                ),
+                "",
+            )
+            if "hermes-gateway-v1" not in protocols or credential not in tickets:
+                return False
+            tickets.remove(credential)
+            websocket._hermes_ws_subprotocol = "hermes-gateway-v1"  # type: ignore[attr-defined]
+            return True
+
+        subprotocols = [
+            "hermes-gateway-v1",
+            "hermes-gateway-ticket.fresh-ticket",
+        ]
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api,
+            "_dashboard_ws_guards",
+            return_value=(request_allowed, auth_ok),
+        ), self._client() as client:
+            with client.websocket_connect(path, subprotocols=subprotocols) as socket:
+                self.assertEqual(socket.accepted_subprotocol, "hermes-gateway-v1")
+                socket.send_json(
+                    self._auth_payload(
+                        session_token=self.relay.server.sessions.create_session(
+                            "Hermetic phone", "hermetic-phone-1"
+                        ).token
+                    )
+                )
+                self.assertEqual(socket.receive_json()["type"], "auth.ok")
+
+            with self.assertRaises(WebSocketDisconnect) as denied:
+                with client.websocket_connect(path, subprotocols=subprotocols):
+                    pass
+            self.assertEqual(denied.exception.code, 1008)
+
+        self.assertEqual(guard_events, ["request", "auth", "request", "auth"])
+
+    def test_missing_dashboard_helpers_denies_upgrade_without_relay_client(self) -> None:
+        path = f"{self.prefix}/transport/ws"
+        with patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=None
+        ), self._client() as client:
+            with self.assertRaises(WebSocketDisconnect) as denied:
+                with client.websocket_connect(path):
+                    pass
+        self.assertEqual(denied.exception.code, 1011)
+        self.assertEqual(self.relay.server.client_count, 0)
 
 # ---------------------------------------------------------------------------
 # 2xx passthrough

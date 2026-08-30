@@ -229,7 +229,7 @@ hermes dashboard --no-open --host 0.0.0.0 --port 9119
 :::
 
 You sign in with this username/password during connection setup or from the
-app's **Manage** tab. The same session authorizes Gateway chat, sessions, Manage,
+app's sign-in screen. The same session authorizes Gateway chat, sessions, Manage,
 and standard voice. For stronger setups Hermes also accepts a hashed password
 (`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH`) instead of plaintext, and for a
 public or hosted dashboard you should use Nous OAuth or self-hosted OIDC rather
@@ -240,8 +240,9 @@ are needed only because your phone connects over the network. (The dashboard als
 reads and writes `~/.hermes/.env`, which holds your keys and secrets.)
 
 ::: warning Dashboard auth and API bearer auth are different
-Dashboard sign-in on `:9119` uses dashboard cookies plus short-lived `/api/ws`
-tickets and is sufficient for the standard connection. An API key authenticates
+Dashboard sign-in on `:9119` uses a native bearer on current gateways, or
+exact-origin cookies on compatibility gateways, plus short-lived `/api/ws`
+tickets. It is sufficient for the standard connection. An API key authenticates
 only the optional API fallback on `:8642`; dashboard login does not create one,
 and you should not enter a fake key when no API endpoint is configured.
 :::
@@ -427,23 +428,33 @@ see [Remote access](/guide/remote-access) and the
 ## Reference
 
 ::: details Dashboard login from Android (auth modes)
-Manage uses the Hermes dashboard/admin server and stores dashboard cookies
-separately from Relay pairing credentials.
+Manage uses the Hermes dashboard/admin server and stores its native bearer or
+compatibility cookies separately from Relay pairing credentials.
 
 - **Dashboard auth disabled / open dashboard:** Manage works as long as Android
   can reach the dashboard URL.
-- **Basic username/password login:** supported. Android posts to
-  `/auth/password-login` with the upstream `basic` provider, stores the dashboard
-  cookies, and checks `/api/auth/me`.
-- **Nous OAuth / OIDC redirect login:** supported. Android opens the dashboard's
-  `/auth/login?provider=...` flow in an in-app WebView, imports the resulting
-  cookies, checks `/api/auth/me`, and probes `/api/auth/ws-ticket`.
+- **Basic username/password login:** supported. Current gateways broker it in the
+  system browser when `native_pkce` is advertised. Compatibility gateways post
+  to `/auth/password-login` and store exact-origin Dashboard cookies.
+- **Nous OAuth / OIDC redirect login:** supported. When the Dashboard advertises
+  `native_pkce`, Android uses the upstream system-browser `/auth/native/*`
+  broker. Older gateways use the in-app `/auth/login?provider=...` cookie
+  compatibility flow. Both verify `/api/auth/me` and `/api/auth/ws-ticket`.
+- **Private app route with public OIDC callback:** supported. Android may connect
+  over LAN or Tailscale while the identity provider returns to an HTTPS public
+  Dashboard origin. Register `<public-dashboard-origin>/auth/callback` with the
+  provider. Hermes normally derives the origin from trusted proxy headers; set
+  upstream `dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when that
+  reconstruction is unreliable. Native PKCE uses that origin for its browser
+  transaction only. On the older cookie flow Android verifies the installation
+  and asks before saving a different authenticated origin. You do not enter a
+  second sign-in URL during normal setup.
 - **Custom password providers:** supported when `/api/auth/providers` advertises
   `supports_password: true`.
 
 Relay pairing does not replace dashboard login, and dashboard login does not mint
 an API key: it matches the Hermes Desktop remote-gateway path by authenticating
-`/api/ws` and `/api/pty` with dashboard cookies plus a single-use ticket from
+`/api/ws` and `/api/pty` with the Dashboard session plus a single-use ticket from
 `/api/auth/ws-ticket`. Android uses that gateway path when it is ready and falls
 back to API-server SSE when it is not.
 :::
@@ -457,11 +468,11 @@ back to API-server SSE when it is not.
 4. Optional: expand **Advanced** to add an API fallback URL/key or Relay route.
 5. Tap **Connect**.
 
-**After onboarding:** open **Settings → Connections**. Each Hermes host is a card;
-the active card expands inline to show status rows, route details, and an
-**Advanced** section with manual API URL/key config, Relay URL override,
-insecure-mode toggle, and the manual Relay pairing-code fallback. The per-card
-**Pair Relay** / **Re-pair** button scans a Relay QR when you need power tools.
+**After onboarding:** open **Settings → Gateways** and select a Hermes host.
+**Advanced** contains only compatibility controls: optional direct API URL/key,
+an explicit direct Relay endpoint override, and the insecure-development toggle.
+Use **Pair Relay** / **Re-pair** for the shared QR, enter-code, or show-code flow.
+Edit the normal Dashboard/Gateway address and network paths under **Routes**.
 
 For Vanilla Hermes setup, use discovery or enter the Dashboard/Gateway address.
 If a QR includes a Relay block, Android shows the Relay pairing confirmation and

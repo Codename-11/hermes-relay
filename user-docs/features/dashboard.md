@@ -74,7 +74,11 @@ What you can do from the phone, per section:
 
 A successful dashboard sign-in here also unlocks **standard voice** for the connection — speech uses the same dashboard session (see [Voice Mode](./voice)).
 
-Dashboard sign-in is the upstream-preferred remote auth path. Android supports the bundled `basic` username/password provider and redirect providers such as `nous` or self-hosted OIDC through the dashboard's `/auth/login?provider=...` flow. Successful sign-in stores dashboard cookies, verifies the flat upstream `/api/auth/me` session response, and probes `/api/auth/ws-ticket`. This matches the Hermes Desktop remote-gateway model: sign in once to the dashboard, then reuse that dashboard session for `/api/ws` with a short-lived ticket.
+Dashboard sign-in is the upstream-preferred remote auth path. When Hermes advertises `native_pkce`, Android opens the selected provider in the system browser and uses the same brokered `/auth/native/*` flow as Hermes Desktop. Older gateways use the dashboard's cookie-based `/auth/login?provider=...` compatibility flow. Successful sign-in verifies `/api/auth/me` and can mint the short-lived `/api/ws` ticket used by Gateway chat.
+
+The address saved in Android may be a LAN, Tailscale, or public Dashboard route. Redirect providers still need an externally reachable Dashboard callback registered as `<public-dashboard-origin>/auth/callback`. Hermes normally reconstructs that origin from trusted reverse-proxy headers. If the proxy does not forward them reliably, configure upstream `dashboard.public_url` (or `HERMES_DASHBOARD_PUBLIC_URL`) to the complete HTTPS Dashboard origin, including any path prefix. Native PKCE uses a different advertised origin only for its browser transaction; on the older cookie compatibility flow Android verifies the installation and asks before saving a different authenticated Dashboard origin. A second public sign-in field is not required during normal app setup.
+
+For support, open **Settings → Diagnostics** and filter to **Auth**. Native sign-in records only a sanitized lifecycle—attempt number, provider class, route role, configured-versus-alternate authorization origin, browser launch, validated callback, Continue/cancel, elapsed time, completion, or typed failure stage. The reviewable support export includes these recent entries alongside persistent reliability reports and never uploads automatically.
 
 This is separate from Relay pairing and from `API_SERVER_KEY`. A dashboard
 session does not become an API bearer token: Android uses it for primary Gateway

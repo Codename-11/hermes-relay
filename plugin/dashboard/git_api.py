@@ -77,7 +77,7 @@ def _resolve(repo: str) -> Any:
 
 
 @router.get("/repos")
-async def get_repos() -> dict[str, Any]:
+def get_repos() -> dict[str, Any]:
     """Return the scanned repo list plus a notice when the base path is missing."""
     base = git_state.base_path()
     repos = git_state.scan_repos(base)
@@ -88,7 +88,7 @@ async def get_repos() -> dict[str, Any]:
 
 
 @router.get("/status")
-async def get_status(repo: str = Query(...)) -> dict[str, Any]:
+def get_status(repo: str = Query(...)) -> dict[str, Any]:
     try:
         return git_state.repo_status(_resolve(repo))
     except git_state.GitStateError as exc:
@@ -96,7 +96,7 @@ async def get_status(repo: str = Query(...)) -> dict[str, Any]:
 
 
 @router.get("/branches")
-async def get_branches(repo: str = Query(...)) -> dict[str, Any]:
+def get_branches(repo: str = Query(...)) -> dict[str, Any]:
     try:
         return {"branches": git_state.repo_branches(_resolve(repo))}
     except git_state.GitStateError as exc:
@@ -104,7 +104,7 @@ async def get_branches(repo: str = Query(...)) -> dict[str, Any]:
 
 
 @router.get("/diff")
-async def get_diff(
+def get_diff(
     repo: str = Query(...),
     path: str = Query(...),
     kind: str = Query("unstaged"),
@@ -116,7 +116,7 @@ async def get_diff(
 
 
 @router.get("/file")
-async def get_file(repo: str = Query(...), path: str = Query(...)) -> dict[str, Any]:
+def get_file(repo: str = Query(...), path: str = Query(...)) -> dict[str, Any]:
     try:
         return git_state.read_file(_resolve(repo), path)
     except git_state.GitStateError as exc:
@@ -136,7 +136,7 @@ def _require_repo(body: dict[str, Any]) -> Any:
 
 
 @router.post("/stage")
-async def post_stage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_stage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.stage(_require_repo(body), _paths(body))
     except git_state.GitError as exc:
@@ -146,7 +146,7 @@ async def post_stage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/unstage")
-async def post_unstage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_unstage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.unstage(_require_repo(body), _paths(body))
     except git_state.GitError as exc:
@@ -156,7 +156,7 @@ async def post_unstage(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/discard")
-async def post_discard(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_discard(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.discard(
             _require_repo(body),
@@ -171,7 +171,7 @@ async def post_discard(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/commit")
-async def post_commit(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_commit(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.commit(_require_repo(body), _message(body))
     except git_state.GitError as exc:
@@ -181,7 +181,7 @@ async def post_commit(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/commit_selected")
-async def post_commit_selected(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_commit_selected(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.commit_selected(_require_repo(body), _message(body), _paths(body))
     except git_state.GitError as exc:
@@ -191,7 +191,7 @@ async def post_commit_selected(body: dict[str, Any] = Body(...)) -> dict[str, An
 
 
 @router.post("/fetch")
-async def post_fetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_fetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.fetch(_require_repo(body), _remote(body))
     except git_state.GitError as exc:
@@ -201,7 +201,7 @@ async def post_fetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/pull")
-async def post_pull(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_pull(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.pull(_require_repo(body), _remote(body), _branch(body))
     except git_state.GitError as exc:
@@ -211,7 +211,7 @@ async def post_pull(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/push")
-async def post_push(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_push(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return git_state.push(
             _require_repo(body),
@@ -226,7 +226,7 @@ async def post_push(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/checkout")
-async def post_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         new_branch = _str_opt(body, "new_branch")
         return git_state.checkout(
@@ -243,7 +243,7 @@ async def post_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @router.post("/stash_checkout")
-async def post_stash_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def post_stash_checkout(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Checkout that auto-stashes a dirty tree first.
 
     Unlike a plain dirty checkout, no confirmation is required: a stash is

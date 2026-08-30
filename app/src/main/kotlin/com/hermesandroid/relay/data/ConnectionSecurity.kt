@@ -18,6 +18,9 @@ package com.hermesandroid.relay.data
  */
 enum class SurfaceSecurityKind { Tls, Overlay, Plain }
 
+/** Whether a configured surface currently contributes traffic to the connection. */
+enum class SurfaceUseState { InUse, Available, Unavailable }
+
 /** Connection-level rollup across the surfaces actually in use. */
 enum class ConnectionSecurityLevel { Tls, Overlay, Mixed, Plain, Unknown }
 
@@ -28,6 +31,7 @@ data class SurfaceSecurity(
     /** Human mechanism: "TLS", "Tailscale", "WireGuard", "Proxy", "Plain". */
     val mechanism: String,
     val url: String,
+    val useState: SurfaceUseState = SurfaceUseState.InUse,
 )
 
 data class ConnectionSecurity(
@@ -86,6 +90,7 @@ fun classifySurfaceSecurity(
     url: String,
     activeEndpoint: EndpointCandidate?,
     isTailscaleDetected: Boolean,
+    useState: SurfaceUseState = SurfaceUseState.InUse,
 ): SurfaceSecurity {
     val secureLinkProtected = activeEndpoint.secureLinkProtects(label, url)
     val (kind, mechanism) = when {
@@ -96,7 +101,13 @@ fun classifySurfaceSecurity(
             SurfaceSecurityKind.Overlay to activeEndpoint.overlayMechanism(isTailscaleDetected)
         else -> SurfaceSecurityKind.Plain to "Plain"
     }
-    return SurfaceSecurity(label = label, kind = kind, mechanism = mechanism, url = url)
+    return SurfaceSecurity(
+        label = label,
+        kind = kind,
+        mechanism = mechanism,
+        url = url,
+        useState = useState,
+    )
 }
 
 private fun EndpointCandidate?.secureLinkProtects(label: String, url: String): Boolean {
@@ -112,8 +123,8 @@ private fun EndpointCandidate?.secureLinkProtects(label: String, url: String): B
         } ?: return false
     val normalized = url.trim().trimEnd('/')
     val service = when (label) {
-        "Chat & Manage" -> "dashboard"
-        "API / sessions" -> "api"
+        "Chat & Manage", "Dashboard & Gateway" -> "dashboard"
+        "API / sessions", "API fallback" -> "api"
         "Relay tools" -> "relay"
         else -> return false
     }
@@ -137,23 +148,67 @@ fun computeConnectionSecurity(
     relayConfigured: Boolean,
     activeEndpoint: EndpointCandidate?,
     isTailscaleDetected: Boolean,
+    dashboardInUse: Boolean = true,
+    apiInUse: Boolean = true,
+    apiAvailable: Boolean = apiInUse,
+    relayInUse: Boolean = relayConfigured,
+    apiEndpoint: EndpointCandidate? = activeEndpoint,
+    relayEndpoint: EndpointCandidate? = activeEndpoint,
 ): ConnectionSecurity {
     val surfaces = buildList {
         dashboardUrl.trim().takeIf { it.isNotBlank() }?.let {
-            add(classifySurfaceSecurity("Chat & Manage", it, activeEndpoint, isTailscaleDetected))
+            add(
+                classifySurfaceSecurity(
+                    label = "Dashboard & Gateway",
+                    url = it,
+                    activeEndpoint = activeEndpoint,
+                    isTailscaleDetected = isTailscaleDetected,
+                    useState = if (dashboardInUse) SurfaceUseState.InUse else SurfaceUseState.Unavailable,
+                )
+            )
         }
         apiUrl.trim().takeIf { it.isNotBlank() }?.let {
-            add(classifySurfaceSecurity("API / sessions", it, activeEndpoint, isTailscaleDetected))
+            add(
+                classifySurfaceSecurity(
+                    label = "API fallback",
+                    url = it,
+                    activeEndpoint = apiEndpoint,
+                    isTailscaleDetected = isTailscaleDetected,
+                    useState = when {
+                        apiInUse -> SurfaceUseState.InUse
+                        apiAvailable -> SurfaceUseState.Available
+                        else -> SurfaceUseState.Unavailable
+                    },
+                )
+            )
         }
         if (relayConfigured) {
             relayUrl.trim().takeIf { it.isNotBlank() }?.let {
-                add(classifySurfaceSecurity("Relay tools", it, activeEndpoint, isTailscaleDetected))
+                add(
+                    classifySurfaceSecurity(
+                        label = "Relay tools",
+                        url = it,
+                        activeEndpoint = relayEndpoint,
+                        isTailscaleDetected = isTailscaleDetected,
+                        useState = if (relayInUse) SurfaceUseState.InUse else SurfaceUseState.Unavailable,
+                    )
+                )
             }
         }
     }
     if (surfaces.isEmpty()) return ConnectionSecurity.UNKNOWN
 
-    val kinds = surfaces.map { it.kind }.toSet()
+    // Configured-but-unavailable fallbacks remain visible in the breakdown,
+    // but do not make the active transport look insecure.
+    val activeSurfaces = surfaces.filter { it.useState == SurfaceUseState.InUse }
+    if (activeSurfaces.isEmpty()) {
+        return ConnectionSecurity(
+            level = ConnectionSecurityLevel.Unknown,
+            mechanism = "",
+            surfaces = surfaces,
+        )
+    }
+    val kinds = activeSurfaces.map { it.kind }.toSet()
     val hasPlain = SurfaceSecurityKind.Plain in kinds
     val hasSecure = kinds.any { it != SurfaceSecurityKind.Plain }
 
@@ -167,7 +222,7 @@ fun computeConnectionSecurity(
     val mechanism = when (level) {
         ConnectionSecurityLevel.Tls -> "TLS"
         ConnectionSecurityLevel.Overlay ->
-            surfaces.firstOrNull { it.kind == SurfaceSecurityKind.Overlay }?.mechanism ?: "Encrypted"
+            activeSurfaces.firstOrNull { it.kind == SurfaceSecurityKind.Overlay }?.mechanism ?: "Encrypted"
         ConnectionSecurityLevel.Mixed -> "Mixed"
         ConnectionSecurityLevel.Plain -> when (activeEndpoint?.role?.lowercase()) {
             "lan" -> "LAN"

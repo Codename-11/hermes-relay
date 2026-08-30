@@ -132,6 +132,32 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
         self.assertEqual(qr["key"], "")
 
+    async def test_explicit_api_disabled_omits_api_fields_and_candidate_records(self) -> None:
+        result = await self._mint({
+            "api_enabled": False,
+            "dashboard_url": "http://10.0.0.42:9119",
+            "endpoints": [{
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "10.0.0.42", "port": 8642, "tls": False},
+                "relay": {"url": "ws://10.0.0.42:8767"},
+            }],
+        })
+        qr = json.loads(result["qr_payload"])
+
+        for field in ("host", "port", "key", "tls"):
+            self.assertNotIn(field, qr)
+            self.assertNotIn(field, result)
+        self.assertTrue(qr["endpoints"])
+        self.assertTrue(all("api" not in item for item in qr["endpoints"]))
+
+    async def test_api_enabled_must_be_boolean(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint", json={"api_enabled": "false"}
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("boolean", (await response.json())["error"])
+
     async def test_body_overrides_api_host_port_tls(self) -> None:
         result = await self._mint({
             "host": "relay.example.com",
@@ -164,14 +190,23 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
     async def test_ttl_and_transport_hint_flow_through_to_relay_block(self) -> None:
         result = await self._mint({
-            "ttl_seconds": 3600,
+            "ttl_seconds": 3600.0,
+            "grants": {"terminal": 1800.0},
             "transport_hint": "ws",
         })
         qr = json.loads(result["qr_payload"])
 
         relay = qr["relay"]
         self.assertEqual(relay["ttl_seconds"], 3600)
+        self.assertIs(type(relay["ttl_seconds"]), int)
+        self.assertEqual(relay["grants"]["terminal"], 1800)
+        self.assertIs(type(relay["grants"]["terminal"]), int)
         self.assertEqual(relay["transport_hint"], "ws")
+
+    async def test_fractional_pairing_durations_are_rejected(self) -> None:
+        response = await self.client.post("/pairing/mint", json={"ttl_seconds": 1.5})
+        self.assertEqual(response.status, 400)
+        self.assertIn("whole number", (await response.json())["error"])
 
     async def test_hermes_version_is_v2_when_metadata_present(self) -> None:
         result = await self._mint({"ttl_seconds": 3600})

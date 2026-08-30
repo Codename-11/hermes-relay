@@ -43,7 +43,14 @@ Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 C
 不要将未加密的 Dashboard、API 或 Relay 端口直接暴露到互联网；远程访问应使用 Tailscale、VPN 或 HTTPS。
 :::
 
-Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立，不能用于 Dashboard 登录。
+Dashboard 登录在当前 Gateway 上使用原生 bearer，在兼容 Gateway 上使用精确
+origin Cookie，并配合短期 Gateway ticket。API 密钥与其独立。
+
+Android 保存的路由可以是 LAN、Tailscale 或公共地址。OIDC 仍需要一个可访问的
+HTTPS 回调：`<公共-dashboard-origin>/auth/callback`。Hermes 通常从受信任的代理
+标头重建该 origin；只有在重建不可靠时，才设置 upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL`。Android 会在保存前验证
+不同的登录 origin。
 
 ## 3. 连接并开始对话
 

@@ -549,7 +549,7 @@ fun ChatSettingsScreen(
                     val settingsContext = LocalContext.current
                     val notifyPermissionLauncher = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestPermission()
-                    ) { /* Notifier re-checks the grant at post time. */ }
+                    ) { granted -> connectionViewModel.setNotifyTurnComplete(granted) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,

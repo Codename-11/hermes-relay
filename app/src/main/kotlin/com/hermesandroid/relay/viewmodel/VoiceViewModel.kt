@@ -3621,9 +3621,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val message = when {
             raw.contains("timeout", ignoreCase = true) ||
                 raw.contains("not responding", ignoreCase = true) ->
-                "Relay is not responding. Check Connections."
+                "Relay is not responding. Check Gateways."
             raw.contains("not configured", ignoreCase = true) ->
-                "Relay is not configured. Check Connections."
+                "Relay is not configured. Check Gateways."
             else -> raw
         }
         DiagnosticsLog.record(

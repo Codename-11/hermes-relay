@@ -31,7 +31,7 @@ async def get_mobile_manifest() -> dict[str, Any]:
 
 
 @router.get("/pages/{plugin_id}")
-async def get_mobile_page(plugin_id: str = Path(...)) -> dict[str, Any]:
+def get_mobile_page(plugin_id: str = Path(...)) -> dict[str, Any]:
     # The static read-only Git page is served directly from the git_state
     # module (not the generated-page store). It carries no filesystem paths
     # per the android-plugins.md document contract.

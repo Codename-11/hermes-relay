@@ -248,7 +248,11 @@ fun DiagnosticsScreen(
                 onClick = {
                     scope.launch {
                         supportReview = withContext(Dispatchers.IO) {
-                            buildSupportReviewState(ReliabilityCenter.reports(context))
+                            buildSupportReviewState(
+                                reports = ReliabilityCenter.reports(context),
+                                diagnostics = entries,
+                                environment = ReliabilityCenter.environment(),
+                            )
                         }
                     }
                 },

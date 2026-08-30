@@ -439,6 +439,29 @@ internal fun ownedBottomFollowScroll(
     return requiredBottomFollowScroll(previous, current)
 }
 
+internal fun shouldShowRetainedHistoryDashboardSignIn(
+    hasMessages: Boolean,
+    gatewayAvailability: GatewayAvailability,
+    apiReachable: Boolean,
+    supervised: Boolean,
+): Boolean = hasMessages &&
+    !supervised &&
+    gatewayAvailability == GatewayAvailability.SignInRequired &&
+    !apiReachable
+
+internal fun shouldPresentChatFailureDuringDashboardSignIn(
+    failure: ChatFailureNotice,
+    dashboardSignInRequired: Boolean,
+): Boolean {
+    if (!dashboardSignInRequired || failure.route != ChatFailureRoute.GATEWAY) return true
+    val authFailure = failure.rawError.contains("no_cookie", ignoreCase = true) ||
+        (
+            failure.rawError.contains("Auth provider", ignoreCase = true) &&
+                failure.rawError.contains("unreachable", ignoreCase = true)
+            )
+    return !authFailure && !failure.turnId.startsWith("history-")
+}
+
 /**
  * One frame of the live bottom-follow ramp. The maximum step is derived from
  * the viewport, never the transcript distance, so a long session cannot make
@@ -710,7 +733,7 @@ fun ChatScreen(
     // Offline demo entry, surfaced on the empty-chat "needs connection" card so a
     // skipped / never-connected first run can explore without a server. null hides it.
     onTryDemo: (() -> Unit)? = null,
-    onNavigateToManage: () -> Unit = {},
+    onNavigateToDashboardSignIn: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
@@ -934,6 +957,10 @@ fun ChatScreen(
     val subagentChildPreview by chatViewModel.subagentChildPreview.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
+    val isLoadingMoreSessions by chatViewModel.isLoadingMoreSessions.collectAsState()
+    val hasMoreSessions by chatViewModel.hasMoreSessions.collectAsState()
+    val sessionPageLoadFailed by chatViewModel.sessionPageLoadFailed.collectAsState()
+    val sessionListUnavailable by chatViewModel.sessionListUnavailable.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -952,53 +979,69 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
+    var allProfileSessionsUnavailable by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     suspend fun refreshAllProfileSessions(showError: Boolean) {
         if (isProfileLocked || allProfileSessionsLoading) return
         allProfileSessionsLoading = true
-        val result = connectionViewModel.listAllProfileSessions()
-        result?.fold(
-            onSuccess = { items ->
-                allProfileSessions = items.mapNotNull { item ->
-                    val owner = item.profile?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    ProfileSessionRow(
-                        profile = owner,
-                        session = com.hermesandroid.relay.data.ChatSession(
-                            sessionId = item.id,
-                            title = item.title ?: item.preview,
-                            model = item.model,
-                            messageCount = item.messageCount ?: 0,
-                            inputTokens = item.inputTokens ?: 0,
-                            outputTokens = item.outputTokens ?: 0,
-                            actualCostUsd = item.actualCostUsd,
-                            estimatedCostUsd = item.estimatedCostUsd,
-                            recentlyActive = item.isActive,
-                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
-                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
-                            source = item.source,
-                            pinned = item.pinned,
-                            archived = item.archived,
-                            workingDirectory = item.cwd,
-                            gitBranch = item.gitBranch,
-                            gitRepoRoot = item.gitRepoRoot,
-                            pullRequestNumber = item.pullRequest?.number,
-                            pullRequestUrl = item.pullRequest?.url,
-                            pullRequestState = item.pullRequest?.state,
-                            pullRequestDraft = item.pullRequest?.draft == true,
-                        ),
+        allProfileSessionsUnavailable = false
+        try {
+            val result = connectionViewModel.listAllProfileSessions()
+            if (result == null) allProfileSessionsUnavailable = true
+            result?.fold(
+                onSuccess = { items ->
+                    allProfileSessionsUnavailable = false
+                    allProfileSessions = items.mapNotNull { item ->
+                        val owner = item.profile?.takeIf { it.isNotBlank() }
+                            ?: return@mapNotNull null
+                        ProfileSessionRow(
+                            profile = owner,
+                            session = com.hermesandroid.relay.data.ChatSession(
+                                sessionId = item.id,
+                                title = item.title ?: item.preview,
+                                model = item.model,
+                                messageCount = item.messageCount ?: 0,
+                                inputTokens = item.inputTokens ?: 0,
+                                outputTokens = item.outputTokens ?: 0,
+                                actualCostUsd = item.actualCostUsd,
+                                estimatedCostUsd = item.estimatedCostUsd,
+                                recentlyActive = item.isActive,
+                                startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
+                                lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
+                                source = item.source,
+                                pinned = item.pinned,
+                                archived = item.archived,
+                                workingDirectory = item.cwd,
+                                gitBranch = item.gitBranch,
+                                gitRepoRoot = item.gitRepoRoot,
+                                pullRequestNumber = item.pullRequest?.number,
+                                pullRequestUrl = item.pullRequest?.url,
+                                pullRequestState = item.pullRequest?.state,
+                                pullRequestDraft = item.pullRequest?.draft == true,
+                            ),
+                        )
+                    }
+                    chatViewModel.updateSessionActivityDirectory(
+                        rows = allProfileSessions.map { it.profile to it.session.sessionId },
                     )
-                }
-                chatViewModel.updateSessionActivityDirectory(
-                    rows = allProfileSessions.map { it.profile to it.session.sessionId },
-                )
-            },
-            onFailure = { error ->
-                if (showError) snackbarHostState.showSnackbar(
-                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
-                )
-            },
-        )
-        allProfileSessionsLoading = false
+                },
+                onFailure = { error ->
+                    allProfileSessionsUnavailable = true
+                    if (showError) snackbarHostState.showSnackbar(
+                        "Couldn't load all profiles: ${error.message ?: "unsupported"}",
+                    )
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            allProfileSessionsUnavailable = true
+            if (showError) snackbarHostState.showSnackbar(
+                "Couldn't load all profiles: ${e.message ?: "unsupported"}",
+            )
+        } finally {
+            allProfileSessionsLoading = false
+        }
     }
     val conversationBinding by chatViewModel.conversationBinding.collectAsState()
     val explicitBindingProfileName = conversationBinding.profileName
@@ -1123,6 +1166,8 @@ fun ChatScreen(
     val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
     val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val chatGatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val dashboardSignInRequired =
+        chatGatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
     val isGatewayTransport = remember(
         streamingEndpointPref, chatServerCapabilities, chatGatewayAvailability,
     ) {
@@ -1134,18 +1179,11 @@ fun ChatScreen(
     // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        val chatVisible = appForeground && chatReady
-        val visibilityChanged = chatViewModel.setChatVisible(chatVisible)
-        if (isGatewayTransport && chatVisible && !visibilityChanged) {
-            // Gateway availability can settle after Chat was already visible.
-            // Repeat the socket-only warmup for that edge; ordinary observation
-            // still cannot resume or activate a session.
-            chatViewModel.prewarmGateway()
-        }
-        if (isGatewayTransport && appForeground && chatReady) {
-            chatViewModel.refreshModelOptions()
-            chatViewModel.refreshReasoningSettings()
-        }
+        val visibleGatewayOwner = appForeground && chatReady && isGatewayTransport
+        chatViewModel.setChatVisible(visibleGatewayOwner)
+        // updateGatewayClient owns the one-time catalog/reasoning bootstrap for
+        // a newly-ready socket. Repeating it here created a duplicate cold-open
+        // RPC burst while the session directory was also trying to hydrate.
     }
     DisposableEffect(chatViewModel) {
         onDispose { chatViewModel.setChatVisible(false) }
@@ -2121,13 +2159,6 @@ fun ChatScreen(
         }
     }
 
-    // Refresh sessions when screen appears and API is ready
-    LaunchedEffect(chatReady) {
-        if (chatReady) {
-            chatViewModel.refreshSessions()
-        }
-    }
-
     // The drawer and composer share this screen's focus owner. Clear the
     // composer's input focus as soon as an open transition is committed so
     // menu activation, accessibility activation, and edge swipes all dismiss
@@ -2150,8 +2181,11 @@ fun ChatScreen(
     // row for the active session is preserved by ChatHandler.updateSessions.
     LaunchedEffect(drawerState.isOpen) {
         chatViewModel.setSessionActivityDrawerOpen(drawerState.isOpen)
-        if (drawerState.isOpen && chatReady) {
-            chatViewModel.refreshSessions()
+        // Session history is Dashboard HTTP state and remains usable while the
+        // independent Gateway socket is reconnecting. Never gate drawer-open
+        // refresh on chatReady; owner/generation fencing lives in ChatViewModel.
+        if (drawerState.isOpen) {
+            chatViewModel.refreshSessionsIfStale()
         }
     }
 
@@ -2496,6 +2530,10 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 activeProfileName = drawerProfileName ?: "default",
                 isLoading = isLoadingSessions,
+                loadFailed = sessionListUnavailable,
+                isLoadingMore = isLoadingMoreSessions,
+                hasMore = hasMoreSessions,
+                loadMoreFailed = sessionPageLoadFailed,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
@@ -2505,6 +2543,8 @@ fun ChatScreen(
                     .takeIf { supervised },
                 newChatEnabled = !supervised || supervisedPolicy.capabilities.newChat,
                 onRefresh = { chatViewModel.refreshSessions() },
+                onLoadMore = { chatViewModel.loadMoreSessions() },
+                onRetryLoadMore = { chatViewModel.retryLoadMoreSessions() },
                 onOpenBotMode = {
                     scope.launch { drawerState.close() }
                     onNavigateToBotMode()
@@ -2589,6 +2629,7 @@ fun ChatScreen(
                     !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
+                allProfileSessionsLoadFailed = allProfileSessionsUnavailable,
                 profileColors = profilePresentation.colors,
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
@@ -2915,90 +2956,45 @@ fun ChatScreen(
                             modifier = Modifier.animateContentSize(
                                 animationSpec = tween(durationMillis = 220),
                             ),
-                            verticalArrangement = if (isChatConnecting) {
-                                Arrangement.spacedBy(6.dp)
-                            } else {
-                                Arrangement.Top
-                            },
+                            verticalArrangement = Arrangement.Top,
                         ) {
-                            AnimatedContent(
-                                targetState = isChatConnecting,
-                                transitionSpec = {
-                                    (
-                                        fadeIn(tween(180)) +
-                                            slideInVertically(tween(220)) { it / 6 }
-                                        ) togetherWith (
-                                        fadeOut(tween(140)) +
-                                            slideOutVertically(tween(180)) { -it / 8 }
-                                        )
-                                },
-                                label = "chatHeaderIdentityTransition",
-                            ) { connecting ->
-                                if (connecting) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        ChatSkeletonLine(
-                                            modifier = Modifier.width(112.dp),
-                                            height = 15.dp,
-                                        )
-                                        ChatSkeletonLine(
-                                            modifier = Modifier.width(156.dp),
-                                            height = 11.dp,
-                                        )
-                                    }
+                            Text(
+                                text = if (supervised && !supervisedVisibility.showAgentIdentity) {
+                                    stringResource(R.string.screen_chat_label)
+                                } else if (agentDisplayName.isNotBlank()) {
+                                    agentDisplayName
                                 } else {
-                                    Column {
-                                        Text(
-                                            text = if (supervised && !supervisedVisibility.showAgentIdentity) {
-                                                stringResource(R.string.screen_chat_label)
-                                            } else if (agentDisplayName.isNotBlank()) {
-                                                agentDisplayName
-                                            } else {
-                                                stringResource(R.string.chat_agent_default)
-                                            },
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    stringResource(R.string.chat_agent_default)
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            // Keep the exact persisted identity visible while the
+                            // Gateway wakes. The existing loaded-content motion
+                            // animates status → confirmed model/personality without
+                            // replacing the whole header with anonymous skeletons.
+                            AnimatedContent(
+                                targetState = subtitleText,
+                                transitionSpec = { loadedContentTransform() },
+                                label = "chatHeaderSubtitle",
+                            ) { line ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = subtitleColor,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                    if (showStreamingState && animationEnabled) {
+                                        StreamingDots(
+                                            color = subtitleColor,
+                                            modifier = Modifier.clearAndSetSemantics { },
                                         )
-                                        // Context % lives in the per-session
-                                        // ContextMeterBar, and the approval-bypass
-                                        // marker now rides a compact ⚡ icon in the
-                                        // app bar actions (full detail in the agent
-                                        // sheet) instead of being appended here —
-                                        // so the subtitle stays a clean single line
-                                        // (`personality · model`) and no longer gets
-                                        // squeezed out by the trailing action icons.
-                                        // Fade the subtitle whenever it changes
-                                        // — most importantly the honest
-                                        // "Connected" → confirmed-model reveal
-                                        // once /api/config lands (the model
-                                        // arrives later than the identity, and
-                                        // used to pop in). AnimatedContent doesn't
-                                        // animate its initial state, so this only
-                                        // smooths real changes, not first paint.
-                                        AnimatedContent(
-                                            targetState = subtitleText,
-                                            transitionSpec = { loadedContentTransform() },
-                                            label = "chatHeaderSubtitle",
-                                        ) { line ->
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            Text(
-                                                text = line,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = subtitleColor,
-                                                maxLines = 1,
-                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                            )
-                                            if (showStreamingState && animationEnabled) {
-                                                StreamingDots(
-                                                    color = subtitleColor,
-                                                    modifier = Modifier.clearAndSetSemantics { },
-                                                )
-                                            }
-                                        }
-                                        }
                                     }
                                 }
                             }
@@ -3182,6 +3178,22 @@ fun ChatScreen(
                     onClick = if (supervised) null else ({ showContextSheet = true }),
                 )
             }
+            if (
+                shouldShowRetainedHistoryDashboardSignIn(
+                    hasMessages = messages.isNotEmpty(),
+                    gatewayAvailability = chatGatewayAvailability,
+                    apiReachable = apiReachable,
+                    supervised = supervised,
+                )
+            ) {
+                ChatDashboardSignInCard(
+                    dashboardRouteMovedHint = dashboardRouteMovedHint,
+                    onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             if (!supervised && showContextSheet) {
                 // Live audit of the exact extra context the agent will be
                 // injected with on the next turn (transparency / auditability).
@@ -3273,6 +3285,7 @@ fun ChatScreen(
                             ?: activeConnection
                                 ?.apiServerUrl
                                 ?.let(Connection::extractDefaultLabel),
+                        agentDisplayName = agentDisplayName,
                         chatMode = chatMode,
                         apiReachable = apiReachable,
                         chatReady = chatReady,
@@ -3280,7 +3293,7 @@ fun ChatScreen(
                         isLoadingSessions = isLoadingSessions,
                         gatewayAvailability = chatGatewayAvailability,
                         dashboardRouteMovedHint = dashboardRouteMovedHint,
-                        onNavigateToManage = onNavigateToManage,
+                        onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
                         onNavigateToConnections = onNavigateToConnections,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -3342,6 +3355,7 @@ fun ChatScreen(
                                             stringResource(R.string.chat_start_conversation)
                                         }
                                     ChatConnectState.Connecting -> stringResource(R.string.chat_connect_to_hermes_dots)
+                                    ChatConnectState.Unavailable -> stringResource(R.string.chat_disconnected_label)
                                     ChatConnectState.NeedsConnection -> stringResource(R.string.chat_needs_connection)
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -3409,6 +3423,31 @@ fun ChatScreen(
                                 }
 
                                 ChatConnectState.Connecting -> Unit
+
+                                ChatConnectState.Unavailable -> {
+                                    if (dashboardSignInRequired) {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        ChatDashboardSignInCard(
+                                            dashboardRouteMovedHint = dashboardRouteMovedHint,
+                                            onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    } else {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Button(
+                                            onClick = connectionViewModel::probeNow,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(stringResource(R.string.chat_retry))
+                                        }
+                                        TextButton(
+                                            onClick = onNavigateToConnections,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(stringResource(R.string.settings_connections))
+                                        }
+                                    }
+                                }
 
                                 ChatConnectState.Ready -> {
                                     Spacer(modifier = Modifier.height(20.dp))
@@ -4421,7 +4460,14 @@ fun ChatScreen(
                 null
             }
 
-            visibleChatFailure?.let { failure ->
+            visibleChatFailure
+                ?.takeIf { failure ->
+                    shouldPresentChatFailureDuringDashboardSignIn(
+                        failure = failure,
+                        dashboardSignInRequired = dashboardSignInRequired,
+                    )
+                }
+                ?.let { failure ->
                 val displayFailure = if (!supervised) failure else failure.copy(
                     model = failure.model.takeIf { supervisedVisibility.showModelName },
                     provider = failure.provider.takeIf { supervisedVisibility.showTechnicalRoute },
@@ -5021,6 +5067,7 @@ private fun ChatColdStartLoadingState(
     streamingIntensity: Float,
     toolCallBurst: Float,
     connectionLabel: String?,
+    agentDisplayName: String,
     chatMode: ChatMode,
     apiReachable: Boolean,
     chatReady: Boolean,
@@ -5028,13 +5075,14 @@ private fun ChatColdStartLoadingState(
     isLoadingSessions: Boolean,
     gatewayAvailability: GatewayAvailability,
     dashboardRouteMovedHint: String?,
-    onNavigateToManage: () -> Unit,
+    onNavigateToDashboardSignIn: () -> Unit,
     onNavigateToConnections: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val commands = remember(
         connectionLabel,
+        agentDisplayName,
         chatMode,
         apiReachable,
         chatReady,
@@ -5044,6 +5092,7 @@ private fun ChatColdStartLoadingState(
         buildChatLoadingCommands(
             context = context,
             connectionLabel = connectionLabel,
+            agentDisplayName = agentDisplayName,
             chatMode = chatMode,
             apiReachable = apiReachable,
             chatReady = chatReady,
@@ -5097,38 +5146,14 @@ private fun ChatColdStartLoadingState(
         val dashboardSignInRequired =
             gatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
         if (dashboardSignInRequired) {
-            ElevatedCard(
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                ),
+            ChatDashboardSignInCard(
+                dashboardRouteMovedHint = dashboardRouteMovedHint,
+                onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 16.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.dashboard_signin_required_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = dashboardRouteMovedHint?.let { route ->
-                            stringResource(R.string.dashboard_signin_route_hint, route)
-                        } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = onNavigateToManage,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.voice_settings_sign_in_via_manage))
-                    }
-                }
-            }
+            )
         } else {
             ChatLoadingCommandPanel(
                 commands = commands,
@@ -5142,9 +5167,47 @@ private fun ChatColdStartLoadingState(
     }
 }
 
+@Composable
+private fun ChatDashboardSignInCard(
+    dashboardRouteMovedHint: String?,
+    onNavigateToDashboardSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        ),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.dashboard_signin_required_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = dashboardRouteMovedHint?.let { route ->
+                    stringResource(R.string.dashboard_signin_route_hint, route)
+                } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onNavigateToDashboardSignIn,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.cw_sign_in_to_hermes))
+            }
+        }
+    }
+}
+
 private fun buildChatLoadingCommands(
     context: android.content.Context,
     connectionLabel: String?,
+    agentDisplayName: String,
     chatMode: ChatMode,
     apiReachable: Boolean,
     chatReady: Boolean,
@@ -5173,12 +5236,16 @@ private fun buildChatLoadingCommands(
         ),
         ChatLoadingCommand(
             state = when {
-                apiReachable -> ChatLoadingCommandState.Done
+                chatReady -> ChatLoadingCommandState.Done
                 hasConnection -> ChatLoadingCommandState.Active
                 else -> ChatLoadingCommandState.Pending
             },
-            command = "/hermes ping",
-            detail = if (apiReachable) "online" else context.getString(R.string.chat_contacting_server),
+            command = "/gateway wake",
+            detail = if (chatReady) {
+                "${agentDisplayName.ifBlank { "Hermes" }} online"
+            } else {
+                "waking ${agentDisplayName.ifBlank { "Hermes" }}"
+            },
         ),
         ChatLoadingCommand(
             state = when {
@@ -5186,8 +5253,13 @@ private fun buildChatLoadingCommands(
                 apiReachable || isLoadingHistory || isLoadingSessions -> ChatLoadingCommandState.Active
                 else -> ChatLoadingCommandState.Pending
             },
-            command = "/chat hydrate",
-            detail = if (chatReady) "ready via $chatModeDetail" else "loading conversation",
+            command = "/sessions load",
+            detail = when {
+                isLoadingSessions -> context.getString(R.string.drawer_loading_sessions)
+                isLoadingHistory -> context.getString(R.string.chat_loading_messages)
+                chatReady -> "ready via $chatModeDetail"
+                else -> "waiting for gateway"
+            },
         ),
     )
 }

@@ -16,6 +16,7 @@ import { certificateDerToPem, comparePins, extractSpkiSha256, isSecureUrl, peerC
 import type { GatewayEvent } from '../gatewayTypes.js'
 import { CircularBuffer } from '../lib/circularBuffer.js'
 import { getSession, saveSession } from '../remoteSessions.js'
+import { assertDesktopCompatibleRelayUrl } from '../pairingQr.js'
 import { installWindowsSystemCaTrust } from '../windowsSystemCa.js'
 
 import type { Transport } from './Transport.js'
@@ -258,6 +259,7 @@ export class RelayTransport extends EventEmitter implements Transport {
 
   constructor(cfg: RelayTransportConfig) {
     super()
+    assertDesktopCompatibleRelayUrl(cfg.url)
     this.setMaxListeners(0)
     this.cfg = cfg
     this.wsFactory = cfg.wsFactory ?? defaultWSFactory

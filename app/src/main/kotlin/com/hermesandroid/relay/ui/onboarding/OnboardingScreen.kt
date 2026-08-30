@@ -124,7 +124,7 @@ private val OnboardingAccent = Color(0xFF7B55F6)
  *     Hermes API/dashboard features first, Relay-only power tools second.
  *  2. **Connect page** — embeds the shared [ConnectionWizard] so onboarding
  *     uses the exact same Standard API/dashboard and optional Relay pairing
- *     flow as Settings → Connections.
+ *     flow as Settings → Gateways.
  *
  * The previous separate "ConnectPage" + "RelayPage" pair has been removed —
  * it discarded the QR's relay block, never applied per-channel grants, never
@@ -177,6 +177,7 @@ fun OnboardingScreen(
     ) { granted ->
         notificationsPermitted =
             granted || AppPermissionStatusProbe.snapshot(context).notificationsPermitted
+        connectionViewModel.setNotifyTurnComplete(notificationsPermitted)
     }
 
     Surface(
@@ -288,7 +289,14 @@ fun OnboardingScreen(
                                 )
                             },
                             onReviewPermissions = onOpenPermissions,
-                            onFinish = onComplete,
+                            onFinish = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    !notificationsPermitted
+                                ) {
+                                    connectionViewModel.setNotifyTurnComplete(false)
+                                }
+                                onComplete()
+                            },
                         )
                     }
                 }

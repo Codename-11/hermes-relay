@@ -300,11 +300,13 @@ Resulting QR (three endpoints, strict-priority):
 **Strict priority** — priority 0 wins whenever it is reachable. Reachability
 only breaks ties between candidates that share a priority. Operator overrides
 can still promote a role deliberately, but generated defaults prefer secure
-routes and use LAN as fallback.
+routes and use LAN as fallback. Supported priorities probe speculatively in
+parallel and are consumed in strict order, so a dead public route does not add
+its full timeout before Tailscale/LAN probing begins.
 
 The phone re-probes on every `ConnectivityManager.onAvailable` /
 `onLost`, with a 60s cache per candidate so rapid network flaps don't
-hammer the network with `HEAD /health` probes.
+hammer the network with `GET` health probes.
 
 Force-override from the pair command: `--mode lan` (LAN only),
 `--mode tailscale` (Tailscale only), `--mode public` (requires
