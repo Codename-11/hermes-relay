@@ -152,4 +152,15 @@ class RelayErrorClassifierTest {
         assertEquals("Microphone unavailable", err.title)
         assertTrue(err.retryable)
     }
+
+    @Test
+    fun microphoneOwnershipConflictMapsToRetryableMicUnavailableHint() {
+        val err = classifyError(
+            IllegalStateException("Microphone is in use by another voice feature"),
+            context = "record",
+        )
+
+        assertEquals("Microphone unavailable", err.title)
+        assertTrue(err.retryable)
+    }
 }
