@@ -100,6 +100,47 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_cross_client_observer_never_claims_or_interrupts_producer(self) -> None:
+        fixture, base_url = await self.start("cross_client_observation")
+        producer, _ = await self.connect(base_url)
+        await self.rpc(producer, 1, "session.resume", {"session_id": fixture.scenario.stored_session_id})
+        await producer.receive_json()
+        await self.rpc(producer, 2, "prompt.submit", {"text": "producer-only content"})
+        producer_frames = await self.frames_until(
+            producer,
+            lambda frame: frame.get("params", {}).get("type") == "message.delta",
+        )
+
+        observer, _ = await self.connect(base_url)
+        await self.rpc(observer, 3, "session.active_list")
+        active = (await observer.receive_json())["result"]["sessions"]
+        self.assertEqual("working", active[0]["status"])
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+            params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
+        ) as response:
+            self.assertEqual(200, response.status)
+            self.assertIsInstance((await response.json())["messages"], list)
+        await observer.close()
+
+        producer_frames += await self.frames_until(
+            producer,
+            lambda frame: frame.get("params", {}).get("type") == "message.complete",
+        )
+        self.assertIn(
+            "message.complete",
+            [frame.get("params", {}).get("type") for frame in producer_frames],
+        )
+        async with self.session.get(f"{base_url}/__fixture__/evidence") as response:
+            evidence = await response.json()
+        observer_methods = [
+            entry.get("method")
+            for entry in evidence["entries"]
+            if entry.get("kind") == "rpc" and entry.get("connection") == 2
+        ]
+        self.assertEqual(["session.active_list"], observer_methods)
+        self.assertNotIn("session.interrupt", observer_methods)
+
     async def test_rapid_chunks_tools_and_interims_keep_wire_order(self) -> None:
         _, base_url = await self.start("rapid_tools_interims")
         ws, _ = await self.connect(base_url)
@@ -265,6 +306,7 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_lifecycle",
             "active_status_profile_scope",
             "active_status_unsupported",
+            "cross_client_observation",
             "ordinary_turn",
             "rapid_tools_interims",
             "terminal_gap_activate",
@@ -303,6 +345,10 @@ class ScenarioTestCase(unittest.TestCase):
         self.assertEqual(
             ("gateway.settled_session_info",),
             load_scenario("terminal_gap_session_info").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.message_complete", "gateway.session_active_list"),
+            load_scenario("cross_client_observation").contract_requirements,
         )
 
     def test_tls_arguments_must_be_paired(self) -> None:

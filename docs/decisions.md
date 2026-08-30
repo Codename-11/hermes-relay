@@ -3982,3 +3982,36 @@ disappearance, client-side profile isolation, and method-not-found; physical
 and current-host certification remains tracked in `TODO.md`. An upstream
 profile field/filter or explicitly owned aggregate activity route would remove
 the remaining ambiguity for multi-profile clients.
+
+---
+
+## ADR 69 — Passive Android observation never attaches another client's Gateway turn
+
+**Status:** Accepted (2026-08-28).
+
+**Context.** `session.resume` and `session.activate` are live-runtime attachment
+operations, not read-only subscriptions. Android previously called
+`session.resume` while opening or foregrounding Chat and after loading a saved
+session's history. When Desktop/TUI already owned a running turn, that passive
+prewarm could rebind the runtime transport to Android. A later Android socket,
+route, or client teardown could then strand the producer or promote the foreign
+turn into an Android `GatewayTurn` whose cancellation sends `session.interrupt`.
+The issue was distinct from the earlier stale-view and missing-terminal recovery
+paths, which concern exact Android-owned checkpoints.
+
+**Decision.** Ordinary visibility, foreground restoration, Idle-socket recovery,
+and saved-session selection establish only the shared Gateway socket. They use
+profile-scoped REST history plus process-wide `session.active_list`; while an
+unowned row with the selected durable id is live, Android performs bounded
+history refreshes and one final read after settlement. These observer paths send
+no `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`.
+Exact Android-owned checkpoints retain `session.activate` with durable-resume
+fallback, and explicit send or session-config actions may resume because the user
+is intentionally taking control of that destination.
+
+**Consequences.** Opening Android cannot replace, stop, or later cancel a turn
+already running in Desktop/TUI. Live token frames remain with the producing
+client; Android observes durable progress and final history without inventing a
+multi-subscriber Gateway contract. The first explicit Android mutation may pay
+the resume latency that passive prewarm previously hid. Cross-client fixtures
+and Android lifecycle coverage enforce the no-control-RPC observation boundary.

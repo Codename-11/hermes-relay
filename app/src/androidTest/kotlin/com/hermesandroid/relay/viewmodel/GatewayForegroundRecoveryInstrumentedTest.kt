@@ -239,6 +239,60 @@ class GatewayForegroundRecoveryInstrumentedTest {
         assertEquals(0, fixture.requestsTo("/v1/chat/completions"))
     }
 
+    @Test
+    fun desktopOwnedTurn_remainsReadOnlyAcrossAndroidForegroundLifecycle() {
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "session.interrupt",
+            "prompt.submit",
+        )
+        val baseline = controlMethods.associateWith(fixture::rpcCount)
+        val baselineActiveList = fixture.rpcCount("session.active_list")
+        fixture.activeSessionStatus = "working"
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val okHttp = OkHttpClient()
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = fixture.server.url("/").toString().trimEnd('/'),
+                okHttpClient = okHttp,
+            ),
+            okHttpClient = okHttp,
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+            reconnectJitterUnit = { 0.0 },
+        )
+        viewModel.setChatTurnCheckpointStore(null)
+        viewModel.updateGatewayClient(gatewayClient)
+
+        viewModel.setChatVisible(true)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        viewModel.setChatVisible(false)
+        viewModel.setChatVisible(true)
+        fixture.awaitRpcCount("session.active_list", baselineActiveList + 1)
+
+        controlMethods.forEach { method ->
+            assertEquals(
+                "passive lifecycle sent $method",
+                baseline.getValue(method),
+                fixture.rpcCount(method),
+            )
+        }
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        assertEquals(
+            "observer teardown interrupted the Desktop turn",
+            baseline.getValue("session.interrupt"),
+            fixture.rpcCount("session.interrupt"),
+        )
+    }
+
     private companion object {
         const val STORED_SESSION_ID = "20260821_120000_fixture"
         const val LIVE_SESSION_ID = "fixture-live-1"
@@ -263,6 +317,9 @@ internal class AndroidGatewayContractFixture {
     @Volatile
     var recoveryRunning = false
 
+    @Volatile
+    var activeSessionStatus: String? = null
+
     private val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             sockets.add(webSocket)
@@ -282,6 +339,18 @@ internal class AndroidGatewayContractFixture {
                 "session.activate" -> sessionSnapshot(
                     (params["session_id"] as? JsonPrimitive)?.contentOrNull ?: "fixture-live-1",
                 )
+                "session.active_list" -> buildJsonObject {
+                    put("sessions", kotlinx.serialization.json.buildJsonArray {
+                        activeSessionStatus?.let { status ->
+                            add(buildJsonObject {
+                                put("id", LIVE_SESSION_ID)
+                                put("session_key", STORED_SESSION_ID)
+                                put("status", status)
+                                put("last_active", 1.0)
+                            })
+                        }
+                    })
+                }
                 "prompt.submit", "session.interrupt" -> buildJsonObject { put("ok", true) }
                 else -> JsonObject(emptyMap())
             }
@@ -345,6 +414,15 @@ internal class AndroidGatewayContractFixture {
         error("Gateway RPC $method not observed; saw ${rpcLog.map { it.first }}")
     }
 
+    fun awaitRpcCount(method: String, count: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            if (rpcCount(method) >= count) return
+            Thread.sleep(20)
+        }
+        error("Gateway RPC $method count $count not observed; saw ${rpcLog.map { it.first }}")
+    }
+
     fun requestsTo(path: String): Int = requestPaths.count { it.startsWith(path) }
 
     fun rpcCount(method: String): Int = rpcLog.count { it.first == method }
@@ -352,5 +430,10 @@ internal class AndroidGatewayContractFixture {
     fun shutdown() {
         allSockets.forEach { socket -> runCatching { socket.close(1001, "teardown") } }
         runCatching { server.shutdown() }
+    }
+
+    private companion object {
+        const val STORED_SESSION_ID = "20260821_120000_fixture"
+        const val LIVE_SESSION_ID = "fixture-live-1"
     }
 }

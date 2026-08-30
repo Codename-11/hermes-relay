@@ -1,0 +1,40 @@
+{
+  "name": "cross_client_observation",
+  "live_session_id": "fixture-desktop-live",
+  "stored_session_id": "fixture-shared-session",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete",
+    "gateway.session_active_list"
+  ],
+  "initial_history": [],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Desktop still owns this turn."}},
+        {"op": "sleep", "milliseconds": 250},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Desktop prompt.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "Desktop still owns this turn.", "timestamp": 2.0, "finish_reason": "stop"}
+          ]
+        },
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "Desktop still owns this turn.", "status": "complete"}}
+      ]
+    }
+  ],
+  "active_list": {
+    "supported": true,
+    "snapshots": [
+      [
+        {"id": "fixture-desktop-live", "session_key": "fixture-shared-session", "status": "working", "current": false}
+      ],
+      [
+        {"id": "fixture-desktop-live", "session_key": "fixture-shared-session", "status": "idle", "current": false}
+      ]
+    ]
+  }
+}
