@@ -493,6 +493,17 @@
     <string name="endpoints_preferred">Предпочтительный</string>
     <string name="endpoints_automatic">Автоматический</string>
     <string name="endpoints_current_route">Текущий маршрут: %1$s (%2$s)</string>
+    <string name="endpoints_no_active_fallback">Резервный маршрут сейчас не выбран.</string>
+    <string name="endpoints_selection_reason">Приоритет %1$d (0 — наивысший) · %2$s</string>
+    <string name="endpoints_reachable_now">Доступен сейчас</string>
+    <string name="endpoints_last_check_failed">Последняя проверка завершилась ошибкой</string>
+    <string name="endpoints_reachability_not_checked">Доступность не проверена</string>
+    <string name="endpoints_security_application_tls">TLS на уровне приложения</string>
+    <string name="endpoints_security_tailscale_overlay">Зашифровано через Tailscale · без TLS на уровне приложения</string>
+    <string name="endpoints_security_wireguard_overlay">Зашифровано через WireGuard · без TLS на уровне приложения</string>
+    <string name="endpoints_security_secure_link">Зашифровано через Hermes Secure Link</string>
+    <string name="endpoints_security_private_plain">Частная сеть · без TLS на уровне приложения</string>
+    <string name="endpoints_security_public_plain">Публичный маршрут не зашифрован</string>
     <string name="endpoints_cancel_manual_switch">Отменить ручной переключатель — вернуться к %1$s</string>
     <string name="endpoints_stop_preferring">Остановить предпочтение — вернуться к автоматическому</string>
     <string name="endpoints_checking">Проверка…</string>
@@ -2328,6 +2339,8 @@
     <string name="active_section_no_response_from_relay">Нет ответа от Relay</string>
     <string name="active_section_no_route_reachable">Нет доступных маршрутов</string>
     <string name="active_section_no_routes_answered_probe">Маршруты не ответили на запрос</string>
+    <string name="active_section_no_reachable_route_title">Нет доступного маршрута Gateway</string>
+    <string name="active_section_no_reachable_route_body">Ни один из настроенных маршрутов Gateway не ответил. Включите Tailscale, Wi-Fi или мобильную передачу данных и повторите проверку. Разверните маршрут ниже, чтобы увидеть результаты Dashboard, API и Relay.</string>
     <string name="active_section_not_advertised">Не объявлено</string>
     <string name="active_section_not_checked">Не проверено</string>
     <string name="active_section_not_configured">Не настроено</string>

@@ -499,6 +499,17 @@
     <string name="endpoints_preferred">首选</string>
     <string name="endpoints_automatic">自动</string>
     <string name="endpoints_current_route">当前路由：%1$s（%2$s）</string>
+    <string name="endpoints_no_active_fallback">当前未选择备用路由。</string>
+    <string name="endpoints_selection_reason">优先级 %1$d（0 最高）· %2$s</string>
+    <string name="endpoints_reachable_now">当前可达</string>
+    <string name="endpoints_last_check_failed">上次检查失败</string>
+    <string name="endpoints_reachability_not_checked">尚未检查可达性</string>
+    <string name="endpoints_security_application_tls">应用层 TLS</string>
+    <string name="endpoints_security_tailscale_overlay">由 Tailscale 加密 · 无应用层 TLS</string>
+    <string name="endpoints_security_wireguard_overlay">由 WireGuard 加密 · 无应用层 TLS</string>
+    <string name="endpoints_security_secure_link">由 Hermes Secure Link 加密</string>
+    <string name="endpoints_security_private_plain">专用网络 · 无应用层 TLS</string>
+    <string name="endpoints_security_public_plain">公共路由未加密</string>
     <string name="endpoints_cancel_manual_switch">取消手动切换——恢复到 %1$s</string>
     <string name="endpoints_stop_preferring">取消首选——恢复到自动</string>
     <string name="endpoints_checking">检测中…</string>
@@ -2316,6 +2327,8 @@
     <string name="active_section_no_response_from_relay">Relay 无响应</string>
     <string name="active_section_no_route_reachable">无可用路由</string>
     <string name="active_section_no_routes_answered_probe">没有路由响应探测</string>
+    <string name="active_section_no_reachable_route_title">没有可达的 Gateway 路由</string>
+    <string name="active_section_no_reachable_route_body">配置的 Gateway 路由均未响应。请开启 Tailscale、Wi-Fi 或移动数据，然后重新检查。展开下方路由可查看 Dashboard、API 和 Relay 的结果。</string>
     <string name="active_section_not_advertised">未公布</string>
     <string name="active_section_not_checked">未检查</string>
     <string name="active_section_not_configured">未配置</string>

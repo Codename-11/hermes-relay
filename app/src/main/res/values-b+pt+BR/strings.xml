@@ -470,6 +470,17 @@
     <string name="endpoints_preferred">Preferencial</string>
     <string name="endpoints_automatic">Automática</string>
     <string name="endpoints_current_route">Rota atual: %1$s (%2$s)</string>
+    <string name="endpoints_no_active_fallback">Nenhuma rota alternativa está selecionada no momento.</string>
+    <string name="endpoints_selection_reason">Prioridade %1$d (0 é a mais alta) · %2$s</string>
+    <string name="endpoints_reachable_now">Acessível agora</string>
+    <string name="endpoints_last_check_failed">A última verificação falhou</string>
+    <string name="endpoints_reachability_not_checked">A acessibilidade não foi verificada</string>
+    <string name="endpoints_security_application_tls">TLS da aplicação</string>
+    <string name="endpoints_security_tailscale_overlay">Criptografado pelo Tailscale · sem TLS da aplicação</string>
+    <string name="endpoints_security_wireguard_overlay">Criptografado pelo WireGuard · sem TLS da aplicação</string>
+    <string name="endpoints_security_secure_link">Criptografado pelo Hermes Secure Link</string>
+    <string name="endpoints_security_private_plain">Rede privada · sem TLS da aplicação</string>
+    <string name="endpoints_security_public_plain">A rota pública não está criptografada</string>
     <string name="endpoints_cancel_manual_switch">Cancelar troca manual — voltar para %1$s</string>
     <string name="endpoints_stop_preferring">Parar de preferir — voltar ao modo automático</string>
     <string name="endpoints_checking">Verificando…</string>
@@ -2225,6 +2236,8 @@
     <string name="active_section_no_response_from_relay">Sem resposta do relay</string>
     <string name="active_section_no_route_reachable">Nenhuma rota acessível</string>
     <string name="active_section_no_routes_answered_probe">Nenhuma rota respondeu ao teste</string>
+    <string name="active_section_no_reachable_route_title">Nenhuma rota do Gateway está acessível</string>
+    <string name="active_section_no_reachable_route_body">Nenhuma das rotas configuradas do Gateway respondeu. Ative o Tailscale, o Wi-Fi ou os dados móveis e verifique novamente. Expanda uma rota abaixo para ver os resultados do Dashboard, da API e do Relay.</string>
     <string name="active_section_not_advertised">Não anunciado</string>
     <string name="active_section_not_checked">Não verificado</string>
     <string name="active_section_not_configured">Não configurado</string>

@@ -499,6 +499,17 @@
     <string name="endpoints_preferred">Bevorzugt</string>
     <string name="endpoints_automatic">Automatisch</string>
     <string name="endpoints_current_route">Aktuelle Route: %1$s (%2$s)</string>
+    <string name="endpoints_no_active_fallback">Derzeit ist keine Ausweichroute ausgewählt.</string>
+    <string name="endpoints_selection_reason">Priorität %1$d (0 ist am höchsten) · %2$s</string>
+    <string name="endpoints_reachable_now">Jetzt erreichbar</string>
+    <string name="endpoints_last_check_failed">Letzte Prüfung fehlgeschlagen</string>
+    <string name="endpoints_reachability_not_checked">Erreichbarkeit nicht geprüft</string>
+    <string name="endpoints_security_application_tls">TLS auf Anwendungsebene</string>
+    <string name="endpoints_security_tailscale_overlay">Durch Tailscale verschlüsselt · kein TLS auf Anwendungsebene</string>
+    <string name="endpoints_security_wireguard_overlay">Durch WireGuard verschlüsselt · kein TLS auf Anwendungsebene</string>
+    <string name="endpoints_security_secure_link">Durch Hermes Secure Link verschlüsselt</string>
+    <string name="endpoints_security_private_plain">Privates Netzwerk · kein TLS auf Anwendungsebene</string>
+    <string name="endpoints_security_public_plain">Öffentliche Route ist nicht verschlüsselt</string>
     <string name="endpoints_cancel_manual_switch">Manuelle Umschaltung abbrechen — zurück zu %1$s</string>
     <string name="endpoints_stop_preferring">Nicht mehr bevorzugen — zurück zu Automatisch</string>
     <string name="endpoints_checking">Prüfung läuft…</string>
@@ -2323,6 +2334,8 @@
     <string name="active_section_no_response_from_relay">Keine Antwort vom Relay</string>
     <string name="active_section_no_route_reachable">Keine Route erreichbar</string>
     <string name="active_section_no_routes_answered_probe">Keine Route hat auf die Prüfung geantwortet</string>
+    <string name="active_section_no_reachable_route_title">Keine erreichbare Gateway-Route</string>
+    <string name="active_section_no_reachable_route_body">Keine der konfigurierten Gateway-Routen hat geantwortet. Aktiviere Tailscale, WLAN oder mobile Daten und prüfe erneut. Klappe unten eine Route auf, um die Ergebnisse für Dashboard, API und Relay anzuzeigen.</string>
     <string name="active_section_not_advertised">Nicht angekündigt</string>
     <string name="active_section_not_checked">Nicht geprüft</string>
     <string name="active_section_not_configured">Nicht konfiguriert</string>

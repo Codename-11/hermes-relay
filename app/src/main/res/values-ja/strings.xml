@@ -499,6 +499,17 @@
     <string name="endpoints_preferred">好ましい</string>
     <string name="endpoints_automatic">自動</string>
     <string name="endpoints_current_route">現在のルート: %1$s (%2$s)</string>
+    <string name="endpoints_no_active_fallback">現在選択されているフォールバックルートはありません。</string>
+    <string name="endpoints_selection_reason">優先度 %1$d（0 が最高）· %2$s</string>
+    <string name="endpoints_reachable_now">現在到達可能</string>
+    <string name="endpoints_last_check_failed">前回の確認に失敗しました</string>
+    <string name="endpoints_reachability_not_checked">到達可能性は未確認</string>
+    <string name="endpoints_security_application_tls">アプリケーション TLS</string>
+    <string name="endpoints_security_tailscale_overlay">Tailscale で暗号化 · アプリケーション TLS なし</string>
+    <string name="endpoints_security_wireguard_overlay">WireGuard で暗号化 · アプリケーション TLS なし</string>
+    <string name="endpoints_security_secure_link">Hermes Secure Link で暗号化</string>
+    <string name="endpoints_security_private_plain">プライベートネットワーク · アプリケーション TLS なし</string>
+    <string name="endpoints_security_public_plain">公開ルートは暗号化されていません</string>
     <string name="endpoints_cancel_manual_switch">手動切り替えをキャンセル — %1$s に戻る</string>
     <string name="endpoints_stop_preferring">優先をやめて自動に戻す</string>
     <string name="endpoints_checking">チェック中…</string>
@@ -2332,6 +2343,8 @@
     <string name="active_section_no_response_from_relay">Relayからの応答がありません</string>
     <string name="active_section_no_route_reachable">到達可能なルートがありません</string>
     <string name="active_section_no_routes_answered_probe">プローブに応答したルートはありませんでした</string>
+    <string name="active_section_no_reachable_route_title">到達可能な Gateway ルートがありません</string>
+    <string name="active_section_no_reachable_route_body">構成済みの Gateway ルートはいずれも応答しませんでした。Tailscale、Wi-Fi、またはモバイルデータ通信を有効にして、もう一度確認してください。下のルートを展開すると、Dashboard、API、Relay の結果を確認できます。</string>
     <string name="active_section_not_advertised">宣伝されていない</string>
     <string name="active_section_not_checked">未チェック</string>
     <string name="active_section_not_configured">未設定</string>

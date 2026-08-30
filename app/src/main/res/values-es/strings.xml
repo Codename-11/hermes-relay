@@ -450,6 +450,17 @@
     <string name="endpoints_preferred">Privilegiado</string>
     <string name="endpoints_automatic">Automático</string>
     <string name="endpoints_current_route">Ruta actual: %1$s (%2$s)</string>
+    <string name="endpoints_no_active_fallback">Actualmente no hay ninguna ruta alternativa seleccionada.</string>
+    <string name="endpoints_selection_reason">Prioridad %1$d (0 es la más alta) · %2$s</string>
+    <string name="endpoints_reachable_now">Accesible ahora</string>
+    <string name="endpoints_last_check_failed">La última comprobación falló</string>
+    <string name="endpoints_reachability_not_checked">Accesibilidad no comprobada</string>
+    <string name="endpoints_security_application_tls">TLS de aplicación</string>
+    <string name="endpoints_security_tailscale_overlay">Cifrado por Tailscale · sin TLS de aplicación</string>
+    <string name="endpoints_security_wireguard_overlay">Cifrado por WireGuard · sin TLS de aplicación</string>
+    <string name="endpoints_security_secure_link">Cifrado por Hermes Secure Link</string>
+    <string name="endpoints_security_private_plain">Red privada · sin TLS de aplicación</string>
+    <string name="endpoints_security_public_plain">La ruta pública no está cifrada</string>
     <string name="endpoints_cancel_manual_switch">Cancelar el cambio manual: volver a %1$s</string>
     <string name="endpoints_stop_preferring">Dejar de preferir: volver a automático</string>
     <string name="endpoints_checking">De cheques…</string>
@@ -2130,6 +2141,8 @@
     <string name="active_section_no_response_from_relay">No hay respuesta de relay</string>
     <string name="active_section_no_route_reachable">No hay ruta accesible</string>
     <string name="active_section_no_routes_answered_probe">Ninguna ruta respondió a la sonda.</string>
+    <string name="active_section_no_reachable_route_title">No hay ninguna ruta de Gateway accesible</string>
+    <string name="active_section_no_reachable_route_body">Ninguna de las rutas de Gateway configuradas respondió. Activa Tailscale, Wi-Fi o los datos móviles y vuelve a comprobar. Despliega una ruta abajo para ver los resultados de Dashboard, API y Relay.</string>
     <string name="active_section_not_advertised">No anunciado</string>
     <string name="active_section_not_checked">No comprobado</string>
     <string name="active_section_not_configured">No configurado</string>
