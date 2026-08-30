@@ -723,6 +723,73 @@ class RelayErrorTests(PluginApiTestCase):
         self.assertEqual(resp.json(), {"detail": {"error": "not found"}})
 
 
+class PairingRouteTests(PluginApiTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        import tempfile
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        original = plugin_api._hermes_home
+        plugin_api._hermes_home = lambda: Path(self._tmpdir.name)
+        self.addCleanup(lambda: setattr(plugin_api, "_hermes_home", original))
+
+    def test_dashboard_origin_and_public_route_flow_to_relay_mint(self) -> None:
+        proxy = AsyncMock(return_value={"ok": True})
+        with patch.object(plugin_api, "_proxy", proxy), patch(
+            "plugin.pair.read_server_config",
+            return_value={"enabled": False, "host": "127.0.0.1", "port": 8642, "tls": False},
+        ), patch(
+            "plugin.pair.read_relay_config",
+            return_value={"host": "0.0.0.0", "port": 8767, "tls": False},
+        ):
+            response = self.client.post("/pairing", json={
+                "mode": "public",
+                "public_url": "https://public.example/base",
+                "dashboard_url": "https://public.example/base/",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = proxy.await_args.kwargs["json"]
+        self.assertEqual(forwarded["dashboard_url"], "https://public.example/base")
+        self.assertFalse(forwarded.get("legacy_direct_relay", False))
+        self.assertEqual(forwarded["endpoints"], [{
+            "role": "public",
+            "priority": 0,
+            "recommended": False,
+            "dashboard": {"url": "https://public.example/base"},
+            "relay": {
+                "url": "wss://public.example/base/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }])
+
+    def test_pinned_explicit_legacy_state_is_forwarded(self) -> None:
+        self.client.put("/remote-access/public-url", json={
+            "url": "https://legacy.example/relay",
+            "legacy_direct_relay": True,
+        })
+        proxy = AsyncMock(return_value={"ok": True})
+        with patch.object(plugin_api, "_proxy", proxy), patch(
+            "plugin.pair.read_server_config",
+            return_value={"enabled": False, "host": "127.0.0.1", "port": 8642, "tls": False},
+        ), patch(
+            "plugin.pair.read_relay_config",
+            return_value={"host": "0.0.0.0", "port": 8767, "tls": False},
+        ):
+            response = self.client.post("/pairing", json={"mode": "public"})
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = proxy.await_args.kwargs["json"]
+        self.assertTrue(forwarded["legacy_direct_relay"])
+        roles = [candidate["role"] for candidate in forwarded["endpoints"]]
+        self.assertEqual(roles, ["public_legacy", "legacy_direct"])
+        self.assertEqual(
+            forwarded["endpoints"][0]["relay"]["url"],
+            "wss://legacy.example/relay",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Remote Access tab — tailscale helper, public URL state, /probe
 # ---------------------------------------------------------------------------
@@ -746,14 +813,20 @@ class RemoteAccessStateTests(PluginApiTestCase):
 
     def test_put_public_url_persists_then_get_reads(self) -> None:
         resp = self.client.put(
-            "/remote-access/public-url", json={"url": "https://relay.example.com"}
+            "/remote-access/public-url",
+            json={
+                "url": "https://relay.example.com/legacy",
+                "legacy_direct_relay": True,
+            },
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["url"], "https://relay.example.com")
+        self.assertEqual(resp.json()["url"], "https://relay.example.com/legacy")
+        self.assertTrue(resp.json()["legacy_direct_relay"])
 
         resp = self.client.get("/remote-access/public-url")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["url"], "https://relay.example.com")
+        self.assertEqual(resp.json()["url"], "https://relay.example.com/legacy")
+        self.assertTrue(resp.json()["legacy_direct_relay"])
 
     def test_put_public_url_clears_on_empty(self) -> None:
         self.client.put("/remote-access/public-url", json={"url": "https://a.example.com"})
@@ -774,6 +847,21 @@ class RemoteAccessStateTests(PluginApiTestCase):
     def test_put_public_url_rejects_non_string(self) -> None:
         resp = self.client.put("/remote-access/public-url", json={"url": 42})
         self.assertEqual(resp.status_code, 400)
+
+    def test_put_public_url_rejects_credentials_and_non_boolean_legacy_flag(self) -> None:
+        credentialed = self.client.put(
+            "/remote-access/public-url", json={"url": "https://user:secret@example.com"}
+        )
+        self.assertEqual(credentialed.status_code, 400)
+        invalid_flag = self.client.put(
+            "/remote-access/public-url",
+            json={"url": "https://example.com", "legacy_direct_relay": "true"},
+        )
+        self.assertEqual(invalid_flag.status_code, 400)
+        implicit_legacy_path = self.client.put(
+            "/remote-access/public-url", json={"url": "https://example.com/relay"}
+        )
+        self.assertEqual(implicit_legacy_path.status_code, 400)
 
 
 class RemoteAccessProbeTests(PluginApiTestCase):
@@ -816,6 +904,54 @@ class RemoteAccessProbeTests(PluginApiTestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_structured_probe_uses_surface_specific_health_paths(self) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return httpx.Response(200, json={"ok": True})
+
+        _install_mock_transport(self, handler)
+        candidates = [
+            {"role": "public", "priority": 1, "surface": "dashboard", "url": "https://example.com/base"},
+            {"role": "public", "priority": 1, "surface": "relay", "url": "wss://example.com/base/api/plugins/hermes-relay/transport"},
+            {"role": "public", "priority": 1, "surface": "api", "url": "https://api.example.com"},
+        ]
+        response = self.client.post(
+            "/remote-access/probe", json={"candidates": candidates}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen, [
+            "https://example.com/base/api/health",
+            "https://example.com/base/api/plugins/hermes-relay/transport/health",
+            "https://api.example.com/health",
+        ])
+        for candidate, result in zip(candidates, response.json()["results"], strict=True):
+            self.assertEqual(result["role"], candidate["role"])
+            self.assertEqual(result["priority"], candidate["priority"])
+            self.assertEqual(result["surface"], candidate["surface"])
+            self.assertEqual(result["url"], candidate["url"])
+            self.assertTrue(result["reachable"])
+
+    def test_structured_probe_rejects_credentials_without_network_call(self) -> None:
+        captured = _install_mock_transport(
+            self, lambda request: (_ for _ in ()).throw(AssertionError(request.url))
+        )
+        response = self.client.post(
+            "/remote-access/probe",
+            json={"candidates": [{
+                "role": "public",
+                "priority": 0,
+                "surface": "dashboard",
+                "url": "https://user:secret@example.com",
+            }]},
+        )
+        result = response.json()["results"][0]
+        self.assertFalse(result["reachable"])
+        self.assertIn("invalid", result["error"])
+        self.assertEqual(captured, [])
+
 
 class RemoteAccessStatusTests(PluginApiTestCase):
     def test_status_surfaces_tailscale_dict_and_public_pin(self) -> None:
@@ -844,6 +980,8 @@ class RemoteAccessStatusTests(PluginApiTestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["tailscale"]["hostname"], "hermes.tail1234.ts.net")
+        self.assertTrue(body["tailscale"]["legacy_8767_active"])
+        self.assertFalse(body["tailscale"]["dashboard_9119_active"])
         self.assertIsNone(body["public"]["url"])
         self.assertFalse(body["upstream_canonical"])
         self.assertFalse(body["secure_link"]["enabled"])
@@ -894,7 +1032,7 @@ class RemoteAccessTailscaleActionTests(PluginApiTestCase):
         from plugin.relay import tailscale as ts_mod
 
         with patch.object(ts_mod, "enable", side_effect=lambda port: {"ok": True, "port": port}):
-            for port in (8767, 8642):
+            for port in (9119, 8767, 8642):
                 with self.subTest(port=port):
                     resp = self.client.post(
                         "/remote-access/tailscale/enable", json={"port": port}

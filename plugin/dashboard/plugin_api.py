@@ -206,14 +206,10 @@ def _validate_public_url(url: str) -> str:
     trimmed = url.strip()
     if not trimmed:
         return ""
-    parsed = urlparse(trimmed)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"public url must start with http:// or https:// (got {trimmed!r})"
-        )
-    if not parsed.netloc:
-        raise ValueError(f"public url missing host: {trimmed!r}")
-    return trimmed
+    try:
+        return _plugin_module("pair").normalize_dashboard_url(trimmed)
+    except ValueError as exc:
+        raise ValueError(f"invalid public Dashboard URL: {exc}") from exc
 
 
 router = APIRouter()
@@ -883,6 +879,23 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
     mode_raw = body.pop("mode", None)
     public_url_raw = body.pop("public_url", None)
     prefer_raw = body.pop("prefer", None)
+    dashboard_url_raw = body.get("dashboard_url") or body.get("dashboardUrl")
+    legacy_direct_relay_explicit = "legacy_direct_relay" in body
+    legacy_direct_relay_raw = body.get("legacy_direct_relay", False)
+    if not isinstance(legacy_direct_relay_raw, bool):
+        raise HTTPException(
+            status_code=400, detail="legacy_direct_relay must be a boolean"
+        )
+
+    pair = _plugin_module("pair")
+    if dashboard_url_raw is not None:
+        try:
+            body["dashboard_url"] = pair.normalize_dashboard_url(
+                str(dashboard_url_raw)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        body.pop("dashboardUrl", None)
 
     if mode_raw is not None:
         mode = str(mode_raw).strip().lower()
@@ -890,7 +903,6 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
         # on sys.path (smoke tests, docs render, etc.) still loads the
         # module. Any failure here becomes a 500 via HTTPException below.
         try:
-            pair = _plugin_module("pair")
             build_endpoint_candidates = pair.build_endpoint_candidates
             read_relay_config = pair.read_relay_config
         except ImportError as exc:
@@ -906,9 +918,16 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
         if isinstance(public_url_raw, str) and public_url_raw.strip():
             effective_public_url = public_url_raw.strip()
         else:
-            pinned = _read_remote_state().get("public_url")
+            remote_state = _read_remote_state()
+            pinned = remote_state.get("public_url")
             if isinstance(pinned, str) and pinned.strip():
                 effective_public_url = pinned.strip()
+                if (
+                    not legacy_direct_relay_explicit
+                    and remote_state.get("legacy_direct_relay") is True
+                ):
+                    legacy_direct_relay_raw = True
+                    body["legacy_direct_relay"] = True
 
         # API defaults come from the same config chain ``pair.py`` uses so
         # the dashboard-minted QR matches what ``hermes-pair --mode auto``
@@ -934,6 +953,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
                 relay_tls=bool(relay_cfg.get("tls")),
                 public_url=effective_public_url,
                 prefer=prefer,
+                legacy_direct_relay=legacy_direct_relay_raw,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -957,12 +977,12 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
 # other routes in this file — the dashboard is loopback-only and we
 # never accept callers from elsewhere.
 
-_TAILSCALE_MANAGED_PORTS = frozenset((8767, 8642))
+_TAILSCALE_MANAGED_PORTS = frozenset((9119, 8642, 8767))
 
 
 def _managed_tailscale_port(body: dict[str, Any]) -> int:
     """Return a dashboard-managed port, rejecting arbitrary proxy targets."""
-    port_raw = body.get("port", 8767)
+    port_raw = body.get("port", 9119)
     if isinstance(port_raw, bool):
         raise HTTPException(
             status_code=400, detail=f"port must be an integer (got {port_raw!r})"
@@ -977,7 +997,10 @@ def _managed_tailscale_port(body: dict[str, Any]) -> int:
         supported = ", ".join(str(value) for value in sorted(_TAILSCALE_MANAGED_PORTS))
         raise HTTPException(
             status_code=400,
-            detail=f"dashboard may manage only the Relay/API ports: {supported}",
+            detail=(
+                "dashboard may manage only Dashboard 9119, optional API 8642, "
+                f"or legacy Relay 8767: {supported}"
+            ),
         )
     return port
 
@@ -999,7 +1022,33 @@ def _tailscale_status_dict() -> dict[str, Any]:
         return {"available": False, "reason": f"helper raised: {exc}"}
     if status is None:
         return {"available": False, "reason": "tailscale daemon not reachable"}
-    return status
+    normalized = dict(status)
+    serve_ports = {
+        port for port in normalized.get("serve_ports", []) if isinstance(port, int)
+    }
+    services = normalized.get("serve_services")
+    service_map = services if isinstance(services, dict) else {}
+    dashboard_service = service_map.get("dashboard")
+    api_service = service_map.get("api")
+    legacy_service = service_map.get("legacy_relay")
+    normalized.update({
+        "dashboard_9119_active": (
+            dashboard_service.get("active") is True
+            if isinstance(dashboard_service, dict)
+            else 9119 in serve_ports
+        ),
+        "api_8642_active": (
+            api_service.get("active") is True
+            if isinstance(api_service, dict)
+            else 8642 in serve_ports
+        ),
+        "legacy_8767_active": (
+            legacy_service.get("active") is True
+            if isinstance(legacy_service, dict)
+            else 8767 in serve_ports
+        ),
+    })
+    return normalized
 
 
 def _canonical_upstream_present() -> bool:
@@ -1066,7 +1115,11 @@ async def get_remote_access_status() -> dict[str, Any]:
     return {
         "tailscale": _tailscale_status_dict(),
         "secure_link": secure_link,
-        "public": {"url": pinned, "reachable": None},
+        "public": {
+            "url": pinned,
+            "reachable": None,
+            "legacy_direct_relay": state.get("legacy_direct_relay") is True,
+        },
         "upstream_canonical": _canonical_upstream_present(),
     }
 
@@ -1115,8 +1168,11 @@ async def get_public_url() -> dict[str, Any]:
     state = _read_remote_state()
     pinned = state.get("public_url")
     if not isinstance(pinned, str) or not pinned.strip():
-        return {"url": None}
-    return {"url": pinned}
+        return {"url": None, "legacy_direct_relay": False}
+    return {
+        "url": pinned,
+        "legacy_direct_relay": state.get("legacy_direct_relay") is True,
+    }
 
 
 @router.put("/remote-access/public-url")
@@ -1131,6 +1187,11 @@ async def put_public_url(
     silently persisted.
     """
     raw = body.get("url")
+    legacy_direct_relay = body.get("legacy_direct_relay", False)
+    if not isinstance(legacy_direct_relay, bool):
+        raise HTTPException(
+            status_code=400, detail="legacy_direct_relay must be a boolean"
+        )
     if raw is None:
         normalized = ""
     elif isinstance(raw, str):
@@ -1142,14 +1203,25 @@ async def put_public_url(
         raise HTTPException(
             status_code=400, detail=f"'url' must be a string or null (got {type(raw).__name__})"
         )
+    if (
+        normalized
+        and _plugin_module("pair").is_explicit_relay_url(normalized)
+        and not legacy_direct_relay
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="an explicit Relay public path requires legacy_direct_relay=true",
+        )
 
     state = _read_remote_state()
     now = int(time.time())
     if normalized:
         state["public_url"] = normalized
+        state["legacy_direct_relay"] = legacy_direct_relay
         state["updated_at"] = now
     else:
         state.pop("public_url", None)
+        state.pop("legacy_direct_relay", None)
         state["cleared_at"] = now
 
     try:
@@ -1160,22 +1232,36 @@ async def put_public_url(
             detail=f"could not persist {_remote_state_path()}: {exc}",
         ) from exc
 
-    return {"url": normalized or None, "updated_at": state.get("updated_at")}
+    return {
+        "url": normalized or None,
+        "legacy_direct_relay": legacy_direct_relay if normalized else False,
+        "updated_at": state.get("updated_at"),
+    }
 
 
 @router.post("/remote-access/probe")
 async def probe_endpoints(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    """Probe ``<candidate>/health`` for each URL in the request body.
+    """Probe explicit Dashboard, Relay, or API health surfaces.
 
     Body shape::
 
-        { "candidates": ["https://relay.example.com:8767", ...] }
+        { "candidates": [
+            {"role": "public", "priority": 1,
+             "surface": "dashboard", "url": "https://example.com"},
+            {"role": "public", "priority": 1,
+             "surface": "relay",
+             "url": "wss://example.com/api/plugins/hermes-relay/transport"}
+        ] }
+
+    String entries remain supported as legacy direct-Relay URLs.
 
     Returns::
 
-        { "results": [{ "url": "...", "reachable": bool, "status": int|null,
+        { "results": [{ "role": str|null, "priority": int|null,
+                        "surface": str, "url": "...", "probe_url": "...",
+                        "reachable": bool, "status": int|null,
                         "latency_ms": int|null, "error": str|null }] }
 
     2s per-probe timeout; errors are captured per-entry so one flaky
@@ -1189,31 +1275,95 @@ async def probe_endpoints(
         raw = []
     if not isinstance(raw, list):
         raise HTTPException(
-            status_code=400, detail="'candidates' must be an array of URLs"
+            status_code=400, detail="'candidates' must be an array"
         )
 
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=2.0) as client:
         for entry in raw:
-            if not isinstance(entry, str) or not entry.strip():
+            role: Any = None
+            priority: Any = None
+            surface = "relay"
+            entry_url: Any = entry
+            if isinstance(entry, dict):
+                role = entry.get("role")
+                priority = entry.get("priority")
+                surface = str(entry.get("surface") or "").strip().lower()
+                entry_url = entry.get("url")
+
+            base_result = {
+                "role": role,
+                "priority": priority,
+                "surface": surface,
+                "url": entry_url,
+            }
+            if surface not in {"dashboard", "relay", "api"}:
                 results.append(
                     {
-                        "url": entry,
+                        **base_result,
+                        "probe_url": None,
                         "reachable": False,
                         "status": None,
                         "latency_ms": None,
-                        "error": "empty url",
+                        "error": "surface must be dashboard, relay, or api",
                     }
                 )
                 continue
-            url = entry.rstrip("/") + "/health"
+            if not isinstance(entry_url, str) or not entry_url.strip():
+                results.append({
+                    **base_result,
+                    "probe_url": None,
+                    "reachable": False,
+                    "status": None,
+                    "latency_ms": None,
+                    "error": "empty url",
+                })
+                continue
+
+            parsed = urlparse(entry_url.strip())
+            allowed_schemes = (
+                {"http", "https", "ws", "wss"}
+                if surface == "relay"
+                else {"http", "https"}
+            )
+            if (
+                parsed.scheme.lower() not in allowed_schemes
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                results.append({
+                    **base_result,
+                    "probe_url": None,
+                    "reachable": False,
+                    "status": None,
+                    "latency_ms": None,
+                    "error": f"invalid {surface} url",
+                })
+                continue
+
+            normalized = entry_url.strip().rstrip("/")
+            if surface == "dashboard":
+                url = normalized + "/api/health"
+            elif surface == "relay":
+                http_scheme = {
+                    "wss": "https",
+                    "ws": "http",
+                }.get(parsed.scheme.lower(), parsed.scheme.lower())
+                http_base = parsed._replace(scheme=http_scheme).geturl().rstrip("/")
+                url = http_base + "/health"
+            else:
+                url = normalized + "/health"
             t0 = time.perf_counter()
             try:
                 resp = await client.get(url)
             except httpx.HTTPError as exc:
                 results.append(
                     {
-                        "url": entry,
+                        **base_result,
+                        "probe_url": url,
                         "reachable": False,
                         "status": None,
                         "latency_ms": None,
@@ -1224,7 +1374,8 @@ async def probe_endpoints(
             latency_ms = int((time.perf_counter() - t0) * 1000)
             results.append(
                 {
-                    "url": entry,
+                    **base_result,
+                    "probe_url": url,
                     "reachable": 200 <= resp.status_code < 300,
                     "status": resp.status_code,
                     "latency_ms": latency_ms,

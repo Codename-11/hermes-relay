@@ -62,6 +62,7 @@ use ``POST /pairing/register`` only when Reach is not configured.
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import math
 import os
@@ -226,6 +227,7 @@ def build_payload(
     sign: bool = True,
     endpoints: Optional[list[dict]] = None,
     dashboard_url: Optional[str] = None,
+    legacy_direct_relay: bool = False,
 ) -> str:
     """Build compact JSON payload matching HermesPairingPayload.kt format.
 
@@ -253,13 +255,17 @@ def build_payload(
     If ``sign`` is true the payload is signed with the host-local QR
     secret and the base64 HMAC is added as a top-level ``sig`` field.
     """
+    normalized_dashboard_url = (
+        normalize_dashboard_url(dashboard_url) if dashboard_url else None
+    )
     endpoints = add_dashboard_ingress_candidate(
         endpoints=endpoints,
-        dashboard_url=dashboard_url,
+        dashboard_url=normalized_dashboard_url,
         relay=relay,
         api_host=host,
         api_port=port,
         api_tls=tls,
+        legacy_direct_relay=legacy_direct_relay,
     )
     if endpoints:
         version = 3
@@ -278,11 +284,27 @@ def build_payload(
             }
         )
     if relay is not None:
-        payload["relay"] = relay
+        advertised_relay = dict(relay)
+        if not legacy_direct_relay:
+            ingress_relay = next(
+                (
+                    candidate.get("relay")
+                    for candidate in (endpoints or [])
+                    if isinstance(candidate, dict)
+                    and isinstance(candidate.get("dashboard"), dict)
+                    and isinstance(candidate.get("relay"), dict)
+                ),
+                None,
+            )
+            if isinstance(ingress_relay, dict) and ingress_relay.get("url"):
+                advertised_relay["url"] = ingress_relay["url"]
+                if ingress_relay.get("transport_hint"):
+                    advertised_relay["transport_hint"] = ingress_relay["transport_hint"]
+        payload["relay"] = advertised_relay
     if endpoints:
         payload["endpoints"] = endpoints
-    if dashboard_url:
-        payload["dashboard_url"] = dashboard_url
+    if normalized_dashboard_url:
+        payload["dashboard_url"] = normalized_dashboard_url
 
     if sign:
         try:
@@ -307,16 +329,55 @@ def _endpoint_role_for_url(url: str) -> str:
     host = (parsed.hostname or "").lower()
     if host.endswith(".ts.net"):
         return "tailscale"
-    if parsed.scheme.lower() == "https":
-        return "https"
-    return "lan"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and (address.is_private or address.is_loopback):
+        return "lan"
+    if host in {"localhost", "localhost.localdomain"}:
+        return "lan"
+    return "public"
+
+
+def normalize_dashboard_url(dashboard_url: str) -> str:
+    """Return a credential-free canonical Dashboard HTTP(S) base URL."""
+    trimmed = dashboard_url.strip().rstrip("/")
+    if any(character.isspace() for character in trimmed):
+        raise ValueError("dashboard_url must not include whitespace")
+    parsed = urlparse(trimmed)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        raise ValueError("dashboard_url must be an absolute http(s) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("dashboard_url must not include credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("dashboard_url must not include a query or fragment")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("dashboard_url contains an invalid port") from exc
+    return parsed._replace(scheme=parsed.scheme.lower()).geturl().rstrip("/")
+
+
+def configured_dashboard_url(explicit: Optional[str] = None) -> Optional[str]:
+    """Resolve Dashboard identity from explicit input or trusted URL envs."""
+    if explicit and explicit.strip():
+        return normalize_dashboard_url(explicit)
+    for key in (
+        "HERMES_DASHBOARD_PUBLIC_URL",
+        "HERMES_DASHBOARD_URL",
+        "HERMES_WEB_URL",
+        "DASHBOARD_URL",
+    ):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return normalize_dashboard_url(value)
+    return None
 
 
 def dashboard_relay_ingress_url(dashboard_url: str) -> str:
     """Build the same-origin Relay transport base mounted by Hermes Dashboard."""
-    parsed = urlparse(dashboard_url.strip().rstrip("/"))
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("dashboard_url must be an absolute http(s) URL")
+    parsed = urlparse(normalize_dashboard_url(dashboard_url))
     scheme = "wss" if parsed.scheme == "https" else "ws"
     prefix = (parsed.path or "").rstrip("/")
     return (
@@ -333,15 +394,17 @@ def add_dashboard_ingress_candidate(
     api_host: Optional[str] = None,
     api_port: Optional[int] = None,
     api_tls: Optional[bool] = None,
+    legacy_direct_relay: bool = False,
 ) -> Optional[list[dict]]:
     """Advertise Dashboard's same-origin Relay ingress with direct fallbacks.
 
     The candidate uses the normal network role (``https``, ``tailscale``, or
     ``lan``), not a service-specific role.  API is intentionally optional.
-    Existing direct candidates and the top-level direct Relay URL remain as
-    later compatibility fallbacks for clients without Dashboard WS auth.
+    Direct Relay is included only after an explicit legacy opt-in. New
+    Dashboard-origin pairing must not leak the loopback Relay port into a
+    public or tailnet route.
     """
-    dashboard = (dashboard_url or "").strip().rstrip("/")
+    dashboard = normalize_dashboard_url(dashboard_url) if dashboard_url else ""
     if not dashboard:
         return endpoints
 
@@ -351,10 +414,11 @@ def add_dashboard_ingress_candidate(
 
     ingress_url = dashboard_relay_ingress_url(dashboard)
     transport_hint = "wss" if ingress_url.startswith("wss://") else "ws"
+    ingress_role = _endpoint_role_for_url(dashboard)
     ingress: dict[str, Any] = {
-        "role": _endpoint_role_for_url(dashboard),
+        "role": ingress_role,
         "priority": 0,
-        "recommended": True,
+        "recommended": ingress_role == "tailscale",
         "dashboard": {"url": dashboard},
     }
     ingress["relay"] = {
@@ -375,17 +439,33 @@ def add_dashboard_ingress_candidate(
     }
     combined: list[dict] = []
     if ingress_url.rstrip("/") not in relay_urls and dashboard not in dashboard_urls:
-        combined.append(ingress)
-
-    combined.extend(existing)
+        rank = {"tailscale": 0, "public": 1, "lan": 2}.get(ingress_role, 1)
+        inserted = False
+        for candidate in existing:
+            candidate_rank = {"tailscale": 0, "public": 1, "lan": 2}.get(
+                str(candidate.get("role") or "").lower(), 1
+            )
+            if not inserted and candidate_rank > rank:
+                combined.append(ingress)
+                inserted = True
+            combined.append(candidate)
+        if not inserted:
+            combined.append(ingress)
+    else:
+        combined.extend(existing)
 
     direct_url = str((relay or {}).get("url") or "").strip()
-    if direct_url and direct_url.rstrip("/") not in relay_urls and direct_url.rstrip("/") != ingress_url.rstrip("/"):
+    if (
+        legacy_direct_relay
+        and direct_url
+        and direct_url.rstrip("/") not in relay_urls
+        and direct_url.rstrip("/") != ingress_url.rstrip("/")
+    ):
         direct: dict[str, Any] = {
-            "role": _endpoint_role_for_url(
-                direct_url.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
-            ),
+            "role": "legacy_direct",
             "priority": len(combined),
+            "recommended": False,
+            "legacy": True,
             "relay": {
                 "url": direct_url,
                 **(
@@ -447,6 +527,7 @@ def build_pairing_qr_payload(
     relay: Optional[dict] = None,
     endpoints: Optional[list[dict]] = None,
     dashboard_url: Optional[str] = None,
+    legacy_direct_relay: bool = False,
     sign: bool = True,
 ) -> str:
     """Build the Android pairing QR payload shared by CLI and dashboard mint."""
@@ -458,6 +539,7 @@ def build_pairing_qr_payload(
         relay=relay,
         endpoints=endpoints,
         dashboard_url=dashboard_url,
+        legacy_direct_relay=legacy_direct_relay,
         sign=sign,
     )
 
@@ -477,6 +559,7 @@ def build_pairing_invite_url(payload: str) -> str:
 
 
 _VALID_MODES = ("auto", "lan", "tailscale", "public")
+_DEFAULT_DASHBOARD_PORT = 9119
 
 
 def _lan_endpoint(
@@ -487,6 +570,7 @@ def _lan_endpoint(
     relay_port: int,
     relay_tls: bool,
     priority: int = 0,
+    dashboard_port: int = _DEFAULT_DASHBOARD_PORT,
 ) -> dict[str, Any]:
     """Build a ``role: lan`` endpoint candidate using the LAN-resolved host.
 
@@ -495,17 +579,29 @@ def _lan_endpoint(
     IP in the candidate.
     """
     lan_host = _resolve_lan_ip(api_host)
-    relay_lan_host = _resolve_lan_ip(relay_host)
-    relay_scheme = "wss" if relay_tls else "ws"
+    dashboard_host = _resolve_lan_ip(relay_host)
+    url_host = (
+        f"[{dashboard_host}]"
+        if ":" in dashboard_host and not dashboard_host.startswith("[")
+        else dashboard_host
+    )
+    dashboard_url = f"http://{url_host}:{dashboard_port}"
     return {
         "role": "lan",
         "priority": priority,
         "api": {"host": lan_host, "port": api_port, "tls": api_tls},
+        "dashboard": {"url": dashboard_url},
         "relay": {
-            "url": f"{relay_scheme}://{relay_lan_host}:{relay_port}",
-            "transport_hint": relay_scheme,
+            "url": dashboard_relay_ingress_url(dashboard_url),
+            "transport_hint": "ws",
         },
     }
+
+
+def is_explicit_relay_url(url: str) -> bool:
+    """Whether an HTTP(S) URL names a Relay path rather than Dashboard base."""
+    path = urlparse(url).path.rstrip("/").lower()
+    return path.endswith(("/relay", "/ws", "/transport", "/transport/ws"))
 
 
 def _tailscale_status() -> Optional[dict[str, Any]]:
@@ -538,16 +634,16 @@ def _tailscale_endpoint(
     api_tls: bool,
     relay_tls: bool,
     priority: int,
+    dashboard_port: int = _DEFAULT_DASHBOARD_PORT,
 ) -> Optional[dict[str, Any]]:
     """Materialize a ``role: tailscale`` candidate from a helper status dict.
 
     The helper contract (ADR 25) hands back something shaped roughly
     like ``{"hostname": "hermes.tail-scale.ts.net", "tailscale_ip":
     "100.64.0.1", "serve_ports": [...]}``. When Tailscale Serve is active
-    for both the API and relay ports, emit the MagicDNS hostname with TLS.
-    When Serve is not active for the full pair, prefer the raw 100.x
-    Tailscale IP and direct port schemes so Android installs without
-    MagicDNS resolution can still pair and fail over on the tailnet.
+    for Dashboard, emit the MagicDNS hostname with TLS. Otherwise use the
+    raw tailnet IP and Dashboard's normal HTTP port. Relay always rides the
+    Dashboard same-origin ingress; direct 8767 is legacy-only.
     """
     hostname = status.get("hostname") or status.get("dns_name") or status.get("host")
     if isinstance(hostname, str):
@@ -570,37 +666,81 @@ def _tailscale_endpoint(
             except (TypeError, ValueError):
                 continue
 
-    explicit_tls = status.get("tls")
-    use_serve_tls = (
-        bool(explicit_tls)
-        if explicit_tls is not None
-        else api_port in serve_ports and relay_port in serve_ports
-    )
+    serve_services = status.get("serve_services")
+    serve_services_dict = serve_services if isinstance(serve_services, dict) else {}
 
-    if use_serve_tls:
+    def _service_listener(name: str, default_port: int) -> Optional[int]:
+        service = serve_services_dict.get(name)
+        if not isinstance(service, dict) or service.get("active") is not True:
+            return None
+        ports = service.get("listen_ports")
+        valid_ports = sorted({
+            int(port)
+            for port in (ports if isinstance(ports, list) else [])
+            if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+        })
+        if default_port in valid_ports:
+            return default_port
+        if 443 in valid_ports:
+            return 443
+        return valid_ports[0] if valid_ports else None
+
+    dashboard_listener = _service_listener("dashboard", dashboard_port)
+    api_listener = _service_listener("api", api_port)
+    # Compatibility with pre-classification helpers: only the well-known
+    # Dashboard listener proves Dashboard Serve. Legacy Relay 8767 must not.
+    dashboard_serve_tls = (
+        dashboard_listener is not None
+        or (not serve_services_dict and dashboard_port in serve_ports)
+    )
+    if dashboard_serve_tls:
         if not hostname or not hostname.endswith(".ts.net"):
             return None
-        host = hostname
-        api_tls_effective = True
-        relay_scheme = "wss"
+        dashboard_host = hostname
+        dashboard_scheme = "https"
     else:
-        host = tailscale_ip or hostname
-        if not isinstance(host, str) or not host.strip():
+        dashboard_host = tailscale_ip or hostname
+        if not isinstance(dashboard_host, str) or not dashboard_host.strip():
             return None
-        api_tls_effective = api_tls
-        relay_scheme = "wss" if relay_tls else "ws"
+        dashboard_scheme = "http"
 
-    host = host.strip().rstrip(".")
-    if not host:
+    dashboard_host = dashboard_host.strip().rstrip(".")
+    if not dashboard_host:
         return None
-    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    dashboard_url_host = (
+        f"[{dashboard_host}]"
+        if ":" in dashboard_host and not dashboard_host.startswith("[")
+        else dashboard_host
+    )
+    advertised_dashboard_port = dashboard_listener or dashboard_port
+    dashboard_port_suffix = (
+        "" if dashboard_scheme == "https" and advertised_dashboard_port == 443
+        else f":{advertised_dashboard_port}"
+    )
+    dashboard_url = f"{dashboard_scheme}://{dashboard_url_host}{dashboard_port_suffix}"
+
+    api_serve_tls = bool(
+        (api_listener is not None or (not serve_services_dict and api_port in serve_ports))
+        and hostname
+        and hostname.endswith(".ts.net")
+    )
+    api_host = hostname if api_serve_tls else (tailscale_ip or hostname)
+    if not isinstance(api_host, str) or not api_host.strip():
+        return None
+    api_host = api_host.strip().rstrip(".")
     return {
         "role": "tailscale",
         "priority": priority,
-        "api": {"host": host, "port": api_port, "tls": api_tls_effective},
+        "recommended": True,
+        "api": {
+            "host": api_host,
+            "port": api_listener or api_port,
+            "tls": True if api_serve_tls else api_tls,
+        },
+        "dashboard": {"url": dashboard_url},
         "relay": {
-            "url": f"{relay_scheme}://{url_host}:{relay_port}",
-            "transport_hint": relay_scheme,
+            "url": dashboard_relay_ingress_url(dashboard_url),
+            "transport_hint": "wss" if dashboard_serve_tls else "ws",
         },
     }
 
@@ -639,7 +779,65 @@ def normalize_endpoint_candidates(
         if not isinstance(candidate, dict):
             normalized.append(candidate)
             continue
-        if str(candidate.get("role") or "").strip().lower() != "tailscale":
+        candidate = dict(candidate)
+        if candidate.get("legacy") is True:
+            normalized.append(candidate)
+            continue
+        role = str(candidate.get("role") or "").strip().lower()
+        candidate_dashboard = candidate.get("dashboard")
+        if isinstance(candidate_dashboard, dict) and candidate_dashboard.get("url"):
+            dashboard_dict = dict(candidate_dashboard)
+            dashboard_url = normalize_dashboard_url(str(dashboard_dict["url"]))
+            dashboard_dict["url"] = dashboard_url
+            candidate["dashboard"] = dashboard_dict
+            if candidate.get("legacy") is not True:
+                ingress_url = dashboard_relay_ingress_url(dashboard_url)
+                relay_dict = (
+                    dict(candidate["relay"])
+                    if isinstance(candidate.get("relay"), dict)
+                    else {}
+                )
+                relay_dict.update({
+                    "url": ingress_url,
+                    "transport_hint": "wss" if ingress_url.startswith("wss://") else "ws",
+                })
+                candidate["relay"] = relay_dict
+
+        if not isinstance(candidate.get("dashboard"), dict) and role in {"lan", "public", "tailscale"}:
+            relay_dict = candidate.get("relay")
+            api_dict = candidate.get("api")
+            relay_url = (
+                str(relay_dict.get("url") or "")
+                if isinstance(relay_dict, dict)
+                else ""
+            )
+            parsed_relay = urlparse(relay_url) if relay_url else None
+            host = parsed_relay.hostname if parsed_relay is not None else None
+            if not host and isinstance(api_dict, dict):
+                host = str(api_dict.get("host") or "").strip() or None
+            if host:
+                url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+                if role == "public":
+                    dashboard_url = f"https://{url_host}"
+                elif role == "tailscale":
+                    dashboard_scheme = (
+                        "https"
+                        if relay_url.startswith("wss://")
+                        or (isinstance(api_dict, dict) and api_dict.get("tls") is True)
+                        else "http"
+                    )
+                    dashboard_url = f"{dashboard_scheme}://{url_host}:{_DEFAULT_DASHBOARD_PORT}"
+                else:
+                    dashboard_url = f"http://{url_host}:{_DEFAULT_DASHBOARD_PORT}"
+                ingress_url = dashboard_relay_ingress_url(dashboard_url)
+                candidate["dashboard"] = {"url": dashboard_url}
+                candidate["relay"] = {
+                    **(dict(relay_dict) if isinstance(relay_dict, dict) else {}),
+                    "url": ingress_url,
+                    "transport_hint": "wss" if ingress_url.startswith("wss://") else "ws",
+                }
+
+        if role != "tailscale":
             normalized.append(candidate)
             continue
 
@@ -654,7 +852,6 @@ def normalize_endpoint_candidates(
         api_dict = api if isinstance(api, dict) else {}
         relay = candidate.get("relay")
         relay_dict = relay if isinstance(relay, dict) else {}
-
         relay_url = str(relay_dict.get("url") or "")
         parsed_relay = urlparse(relay_url) if relay_url else None
 
@@ -662,9 +859,12 @@ def normalize_endpoint_candidates(
             api_dict.get("port"),
             api_port if api_port is not None else 8642,
         )
+        try:
+            parsed_relay_port = parsed_relay.port if parsed_relay is not None else None
+        except ValueError:
+            parsed_relay_port = None
         effective_relay_port = _int_or(
-            parsed_relay.port if parsed_relay is not None else None,
-            relay_port if relay_port is not None else 8767,
+            parsed_relay_port, relay_port if relay_port is not None else 8767
         )
         effective_api_tls = (
             bool(api_tls) if api_tls is not None else bool(api_dict.get("tls"))
@@ -676,7 +876,6 @@ def normalize_endpoint_candidates(
             or str(relay_dict.get("transport_hint") or "").lower() == "wss"
         )
         priority = _int_or(candidate.get("priority"), index)
-
         replacement = _tailscale_endpoint(
             status,
             api_port=effective_api_port,
@@ -684,6 +883,7 @@ def normalize_endpoint_candidates(
             api_tls=effective_api_tls,
             relay_tls=effective_relay_tls,
             priority=priority,
+            dashboard_port=_DEFAULT_DASHBOARD_PORT,
         )
         if replacement is None:
             normalized.append(candidate)
@@ -695,7 +895,9 @@ def normalize_endpoint_candidates(
         merged_relay = dict(relay_dict)
         merged_relay.update(replacement["relay"])
         merged["priority"] = replacement["priority"]
+        merged["recommended"] = replacement["recommended"]
         merged["api"] = merged_api
+        merged["dashboard"] = replacement["dashboard"]
         merged["relay"] = merged_relay
         normalized.append(merged)
 
@@ -707,50 +909,55 @@ def _public_endpoint(
     relay_port: int,
     priority: int,
 ) -> dict[str, Any]:
-    """Parse ``--public-url`` into a ``role: public`` candidate.
+    """Parse ``--public-url`` as a public Dashboard-origin candidate.
 
-    Infers api host/port/tls from the URL. When the URL scheme is
-    ``https`` and no port is present we default to 443 (the common
-    reverse-proxy / Cloudflare Tunnel case). The relay URL mirrors the
-    same host/scheme at the configured ``relay_port``; operators behind
-    a path-rewriting proxy can override later via the dashboard
-    ``/pairing/mint`` body.
+    Relay uses Dashboard's same-origin plugin transport. The Relay process's
+    private 8767 listener is never inferred from a public origin.
 
     Raises :class:`ValueError` when ``public_url`` is empty or its
     scheme isn't ``http`` / ``https``.
     """
     if not public_url:
         raise ValueError("public_url is required for role=public")
-    parsed = urlparse(public_url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"--public-url must be http:// or https:// (got {public_url!r})"
-        )
-    host = parsed.hostname
-    if not host:
-        raise ValueError(f"--public-url has no host: {public_url!r}")
-    tls = parsed.scheme == "https"
-    api_port = parsed.port if parsed.port is not None else (443 if tls else 80)
-    relay_scheme = "wss" if tls else "ws"
-    # If the operator passed a relay-explicit URL (path present beyond
-    # "/"), preserve it verbatim — path-rewriting proxies depend on it.
-    relay_url: str
-    path = parsed.path or ""
-    if path and path != "/":
-        relay_url = f"{relay_scheme}://{host}{path}"
-    else:
-        # No path → assume the relay is on the same host at its usual
-        # port. TLS-terminating reverse proxies that forward WSS on
-        # :443 are typical; the operator can override via --public-url
-        # with an explicit path if the proxy rewrites.
-        relay_url = f"{relay_scheme}://{host}:{relay_port}"
+    dashboard_url = normalize_dashboard_url(public_url)
+    relay_url = dashboard_relay_ingress_url(dashboard_url)
+    relay_scheme = "wss" if relay_url.startswith("wss://") else "ws"
     return {
         "role": "public",
         "priority": priority,
-        "api": {"host": host, "port": api_port, "tls": tls},
+        "recommended": False,
+        "dashboard": {"url": dashboard_url},
         "relay": {
             "url": relay_url,
             "transport_hint": relay_scheme,
+        },
+    }
+
+
+def _legacy_public_relay_endpoint(
+    public_url: str,
+    relay_port: int,
+    priority: int,
+) -> dict[str, Any]:
+    """Build the old public direct-Relay route after explicit opt-in."""
+    dashboard_url = normalize_dashboard_url(public_url)
+    parsed = urlparse(dashboard_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    host = parsed.hostname or ""
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    relay_url = (
+        f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+        if is_explicit_relay_url(dashboard_url)
+        else f"{scheme}://{url_host}:{relay_port}"
+    )
+    return {
+        "role": "public_legacy",
+        "priority": priority,
+        "recommended": False,
+        "legacy": True,
+        "relay": {
+            "url": relay_url,
+            "transport_hint": scheme,
         },
     }
 
@@ -765,6 +972,7 @@ def build_endpoint_candidates(
     relay_tls: bool,
     public_url: Optional[str] = None,
     prefer: Optional[str] = None,
+    legacy_direct_relay: bool = False,
 ) -> list[dict[str, Any]]:
     """Build the ordered ``endpoints`` array for a v3 QR payload.
 
@@ -808,6 +1016,7 @@ def build_endpoint_candidates(
     want_lan = mode in ("auto", "lan")
     want_tailscale = mode in ("auto", "tailscale")
     want_public = mode in ("auto", "public")
+    effective_public_url = public_url
 
     if want_tailscale:
         status = _tailscale_status()
@@ -829,7 +1038,6 @@ def build_endpoint_candidates(
             pass
 
     if want_public:
-        effective_public_url = public_url
         # Auto-detect Tailscale Funnel URL when mode=auto and caller
         # didn't pin one explicitly. Saves operators the "set public
         # URL" step on the Remote Access tab when Funnel is already
@@ -840,20 +1048,29 @@ def build_endpoint_candidates(
             try:
                 from .relay import tailscale as _ts_helper  # type: ignore
 
-                detected = _ts_helper.funnel_url(port=relay_port)
+                detected = _ts_helper.funnel_url(port=_DEFAULT_DASHBOARD_PORT)
             except Exception:  # noqa: BLE001 — any failure = no funnel
                 detected = None
             if detected:
                 effective_public_url = detected
 
         if effective_public_url:
-            _emit(
-                _public_endpoint(
-                    effective_public_url,
-                    relay_port=relay_port,
-                    priority=next_priority,
-                )
+            explicit_relay_url = is_explicit_relay_url(
+                normalize_dashboard_url(effective_public_url)
             )
+            if explicit_relay_url and not legacy_direct_relay:
+                raise ValueError(
+                    "an explicit Relay public path requires "
+                    "--legacy-direct-relay"
+                )
+            if not explicit_relay_url:
+                _emit(
+                    _public_endpoint(
+                        effective_public_url,
+                        relay_port=relay_port,
+                        priority=next_priority,
+                    )
+                )
         elif mode == "public":
             raise ValueError(
                 "--mode public requires --public-url <url> "
@@ -875,6 +1092,33 @@ def build_endpoint_candidates(
                 priority=next_priority,
             )
         )
+
+    if legacy_direct_relay:
+        if effective_public_url:
+            _emit(
+                _legacy_public_relay_endpoint(
+                    effective_public_url,
+                    relay_port=relay_port,
+                    priority=next_priority,
+                )
+            )
+        relay_host_resolved = _resolve_lan_ip(relay_host)
+        url_host = (
+            f"[{relay_host_resolved}]"
+            if ":" in relay_host_resolved and not relay_host_resolved.startswith("[")
+            else relay_host_resolved
+        )
+        relay_scheme = "wss" if relay_tls else "ws"
+        _emit({
+            "role": "legacy_direct",
+            "priority": next_priority,
+            "recommended": False,
+            "legacy": True,
+            "relay": {
+                "url": f"{relay_scheme}://{url_host}:{relay_port}",
+                "transport_hint": relay_scheme,
+            },
+        })
 
     # Priority override — promote the named role to priority 0 and
     # renumber the rest in their existing relative order. Role string
@@ -1119,6 +1363,7 @@ def mint_relay_pairing(
     endpoints: list[dict] | None,
     dashboard_url: str | None,
     api_enabled: bool = True,
+    legacy_direct_relay: bool = False,
     timeout_s: float = 5.0,
 ) -> dict[str, Any] | None:
     """Ask the running Relay to mint the authoritative signed invite.
@@ -1145,6 +1390,8 @@ def mint_relay_pairing(
         body["endpoints"] = endpoints
     if dashboard_url:
         body["dashboard_url"] = dashboard_url
+    if legacy_direct_relay:
+        body["legacy_direct_relay"] = True
     request = urllib.request.Request(
         f"http://127.0.0.1:{localhost_port}/pairing/mint",
         data=json.dumps(body).encode("utf-8"),
@@ -1468,9 +1715,14 @@ def pair_command(args) -> None:
     key = config["key"]
     tls = config["tls"]
     api_enabled = bool(config.get("enabled", True))
-    dashboard_url = (
-        str(getattr(args, "dashboard_url", "") or "").strip().rstrip("/") or None
-    )
+    try:
+        dashboard_url = configured_dashboard_url(
+            str(getattr(args, "dashboard_url", "") or "") or None
+        )
+    except ValueError as exc:
+        print(f"  [error] --dashboard-url: {exc}", file=sys.stderr)
+        sys.exit(2)
+    legacy_direct_relay = bool(getattr(args, "legacy_direct_relay", False))
 
     # ── Relay pre-pairing ────────────────────────────────────────────────
     #
@@ -1554,6 +1806,7 @@ def pair_command(args) -> None:
                 relay_tls=bool(_relay_cfg.get("tls")),
                 public_url=public_url,
                 prefer=prefer,
+                legacy_direct_relay=legacy_direct_relay,
             )
             if not api_enabled:
                 endpoints = [
@@ -1588,6 +1841,7 @@ def pair_command(args) -> None:
             endpoints=endpoints or None,
             dashboard_url=dashboard_url,
             api_enabled=api_enabled,
+            legacy_direct_relay=legacy_direct_relay,
         )
         if minted is not None:
             payload = str(minted["qr_payload"])
@@ -1622,6 +1876,7 @@ def pair_command(args) -> None:
                     tls=tls if api_enabled else None,
                     relay=relay_block, endpoints=endpoints or None,
                     dashboard_url=dashboard_url,
+                    legacy_direct_relay=legacy_direct_relay,
                 )
                 invite_url = build_pairing_invite_url(payload)
             else:
@@ -1716,6 +1971,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dashboard-url",
         help="Embed an explicit Hermes dashboard URL for Manage/standard voice",
+    )
+    parser.add_argument(
+        "--legacy-direct-relay",
+        action="store_true",
+        help=(
+            "Also advertise the direct Relay listener (normally port 8767). "
+            "Use only for older Desktop clients without Dashboard ticket auth."
+        ),
     )
     parser.add_argument(
         "--ttl",

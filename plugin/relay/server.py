@@ -584,6 +584,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         build_pairing_qr_payload,
         build_relay_pairing_block,
         normalize_endpoint_candidates,
+        normalize_dashboard_url,
         read_server_config,
         _relay_lan_base_url,
         _resolve_lan_ip,
@@ -662,6 +663,20 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         if dashboard_url_raw is not None
         else None
     ) or None
+    if dashboard_url is not None:
+        try:
+            dashboard_url = normalize_dashboard_url(dashboard_url)
+        except ValueError as exc:
+            return web.json_response(
+                {"ok": False, "error": str(exc)}, status=400
+            )
+    legacy_direct_relay_raw = payload.get("legacy_direct_relay", False)
+    if not isinstance(legacy_direct_relay_raw, bool):
+        return web.json_response(
+            {"ok": False, "error": "legacy_direct_relay must be a boolean"},
+            status=400,
+        )
+    legacy_direct_relay = legacy_direct_relay_raw
 
     # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
@@ -706,13 +721,18 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         server.config.host, server.config.port, tls=relay_tls
     )
     if endpoints_list is not None:
-        normalized_endpoints = normalize_endpoint_candidates(
-            endpoints_list,
-            api_port=api_port,
-            relay_port=server.config.port,
-            api_tls=api_tls,
-            relay_tls=relay_tls,
-        )
+        try:
+            normalized_endpoints = normalize_endpoint_candidates(
+                endpoints_list,
+                api_port=api_port,
+                relay_port=server.config.port,
+                api_tls=api_tls,
+                relay_tls=relay_tls,
+            )
+        except ValueError as exc:
+            return web.json_response(
+                {"ok": False, "error": str(exc)}, status=400
+            )
         if normalized_endpoints != endpoints_list:
             logger.info(
                 "Normalized pairing endpoint candidates before QR signing",
@@ -810,6 +830,7 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         sign=True,
         endpoints=endpoints_list or None,
         dashboard_url=dashboard_url,
+        legacy_direct_relay=legacy_direct_relay,
     )
     pairing_url = build_pairing_invite_url(qr_payload)
 
@@ -843,14 +864,20 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         ),
         relay_url,
     )
+    signed_payload = json.loads(qr_payload)
+    advertised_relay_url = str(
+        signed_payload.get("relay", {}).get("url") or relay_url
+    )
     mint_response: dict[str, Any] = {
         "ok": True,
         "code": code,
         "qr_payload": qr_payload,
         "pairing_url": pairing_url,
         "expires_at": expires_at,
-        "relay_url": relay_url,
+        "relay_url": advertised_relay_url,
     }
+    if legacy_direct_relay:
+        mint_response["legacy_direct_relay_url"] = relay_url
     if api_enabled:
         mint_response.update({"host": api_host, "port": api_port, "tls": api_tls})
     if dashboard_url is not None:

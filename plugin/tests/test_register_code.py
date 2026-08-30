@@ -89,7 +89,7 @@ class NormalizePairingCodeTests(unittest.TestCase):
 
 
 class DashboardIngressPairingTests(unittest.TestCase):
-    def test_dashboard_ingress_is_first_and_direct_relay_is_retained(self) -> None:
+    def test_dashboard_ingress_replaces_implicit_direct_relay(self) -> None:
         payload = json.loads(pair.build_pairing_qr_payload(
             host="192.168.1.20",
             port=8642,
@@ -105,21 +105,41 @@ class DashboardIngressPairingTests(unittest.TestCase):
         ))
 
         self.assertEqual(payload["hermes"], 3)
-        self.assertEqual(payload["dashboard_url"], "https://hermes.example.test/base/")
+        self.assertEqual(payload["dashboard_url"], "https://hermes.example.test/base")
         self.assertEqual(payload["endpoints"][0], {
-            "role": "https",
+            "role": "public",
             "priority": 0,
-            "recommended": True,
+            "recommended": False,
             "dashboard": {"url": "https://hermes.example.test/base"},
             "relay": {
                 "url": "wss://hermes.example.test/base/api/plugins/hermes-relay/transport",
                 "transport_hint": "wss",
             },
         })
+        self.assertEqual(len(payload["endpoints"]), 1)
+        self.assertNotIn(":8767", json.dumps(payload))
         self.assertEqual(
-            payload["endpoints"][1]["relay"]["url"],
-            "ws://192.168.1.20:8767",
+            payload["relay"]["url"],
+            "wss://hermes.example.test/base/api/plugins/hermes-relay/transport",
         )
+
+    def test_explicit_legacy_direct_relay_is_last_and_non_recommended(self) -> None:
+        payload = json.loads(pair.build_pairing_qr_payload(
+            host="192.168.1.20",
+            port=8642,
+            key="api-key",
+            tls=False,
+            relay={"url": "ws://192.168.1.20:8767", "code": "ABC123"},
+            dashboard_url="https://hermes.example.test",
+            legacy_direct_relay=True,
+            sign=False,
+        ))
+
+        legacy = payload["endpoints"][-1]
+        self.assertEqual(legacy["role"], "legacy_direct")
+        self.assertTrue(legacy["legacy"])
+        self.assertFalse(legacy["recommended"])
+        self.assertEqual(legacy["relay"]["url"], "ws://192.168.1.20:8767")
         self.assertEqual(payload["relay"]["url"], "ws://192.168.1.20:8767")
 
     def test_api_less_payload_omits_legacy_api_fields(self) -> None:
@@ -138,7 +158,7 @@ class DashboardIngressPairingTests(unittest.TestCase):
         self.assertNotIn("key", payload)
         self.assertNotIn("tls", payload)
         self.assertNotIn("api", payload["endpoints"][0])
-        self.assertNotIn("api", payload["endpoints"][1])
+        self.assertEqual(len(payload["endpoints"]), 1)
         self.assertEqual(payload["endpoints"][0]["role"], "lan")
 
     def test_dashboard_ingress_does_not_duplicate_existing_candidate(self) -> None:
@@ -264,6 +284,7 @@ class PairCommandTests(unittest.TestCase):
             sign=True,
             endpoints=None,
             dashboard_url=None,
+            legacy_direct_relay=False,
         ):
             payload = {
                 "hermes": 2 if relay else 1,
