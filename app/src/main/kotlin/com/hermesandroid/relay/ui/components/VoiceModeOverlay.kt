@@ -152,6 +152,7 @@ fun VoiceModeOverlay(
     voiceOutputEnabled: Boolean? = null,
     voiceOutputFallbackEnabled: Boolean? = null,
     onOverlayRequest: () -> Unit = {},
+    systemOverlayAvailable: Boolean = true,
     presentationMode: VoicePresentationMode = VoicePresentationMode.Focus,
     onPresentationModeChange: (VoicePresentationMode) -> Unit = {},
     // === END PHASE3-voice-mode-transcript ===
@@ -238,6 +239,7 @@ fun VoiceModeOverlay(
                 onInterrupt = onInterrupt,
                 onPauseAutoMode = onPauseAutoMode,
                 onOverlayRequest = onOverlayRequest,
+                systemOverlayAvailable = systemOverlayAvailable,
                 onOpenSettings = onOpenSettings,
                 onExit = onDismiss,
                 modifier = Modifier
@@ -622,6 +624,22 @@ private fun VoiceMicButton(
 ) {
     if (!visible) return
 
+    val micActionDescription = when (uiState.state) {
+        VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
+        VoiceState.Listening ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_listening)
+            }
+        VoiceState.Transcribing, VoiceState.Thinking, VoiceState.Speaking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_interrupt)
+            }
+    }
+
     val pulseScale by animateFloatAsState(
         targetValue = when (uiState.state) {
             VoiceState.Listening -> 1f + uiState.amplitude * 0.15f
@@ -656,28 +674,12 @@ private fun VoiceMicButton(
         else -> Icons.Filled.Mic
     }
 
-    val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnHoldPress by rememberUpdatedState(onHoldPress)
-    val currentOnHoldRelease by rememberUpdatedState(onHoldRelease)
-
     val gestureModifier = when (uiState.interactionMode) {
-        InteractionMode.HoldToTalk -> Modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                currentOnHoldPress()
-                // Hold until the finger genuinely lifts. Don't use
-                // waitForUpOrCancellation(): it ends the hold on ANY cancel — a
-                // consumed move event or the finger drifting just off the small
-                // circle — which made the button feel like it released by
-                // accident. Loop until no pointer is still pressed so drift and
-                // minor consumption don't cut the recording short.
-                do {
-                    val event = awaitPointerEvent()
-                } while (event.changes.any { it.pressed })
-                currentOnHoldRelease()
-            }
-        }
-        else -> Modifier.clickable { currentOnTap() }
+        InteractionMode.HoldToTalk -> Modifier.voiceHoldGesture(
+            onPress = onHoldPress,
+            onRelease = onHoldRelease,
+        )
+        else -> Modifier.clickable(onClick = onTap)
     }
 
     Surface(
@@ -692,12 +694,44 @@ private fun VoiceMicButton(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
-                contentDescription = stringResource(R.string.voice_overlay_mic_cd),
+                contentDescription = micActionDescription,
                 tint = Color.White,
                 modifier = Modifier.size(iconSize.dp),
             )
         }
     }
+}
+
+/**
+ * Shared Hold-to-talk gesture for in-app and system-overlay voice controls.
+ * The callback refs update across recomposition without restarting the active
+ * gesture when its press changes VoiceUiState to Listening.
+ */
+@Composable
+internal fun Modifier.voiceHoldGesture(
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+): Modifier {
+    val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnRelease by rememberUpdatedState(onRelease)
+    return then(
+        Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                currentOnPress()
+                // Hold until the finger genuinely lifts. Don't use
+                // waitForUpOrCancellation(): it ends the hold on ANY cancel — a
+                // consumed move event or the finger drifting just off the small
+                // circle — which made the button feel like it released by
+                // accident. Loop until no pointer is still pressed so drift and
+                // minor consumption don't cut the recording short.
+                do {
+                    val event = awaitPointerEvent()
+                } while (event.changes.any { it.pressed })
+                currentOnRelease()
+            }
+        },
+    )
 }
 
 private fun voiceStateToSphereState(state: VoiceState): SphereState = when (state) {
@@ -773,6 +807,7 @@ fun ConversationVoiceDock(
     onOverlayRequest: () -> Unit,
     onOpenSettings: () -> Unit,
     onExit: () -> Unit,
+    systemOverlayAvailable: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -816,17 +851,19 @@ fun ConversationVoiceDock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    TextButton(
-                        onClick = onOverlayRequest,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.voice_overlay_overlay),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    if (systemOverlayAvailable) {
+                        TextButton(
+                            onClick = onOverlayRequest,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.voice_overlay_overlay),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                     TextButton(
                         onClick = onExit,
@@ -1006,6 +1043,7 @@ private fun VoiceSessionPill(
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
     onOverlayRequest: () -> Unit,
+    systemOverlayAvailable: Boolean,
     onOpenSettings: () -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1158,21 +1196,23 @@ private fun VoiceSessionPill(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        TextButton(
-                            onClick = {
-                                onFocusModeChange(false)
-                                onOverlayRequest()
-                            },
-                            modifier = Modifier
-                                .weight(0.95f)
-                                .height(40.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.voice_overlay_overlay),
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                        if (systemOverlayAvailable) {
+                            TextButton(
+                                onClick = {
+                                    onFocusModeChange(false)
+                                    onOverlayRequest()
+                                },
+                                modifier = Modifier
+                                    .weight(0.95f)
+                                    .height(40.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.voice_overlay_overlay),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                         TextButton(
                             onClick = onExit,
@@ -1289,8 +1329,9 @@ internal fun dispatchVoiceMicHoldPress(
 ) {
     when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> onStartListening()
-        VoiceState.Speaking -> onInterruptAndStart()
-        VoiceState.Listening, VoiceState.Transcribing, VoiceState.Thinking -> Unit
+        VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking ->
+            onInterruptAndStart()
+        VoiceState.Listening -> Unit
     }
 }
 

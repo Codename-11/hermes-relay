@@ -91,6 +91,9 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.components.distinctVoiceRouteParts
+import com.hermesandroid.relay.ui.components.dispatchVoiceMicHoldPress
+import com.hermesandroid.relay.ui.components.dispatchVoiceMicTap
+import com.hermesandroid.relay.ui.components.voiceHoldGesture
 import com.hermesandroid.relay.ui.components.voiceRouteDisplayLabel
 import com.hermesandroid.relay.ui.theme.PersistedHermesRelayTheme
 import com.hermesandroid.relay.viewmodel.InteractionMode
@@ -669,6 +672,35 @@ private fun VoiceFloatingOverlayBubble(
         VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.Stop
         VoiceState.Idle, VoiceState.Error -> Icons.Filled.Mic
     }
+    val bubbleGesture = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+        Modifier.voiceHoldGesture(
+            onPress = {
+                dispatchVoiceMicHoldPress(
+                    uiState = uiState,
+                    onStartListening = onStartListening,
+                    onInterruptAndStart = {
+                        onInterrupt()
+                        onStartListening()
+                    },
+                )
+            },
+            onRelease = onStopListening,
+        )
+    } else {
+        Modifier.combinedClickable(
+            onClick = {
+                dispatchVoiceMicTap(
+                    uiState = uiState,
+                    onStartListening = onStartListening,
+                    onStopListening = onStopListening,
+                    onInterrupt = onInterrupt,
+                    onPauseAutoMode = onPauseAutoMode,
+                )
+            },
+            onLongClick = onExpand,
+            onDoubleClick = onExpand,
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -691,19 +723,7 @@ private fun VoiceFloatingOverlayBubble(
             modifier = Modifier
                 .size(70.dp)
                 .clip(CircleShape)
-            .combinedClickable(
-                onClick = {
-                    dispatchMicAction(
-                        uiState = uiState,
-                        onStartListening = onStartListening,
-                        onStopListening = onStopListening,
-                        onInterrupt = onInterrupt,
-                        onPauseAutoMode = onPauseAutoMode,
-                    )
-                },
-                onLongClick = onExpand,
-                onDoubleClick = onExpand,
-            ),
+                .then(bubbleGesture),
             shape = CircleShape,
             color = containerColor.copy(alpha = if (isHot) 0.96f else 0.92f),
             shadowElevation = 8.dp,
@@ -727,6 +747,22 @@ private fun VoiceFloatingOverlayBubble(
                     color = Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+            IconButton(
+                onClick = onExpand,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(30.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ExpandMore,
+                    contentDescription = stringResource(R.string.voice_overlay_expand_cd),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
@@ -864,19 +900,51 @@ private fun MicControlButton(
         uiState.state == VoiceState.Speaking ||
         uiState.state == VoiceState.Transcribing ||
         uiState.state == VoiceState.Thinking
+    val actionDescription = when (uiState.state) {
+        VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
+        VoiceState.Listening ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_listening)
+            }
+        VoiceState.Transcribing, VoiceState.Thinking, VoiceState.Speaking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_interrupt)
+            }
+    }
+    val gestureModifier = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+        Modifier.voiceHoldGesture(
+            onPress = {
+                dispatchVoiceMicHoldPress(
+                    uiState = uiState,
+                    onStartListening = onStartListening,
+                    onInterruptAndStart = {
+                        onInterrupt()
+                        onStartListening()
+                    },
+                )
+            },
+            onRelease = onStopListening,
+        )
+    } else {
+        Modifier.clickable {
+            dispatchVoiceMicTap(
+                uiState = uiState,
+                onStartListening = onStartListening,
+                onStopListening = onStopListening,
+                onInterrupt = onInterrupt,
+                onPauseAutoMode = onPauseAutoMode,
+            )
+        }
+    }
     Surface(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .clickable {
-                dispatchMicAction(
-                    uiState = uiState,
-                    onStartListening = onStartListening,
-                    onStopListening = onStopListening,
-                    onInterrupt = onInterrupt,
-                    onPauseAutoMode = onPauseAutoMode,
-                )
-        },
+            .then(gestureModifier),
         shape = CircleShape,
         color = when {
             isStopAction -> Color(0xFFE53935)
@@ -895,44 +963,11 @@ private fun MicControlButton(
                         Icons.Filled.Stop
                     else -> Icons.Filled.Mic
                 },
-                contentDescription = stringResource(R.string.voice_overlay_mic_a11y),
+                contentDescription = actionDescription,
                 tint = Color.White,
                 modifier = Modifier.size(22.dp),
             )
         }
-    }
-}
-
-private fun dispatchMicAction(
-    uiState: VoiceUiState,
-    onStartListening: () -> Unit,
-    onStopListening: () -> Unit,
-    onInterrupt: () -> Unit,
-    onPauseAutoMode: () -> Unit,
-) {
-    when (uiState.state) {
-        VoiceState.Listening -> {
-            if (uiState.interactionMode == InteractionMode.Continuous) {
-                onPauseAutoMode()
-            } else {
-                onStopListening()
-            }
-        }
-        VoiceState.Speaking -> {
-            if (uiState.interactionMode == InteractionMode.Continuous) {
-                onPauseAutoMode()
-            } else {
-                onInterrupt()
-            }
-        }
-        VoiceState.Transcribing, VoiceState.Thinking -> {
-            if (uiState.interactionMode == InteractionMode.Continuous) {
-                onPauseAutoMode()
-            } else {
-                onInterrupt()
-            }
-        }
-        VoiceState.Idle, VoiceState.Error -> onStartListening()
     }
 }
 

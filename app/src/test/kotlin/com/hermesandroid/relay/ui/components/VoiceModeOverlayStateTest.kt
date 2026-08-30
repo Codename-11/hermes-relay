@@ -15,6 +15,7 @@ import com.hermesandroid.relay.viewmodel.preserveRealtimeTurnOnStop
 import com.hermesandroid.relay.viewmodel.realtimeTranscriptState
 import com.hermesandroid.relay.viewmodel.realtimeTurnActiveAfterPromotion
 import com.hermesandroid.relay.viewmodel.voiceSessionExitState
+import com.hermesandroid.relay.viewmodel.shouldArmVoiceSilenceWatchdog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -292,5 +293,44 @@ class VoiceModeOverlayStateTest {
         )
 
         assertEquals(listOf("interrupt", "start"), calls)
+    }
+
+    @Test
+    fun holdPress_interruptsAndCapturesSteeringAcrossBusyTurnStates() {
+        listOf(VoiceState.Transcribing, VoiceState.Thinking, VoiceState.Speaking).forEach { state ->
+            val calls = mutableListOf<String>()
+
+            dispatchVoiceMicHoldPress(
+                uiState = VoiceUiState(
+                    state = state,
+                    interactionMode = InteractionMode.HoldToTalk,
+                ),
+                onStartListening = { calls += "start" },
+                onInterruptAndStart = {
+                    calls += "interrupt"
+                    calls += "start"
+                },
+            )
+
+            assertEquals("Hold-to-talk dispatch for $state", listOf("interrupt", "start"), calls)
+        }
+    }
+
+    @Test
+    fun bargeInCaptureAlwaysArmsSilenceCompletion() {
+        InteractionMode.values().forEach { mode ->
+            assertEquals(
+                "Barge-in capture for $mode must auto-complete without a physical release",
+                true,
+                shouldArmVoiceSilenceWatchdog(mode, bargeInCapture = true),
+            )
+        }
+        assertEquals(
+            false,
+            shouldArmVoiceSilenceWatchdog(
+                InteractionMode.HoldToTalk,
+                bargeInCapture = false,
+            ),
+        )
     }
 }

@@ -53,7 +53,7 @@ class VoiceModeOverlayInteractionTest {
             }
         }
 
-        compose.onNodeWithContentDescription("Voice mic")
+        compose.onNodeWithContentDescription("start listening")
             .performTouchInput { click() }
         compose.onNodeWithContentDescription("Expand voice controls")
             .performTouchInput { click() }
@@ -101,6 +101,31 @@ class VoiceModeOverlayInteractionTest {
             .performTouchInput { click(Offset(1f, center.y)) }
 
         compose.runOnIdle { assertEquals(0, backgroundTaps) }
+    }
+
+    @Test
+    fun unavailableSystemOverlayActionIsNotOffered() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            MaterialTheme {
+                VoiceModeOverlay(
+                    uiState = idleVoiceState(),
+                    onMicTap = {},
+                    onMicRelease = {},
+                    onInterrupt = {},
+                    onDismiss = {},
+                    onModeChange = {},
+                    onClearError = {},
+                    systemOverlayAvailable = false,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Expand voice controls")
+            .performTouchInput { click() }
+        compose.mainClock.advanceTimeBy(500)
+
+        compose.onNodeWithText("Overlay").assertDoesNotExist()
     }
 
     private fun idleVoiceState() = VoiceUiState(

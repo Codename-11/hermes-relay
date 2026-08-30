@@ -2094,8 +2094,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             !continuousListeningPaused
     }
 
-    private fun startVoiceCapture(rec: VoiceRecorder) {
-        try {
+    private fun startVoiceCapture(
+        rec: VoiceRecorder,
+        bargeInCapture: Boolean = false,
+    ): Boolean {
+        return try {
             rec.startRecording()
             listeningStartedAtMs = System.currentTimeMillis()
             _uiState.update {
@@ -2110,16 +2113,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     handoffStatus = null,
                 )
             }
-            // 2026-04-18: arm silence-based auto-stop. HoldToTalk skips
-            // this — the physical release is the authoritative stop.
-            if (_uiState.value.interactionMode != InteractionMode.HoldToTalk) {
+            // A normal Hold-to-talk capture ends on physical release. A
+            // barge-in capture is VAD-owned instead, so it always needs the
+            // silence watchdog even when Hold-to-talk is the saved mode;
+            // otherwise the steering utterance remains open indefinitely.
+            if (shouldArmVoiceSilenceWatchdog(_uiState.value.interactionMode, bargeInCapture)) {
                 startSilenceWatchdog()
             }
+            true
         } catch (e: Exception) {
             listeningStartedAtMs = 0L
             Log.e(TAG, "startListening failed: ${e.message}")
             // SecurityException path becomes "Permission needed" via the classifier.
             surfaceError(e, context = "record")
+            false
         }
     }
 
@@ -6074,12 +6081,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val rec = recorder ?: error("Recorder not initialized")
-                if (!rec.isRecording()) {
-                    rec.startRecording()
+                val captureStarted = rec.isRecording() ||
+                    startVoiceCapture(rec, bargeInCapture = true)
+                if (!captureStarted) {
+                    abandonBargeInCaptureIfCurrent(captureEpoch)
+                    return@launch
                 }
                 if (canStartBargeInCapture(captureEpoch, interruptedMode, interruptedEngine)) {
                     scheduleResumeWatchdog()
                 } else {
+                    silenceWatchdogJob?.cancel()
+                    silenceWatchdogJob = null
                     try { rec.cancel() } catch (_: Throwable) { /* ignore */ }
                     abandonBargeInCaptureIfCurrent(captureEpoch)
                 }
@@ -6981,6 +6993,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 }
+
+internal fun shouldArmVoiceSilenceWatchdog(
+    interactionMode: InteractionMode,
+    bargeInCapture: Boolean,
+): Boolean = bargeInCapture || interactionMode != InteractionMode.HoldToTalk
 
 // -------------------------------------------------------------------------
 // Voice capture guards and sentence-boundary detection (top-level so they're
