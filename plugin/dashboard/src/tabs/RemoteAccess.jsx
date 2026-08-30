@@ -103,6 +103,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
           away from home. Tailscale supplies private routing, WireGuard encryption,
           and ACLs. Raw tailnet HTTP/WS has no application TLS, but traffic remains
           encrypted between tailnet devices; Hermes authentication still applies.
+          Recommended setup maps tailnet HTTPS :443 to local Dashboard :9119.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -166,7 +167,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
 
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={busy || !available || serving} onClick={() => onEnable()}>
-            {busy === "enable" ? "Enabling…" : "Enable recommended setup"}
+            {busy === "enable" ? "Enabling…" : "Enable HTTPS :443 ingress"}
           </Button>
           {dashboardServing && !apiServing ? (
             <Button
@@ -199,8 +200,9 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          New pairing invites use Dashboard :9119 and its same-origin Relay path.
-          Keep :8767 active only until older devices have re-paired.
+          New pairing invites use the classified tailnet listener above — normally
+          HTTPS :443 — which proxies local Dashboard :9119 and its same-origin Relay
+          path. Keep :8767 active only until older devices have re-paired.
         </p>
 
         {resultMessage ? (

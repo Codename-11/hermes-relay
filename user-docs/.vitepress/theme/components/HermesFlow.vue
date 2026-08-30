@@ -44,7 +44,7 @@ const diagrams: Record<string, DiagramDef> = {
       { id: 'api-client', type: 'hermes', position: { x: 220, y: 20 }, data: { label: 'HermesApiClient' }, sourcePosition: Position.Right, targetPosition: Position.Left },
       { id: 'conn-mgr', type: 'hermes', position: { x: 220, y: 140 }, data: { label: 'ConnectionManager' }, sourcePosition: Position.Right, targetPosition: Position.Left },
       { id: 'api-server', type: 'hermes', position: { x: 480, y: 20 }, data: { label: 'API Server :8642', accent: true }, sourcePosition: Position.Right, targetPosition: Position.Left },
-      { id: 'relay', type: 'hermes', position: { x: 480, y: 140 }, data: { label: 'Relay ingress :9119' }, sourcePosition: Position.Right, targetPosition: Position.Left },
+      { id: 'relay', type: 'hermes', position: { x: 480, y: 140 }, data: { label: 'Relay via Dashboard origin' }, sourcePosition: Position.Right, targetPosition: Position.Left },
       { id: 'chat', type: 'hermes', position: { x: 700, y: 20 }, data: { label: 'Chat' }, targetPosition: Position.Left },
       { id: 'terminal', type: 'hermes', position: { x: 700, y: 100 }, data: { label: 'Terminal' }, targetPosition: Position.Left },
       { id: 'bridge', type: 'hermes', position: { x: 700, y: 180 }, data: { label: 'Bridge' }, targetPosition: Position.Left },

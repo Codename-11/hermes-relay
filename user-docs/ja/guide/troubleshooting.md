@@ -28,6 +28,8 @@ canonical_source: /guide/troubleshooting
 LAN アドレスは同じ Wi-Fi 内でのみ動作します。Tailscale ではスマートフォンと
 サーバーの両方が接続済みである必要があります。
 `http://100.x.y.z:9119` のような Dashboard ルートは、API サーバーや API キーなしで確認されます。
+推奨ヘルパーでは `https://<tailnet-host>/api/health` を開いてください。
+tailnet HTTPS `:443` がローカル Dashboard `:9119` へ転送されます。
 
 ## Chat がストリーミングしない
 

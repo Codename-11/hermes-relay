@@ -28,6 +28,8 @@ O aplicativo testou todas as rotas salvas — LAN, Tailscale e públicas — sem
 receber resposta. Um endereço LAN funciona somente na mesma rede Wi-Fi. Para
 Tailscale, o celular e o servidor precisam estar conectados.
 Uma rota Dashboard como `http://100.x.y.z:9119` é testada sem servidor de API nem chave de API.
+Com o helper recomendado, abra `https://<host-do-tailnet>/api/health`: o HTTPS
+`:443` do tailnet encaminha para o Dashboard local `:9119`.
 
 ## Chat não transmite
 

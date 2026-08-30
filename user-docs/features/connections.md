@@ -168,16 +168,18 @@ The split is intentional:
   control, and Relay voice extensions use the Relay route and require a paired
   Relay session.
 
-For optional Relay and API routes over Tailscale, run this on the host before pairing:
+For the recommended Dashboard and Relay route over Tailscale, run this on the host before pairing:
 
 ```bash
 hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The helper publishes Relay `:8767` and the optional API fallback. Add the remote
-Dashboard/Gateway independently — `http://100.x.y.z:9119` works over the
-encrypted tailnet when the Dashboard is reachable there, and needs no API key.
+The helper publishes tailnet HTTPS `:443` for local Dashboard `:9119` and its
+same-origin Relay path. The API fallback remains optional on `:8642`; direct
+Relay `:8767` is legacy compatibility. A manually exposed
+`http://100.x.y.z:9119` Dashboard also works over the encrypted tailnet, but it
+is not the recommended helper route and has no application TLS.
 The route menu in Settings
 lets you prefer a route for the current session without changing the stored
 connection.

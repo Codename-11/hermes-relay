@@ -28,6 +28,8 @@ Die App hat alle gespeicherten LAN-, Tailscale- und öffentlichen Routen geprüf
 aber keine Antwort erhalten. Eine LAN-Adresse funktioniert nur im selben WLAN.
 Für Tailscale müssen Telefon und Server verbunden sein.
 Eine Dashboard-Route wie `http://100.x.y.z:9119` wird ohne API-Server oder API-Schlüssel geprüft.
+Beim empfohlenen Helfer öffne stattdessen `https://<tailnet-host>/api/health`:
+Tailnet-HTTPS `:443` leitet an das lokale Dashboard `:9119` weiter.
 
 ## Chat streamt nicht
 

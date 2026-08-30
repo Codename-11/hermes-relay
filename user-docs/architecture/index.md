@@ -20,16 +20,18 @@ For a compact shareable reference covering connection paths, transport boundarie
 
 | Path | Protocol | Server | Purpose |
 |------|----------|--------|---------|
-| Chat (preferred) | WS | Dashboard `:9119` | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
+| Chat (preferred) | WS | Dashboard origin (local target commonly `:9119`) | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
 | Chat (fallback) | HTTP/SSE | API Server `:8642` | Streaming conversations via the Sessions / runs / completions APIs |
-| Terminal | WS/WSS | Dashboard `:9119` same-origin Relay ingress | Remote shell via tmux (Phase 2) |
-| Bridge | WS/WSS | Dashboard `:9119` same-origin Relay ingress | Device control via AccessibilityService + MediaProjection (Phase 3) |
-| Notifications | WS/WSS | Dashboard `:9119` same-origin Relay ingress | `NotificationListenerService` forwards posted notifications over a bounded channel |
+| Terminal | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | Remote shell via tmux (Phase 2) |
+| Bridge | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | Device control via AccessibilityService + MediaProjection (Phase 3) |
+| Notifications | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | `NotificationListenerService` forwards posted notifications over a bounded channel |
 
 The Relay process still owns one internal listener on `:8767`, but normal LAN,
 Tailscale, and public clients reach it through the Dashboard plugin path on the
 Dashboard origin. Direct external `:8767` is retained only for explicit legacy
 compatibility. The older standalone `android_relay.py` service on port 8766 is retired.
+For recommended Tailscale, the selected origin is HTTPS `:443` and proxies the
+local Dashboard target on `:9119`.
 
 ## Key Components
 
@@ -97,5 +99,5 @@ Chat uses vanilla upstream Hermes either way (gateway preferred, API-server SSE 
 | Protocol | WS (`/api/ws`) preferred · HTTP/SSE fallback | WSS |
 | Connection | Persistent gateway socket · per-request on SSE fallback | Persistent |
 | Auth | Dashboard ws-ticket (gateway) · API bearer token (SSE fallback) | Pairing code + session token. Voice endpoints may also accept the API bearer token. |
-| Server | Hermes dashboard `:9119` · Hermes API `:8642` | Dashboard `:9119` ingress → internal Relay `:8767` |
+| Server | Hermes Dashboard origin · Hermes API `:8642` | Dashboard origin → local `:9119` → internal Relay `:8767` |
 | Live reasoning | Yes on gateway · post-hoc only on SSE fallback | — |

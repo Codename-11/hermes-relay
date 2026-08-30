@@ -69,8 +69,10 @@ unzuverlässig ist; Android prüft eine abweichende Anmeldeadresse vor dem Speic
 5. Aktiviere unter **Einrichtung abschließen** Android-Benachrichtigungen, wenn du Chat-Hinweise im Hintergrund erhalten möchtest. Kamera, Mikrofon und weitere Funktionen bleiben optional und werden einzeln eingerichtet; mit **Jetzt nicht** kannst du direkt fortfahren.
 6. Füge API-Fallback, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
 
-Eine Tailscale-Dashboard-Adresse wie `http://100.x.y.z:9119` oder eine separat
-veröffentlichte `.ts.net`-Adresse kann ohne API-Server oder API-Schlüssel als Route hinzugefügt und geprüft werden.
+`hermes-relay-tailscale enable` veröffentlicht `https://host.ts.net` auf
+Tailnet-Port `:443` und leitet an das lokale Dashboard `:9119` samt
+gleichnamigem Relay-Pfad weiter. Eine bewusst direkt erreichbare Route wie
+`http://100.x.y.z:9119` funktioniert ebenfalls, besitzt aber kein Anwendungs-TLS.
 
 Dieselbe Anmeldung schaltet Chat, Sitzungen, Manage und Voice frei. Ein
 ungepaartes Relay und ein nicht verfügbarer API-Fallback sind normal.

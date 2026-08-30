@@ -68,8 +68,10 @@ es fiable; Android verifica un origen de inicio de sesión distinto antes de gua
 5. En **Finalizar configuración**, activa las notificaciones de Android si quieres alertas de chat en segundo plano. La cámara, el micrófono y las demás funciones siguen siendo opcionales y se configuran una a una; pulsa **Ahora no** para continuar directamente.
 6. Añade API fallback, Relay o rutas remotas después desde **Advanced** si lo necesitas.
 
-Puedes añadir y probar una dirección Dashboard de Tailscale como
-`http://100.x.y.z:9119`, o una dirección `.ts.net` publicada por separado, sin configurar el servidor API ni una clave API.
+`hermes-relay-tailscale enable` publica `https://host.ts.net` en el puerto
+`:443` del tailnet y lo redirige al Dashboard local `:9119` con su ruta Relay
+del mismo origen. Una ruta deliberadamente directa como
+`http://100.x.y.z:9119` también funciona, pero no tiene TLS de aplicación.
 
 La misma sesión habilita Chat, sesiones, Manage y Voice. Es normal que Relay
 esté sin emparejar y que API fallback no esté disponible.

@@ -407,11 +407,11 @@ when you change networks.
   the LAN, detects Tailscale if it's running, and emits an ordered candidate list
   in the QR. Add `--public-url https://hermes.example.com` to include an external
   reverse-proxy or Cloudflare Tunnel URL.
-- **Add the Dashboard's Tailscale address** directly as a remote route — a raw
-  `http://100.x.y.z:9119` address is valid over the encrypted tailnet and needs
-  no API configuration. `hermes-relay-tailscale enable` publishes Relay and the
-  optional API fallback, not the Dashboard; publish the Dashboard/Gateway route
-  separately when you want a `https://host.ts.net` address. Prefer a reverse proxy + Let's Encrypt or a
+- **Use the helper's detected Tailscale HTTPS address** —
+  `hermes-relay-tailscale enable` publishes `https://host.ts.net` on tailnet
+  `:443` and proxies local Dashboard `:9119` plus its same-origin Relay ingress.
+  A raw `http://100.x.y.z:9119` address remains valid when Dashboard is
+  deliberately reachable there, but it has no application TLS. Prefer a reverse proxy + Let's Encrypt or a
   self-hosted VPN? Both work as long as the phone can reach each capability you
   configured.
 - **Force a mode at pair time** — `--mode` accepts `auto`, `lan`, `tailscale`, or

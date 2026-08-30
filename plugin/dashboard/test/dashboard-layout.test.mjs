@@ -43,6 +43,8 @@ test("remote access presents Dashboard ingress and keeps direct Relay explicitly
   assert.match(source, /Direct Relay → host :8767/);
   assert.match(source, /serve_services/);
   assert.match(source, /listen_ports/);
+  assert.match(source, /tailnet HTTPS :443 to local Dashboard :9119/);
+  assert.match(source, /Enable HTTPS :443 ingress/);
   assert.match(source, /Enable optional API :8642/);
   assert.match(source, /Disable legacy :8767 after re-pairing/);
   assert.match(source, /Public Dashboard origin/);
