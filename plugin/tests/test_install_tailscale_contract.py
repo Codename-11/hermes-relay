@@ -23,14 +23,24 @@ class InstallTailscaleContractTests(unittest.TestCase):
             self.script,
         )
         self.assertIn(
-            "HTTPS :443 for local Dashboard :9119, plus optional API :8642",
+            "HTTPS :10443 for local Dashboard :9119, plus optional API :8642",
             self.script,
         )
 
     def test_installed_shim_marks_direct_relay_as_explicit_legacy(self) -> None:
         self.assertIn(
-            "hermes-relay-tailscale enable [--dashboard-listener-port 443] "
+            "hermes-relay-tailscale enable [--dashboard-listener-port 10443] "
             "[--dashboard-target-port 9119] [--api-port 8642] [--no-api]",
+            self.script,
+        )
+        self.assertIn(
+            "hermes-relay-tailscale disable [--dashboard-listener-port 10443] "
+            "[--dashboard-target-port 9119] [--api-port 8642] [--no-api]",
+            self.script,
+        )
+        self.assertIn(
+            "hermes-relay-tailscale enable --dashboard-listener-port 443  "
+            "# advanced override; only when :443 is free",
             self.script,
         )
         self.assertIn(
@@ -48,7 +58,12 @@ class InstallTailscaleContractTests(unittest.TestCase):
         )[1].split(
             '${C_BOLD}${C_CYAN}Self-setup / troubleshoot${C_RESET}', 1
         )[0]
-        self.assertIn("HTTPS :443 → Dashboard :9119 + optional API :8642", remote_access)
+        self.assertIn("HTTPS :10443 → Dashboard :9119 + optional API :8642", remote_access)
+        self.assertIn(
+            "enable --dashboard-listener-port 443${C_RESET} "
+            "${C_DIM}# advanced override; only if :443 is free",
+            remote_access,
+        )
         self.assertIn("legacy/direct Relay only", remote_access)
         self.assertNotIn("publish relay :8767", remote_access.lower())
         self.assertNotIn("--https=9119", remote_access)

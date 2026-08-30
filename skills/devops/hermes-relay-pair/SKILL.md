@@ -36,7 +36,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 
 1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.pair --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
 2. **Hermes API server reachable** on `API_SERVER_HOST:API_SERVER_PORT` (default `127.0.0.1:8642`). `plugin.pair` auto-reads this from `~/.hermes/config.yaml` → `~/.hermes/.env` → env vars → defaults.
-3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. The Relay may stay host-internal: current Android pairing normally reaches it through the Dashboard's same-origin plugin transport. Tailscale Serve normally exposes HTTPS `443` and proxies the host-local Dashboard on `9119`; a raw LAN/tailnet route may reach `9119` directly. Without a live relay, the QR will configure chat only.
+3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. The Relay may stay host-internal: current Android pairing normally reaches it through the Dashboard's same-origin plugin transport. Tailscale Serve normally exposes dedicated HTTPS `10443` and proxies the host-local Dashboard on `9119`; a raw LAN/tailnet route may reach `9119` directly. Listener `443` is an advanced explicit override only when it is free. Without a live relay, the QR will configure chat only.
 4. **Host is Linux or macOS.** The relay uses a real PTY backend, which is POSIX-only. Windows hosts can generate API-only QRs but the terminal channel will not work.
 
 ## Procedure
@@ -60,9 +60,10 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    A trusted configured `HERMES_DASHBOARD_PUBLIC_URL` / Dashboard public URL is
    also suitable. If no exact origin is available, omit the flag; the pair
    backend will construct conventional LAN/raw-tailnet Dashboard candidates on
-   `9119`, or advertise the HTTPS `443` listener when Tailscale Serve maps it to
-   local Dashboard `9119`. Never substitute the API server URL or infer public
-   port `8767`.
+   `9119`, or advertise the HTTPS `10443` listener when Tailscale Serve maps it
+   to local Dashboard `9119`. HTTPS `443` is used only after the operator
+   explicitly selects that advanced listener and confirms it is free. Never
+   substitute the API server URL or infer public port `8767`.
 
    If `python` resolves to the wrong interpreter (plugin not found), use the Hermes venv explicitly:
 
