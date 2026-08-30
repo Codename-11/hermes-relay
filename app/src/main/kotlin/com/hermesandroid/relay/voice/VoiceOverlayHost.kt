@@ -73,6 +73,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -109,6 +110,8 @@ import kotlin.math.sin
 
 private const val TWO_PI = 6.2831855f
 private const val HALF_PI = 1.5707964f
+internal const val VOICE_FLOATING_OVERLAY_MIC_TEST_TAG = "voiceFloatingOverlayMic"
+internal const val VOICE_OVERLAY_MIC_CONTROL_TEST_TAG = "voiceOverlayMicControl"
 
 // Matches the in-app VoiceWaveform palette so minimized overlay mode reads as
 // the same voice surface, just wrapped around the mic control.
@@ -641,7 +644,7 @@ private fun overlayPrimaryText(uiState: VoiceUiState, fallback: String): String 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun VoiceFloatingOverlayBubble(
+internal fun VoiceFloatingOverlayBubble(
     uiState: VoiceUiState,
     stateText: String,
     onExpand: () -> Unit,
@@ -661,6 +664,9 @@ private fun VoiceFloatingOverlayBubble(
         VoiceState.Transcribing, VoiceState.Thinking ->
             if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_interrupt)
     }
+    val holdStopAction = stringResource(R.string.voice_overlay_tap_action_listening)
+    val inactiveHoldDescription = stringResource(R.string.voice_overlay_a11y, stateText, tapAction)
+    val activeHoldDescription = stringResource(R.string.voice_overlay_a11y, stateText, holdStopAction)
     val containerColor = when (uiState.state) {
         VoiceState.Listening, VoiceState.Speaking -> Color(0xFFE53935)
         VoiceState.Transcribing, VoiceState.Thinking -> Color(0xFFE53935)
@@ -674,6 +680,9 @@ private fun VoiceFloatingOverlayBubble(
     }
     val bubbleGesture = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
         Modifier.voiceHoldGesture(
+            state = uiState.state,
+            inactiveActionLabel = tapAction,
+            activeActionLabel = holdStopAction,
             onPress = {
                 dispatchVoiceMicHoldPress(
                     uiState = uiState,
@@ -685,6 +694,8 @@ private fun VoiceFloatingOverlayBubble(
                 )
             },
             onRelease = onStopListening,
+            inactiveContentDescription = inactiveHoldDescription,
+            activeContentDescription = activeHoldDescription,
         )
     } else {
         Modifier.combinedClickable(
@@ -723,6 +734,7 @@ private fun VoiceFloatingOverlayBubble(
             modifier = Modifier
                 .size(70.dp)
                 .clip(CircleShape)
+                .testTag(VOICE_FLOATING_OVERLAY_MIC_TEST_TAG)
                 .then(bubbleGesture),
             shape = CircleShape,
             color = containerColor.copy(alpha = if (isHot) 0.96f else 0.92f),
@@ -736,7 +748,11 @@ private fun VoiceFloatingOverlayBubble(
             ) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = stringResource(R.string.voice_overlay_a11y, stateText, tapAction),
+                    contentDescription = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+                        null
+                    } else {
+                        stringResource(R.string.voice_overlay_a11y, stateText, tapAction)
+                    },
                     tint = Color.White,
                     modifier = Modifier.size(23.dp),
                 )
@@ -888,7 +904,7 @@ private fun overlayBubbleStateLabel(state: VoiceState): String = when (state) {
 }
 
 @Composable
-private fun MicControlButton(
+internal fun MicControlButton(
     uiState: VoiceUiState,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
@@ -915,8 +931,12 @@ private fun MicControlButton(
                 stringResource(R.string.voice_overlay_tap_action_interrupt)
             }
     }
+    val holdStopDescription = stringResource(R.string.voice_overlay_tap_action_listening)
     val gestureModifier = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
         Modifier.voiceHoldGesture(
+            state = uiState.state,
+            inactiveActionLabel = actionDescription,
+            activeActionLabel = holdStopDescription,
             onPress = {
                 dispatchVoiceMicHoldPress(
                     uiState = uiState,
@@ -944,6 +964,7 @@ private fun MicControlButton(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
+            .testTag(VOICE_OVERLAY_MIC_CONTROL_TEST_TAG)
             .then(gestureModifier),
         shape = CircleShape,
         color = when {
@@ -963,7 +984,11 @@ private fun MicControlButton(
                         Icons.Filled.Stop
                     else -> Icons.Filled.Mic
                 },
-                contentDescription = actionDescription,
+                contentDescription = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+                    null
+                } else {
+                    actionDescription
+                },
                 tint = Color.White,
                 modifier = Modifier.size(22.dp),
             )

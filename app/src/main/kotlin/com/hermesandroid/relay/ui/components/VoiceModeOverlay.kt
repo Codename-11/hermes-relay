@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -63,13 +64,20 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,6 +110,8 @@ import java.io.File
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+
+internal const val VOICE_MODE_MIC_TEST_TAG = "voiceModeMic"
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -676,6 +686,9 @@ private fun VoiceMicButton(
 
     val gestureModifier = when (uiState.interactionMode) {
         InteractionMode.HoldToTalk -> Modifier.voiceHoldGesture(
+            state = uiState.state,
+            inactiveActionLabel = micActionDescription,
+            activeActionLabel = stringResource(R.string.voice_overlay_tap_action_listening),
             onPress = onHoldPress,
             onRelease = onHoldRelease,
         )
@@ -686,6 +699,7 @@ private fun VoiceMicButton(
         modifier = modifier
             .size((baseSize * pulseScale).dp)
             .clip(CircleShape)
+            .testTag(VOICE_MODE_MIC_TEST_TAG)
             .then(gestureModifier),
         shape = CircleShape,
         color = containerColor,
@@ -694,7 +708,11 @@ private fun VoiceMicButton(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
-                contentDescription = micActionDescription,
+                contentDescription = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+                    null
+                } else {
+                    micActionDescription
+                },
                 tint = Color.White,
                 modifier = Modifier.size(iconSize.dp),
             )
@@ -707,31 +725,89 @@ private fun VoiceMicButton(
  * The callback refs update across recomposition without restarting the active
  * gesture when its press changes VoiceUiState to Listening.
  */
-@Composable
 internal fun Modifier.voiceHoldGesture(
+    state: VoiceState,
+    inactiveActionLabel: String,
+    activeActionLabel: String,
     onPress: () -> Unit,
     onRelease: () -> Unit,
-): Modifier {
+    inactiveContentDescription: String = inactiveActionLabel,
+    activeContentDescription: String = activeActionLabel,
+): Modifier = composed {
     val currentOnPress by rememberUpdatedState(onPress)
     val currentOnRelease by rememberUpdatedState(onRelease)
-    return then(
-        Modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                currentOnPress()
-                // Hold until the finger genuinely lifts. Don't use
-                // waitForUpOrCancellation(): it ends the hold on ANY cancel — a
-                // consumed move event or the finger drifting just off the small
-                // circle — which made the button feel like it released by
-                // accident. Loop until no pointer is still pressed so drift and
-                // minor consumption don't cut the recording short.
-                do {
-                    val event = awaitPointerEvent()
-                } while (event.changes.any { it.pressed })
-                currentOnRelease()
+    var semanticHoldActive by remember { mutableStateOf(state == VoiceState.Listening) }
+    var semanticCaptureStarted by remember { mutableStateOf(state == VoiceState.Listening) }
+
+    LaunchedEffect(state) {
+        when {
+            state == VoiceState.Listening -> {
+                semanticHoldActive = true
+                semanticCaptureStarted = true
             }
-        },
-    )
+            semanticCaptureStarted -> {
+                semanticHoldActive = false
+                semanticCaptureStarted = false
+            }
+            state == VoiceState.Error -> semanticHoldActive = false
+        }
+    }
+
+    val semanticToggle = {
+        if (semanticHoldActive) {
+            semanticHoldActive = false
+            semanticCaptureStarted = false
+            currentOnRelease()
+        } else {
+            semanticHoldActive = true
+            currentOnPress()
+        }
+    }
+    Modifier
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = if (semanticHoldActive) {
+                    activeContentDescription
+                } else {
+                    inactiveContentDescription
+                }
+                onClick(
+                    label = if (semanticHoldActive) activeActionLabel else inactiveActionLabel,
+                ) {
+                    semanticToggle()
+                    true
+                }
+            }
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                val activationKey = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                    native.keyCode == android.view.KeyEvent.KEYCODE_SPACE ||
+                    native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                if (native.action == android.view.KeyEvent.ACTION_UP && activationKey) {
+                    semanticToggle()
+                    true
+                } else {
+                    false
+                }
+            }
+            .focusable()
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    currentOnPress()
+                    // Hold until the finger genuinely lifts. Don't use
+                    // waitForUpOrCancellation(): it ends the hold on ANY cancel — a
+                    // consumed move event or the finger drifting just off the small
+                    // circle — which made the button feel like it released by
+                    // accident. Loop until no pointer is still pressed so drift and
+                    // minor consumption don't cut the recording short.
+                    do {
+                        val event = awaitPointerEvent()
+                    } while (event.changes.any { it.pressed })
+                    currentOnRelease()
+                }
+            }
 }
 
 private fun voiceStateToSphereState(state: VoiceState): SphereState = when (state) {
