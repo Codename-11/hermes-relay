@@ -1622,6 +1622,120 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun recoveredServerDefaultSubagentWatchOmitsProfileOverride() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-a", null),
+            persistedProfileKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            expectedProfile = null,
+        )
+    }
+
+    @Test
+    fun recoveredLiteralDefaultSubagentWatchKeepsExplicitProfile() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
+            persistedProfileKey = "default",
+            expectedProfile = "default",
+        )
+    }
+
+    @Test
+    fun recoveredNamedSubagentWatchKeepsOwningProfileAcrossConnectionScope() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-b", "team::writer"),
+            persistedProfileKey = "team::writer",
+            expectedProfile = "team::writer",
+        )
+    }
+
+    @Test
+    fun recoveredLegacyCheckpointFailsClosedWithoutInventingProfile() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = "connection-a/profile-default",
+            persistedProfileKey = null,
+            expectedProfile = null,
+        )
+    }
+
+    @Test
+    fun currentServerDefaultCheckpointPersistsExplicitSentinel() {
+        assertCurrentCheckpointProfileKey(
+            profileName = null,
+            effectiveSessionProfileName = "victor",
+            expectedProfileKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+        )
+    }
+
+    @Test
+    fun currentLiteralDefaultCheckpointPersistsNamedProfile() {
+        assertCurrentCheckpointProfileKey(
+            profileName = "default",
+            effectiveSessionProfileName = "default",
+            expectedProfileKey = "default",
+        )
+    }
+
+    @Test
+    fun explicitConversationOwnerWinsAmbientSelectorInCurrentCheckpoint() {
+        val checkpointStore = MemoryCheckpointStore()
+        val global = Profile(name = "global", model = "global-model")
+        val writer = Profile(name = "writer", model = "writer-model")
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.setProfileMessageLoader { Result.success(emptyList()) }
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = writer.name,
+                profile = writer,
+                contextKey = AgentDisplay.profileContextKey("connection-a", writer.name),
+                sessionId = STORED_SESSION_ID,
+            ),
+        )
+        awaitCondition { viewModel.conversationBinding.value.hasExplicitOwner }
+
+        viewModel.sendMessage("Persist explicit owner")
+
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { checkpointStore.checkpoint?.profileKey == writer.name }
+        assertEquals(writer.name, checkpointStore.checkpoint?.profileKey)
+    }
+
+    @Test
+    fun liveNonRecoveredSubagentWatchKeepsLiteralDefaultProfile() {
+        val profile = Profile(name = "default", model = "model")
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", profile.name),
+            STORED_SESSION_ID,
+        )
+        gatewayHarness.resumeLiveSessionIds["live-child-stored"] = "live-child"
+
+        viewModel.sendMessage("Delegate live work")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "subagent.start",
+                buildJsonObject {
+                    put("goal", "Inspect live path")
+                    put("task_index", 0)
+                    put("task_count", 1)
+                    put("subagent_id", "live-child-agent")
+                    put("child_session_id", "live-child-stored")
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.subagentActivities.value.size == 1 }
+        viewModel.openSubagentChildPreview(viewModel.subagentActivities.value.single().stableKey)
+
+        val resume = gatewayHarness.awaitRpcCount("session.resume", 2).last()
+        assertEquals(JsonPrimitive("default"), resume["profile"])
+    }
+
+    @Test
     fun explicitApprovalActionAloneEmitsResponseAndCollapsesCard() {
         viewModel.sendMessage("Run the guarded command")
         gatewayHarness.awaitRpc("prompt.submit")
@@ -2947,6 +3061,88 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.updateSessionActivityDirectory(
             rows = listOf("default" to STORED_SESSION_ID),
         )
+    }
+
+    private fun assertRecoveredSubagentWatchProfile(
+        contextKey: String,
+        persistedProfileKey: String?,
+        expectedProfile: String?,
+    ) {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = contextKey,
+                profileKey = persistedProfileKey,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("pending-user", "Delegate this", now - 2_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "pending-assistant",
+                    content = "Partial",
+                    timestamp = now - 1_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 1_900L,
+                updatedAt = now,
+            ),
+        )
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Partial"
+        gatewayHarness.resumeLiveSessionIds["child-stored"] = "child-live"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition { handler.isStreaming.value }
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "subagent.start",
+                buildJsonObject {
+                    put("goal", "Inspect recovery")
+                    put("task_index", 0)
+                    put("task_count", 1)
+                    put("subagent_id", "child-agent")
+                    put("child_session_id", "child-stored")
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.subagentActivities.value.size == 1 }
+        viewModel.openSubagentChildPreview(viewModel.subagentActivities.value.single().stableKey)
+
+        val resume = gatewayHarness.awaitRpcCount("session.resume", 2).last()
+        if (expectedProfile == null) {
+            assertFalse(resume.containsKey("profile"))
+        } else {
+            assertEquals(JsonPrimitive(expectedProfile), resume["profile"])
+        }
+    }
+
+    private fun assertCurrentCheckpointProfileKey(
+        profileName: String?,
+        effectiveSessionProfileName: String?,
+        expectedProfileKey: String,
+    ) {
+        val checkpointStore = MemoryCheckpointStore()
+        val profile = profileName?.let { Profile(name = it, model = "model") }
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { effectiveSessionProfileName }
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", profileName),
+            STORED_SESSION_ID,
+        )
+
+        viewModel.sendMessage("Persist profile identity")
+
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { checkpointStore.checkpoint?.profileKey == expectedProfileKey }
+        assertEquals(expectedProfileKey, checkpointStore.checkpoint?.profileKey)
     }
 
     private fun activeSessionPayload(status: String) = buildJsonObject {

@@ -217,6 +217,7 @@ import com.hermesandroid.relay.ui.components.CHAT_PET_STEP_MESSAGE_MARKER
 import com.hermesandroid.relay.ui.components.CHAT_PET_USER_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
+import com.hermesandroid.relay.ui.components.SubagentPreviewVisibility
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
@@ -929,6 +930,8 @@ fun ChatScreen(
     val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
     val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
+    val subagentActivities by chatViewModel.subagentActivities.collectAsState()
+    val subagentChildPreview by chatViewModel.subagentChildPreview.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
@@ -1063,6 +1066,13 @@ fun ChatScreen(
         supervisedVisibility.showToolNames -> "compact"
         else -> "off"
     }
+    val subagentPreviewVisibility = SubagentPreviewVisibility(
+        showLifecycle = !supervised || supervisedVisibility.showWorkingStatus,
+        showReasoning = showThinking,
+        showToolNames = toolDisplay == "compact" || toolDisplay == "detailed",
+        showToolDetails = toolDisplay == "detailed",
+        showChildHistory = !supervised,
+    )
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
@@ -1367,6 +1377,7 @@ fun ChatScreen(
     // A process inventory is scoped to one gateway session. Never leave a
     // sheet opened onto a different chat after a drawer/profile switch.
     LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {
+        chatViewModel.closeSubagentChildPreview()
         showBackgroundProcesses = false
     }
 
@@ -3975,6 +3986,8 @@ fun ChatScreen(
             if (isGatewayTransport) {
                 GatewayBackgroundProcessStrip(
                     processes = backgroundProcesses,
+                    subagentActivities = subagentActivities,
+                    subagentPreviewVisibility = subagentPreviewVisibility,
                     loading = backgroundProcessesLoading,
                     onClick = { showBackgroundProcesses = true },
                 )
@@ -4886,12 +4899,19 @@ fun ChatScreen(
     if (showBackgroundProcesses) {
         GatewayBackgroundProcessSheet(
             processes = backgroundProcesses,
+            subagentActivities = subagentActivities,
+            subagentChildPreview = subagentChildPreview,
+            subagentPreviewVisibility = subagentPreviewVisibility,
             loading = backgroundProcessesLoading,
             stoppingProcessIds = stoppingProcessIds,
             onRefresh = chatViewModel::refreshBackgroundProcesses,
             onStop = chatViewModel::stopBackgroundProcess,
             onDismissProcess = chatViewModel::dismissBackgroundProcess,
-            onDismiss = { showBackgroundProcesses = false },
+            onOpenSubagentChild = chatViewModel::openSubagentChildPreview,
+            onDismiss = {
+                chatViewModel.closeSubagentChildPreview()
+                showBackgroundProcesses = false
+            },
         )
     }
 

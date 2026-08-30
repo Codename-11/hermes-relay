@@ -423,10 +423,8 @@ class ChatViewModel : ViewModel() {
         _sessionDirectoryRefreshRequests.asSharedFlow()
 
     private fun activityScope(contextKey: String? = activeProfileContextKey): SessionActivityScope? {
-        val raw = contextKey?.trim().orEmpty()
-        val separator = raw.lastIndexOf("::")
-        if (separator <= 0 || separator >= raw.lastIndex) return null
-        return SessionActivityScope.of(raw.substring(0, separator), raw.substring(separator + 2))
+        val identity = AgentDisplay.parseProfileContextKey(contextKey) ?: return null
+        return SessionActivityScope.of(identity.connectionId, identity.profileKey)
     }
 
     private fun activityOwner(
@@ -538,7 +536,8 @@ class ChatViewModel : ViewModel() {
     private fun backgroundTurnKey(sessionId: String, profile: String?): TurnCheckpointKey? {
         val profileKey = AgentDisplay.profileSessionKey(profile)
         return backgroundTurnCheckpoints.keys.firstOrNull { key ->
-            key.sessionId == sessionId && key.contextKey.substringAfterLast("::") == profileKey
+            key.sessionId == sessionId &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey
         }
     }
     private var checkpointWriteJob: Job? = null
@@ -551,6 +550,7 @@ class ChatViewModel : ViewModel() {
 
     private data class ActiveTurnCheckpointSeed(
         var contextKey: String?,
+        val profileKey: String?,
         var sessionId: String,
         var liveSessionId: String?,
         var transport: String,
@@ -2096,6 +2096,10 @@ class ChatViewModel : ViewModel() {
     private var chatVisible = false
     private var gatewayProcessSource: GatewayProcessSource? = null
     private val gatewayProcessController = GatewayProcessController(viewModelScope)
+    private val subagentActivityController = SubagentActivityController()
+    private val subagentChildPreviewController = SubagentChildPreviewController(viewModelScope)
+    internal val subagentChildPreview: StateFlow<SubagentChildPreview?> =
+        subagentChildPreviewController.state
 
     /** Session-scoped upstream shell processes shown beside the composer. */
     val backgroundProcesses: StateFlow<List<GatewayProcess>> = gatewayProcessController.processes
@@ -2106,6 +2110,33 @@ class ChatViewModel : ViewModel() {
 
     val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
     val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
+
+    /** Bounded parent-session lifecycle previews for the active chat's delegated work. */
+    internal val subagentActivities: StateFlow<List<SubagentActivity>> =
+        subagentActivityController.activities
+
+    fun openSubagentChildPreview(activityKey: String) {
+        val activity = subagentActivities.value.firstOrNull { it.stableKey == activityKey } ?: return
+        val parentSessionId = chatHandler?.currentSessionId?.value ?: return
+        val parentScopeKey = activeProfileContextKey
+        val client = gatewayClient
+        subagentChildPreviewController.open(
+            activity = activity,
+            client = client,
+            parentSessionId = parentSessionId,
+            parentScopeKey = parentScopeKey,
+            gatewayRouteActive = streamingEndpoint == "gateway",
+            stillOwnsParent = {
+                gatewayClient === client &&
+                    chatHandler?.currentSessionId?.value == parentSessionId &&
+                    activeProfileContextKey == parentScopeKey
+            },
+        )
+    }
+
+    fun closeSubagentChildPreview() {
+        subagentChildPreviewController.close()
+    }
 
     private val _messageReactionsSupported = MutableStateFlow(true)
     val messageReactionsSupported: StateFlow<Boolean> = _messageReactionsSupported.asStateFlow()
@@ -2517,6 +2548,8 @@ class ChatViewModel : ViewModel() {
             resetApprovalModeState()
             _messageReactionsSupported.value = true
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
+            closeSubagentChildPreview()
+            subagentActivityController.resetConnection()
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
                 sessionId = chatHandler?.currentSessionId?.value,
@@ -2704,7 +2737,7 @@ class ChatViewModel : ViewModel() {
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
             val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
-                key.contextKey.substringAfterLast("::") == profileKey &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey &&
                 checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
@@ -2753,11 +2786,14 @@ class ChatViewModel : ViewModel() {
         queuedRecovery: QueuedRecoveryHandoff? = null,
     ): GatewayInboundTurnRegistration? {
         val handler = chatHandler ?: return null
+        val eventScopeKey = activeProfileContextKey
+        val eventProfile = currentSessionProfileName()
         fun matchesAdmissionContext(): Boolean =
             gatewayClient === client &&
                 streamingEndpoint == "gateway" &&
                 chatHandler === handler &&
-                handler.currentSessionId.value == storedSessionId
+                handler.currentSessionId.value == storedSessionId &&
+                activeProfileContextKey == eventScopeKey
 
         val messageId = "gateway-inbound-${UUID.randomUUID()}"
         val queuedUserMessageId = "gateway-queued-user-${UUID.randomUUID()}"
@@ -2792,6 +2828,11 @@ class ChatViewModel : ViewModel() {
             onStart = {
                 if (!started && ownsBoundTurn()) {
                     started = true
+                    subagentActivityController.beginTurn(
+                        storedSessionId,
+                        eventScopeKey,
+                        messageId,
+                    )
                     cancelAnswerRecovery()
                     intentionallyCancelled = false
                     firstTokenNotified = false
@@ -2850,6 +2891,7 @@ class ChatViewModel : ViewModel() {
                     ?.content
                     ?.takeIf { it.isNotBlank() }
                 if (canWriteTranscript) {
+                    subagentActivityController.endTurn(messageId)
                     val failed = handler.messages.value
                         .lastOrNull { it.id == messageId }
                         ?.badges
@@ -2885,6 +2927,7 @@ class ChatViewModel : ViewModel() {
             onError = { message ->
                 val canWriteTranscript = acceptsEvent()
                 if (canWriteTranscript) {
+                    subagentActivityController.endTurn(messageId)
                     AppAnalytics.onStreamError()
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
@@ -2902,7 +2945,16 @@ class ChatViewModel : ViewModel() {
                 if (acceptsEvent()) handler.onToolGenerating(messageId, name)
             },
             onSubagentEvent = { event ->
-                if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
+                if (acceptsEvent()) {
+                    subagentActivityController.onEvent(
+                        sessionId = storedSessionId,
+                        eventScopeKey = eventScopeKey,
+                        turnId = messageId,
+                        event = event,
+                        profile = eventProfile,
+                    )
+                    handler.onSubagentEvent(messageId, event)
+                }
             },
             onMoaReference = { event ->
                 if (acceptsEvent()) handler.onMoaReference(messageId, event)
@@ -3576,7 +3628,13 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         scopeKey: String? = activeProfileContextKey,
     ) {
+        subagentChildPreview.value?.let { preview ->
+            if (preview.parentSessionId != sessionId || preview.parentScopeKey != scopeKey) {
+                closeSubagentChildPreview()
+            }
+        }
         gatewayProcessController.selectSession(sessionId, scopeKey)
+        subagentActivityController.selectSession(sessionId, scopeKey)
     }
 
     /**
@@ -3841,6 +3899,14 @@ class ChatViewModel : ViewModel() {
                         now = System.currentTimeMillis(),
                     )
                     requestSessionActivityRefresh()
+                }
+            }
+            launch {
+                client.connectionState.collect { state ->
+                    if (gatewayClient !== client) return@collect
+                    subagentActivityController.onConnectionReady(
+                        state == com.hermesandroid.relay.network.upstream.GatewayConnectionState.Ready,
+                    )
                 }
             }
             launch {
@@ -6533,6 +6599,16 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = activeProfileContextKey,
+            // Persist the explicit UI selection, not the effective sticky
+            // server profile used to bind the current live session. Server
+            // Default must survive restart as the sentinel even when Hermes
+            // currently resolves it to a named profile such as `victor`.
+            profileKey = AgentDisplay.profileSessionKey(
+                conversationBinding.value.let { binding ->
+                    if (binding.hasExplicitOwner) binding.profileName
+                    else selectedProfileProvider()?.name
+                },
+            ),
             sessionId = sessionId,
             liveSessionId = null,
             transport = transport,
@@ -6573,6 +6649,7 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = checkpoint.contextKey,
+            profileKey = checkpoint.profileKey,
             sessionId = checkpoint.sessionId,
             liveSessionId = checkpoint.liveSessionId,
             transport = checkpoint.transport,
@@ -6633,6 +6710,7 @@ class ChatViewModel : ViewModel() {
         val now = System.currentTimeMillis()
         return ChatTurnCheckpoint(
             contextKey = contextKey,
+            profileKey = seed.profileKey,
             sessionId = sessionId,
             liveSessionId = gatewayClient?.currentLiveSessionId(sessionId) ?: seed.liveSessionId,
             transport = seed.transport,
@@ -7084,6 +7162,11 @@ class ChatViewModel : ViewModel() {
         queuedSuccessorPending: AtomicBoolean,
     ): GatewayTurnCallbacks {
         val messageId = checkpoint.assistant.id
+        subagentActivityController.beginTurn(
+            checkpoint.sessionId,
+            checkpoint.contextKey,
+            messageId,
+        )
         fun owns(): Boolean = ownsTurnCheckpoint(checkpoint, handler)
         return GatewayTurnCallbacks(
             onSessionId = { },
@@ -7134,6 +7217,7 @@ class ChatViewModel : ViewModel() {
             onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
+                    subagentActivityController.endTurn(messageId)
                     cancelAnswerRecovery(settleUi = false)
                     val failed = handler.messages.value
                         .lastOrNull { it.id == messageId }
@@ -7171,6 +7255,7 @@ class ChatViewModel : ViewModel() {
             },
             onError = { error ->
                 if (owns()) {
+                    subagentActivityController.endTurn(messageId)
                     if (queuedSuccessorPending.get()) {
                         AppAnalytics.onStreamError()
                         handler.onStreamError(error)
@@ -7195,6 +7280,18 @@ class ChatViewModel : ViewModel() {
             },
             onSubagentEvent = { event ->
                 if (owns()) {
+                    subagentActivityController.onEvent(
+                        sessionId = checkpoint.sessionId,
+                        eventScopeKey = checkpoint.contextKey,
+                        turnId = messageId,
+                        event = event,
+                        profile = if (checkpoint.profileKey != null) {
+                            AgentDisplay.profileRequestName(checkpoint.profileKey)
+                        } else {
+                            AgentDisplay.parseProfileContextKey(checkpoint.contextKey)
+                                ?.requestProfileName
+                        },
+                    )
                     handler.onSubagentEvent(messageId, event)
                     scheduleCheckpointWrite(immediate = true)
                 }
@@ -8967,6 +9064,7 @@ class ChatViewModel : ViewModel() {
             // wins — stop the poller before finalizing so the turn can't
             // finish twice.
             cancelAnswerRecovery(settleUi = false)
+            subagentActivityController.endTurn(currentMessageId)
             val completedTransport = dispatchedSseEndpoint
                 ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
             val turnErrored = handler.messages.value
@@ -9094,6 +9192,7 @@ class ChatViewModel : ViewModel() {
         }
         val onErrorCb = { errorMsg: String ->
             markTransportFailed(errorMsg)
+            subagentActivityController.endTurn(currentMessageId)
             stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
@@ -9494,6 +9593,13 @@ class ChatViewModel : ViewModel() {
                 // context rides the SSE systemMessage (invisible) + the on-demand
                 // android_phone_status tool instead. See PhoneStatusPromptBuilder.
                 _steerableTurn.value = true
+                handler.currentSessionId.value?.let { existingSessionId ->
+                    subagentActivityController.beginTurn(
+                        existingSessionId,
+                        activeProfileContextKey,
+                        currentMessageId,
+                    )
+                }
                 gateway.sendTurn(
                     sessionId = handler.currentSessionId.value,
                     text = message,
@@ -9515,6 +9621,11 @@ class ChatViewModel : ViewModel() {
                             markSessionActivityStarting(sid)
                             updateTurnCheckpointSession(sid)
                             selectBackgroundProcessSession(sid)
+                            subagentActivityController.beginTurn(
+                                sid,
+                                activeProfileContextKey,
+                                currentMessageId,
+                            )
                             gatewayProcessController.sessionReady(sid)
                             onSessionChanged?.invoke(sid)
                             // The brand-new chat now has a session — apply any
@@ -9559,6 +9670,13 @@ class ChatViewModel : ViewModel() {
                         onSubagentEvent = { event ->
                             ensurePostInterimMessage()
                             streamDeltas.flushNow()
+                            subagentActivityController.onEvent(
+                                sessionId = handler.currentSessionId.value,
+                                eventScopeKey = activeProfileContextKey,
+                                turnId = currentMessageId,
+                                event = event,
+                                profile = currentSessionProfileName(),
+                            )
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },

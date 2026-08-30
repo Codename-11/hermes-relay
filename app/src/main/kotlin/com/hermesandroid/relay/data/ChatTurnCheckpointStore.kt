@@ -23,6 +23,8 @@ import kotlinx.serialization.json.Json
 data class ChatTurnCheckpoint(
     val schemaVersion: Int = CURRENT_SCHEMA,
     val contextKey: String,
+    /** Explicit persisted profile identity; null only for legacy checkpoints. */
+    val profileKey: String? = null,
     val sessionId: String,
     val liveSessionId: String? = null,
     val transport: String,

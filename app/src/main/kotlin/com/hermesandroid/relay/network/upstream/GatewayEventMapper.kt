@@ -281,11 +281,12 @@ class GatewayEventMapper(
                 callbacks.onError(payload.string("message") ?: "Gateway error")
             }
 
-            "subagent.start", "subagent.thinking", "subagent.tool",
+            "subagent.spawn_requested", "subagent.start", "subagent.thinking", "subagent.tool",
             "subagent.progress", "subagent.complete",
             -> {
                 clearActivityStatuses()
                 val phase = when (type) {
+                    "subagent.spawn_requested" -> GatewaySubagentEvent.Phase.SPAWN_REQUESTED
                     "subagent.start" -> GatewaySubagentEvent.Phase.START
                     "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
                     "subagent.tool" -> GatewaySubagentEvent.Phase.TOOL
@@ -306,6 +307,10 @@ class GatewayEventMapper(
                         preview = payload.string("tool_preview") ?: payload.string("text"),
                         durationSeconds = payload.double("duration_seconds"),
                         subagentId = payload.string("subagent_id"),
+                        childSessionId = payload.string("child_session_id"),
+                        parentId = payload.string("parent_id"),
+                        depth = payload.int("depth"),
+                        model = payload.string("model"),
                     ),
                 )
             }

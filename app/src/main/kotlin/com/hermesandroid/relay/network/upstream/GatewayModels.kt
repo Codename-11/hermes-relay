@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -257,7 +258,8 @@ data class GatewayToolOutputRisk(
 
 /**
  * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
- * per task: START → (THINKING | TOOL | PROGRESS)* → COMPLETE. Field
+ * per task: SPAWN_REQUESTED → START → (THINKING | TOOL | PROGRESS)* →
+ * COMPLETE. Field
  * availability varies by phase — [toolName]/[preview] ride TOOL,
  * [status]/[summary]/[durationSeconds] ride COMPLETE — and older emitters
  * omit everything beyond the three defaults-bearing fields.
@@ -273,9 +275,35 @@ data class GatewaySubagentEvent(
     val preview: String? = null,
     val durationSeconds: Double? = null,
     val subagentId: String? = null,
+    /** Durable child session id accepted by `session.resume {lazy:true}`. */
+    val childSessionId: String? = null,
+    /** Owning subagent id for nested delegation; null for first-level children. */
+    val parentId: String? = null,
+    /** Zero-based depth used by the upstream spawn-tree renderer. */
+    val depth: Int? = null,
+    /** Effective child model, when the emitter exposes it. */
+    val model: String? = null,
 ) {
-    enum class Phase { START, THINKING, TOOL, PROGRESS, COMPLETE }
+    enum class Phase { SPAWN_REQUESTED, START, THINKING, TOOL, PROGRESS, COMPLETE }
 }
+
+/**
+ * One profile-pinned, read-only child-session watch opened through the vanilla
+ * upstream Gateway. [storedSessionId] is the durable child id from
+ * `subagent.*`; [liveSessionId] is the short runtime id that tags subsequent
+ * mirror events on this socket. The bounded [messages] snapshot is child-only.
+ */
+data class GatewayChildWatch(
+    val storedSessionId: String,
+    val liveSessionId: String,
+    val profile: String?,
+    val generation: Long,
+    val messages: List<MessageItem>,
+    /** True when Android retained only a bounded recent tail of the response. */
+    val historyTruncated: Boolean,
+    val running: Boolean,
+    val status: String?,
+)
 
 /**
  * One session-owned background process returned by the upstream gateway's

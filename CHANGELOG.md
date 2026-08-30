@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Android can preview delegated agent work without leaving the parent chat.** The current-chat activity sheet shows bounded lifecycle, progress, and tool previews for concurrent children, opens vanilla Hermes child history read-only when the Gateway exposes it, and stays explicit when reconnect gaps or older routes leave details unavailable.
 - **Android presents Relay Git as a first-class native workspace.** A compact optional Chat rail opens repository status, line totals, filters, diffs, branches, staging, commits, and remotes; the full workspace remains available from Settings when Chat controls are hidden.
 - **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, tracked line totals, scoped write grants, and explicit confirmation protect repository reads and mutations.
 

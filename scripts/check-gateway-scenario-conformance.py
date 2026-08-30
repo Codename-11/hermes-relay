@@ -30,6 +30,7 @@ GATEWAY_SETTLED_INFO = "gateway.settled_session_info"
 SESSION_ACTIVATE = "gateway.session_activate_live"
 SESSION_RESUME = "gateway.session_resume_durable"
 SESSION_ACTIVE_LIST = "gateway.session_active_list"
+SUBAGENT_CHILD_WATCH = "gateway.subagent_child_watch"
 API_BOUNDARY = "api.fallback_boundary"
 ALL_CONTRACTS = (
     GATEWAY_TERMINAL,
@@ -37,6 +38,7 @@ ALL_CONTRACTS = (
     SESSION_ACTIVATE,
     SESSION_RESUME,
     SESSION_ACTIVE_LIST,
+    SUBAGENT_CHILD_WATCH,
     API_BOUNDARY,
 )
 
@@ -375,6 +377,38 @@ def _check_api_boundary(api: SourceFile) -> CheckResult:
         return CheckResult(contract, False, (), str(exc))
 
 
+def _check_subagent_child_watch(server: SourceFile, methods: SourceFile) -> CheckResult:
+    contract = SUBAGENT_CHILD_WATCH
+    try:
+        resume = methods.method_handler("session.resume")
+        resume_segment = methods.segment(resume)
+        resume_strings = _string_constants(resume)
+        server_strings = _string_constants(server.tree)
+        missing_resume = sorted(
+            {"lazy", "close_on_disconnect"} - resume_strings
+        )
+        if missing_resume:
+            raise ValueError("lazy child resume field(s) missing: " + ", ".join(missing_resume))
+        if "include_ancestors" not in resume_segment:
+            raise ValueError("lazy child resume does not declare child-only history")
+        missing_events = sorted(
+            {"child_session_id", "subagent.text", "reasoning.delta", "message.delta"}
+            - server_strings
+        )
+        if missing_events:
+            raise ValueError("child watch mirror event(s) missing: " + ", ".join(missing_events))
+        return CheckResult(
+            contract,
+            True,
+            (
+                methods.evidence(resume, "session.resume supports a lazy child-only watch"),
+                "tui_gateway/server.py: child_session_id routes child mirror events",
+            ),
+        )
+    except ValueError as exc:
+        return CheckResult(contract, False, (), str(exc))
+
+
 def load_requirements(manifest: Path | None) -> tuple[str, ...]:
     if manifest is None:
         return ALL_CONTRACTS
@@ -416,6 +450,7 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         SESSION_ACTIVATE: lambda: _check_activate(server, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
         SESSION_ACTIVE_LIST: lambda: _check_active_list(server, methods),
+        SUBAGENT_CHILD_WATCH: lambda: _check_subagent_child_watch(server, methods),
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }
     return [checks[requirement]() for requirement in requirements]
