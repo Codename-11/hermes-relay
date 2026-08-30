@@ -429,6 +429,13 @@
     <string name="cw_pairing_code_label">ペアリングコード</string>
     <string name="cw_pairing_code_placeholder">例えばABC123</string>
     <string name="cw_pair_button">ペア</string>
+    <string name="cw_mixed_route_plain">%1$s は暗号化されていない HTTP/WS を使用します。信頼できるプライベートネットワークまたは自分で管理する VPN でのみ使用してください。</string>
+    <string name="cw_mixed_route_secure">%1$s はトランスポート暗号化された HTTPS/WSS を使用します。</string>
+    <string name="cw_mixed_safe">アプリはこれらのルートを確認し、利用可能なルートを選択します。優先ルートは後から変更できます。</string>
+    <string name="cw_pair_in_progress">処理中…</string>
+    <string name="cw_pair_status_preparing_gateway">ゲートウェイを準備中…</string>
+    <string name="cw_pair_status_opening_sign_in">安全なサインインを開いています…</string>
+    <string name="cw_pair_status_pairing_relay">Relay をペアリング中…</string>
     <string name="cw_show_code_subtitle">Relay と QR のペアをスキャンできない場合にこれを使用します。 URL を設定し、Hermes-Relay を実行しているホストに以下のコードを登録します。</string>
     <string name="cw_step_copy_code">1. このコードをコピーします</string>
     <string name="cw_copy_pairing_code">ペアリングコードをコピーする</string>
@@ -811,7 +818,7 @@
     <string name="chat_settings_8k">8K</string>
     <string name="chat_settings_16k">16K</string>
     <string name="chat_settings_gateway_needs_signin">Gateway にはサインインの管理が必要です</string>
-    <string name="chat_settings_gateway_needs_signin_desc">[管理] タブから一度サインインすると、/api/ws を介したライブ思考のロックが解除されます。</string>
+    <string name="chat_settings_gateway_needs_signin_desc">一度サインインすると、この Hermes 接続の Chat、セッション、管理、標準音声を利用できます。</string>
     <string name="chat_settings_completions">完了</string>
     <string name="chat_settings_offline">オフライン</string>
 
@@ -1862,7 +1869,7 @@
 
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">ダッシュボードへのサインインが必要です</string>
-    <string name="dashboard_signin_required_body">管理は、%1$s で Hermes ダッシュボード セッションを使用します。</string>
+<string name="dashboard_signin_required_body">%1$s の Hermes にサインインすると、Chat、セッション、Manage、標準 Voice を利用できます。</string>
     <string name="dashboard_signin_route_hint">%1$s ルートで保存済みのダッシュボード セッションを再利用できませんでした。再度サインインして、この接続の信頼済みルート全体でセッションを更新してください。</string>
     <string name="dashboard_signin_with_provider">%1$s でサインインします</string>
     <string name="dashboard_username_password">ユーザー名 &amp; パスワード</string>
@@ -1871,6 +1878,7 @@
     <string name="dashboard_sign_in">サインイン</string>
     <string name="dashboard_signing_in">サインイン中…</string>
     <string name="dashboard_no_supported_provider">このダッシュボードは、サポートされている Android サインイン プロバイダーをアドバタイズしていませんでした。</string>
+    <string name="dashboard_signin_provider_unavailable_choose">保存済みのサインインプロバイダーを利用できません。別の設定済みプロバイダーを選ぶか、後でもう一度お試しください。</string>
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">安全なダッシュボード ページでサインインを完了します。</string>
@@ -3578,7 +3586,8 @@
     <string name="dev_settings_image_generation_lab">画像生成ラボ</string>
     <string name="dev_settings_image_generation_lab_desc">生成ループと最終画像の表示をプレビューします</string>
     <string name="dev_settings_open_image_generation_lab_cd">画像生成ラボを開く</string>
-    <string name="dashboard_native_signin_opening">ブラウザでサインインを完了してから、ここに戻ってください。</string>
+<string name="dashboard_native_signin_opening">ブラウザでサインインを完了してください。プロバイダーから戻らない場合は、ここに戻って「サインインを続ける」をタップします。</string>
+<string name="dashboard_native_signin_continue">サインインを続ける</string>
     <string name="dashboard_native_signin_cancelled">ブラウザでのサインインをキャンセルしました。</string>
     <string name="dashboard_native_signin_requires_https">安全なブラウザサインインには、HTTPSのダッシュボードアドレスが必要です。</string>
     <string name="dashboard_native_signin_unavailable">この接続では安全なブラウザサインインを利用できません。接続を更新して、もう一度お試しください。</string>
@@ -4035,6 +4044,9 @@
     <string name="plugins_remove">削除</string>
     <string name="plugins_remove_confirm">「%1$s」を削除しますか？接続された Android 端末にこのプラグインページは表示されなくなります。</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">ホストのリポジトリスキャン</string>
+    <string name="git_state_host_scanning_on_desc">このゲートウェイでオン · Git への書き込みには別の権限が必要です。</string>
+    <string name="git_state_host_scanning_off_desc">このスマートフォンからゲートウェイに、設定済みの Git ルート内のリポジトリ、ブランチ、変更状態をスキャンさせます。Git への書き込みには別の権限が必要です。</string>
     <string name="git_state_back">戻る</string>
     <string name="git_state_staged">ステージ済み</string>
     <string name="git_state_modified">変更</string>
@@ -4078,7 +4090,7 @@
     <string name="git_state_switch_stash">切り替え（変更があればスタッシュ）</string>
     <string name="support_bundle_review">サポート情報を確認</string>
     <string name="support_bundle_title">サポート情報</string>
-    <string name="support_bundle_privacy">自動アップロードはありません。最大 %1$d 件のレポートを含む端末内エクスポートを確認してください。</string>
+<string name="support_bundle_privacy">自動アップロードはありません。最近のレポートと診断 %1$d 件を含む端末内エクスポートを確認してください。</string>
     <string name="support_bundle_copied">サポート情報をコピーしました</string>
     <string name="support_bundle_no_share">サポート情報をコピーしました — 共有できるアプリがありません</string>
     <string name="support_bundle_share_title">Hermes-Relay サポート情報を共有</string>
@@ -4441,7 +4453,7 @@
     <string name="custom_theme_modified">未保存の変更</string>
     <string name="custom_theme_saved_count">保存済み %1$d 件</string>
     <string name="chat_settings_show_git_workspace">チャットに Git ワークスペースを表示</string>
-    <string name="chat_settings_show_git_workspace_desc">入力欄の上にブランチと変更内容を表示します</string>
+    <string name="chat_settings_show_git_workspace_desc">ホストのリポジトリスキャンが有効な場合に、Chat に Git の状態と変更を表示します。これをオフにしても完全な Git ワークスペースは利用できます。</string>
     <string name="chat_git_open_workspace">Git ワークスペースを開く</string>
     <string name="chat_git_branch">ブランチ %1$s</string>
     <string name="chat_git_additions">%1$d 件の追加</string>
@@ -4449,6 +4461,7 @@
     <plurals name="chat_git_change_count"><item quantity="other">%1$d 件の変更</item></plurals>
     <string name="settings_git_workspace">Git ワークスペース</string>
     <string name="settings_git_workspace_desc">変更、ブランチ、コミット、リモートを確認</string>
+    <string name="settings_git_workspace_off_desc">オフ · ホストのリポジトリスキャンはオプトインです</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>
@@ -4464,13 +4477,13 @@
     <string name="dashboard_address_editor_body">この端末で使う Dashboard と Gateway のアドレスを設定します。プライベート LAN と Tailscale ルートは HTTP または HTTPS を使用でき、公開ルートには HTTPS が必要です。</string>
     <string name="dashboard_address_editor_title">ゲートウェイのアドレス</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
+<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">Hermes Gateway のアドレスを入力してください</string>
     <string name="dashboard_gateway_configured">Configured address</string>
-    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
-    <string name="dashboard_gateway_secure_origin">サインイン元</string>
+<string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
+<string name="dashboard_gateway_secure_origin">認証済み Dashboard アドレス</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>

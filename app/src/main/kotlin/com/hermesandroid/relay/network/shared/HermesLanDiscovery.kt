@@ -43,15 +43,16 @@ object HermesLanDiscovery {
     private const val TAG = "HermesLanDiscovery"
     private const val MAX_HOSTS = 254
     private const val MAX_CONCURRENT_PROBES = 32
-    private const val PROBE_TIMEOUT_MS = 650L
+    private const val PROBE_TIMEOUT_MS = 750L
     private const val IPV4_MASK = 0xFFFF_FFFFL
 
     suspend fun scan(
         context: Context,
         apiPort: Int = 8642,
         dashboardPort: Int = 9119,
+        dashboardOnly: Boolean = false,
     ): List<HermesLanDiscoveryResult> = withContext(Dispatchers.IO) {
-        val hosts = localLanHosts(context.applicationContext)
+        val hosts = prioritizeHostSweep(localLanHosts(context.applicationContext))
         if (hosts.isEmpty()) return@withContext emptyList()
 
         val client = OkHttpClient.Builder()
@@ -66,7 +67,13 @@ object HermesLanDiscovery {
             hosts.map { host ->
                 async {
                     semaphore.withPermit {
-                        probeHost(client, host, apiPort, dashboardPort)?.let { result ->
+                        probeHost(
+                            client,
+                            host,
+                            apiPort,
+                            dashboardPort,
+                            dashboardOnly,
+                        )?.let { result ->
                             result.copy(hostname = resolveHostname(host))
                         }
                     }
@@ -88,6 +95,7 @@ object HermesLanDiscovery {
         host: String,
         apiPort: Int,
         dashboardPort: Int,
+        dashboardOnly: Boolean,
     ): HermesLanDiscoveryResult? {
         val apiUrl = "http://$host:$apiPort"
         val dashboardUrl = "http://$host:$dashboardPort"
@@ -95,12 +103,18 @@ object HermesLanDiscovery {
             client = client,
             url = "$dashboardUrl/api/status",
             expectedBody = ::looksLikeDashboardStatus,
+            attempts = 2,
         )
-        val apiReachable = probe(
-            client = client,
-            url = "$apiUrl/health",
-            expectedBody = ::looksLikeApiHealth,
-        )
+        if (dashboardOnly && !dashboardReachable) return null
+        val apiReachable = if (dashboardOnly) {
+            false
+        } else {
+            probe(
+                client = client,
+                url = "$apiUrl/health",
+                expectedBody = ::looksLikeApiHealth,
+            )
+        }
         if (!dashboardReachable && !apiReachable) return null
         return HermesLanDiscoveryResult(
             host = host,
@@ -115,6 +129,7 @@ object HermesLanDiscovery {
         client: OkHttpClient,
         url: String,
         expectedBody: (String, String) -> Boolean,
+        attempts: Int = 1,
     ): Boolean {
         val httpUrl = url.toHttpUrlOrNull() ?: return false
         val request = Request.Builder()
@@ -123,21 +138,25 @@ object HermesLanDiscovery {
             .header("Accept", "application/json, text/plain, */*")
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (response.code == 401 || response.code == 403) {
-                    return true
+        repeat(attempts.coerceAtLeast(1)) { attempt ->
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (response.code == 401 || response.code == 403) {
+                        return true
+                    }
+                    if (!response.isSuccessful) {
+                        if (response.code >= 500 && attempt + 1 < attempts) return@use
+                        return false
+                    }
+                    val contentType = response.header("Content-Type").orEmpty()
+                    val body = response.body.string().take(2_048)
+                    if (expectedBody(body, contentType)) return true
                 }
-                if (!response.isSuccessful) {
-                    return false
-                }
-                val contentType = response.header("Content-Type").orEmpty()
-                val body = response.body.string().take(2_048)
-                expectedBody(body, contentType)
+            } catch (_: Exception) {
+                if (attempt + 1 >= attempts) return false
             }
-        } catch (_: Exception) {
-            false
         }
+        return false
     }
 
     private suspend fun resolveHostname(address: String): String? =
@@ -156,6 +175,23 @@ object HermesLanDiscovery {
         if (normalized.equals("localhost", ignoreCase = true)) return null
         if (normalized.matches(Regex("^\\d{1,3}(?:\\.\\d{1,3}){3}$"))) return null
         return normalized
+    }
+
+    /** Interleave low/high host suffixes so `.1` and `.250` are both early. */
+    internal fun prioritizeHostSweep(hosts: List<String>): List<String> {
+        val sorted = hosts.distinct().sortedBy { address ->
+            address.split('.').fold(0L) { acc, part ->
+                (acc shl 8) + (part.toLongOrNull() ?: 0L)
+            }
+        }
+        val prioritized = ArrayList<String>(sorted.size)
+        var low = 0
+        var high = sorted.lastIndex
+        while (low <= high) {
+            prioritized += sorted[low++]
+            if (low <= high) prioritized += sorted[high--]
+        }
+        return prioritized
     }
 
     private fun looksLikeDashboardStatus(body: String, contentType: String): Boolean {

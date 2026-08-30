@@ -33,6 +33,31 @@ class UpstreamTransportControllerAuthClientTest {
     }
 
     @Test
+    fun readySocketFromOldRouteCannotPublishReadinessForNewRoute() {
+        assertEquals(
+            GatewayAvailability.Unknown,
+            reconcileGatewayAvailability(
+                current = GatewayAvailability.Ready,
+                probed = GatewayAvailability.Unknown,
+                liveState = GatewayConnectionState.Ready,
+                liveRouteMatches = false,
+            ),
+        )
+    }
+
+    @Test
+    fun authenticatedStatusProbeDoesNotClearStickyUnsupportedGateway() {
+        assertEquals(
+            GatewayAvailability.Unsupported,
+            reconcileGatewayAvailability(
+                current = GatewayAvailability.Unsupported,
+                probed = GatewayAvailability.Unknown,
+                liveState = GatewayConnectionState.Idle,
+            ),
+        )
+    }
+
+    @Test
     fun retiredGatewayClientCallbackCannotChangeCurrentConnection() {
         val current = mockk<GatewayChatClient>()
         val retired = mockk<GatewayChatClient>()
@@ -88,6 +113,27 @@ class UpstreamTransportControllerAuthClientTest {
             Thread.yield()
         }
         assertTrue("replaced dashboard client was not disposed", first.dispatcher.executorService.isShutdown)
+    }
+
+    @Test
+    fun multiProviderCompatibilityModeDoesNotConstructNativeBearer() {
+        var capturedBearer: DashboardBearerAuth? = mockk(relaxed = true)
+        val controller = UpstreamTransportController(
+            context = mockk<Context>(relaxed = true),
+            activeConnectionIdProvider = { "connection-a" },
+            dashboardUrlProvider = { "https://hermes.example.test" },
+            gatewayKeepAliveProvider = { false },
+            trustedDashboardUrlProvider = { "https://hermes.example.test" },
+            nativeDashboardBearerEligibleProvider = { false },
+            dashboardHttpClientFactory = { _, bearer ->
+                capturedBearer = bearer
+                okhttp3.OkHttpClient()
+            },
+        )
+
+        controller.dashboardClientFor("connection-a", "https://hermes.example.test")
+
+        assertNull(capturedBearer)
     }
 
     @Test

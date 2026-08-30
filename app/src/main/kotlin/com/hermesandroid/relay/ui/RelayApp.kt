@@ -307,6 +307,21 @@ internal fun shouldSettleStartupUnreachable(
     hasConfiguredChat &&
         runtimeStatus is ChatRuntimeStatus.Unavailable
 
+internal fun startupShellCanRender(
+    appReady: Boolean,
+    hasStartupConnection: Boolean,
+    endpointSelected: Boolean,
+    chatUp: Boolean,
+    narrationStage: Int,
+    unreachableConfirmed: Boolean,
+    timedOut: Boolean,
+): Boolean = appReady && (
+    !hasStartupConnection ||
+        ((endpointSelected || chatUp) && narrationStage >= 2) ||
+        unreachableConfirmed ||
+        timedOut
+    )
+
 /** Route represented by the app footer's currently usable chat transport. */
 internal fun resolveFooterRouteCandidate(
     runtimeStatus: ChatRuntimeStatus,
@@ -802,6 +817,7 @@ fun RelayApp() {
     val profileSelectionSettled by connectionViewModel.profileSelectionSettled.collectAsState()
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
+    val activeConnection by connectionViewModel.activeConnection.collectAsState()
     val connectionStoreHydrated by
         connectionViewModel.connectionStore.isHydrated.collectAsState()
     val supervisedModeStore = remember(applicationContext) {
@@ -912,6 +928,7 @@ fun RelayApp() {
     val serverCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val gitRepoScanningEnabled = activeConnection?.gitRepoScanningEnabled == true
     val gitOwnerKey = activeConnectionId?.takeIf { it.isNotBlank() }?.let { connectionId ->
         effectiveDashboardUrl.takeIf { it.isNotBlank() }?.let { dashboardUrl ->
             "$connectionId\u0000${effectiveSessionProfileName.orEmpty()}\u0000$dashboardUrl"
@@ -931,11 +948,15 @@ fun RelayApp() {
             sessionId = currentChatSessionId,
         )
     }
-    LaunchedEffect(gitOwnerKey) {
+    LaunchedEffect(gitOwnerKey, gitRepoScanningEnabled) {
         val dashboard = effectiveDashboardUrl
             .takeIf { it.isNotBlank() }
             ?.let { connectionViewModel.dashboardClientForActive(it) }
-        gitStateViewModel.configure(dashboard, gitOwnerKey)
+        gitStateViewModel.configure(
+            dashboard = dashboard,
+            ownerKey = gitOwnerKey,
+            scanningEnabled = gitRepoScanningEnabled,
+        )
     }
 
     // Mirror the plugin.api.write grant into the Git view model so write
@@ -978,7 +999,8 @@ fun RelayApp() {
         }
     }
 
-    val gitWorkspaceAvailable = gitReposState is GitStateUiState.Ready
+    val gitWorkspaceAvailable = gitRepoScanningEnabled &&
+        (gitReposState as? GitStateUiState.Ready)?.repos?.isNotEmpty() == true
     val gitWorkspaceSummary = remember(
         gitReposState,
         gitDetailState,
@@ -1490,13 +1512,13 @@ fun RelayApp() {
         }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
-        val activeConnection by connectionViewModel.activeConnection.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
         val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
+        val startupSessionsLoading by chatViewModel.isLoadingSessions.collectAsState()
         val shareConnectionId by rememberUpdatedState(
             activeConnection?.id?.takeIf(String::isNotBlank) ?: "offline"
         )
@@ -1631,6 +1653,10 @@ fun RelayApp() {
                         StartupCheck(StartupCheckState.Failed, "hermes unreachable")
                     appChatRuntimeStatus is ChatRuntimeStatus.Unavailable && startupEndpoint != null ->
                         StartupCheck(StartupCheckState.Active, "gateway retrying")
+                    startupEndpoint != null -> StartupCheck(
+                        StartupCheckState.Active,
+                        "waking ${effectiveDisplayProfile?.name?.replaceFirstChar { it.uppercase() } ?: "Hermes"}",
+                    )
                     appReady ->
                         StartupCheck(StartupCheckState.Active, "contacting hermes")
                     else -> StartupCheck(StartupCheckState.Pending, "hermes")
@@ -1639,10 +1665,12 @@ fun RelayApp() {
                 // renders from — so this row can never tick while the chat
                 // surface would still show its connect CTA.
                 when {
-                    chatReady && initialChatSettled ->
-                        StartupCheck(StartupCheckState.Done, "conversation ready")
+                    initialChatSettled && !startupSessionsLoading ->
+                        StartupCheck(StartupCheckState.Done, "sessions ready")
+                    startupSessionsLoading ->
+                        StartupCheck(StartupCheckState.Active, "loading sessions")
                     startupChatUp ->
-                        StartupCheck(StartupCheckState.Active, "loading conversation")
+                        StartupCheck(StartupCheckState.Active, "restoring conversation")
                     else -> StartupCheck(StartupCheckState.Pending, "conversation")
                 },
             )
@@ -1666,25 +1694,22 @@ fun RelayApp() {
                 startupNarrationStage += 1
             }
         }
+        // Full-screen startup owns only process state + route selection. The
+        // mounted Chat surface owns Gateway wake and session hydration so the
+        // user can see cached rows and accurate inline progress instead of a
+        // global sphere that appears hung for the server's entire wake budget.
         val startupNarrationComplete =
-            startupNarrationStage >= startupCheckTargets.size
+            startupNarrationStage >= minOf(2, startupCheckTargets.size)
 
-        val startupConnectionResolved = appReady && (
-            !hasStartupConnection ||
-                // Happy path: the chat surface's OWN readiness signal is
-                // true (client built + reachable verdict — what its connect
-                // CTA renders from), the last conversation has been restored
-                // (or there was none), and the checklist has visibly
-                // finished ticking. Anything weaker (e.g. the resolver's
-                // earlier health evidence) reveals a chat screen that still
-                // shows "Connect Vanilla Hermes" for the few hundred ms
-                // until the client-based verdict catches up.
-                (chatReady && initialChatSettled && startupNarrationComplete) ||
-                // Error path: a settled unreachable reveals the normal UI,
-                // which owns offline presentation (status pill, retry).
-                startupUnreachableConfirmed ||
-                startupGateTimedOut
-            )
+        val startupConnectionResolved = startupShellCanRender(
+            appReady = appReady,
+            hasStartupConnection = hasStartupConnection,
+            endpointSelected = startupEndpoint != null,
+            chatUp = startupChatUp,
+            narrationStage = startupNarrationStage,
+            unreachableConfirmed = startupUnreachableConfirmed,
+            timedOut = startupGateTimedOut,
+        )
         LaunchedEffect(
             onboardingCompleted,
             startupGateMinElapsed,
@@ -2427,13 +2452,9 @@ fun RelayApp() {
                         // without leaving Chat. Safe here — this state only shows when
                         // nothing is configured, so there's no placeholder in flight.
                         onTryDemo = enterDemo,
-                        onNavigateToManage = {
-                            navController.navigate(Screen.Manage.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                        onNavigateToDashboardSignIn = {
+                            navController.navigate(Screen.DashboardSignIn.route()) {
                                 launchSingleTop = true
-                                restoreState = true
                             }
                         },
                         onNavigateToBridge = {
@@ -2807,6 +2828,7 @@ fun RelayApp() {
                     SettingsScreen(
                         connectionViewModel = connectionViewModel,
                         chatViewModel = chatViewModel,
+                        gitRepoScanningEnabled = gitRepoScanningEnabled,
                         supervisedPolicy = supervisedPolicy,
                         parentAccessUnlocked = parentAccessForCurrentRoute,
                         onRequestParentAccess = { parentAccessUnlocked = true },
@@ -2982,6 +3004,7 @@ fun RelayApp() {
                 composable(Screen.GitState.route) {
                     GitStateScreen(
                         viewModel = gitStateViewModel,
+                        onScanningEnabledChange = connectionViewModel::setGitRepoScanningEnabled,
                         onBack = { navController.popBackStack() },
                     )
                 }

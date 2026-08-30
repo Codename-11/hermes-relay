@@ -2036,7 +2036,7 @@ class ChatHandler {
     /**
      * Update sessions list from API response.
      */
-    fun updateSessions(items: List<SessionItem>) {
+    fun updateSessions(items: List<SessionItem>, append: Boolean = false) {
         // Index the current rows so a server row that arrives without a title
         // can inherit a title we already know locally. Auto-titling is a
         // fire-and-forget background job on the server (upstream
@@ -2109,8 +2109,21 @@ class ChatHandler {
         } else {
             null
         }
-        _sessions.value = if (pending != null) listOf(pending) + mapped else mapped
+        val resolved = if (append) {
+            (_sessions.value + mapped)
+                .distinctBy { it.sessionId }
+                .sortedByDescending { it.activityTimestamp }
+        } else {
+            mapped
+        }
+        _sessions.value = if (pending != null && resolved.none { it.sessionId == pending.sessionId }) {
+            listOf(pending) + resolved
+        } else {
+            resolved
+        }
     }
+
+    fun appendSessions(items: List<SessionItem>) = updateSessions(items, append = true)
 
     fun clearSessions() {
         _sessions.value = emptyList()

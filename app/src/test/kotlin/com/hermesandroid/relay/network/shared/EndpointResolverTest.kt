@@ -96,6 +96,32 @@ class EndpointResolverTest {
     }
 
     @Test
+    fun lowerPriorityProbeStartsSpeculativelyButCannotDisplaceReachablePriorityZero() = runTest {
+        val lowerStarted = CountDownLatch(1)
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(200).setHeadersDelay(750, TimeUnit.MILLISECONDS)
+        }
+        secondReachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                lowerStarted.countDown()
+                return MockResponse().setResponseCode(200)
+            }
+        }
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+        val preferred = candidate("https", priority = 0, server = reachableServer)
+        val fallback = candidate("lan", priority = 1, server = secondReachableServer)
+
+        val resolving = async(Dispatchers.Default) { resolver.resolve(listOf(preferred, fallback)) }
+
+        assertTrue(
+            "fallback probe should start before the slower preferred response completes",
+            lowerStarted.await(500, TimeUnit.MILLISECONDS),
+        )
+        assertEquals("https", resolving.await()?.role)
+    }
+
+    @Test
     fun supportedRouteWins_overHigherPriorityExperimentalReach() = runTest {
         val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
         val reach = candidate("outbound_broker", priority = 0, server = reachableServer)
@@ -667,7 +693,7 @@ class EndpointResolverTest {
                     .toSet()
                     .size == 3,
             )
-            assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+            assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
             assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
             assertEquals("/health", relayServer.takeRequest(1, TimeUnit.SECONDS)?.path)
         } finally {
@@ -677,10 +703,10 @@ class EndpointResolverTest {
     }
 
     @Test
-    fun dashboardOnlyCandidate_probesGatewayStatusWithoutApiOrRelay() = runTest {
+    fun dashboardOnlyCandidate_probesLightweightHealthWithoutApiOrRelay() = runTest {
         reachableServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/status" -> MockResponse().setResponseCode(200)
+                "/api/health" -> MockResponse().setResponseCode(200)
                 else -> MockResponse().setResponseCode(404)
             }
         }
@@ -696,19 +722,142 @@ class EndpointResolverTest {
         val request = reachableServer.takeRequest(1, TimeUnit.SECONDS)
         assertNotNull(request)
         assertEquals("GET", request!!.method)
-        assertEquals("/api/status", request.path)
+        assertEquals("/api/health", request.path)
         val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Endpoint))
             .first { it.operation != null }
         assertEquals("Dashboard or API route health probe", diagnostic.operation)
         assertEquals("http://[host]", diagnostic.configuredUrl)
-        assertEquals("http://[host]/api/status", diagnostic.requestUrl)
+        assertEquals("http://[host]/api/health", diagnostic.requestUrl)
+    }
+
+    @Test
+    fun missingDashboardHealthFallsBackToLegacyStatus() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/health" -> MockResponse().setResponseCode(404)
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(500)
+            }
+        }
+        val candidate = EndpointCandidate(
+            role = "legacy",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(candidate), EndpointSurface.Dashboard)
+
+        assertEquals(candidate, winner)
+        assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun anonymousLegacyGateShapeFallsBackToStatus() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/health" -> MockResponse()
+                    .setResponseCode(401)
+                    .setBody("""{"error":"unauthenticated","reason":"no_cookie"}""")
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(500)
+            }
+        }
+        val candidate = EndpointCandidate(
+            role = "legacy-gated",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(candidate), EndpointSurface.Dashboard)
+
+        assertEquals(candidate, winner)
+        assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+    }
+
+    @Test
+    fun transientDashboardHealthFailureNeverFallsBackToHeavyStatus() = runTest {
+        listOf(429, 503).forEach { status ->
+            reachableServer.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                    "/api/health" -> MockResponse().setResponseCode(status)
+                    "/api/status" -> MockResponse().setResponseCode(200)
+                    else -> MockResponse().setResponseCode(500)
+                }
+            }
+            val candidate = EndpointCandidate(
+                role = "transient-$status",
+                dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+            )
+            val baseline = reachableServer.requestCount
+
+            val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+                .resolve(listOf(candidate), EndpointSurface.Dashboard)
+
+            assertNull(winner)
+            assertEquals(baseline + 1, reachableServer.requestCount)
+            assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        }
+    }
+
+    @Test
+    fun dashboardHealthTimeoutNeverFallsBackToHeavyStatus() = runTest {
+        val attempts = AtomicInteger(0)
+        val timeoutClient = fastClient.newBuilder()
+            .addInterceptor {
+                attempts.incrementAndGet()
+                throw InterruptedIOException("health timed out")
+            }
+            .build()
+        val candidate = EndpointCandidate(
+            role = "timeout",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+        )
+
+        val winner = EndpointResolver(timeoutClient, clock = { clockMillis.get() })
+            .resolve(listOf(candidate), EndpointSurface.Dashboard)
+
+        assertNull(winner)
+        assertEquals(1, attempts.get())
+        assertEquals(
+            "${reachableServer.url("/").toString().trimEnd('/')}/api/health",
+            EndpointResolver(timeoutClient).probeRequestUrlForTest(
+                candidate,
+                EndpointSurface.Dashboard,
+            ),
+        )
+    }
+
+    @Test
+    fun ordinaryDashboardAuthFailureNeverFallsBackToPublicStatus() = runTest {
+        reachableServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/health" -> MockResponse()
+                    .setResponseCode(401)
+                    .setBody("""{"detail":"Unauthorized"}""")
+                "/api/status" -> MockResponse().setResponseCode(200)
+                else -> MockResponse().setResponseCode(500)
+            }
+        }
+        val candidate = EndpointCandidate(
+            role = "auth-rejected",
+            dashboard = DashboardEndpoint(reachableServer.url("/").toString().trimEnd('/')),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(candidate), EndpointSurface.Dashboard)
+
+        assertNull(winner)
+        assertEquals(1, reachableServer.requestCount)
+        assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
     }
 
     @Test
     fun explicitDashboard_isProbeTarget_whenOptionalApiAndRelayArePresent() = runTest {
         reachableServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/status" -> MockResponse().setResponseCode(200)
+                "/api/health" -> MockResponse().setResponseCode(200)
                 "/health" -> MockResponse().setResponseCode(500)
                 else -> MockResponse().setResponseCode(404)
             }
@@ -724,14 +873,14 @@ class EndpointResolverTest {
             .resolve(listOf(candidate))
 
         assertEquals(candidate, winner)
-        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
     }
 
     @Test
     fun dashboardHealthDoesNotVouchForRelayHealthOnTheSameRoute() = runTest {
         reachableServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/status" -> MockResponse().setResponseCode(200)
+                "/api/health" -> MockResponse().setResponseCode(200)
                 else -> MockResponse().setResponseCode(404)
             }
         }
@@ -750,7 +899,7 @@ class EndpointResolverTest {
 
         assertEquals("the healthy Dashboard keeps the standard route usable", candidate, standardWinner)
         assertNull("a failed Relay /health must not be masked by Dashboard health", relayWinner)
-        assertEquals("/api/status", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
+        assertEquals("/api/health", reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
         assertEquals("/health", secondReachableServer.takeRequest(1, TimeUnit.SECONDS)?.path)
     }
 
@@ -768,7 +917,7 @@ class EndpointResolverTest {
         val resolver = EndpointResolver(fastClient)
 
         assertEquals(
-            "https://relay.example:9443/dashboard/api/status",
+            "https://relay.example:9443/dashboard/api/health",
             resolver.probeRequestUrlForTest(candidate, EndpointSurface.Dashboard),
         )
         assertEquals(

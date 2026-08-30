@@ -129,6 +129,19 @@ class ConnectionDashboardFieldsTest {
         assertEquals("http://localhost:9119", connection.resolvedDashboardUrl)
         assertTrue(Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl))
         assertEquals(0, connection.routeCandidates.size)
+        assertEquals(false, connection.gitRepoScanningEnabled)
+    }
+
+    @Test
+    fun gitRepoScanningConsent_roundTripsPerConnection() {
+        val enabled = sampleConnection().copy(gitRepoScanningEnabled = true)
+
+        val decoded = json.decodeFromString<Connection>(
+            json.encodeToString(Connection.serializer(), enabled),
+        )
+
+        assertTrue(decoded.gitRepoScanningEnabled)
+        assertEquals(false, sampleConnection().gitRepoScanningEnabled)
     }
 
     @Test

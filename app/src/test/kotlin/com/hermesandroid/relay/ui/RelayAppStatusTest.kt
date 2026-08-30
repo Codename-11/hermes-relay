@@ -227,6 +227,32 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `startup shell releases after route narration without waiting for Gateway wake`() {
+        assertTrue(
+            startupShellCanRender(
+                appReady = true,
+                hasStartupConnection = true,
+                endpointSelected = true,
+                chatUp = false,
+                narrationStage = 2,
+                unreachableConfirmed = false,
+                timedOut = false,
+            ),
+        )
+        assertFalse(
+            startupShellCanRender(
+                appReady = true,
+                hasStartupConnection = true,
+                endpointSelected = false,
+                chatUp = false,
+                narrationStage = 2,
+                unreachableConfirmed = false,
+                timedOut = false,
+            ),
+        )
+    }
+
+    @Test
     fun `settled chat outage is unavailable instead of connecting forever`() {
         val configured = connection(dashboardUrl = "https://host.ts.net:9119")
         assertEquals(

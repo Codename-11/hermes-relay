@@ -577,7 +577,7 @@
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_required">Enter your Hermes Gateway address</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
-    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
+    <string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
 
     <!-- BridgeMasterToggle -->
     <string name="bmt_agent_control">Agent Control</string>
@@ -816,7 +816,7 @@
     <string name="chat_settings_large_pastes">Convert large pastes to attachments</string>
     <string name="chat_settings_large_pastes_desc">Turn pastes of 5,000 or more characters into reviewable text attachments. On by default.</string>
     <string name="chat_settings_show_git_workspace">Show Git workspace in Chat</string>
-    <string name="chat_settings_show_git_workspace_desc">Show the Git status entry and changes rail in Chat. The full Git workspace remains available when this is off.</string>
+    <string name="chat_settings_show_git_workspace_desc">Show the Git status entry and changes rail in Chat when host repository scanning is enabled. The full Git workspace remains available when this is off.</string>
     <string name="chat_git_open_workspace">Open Git workspace</string>
     <string name="chat_git_branch">Git branch %1$s</string>
     <string name="chat_git_additions">%1$d additions</string>
@@ -875,7 +875,7 @@
     <string name="chat_settings_8k">8K</string>
     <string name="chat_settings_16k">16K</string>
     <string name="chat_settings_gateway_needs_signin">Gateway needs Manage sign-in</string>
-    <string name="chat_settings_gateway_needs_signin_desc">Sign in once from the Manage tab to unlock live thinking over /api/ws.</string>
+    <string name="chat_settings_gateway_needs_signin_desc">Sign in once to unlock Chat, sessions, Manage, and standard voice for this Hermes connection.</string>
     <string name="chat_settings_completions">Completions</string>
     <string name="chat_settings_offline">offline</string>
 
@@ -1011,8 +1011,8 @@
     <string name="active_section_in_use">In use</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="dashboard_gateway_configured">Configured address</string>
-    <string name="dashboard_gateway_secure_origin">Sign-in origin</string>
-    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
+    <string name="dashboard_gateway_secure_origin">Authenticated Dashboard address</string>
+    <string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
     <string name="network_routes_title">Network routes</string>
     <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. API fallback and Relay extensions are optional.</string>
     <string name="network_routes_empty">No additional network routes</string>
@@ -2133,7 +2133,7 @@
 
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard sign-in required</string>
-    <string name="dashboard_signin_required_body">Manage uses the Hermes dashboard session at %1$s.</string>
+    <string name="dashboard_signin_required_body">Sign in to Hermes at %1$s for Chat, sessions, Manage, and standard voice.</string>
     <string name="dashboard_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Sign in again to refresh it across this connection\'s trusted routes.</string>
     <string name="dashboard_signin_with_provider">Sign in with %1$s</string>
     <string name="dashboard_username_password">Username &amp; Password</string>
@@ -2142,6 +2142,7 @@
     <string name="dashboard_sign_in">Sign in</string>
     <string name="dashboard_signing_in">Signing in…</string>
     <string name="dashboard_no_supported_provider">This dashboard did not advertise a supported Android sign-in provider.</string>
+    <string name="dashboard_signin_provider_unavailable_choose">Your saved sign-in provider is unavailable. Choose another configured provider or try again later.</string>
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">Complete sign-in in the secure dashboard page.</string>
@@ -2154,7 +2155,8 @@
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
-    <string name="dashboard_native_signin_opening">Complete sign-in in your browser, then return here.</string>
+    <string name="dashboard_native_signin_opening">Complete sign-in in your browser. If your provider signs you in without returning, come back and tap Continue sign-in.</string>
+    <string name="dashboard_native_signin_continue">Continue sign-in</string>
     <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
@@ -4301,6 +4303,9 @@
     <string name="plugins_remove">Remove</string>
     <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">Host repository scanning</string>
+    <string name="git_state_host_scanning_on_desc">On for this gateway · Git writes remain separately permissioned.</string>
+    <string name="git_state_host_scanning_off_desc">Let this phone ask this gateway to scan its configured Git roots for repositories, branches, and change status. Git writes require separate permission.</string>
     <string name="git_state_back">Back</string>
     <string name="git_state_staged">Staged</string>
     <string name="git_state_modified">Modified</string>
@@ -4347,7 +4352,7 @@
 
     <string name="support_bundle_review">Review support information</string>
     <string name="support_bundle_title">Support information</string>
-    <string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains up to %1$d recent reports.</string>
+<string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains %1$d recent reports and diagnostics.</string>
     <string name="support_bundle_copied">Support information copied</string>
     <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
     <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
@@ -4523,4 +4528,5 @@
     <string name="provider_usage_capability_basic_body">Install or update the Relay plugin for credential pools, structured Nous balances, and OpenCode Go.</string>
     <string name="settings_git_workspace">Git workspace</string>
     <string name="settings_git_workspace_desc">Review changes, branches, commits, and remotes</string>
+    <string name="settings_git_workspace_off_desc">Off · Host repository scanning is opt-in</string>
 </resources>

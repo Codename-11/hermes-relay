@@ -297,7 +297,12 @@ async def _proxy_transport_http(request: Request, relay_template: str) -> Respon
                 raise HTTPException(status_code=413, detail="relay request exceeds size limit")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid content length") from exc
-    body = await request.body()
+    # GET ingress routes never carry an application body. Some HTTP/2 reverse
+    # proxies do not emit a body-complete frame until the downstream client
+    # closes; awaiting ``request.body()`` here therefore held /transport/health
+    # open until Android's probe timeout, accumulating ClientDisconnect tasks in
+    # the Dashboard process. Body-bearing methods retain the bounded read.
+    body = b"" if request.method in {"GET", "HEAD"} else await request.body()
     if len(body) > _TRANSPORT_REQUEST_LIMIT:
         raise HTTPException(status_code=413, detail="relay request exceeds size limit")
 

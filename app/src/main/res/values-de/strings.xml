@@ -429,6 +429,13 @@
     <string name="cw_pairing_code_label">Kopplungscode</string>
     <string name="cw_pairing_code_placeholder">z. B. ABC123</string>
     <string name="cw_pair_button">Koppeln</string>
+    <string name="cw_mixed_route_plain">%1$s verwendet unverschlüsseltes HTTP/WS. Nur in einem vertrauenswürdigen privaten Netzwerk oder über ein selbst verwaltetes VPN verwenden.</string>
+    <string name="cw_mixed_route_secure">%1$s verwendet HTTPS/WSS mit Transportverschlüsselung.</string>
+    <string name="cw_mixed_safe">Die App prüft diese Routen und wählt eine verfügbare aus. Die bevorzugte Route kann später geändert werden.</string>
+    <string name="cw_pair_in_progress">Wird ausgeführt…</string>
+    <string name="cw_pair_status_preparing_gateway">Gateway wird vorbereitet…</string>
+    <string name="cw_pair_status_opening_sign_in">Sichere Anmeldung wird geöffnet…</string>
+    <string name="cw_pair_status_pairing_relay">Relay wird gekoppelt…</string>
     <string name="cw_show_code_subtitle">Verwende dies, wenn du keinen Relay-Kopplungs-QR-Code scannen kannst. Lege deine URLs fest und registriere dann den folgenden Code auf dem Host, auf dem Hermes-Relay läuft.</string>
     <string name="cw_step_copy_code">1. Diesen Code kopieren</string>
     <string name="cw_copy_pairing_code">Kopplungscode kopieren</string>
@@ -813,7 +820,7 @@
     <string name="chat_settings_8k">8K</string>
     <string name="chat_settings_16k">16K</string>
     <string name="chat_settings_gateway_needs_signin">Gateway erfordert Anmeldung unter Verwalten</string>
-    <string name="chat_settings_gateway_needs_signin_desc">Melde dich einmal im Tab Verwalten an, um Live-Denken über /api/ws freizuschalten.</string>
+    <string name="chat_settings_gateway_needs_signin_desc">Melde dich einmal an, um Chat, Sitzungen, Verwaltung und Standard-Sprache für diese Hermes-Verbindung freizuschalten.</string>
     <string name="chat_settings_completions">Vervollständigungen</string>
     <string name="chat_settings_offline">offline</string>
 
@@ -1851,7 +1858,7 @@
 
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard-Anmeldung erforderlich</string>
-    <string name="dashboard_signin_required_body">Verwalten verwendet die Hermes-Dashboard-Sitzung unter %1$s.</string>
+<string name="dashboard_signin_required_body">Melde dich bei Hermes unter %1$s für Chat, Sitzungen, Verwalten und Standard-Voice an.</string>
     <string name="dashboard_signin_route_hint">Die gespeicherte Dashboard-Sitzung konnte über die Route %1$s nicht wiederverwendet werden. Melde dich erneut an, um sie für die vertrauenswürdigen Routen dieser Verbindung zu aktualisieren.</string>
     <string name="dashboard_signin_with_provider">Mit %1$s anmelden</string>
     <string name="dashboard_username_password">Benutzername &amp; Passwort</string>
@@ -1860,6 +1867,7 @@
     <string name="dashboard_sign_in">Anmelden</string>
     <string name="dashboard_signing_in">Anmeldung läuft…</string>
     <string name="dashboard_no_supported_provider">Dieses Dashboard hat keinen unterstützten Android-Anmeldeanbieter angekündigt.</string>
+    <string name="dashboard_signin_provider_unavailable_choose">Der gespeicherte Anmeldeanbieter ist nicht verfügbar. Wähle einen anderen konfigurierten Anbieter oder versuche es später erneut.</string>
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">Schließe die Anmeldung auf der sicheren Dashboard-Seite ab.</string>
@@ -3581,7 +3589,8 @@
     <string name="dev_settings_image_generation_lab">Bildgenerierungs-Labor</string>
     <string name="dev_settings_image_generation_lab_desc">Generierungsschleifen und die abschließende Bildenthüllung als Vorschau anzeigen</string>
     <string name="dev_settings_open_image_generation_lab_cd">Bildgenerierungs-Labor öffnen</string>
-    <string name="dashboard_native_signin_opening">Schließe die Anmeldung im Browser ab und kehre dann hierher zurück.</string>
+<string name="dashboard_native_signin_opening">Schließe die Anmeldung im Browser ab. Falls der Anbieter dich anmeldet, ohne zurückzukehren, tippe hier auf Anmeldung fortsetzen.</string>
+<string name="dashboard_native_signin_continue">Anmeldung fortsetzen</string>
     <string name="dashboard_native_signin_cancelled">Browser-Anmeldung abgebrochen.</string>
     <string name="dashboard_native_signin_requires_https">Die sichere Browser-Anmeldung erfordert eine HTTPS-Dashboard-Adresse.</string>
     <string name="dashboard_native_signin_unavailable">Die sichere Browser-Anmeldung ist für diese Verbindung nicht verfügbar. Aktualisiere die Verbindung und versuche es erneut.</string>
@@ -4038,6 +4047,9 @@
     <string name="plugins_remove">Entfernen</string>
     <string name="plugins_remove_confirm">„%1$s“ entfernen? Diese Plugin-Seite wird auf verbundenen Android-Geräten nicht mehr angezeigt.</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">Repository-Scan auf dem Host</string>
+    <string name="git_state_host_scanning_on_desc">Für dieses Gateway aktiviert · Git-Schreibzugriffe benötigen weiterhin eine separate Berechtigung.</string>
+    <string name="git_state_host_scanning_off_desc">Erlaubt diesem Smartphone, die konfigurierten Git-Stammordner dieses Gateways nach Repositorys, Branches und Änderungen zu durchsuchen. Git-Schreibzugriffe benötigen eine separate Berechtigung.</string>
     <string name="git_state_back">Zurück</string>
     <string name="git_state_staged">Gestaged</string>
     <string name="git_state_modified">Geändert</string>
@@ -4081,7 +4093,7 @@
     <string name="git_state_switch_stash">Wechseln (bei Änderungen stashen)</string>
     <string name="support_bundle_review">Supportinformationen prüfen</string>
     <string name="support_bundle_title">Supportinformationen</string>
-    <string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfen Sie den lokalen Export mit bis zu %1$d Berichten.</string>
+<string name="support_bundle_privacy">Nichts wird automatisch hochgeladen. Prüfe den lokalen Export mit %1$d aktuellen Berichten und Diagnosen.</string>
     <string name="support_bundle_copied">Supportinformationen kopiert</string>
     <string name="support_bundle_no_share">Supportinformationen kopiert — keine App zum Teilen gefunden</string>
     <string name="support_bundle_share_title">Hermes-Relay-Supportinformationen teilen</string>
@@ -4445,7 +4457,7 @@
     <string name="custom_theme_modified">Nicht gespeicherte Änderungen</string>
     <string name="custom_theme_saved_count">%1$d gespeicherte Presets</string>
     <string name="chat_settings_show_git_workspace">Git-Arbeitsbereich im Chat anzeigen</string>
-    <string name="chat_settings_show_git_workspace_desc">Zeigt Branch und Änderungen über dem Eingabefeld an</string>
+    <string name="chat_settings_show_git_workspace_desc">Zeigt Git-Status und Änderungen im Chat, wenn der Repository-Scan auf dem Host aktiviert ist. Der vollständige Git-Arbeitsbereich bleibt verfügbar, wenn dies aus ist.</string>
     <string name="chat_git_open_workspace">Git-Arbeitsbereich öffnen</string>
     <string name="chat_git_branch">Branch %1$s</string>
     <string name="chat_git_additions">%1$d Hinzufügungen</string>
@@ -4453,6 +4465,7 @@
     <plurals name="chat_git_change_count"><item quantity="one">%1$d Änderung</item><item quantity="other">%1$d Änderungen</item></plurals>
     <string name="settings_git_workspace">Git-Arbeitsbereich</string>
     <string name="settings_git_workspace_desc">Änderungen, Branches, Commits und Remotes prüfen</string>
+    <string name="settings_git_workspace_off_desc">Aus · Repository-Scan auf dem Host ist optional</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>
@@ -4468,13 +4481,13 @@
     <string name="dashboard_address_editor_body">Lege die Dashboard- und Gateway-Adresse für dieses Telefon fest. Private LAN- und Tailscale-Routen dürfen HTTP oder HTTPS verwenden; öffentliche Routen erfordern HTTPS.</string>
     <string name="dashboard_address_editor_title">Gateway-Adresse</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
+<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">Gib die Hermes-Gateway-Adresse ein</string>
     <string name="dashboard_gateway_configured">Configured address</string>
-    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
-    <string name="dashboard_gateway_secure_origin">Anmeldeursprung</string>
+<string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
+<string name="dashboard_gateway_secure_origin">Authentifizierte Dashboard-Adresse</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>

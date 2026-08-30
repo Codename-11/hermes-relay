@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.viewmodel
 
 import android.app.Application
+import android.os.Build
 import android.content.Context
 import android.net.Uri
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -90,6 +91,7 @@ import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardStatus
+import com.hermesandroid.relay.network.upstream.isDashboardAuthProviderUnavailable
 import com.hermesandroid.relay.network.upstream.sameDashboardBase
 import com.hermesandroid.relay.network.upstream.multiplexServedProfiles
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
@@ -346,6 +348,40 @@ internal fun isChatTransportReady(
 ): Boolean =
     gatewayAvailability == GatewayAvailability.Ready ||
         (apiClientPresent && apiReachable)
+
+/** Startup transport timeouts are retryable evidence, not an offline verdict. */
+internal fun isTransientDashboardTransportFailure(error: Throwable?): Boolean =
+    generateSequence(error) { it.cause }
+        .any {
+            it is java.io.InterruptedIOException ||
+                it is java.net.UnknownHostException
+        }
+
+internal fun shouldSettleDashboardTransientFailures(consecutiveFailures: Int): Boolean =
+    consecutiveFailures >= 3
+
+internal fun shouldRefreshGatewayProfilesOnReady(
+    lastRefreshedConnectionId: String?,
+    activeConnectionId: String?,
+    availability: GatewayAvailability,
+): Boolean = availability == GatewayAvailability.Ready &&
+    activeConnectionId != null &&
+    lastRefreshedConnectionId != activeConnectionId
+
+/**
+ * Current upstream verifies a bearer against every registered token provider;
+ * one unreachable provider cannot veto another provider's accepted token.
+ * Provider roster size therefore never disables an exact-origin,
+ * connection-scoped bearer. Cookie-first preference remains independent.
+ */
+internal fun nativeDashboardBearerCompatible(
+    @Suppress("UNUSED_PARAMETER") authProviders: List<String>,
+): Boolean = true
+
+internal fun defaultChatAlertsEnabled(
+    sdkInt: Int,
+    notificationsPermitted: Boolean,
+): Boolean = sdkInt < Build.VERSION_CODES.TIRAMISU || notificationsPermitted
 
 internal fun recordDashboardGatewayFailure(
     dashboardUrl: String,
@@ -1206,6 +1242,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     ?.takeIf(String::isNotBlank)
             }
         },
+        nativeDashboardBearerEligibleProvider = { cid ->
+            val connection = connectionStore.connections.value.firstOrNull { it.id == cid }
+            nativeDashboardBearerCompatible(
+                connection?.dashboardLastStatus?.authProviders
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: connection?.dashboardAuthProviders.orEmpty(),
+            )
+        },
         pinnedClientProvider = { url, base ->
             pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
         },
@@ -1221,7 +1265,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         authManagerFlow = _authManagerFlow,
         activeConnectionId = connectionStore.activeConnectionId,
         activeDashboardUrlProvider = { activeDashboardUrl() },
-        dashboardClientFactory = { cid, url -> upstreamTransport.dashboardClientFor(cid, url) },
+        dashboardClientFactory = { cid, url ->
+            upstreamTransport.dashboardSessionClientFor(cid, url)
+        },
         streamingEndpointProvider = { streamingEndpoint.value },
         gatewayAvailabilityProvider = { upstreamTransport.gatewayAvailability.value },
         setLastSessionId = { _lastSessionId.value = it },
@@ -1309,25 +1355,57 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val activeEndpoint = connectionManager.activeEndpoint
     val activeRelayEndpoint = connectionManager.activeRelayEndpoint
 
+    @Volatile
+    private var routeCandidateRecoveryJob: Job? = null
+
     private suspend fun activeRouteCandidatesSnapshot(): List<EndpointCandidate> {
         val activeId = connectionStore.activeConnectionId.value ?: return emptyList()
         val current = connectionStore.connections.value
             .firstOrNull { it.id == activeId }
             ?: return emptyList()
-        val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
-        val pairedRoutes = deviceId?.let { id ->
-            runCatching {
-                PairingPreferences.getDeviceEndpoints(getApplication(), id).first()
-            }.getOrDefault(emptyList())
-        }.orEmpty()
-        val recovered = mergeRelayTransportIntoStandardRoutes(
-            standardRoutes = current.routeCandidates,
-            relayRoutes = pairedRoutes,
-        )
-        if (recovered != current.routeCandidates) {
-            connectionStore.updateConnection(current.copy(routeCandidates = recovered))
+        val immediate = current.routeCandidates.ifEmpty {
+            Connection.buildRouteCandidates(
+                apiServerUrl = current.apiServerUrl,
+                relayUrl = current.relayUrl,
+                dashboardUrl = current.configuredDashboardUrl,
+            )
         }
-        return recovered
+        return immediate
+    }
+
+    /**
+     * Old installs may still hold Relay route details only in the paired-device
+     * store. Recover those details without putting hardware-backed token-store
+     * hydration on standard Dashboard route selection's cold-start path.
+     */
+    private fun recoverLegacyRelayRouteMetadataInBackground(
+        connectionId: String,
+        standardRoutes: List<EndpointCandidate>,
+    ) {
+        if (routeCandidateRecoveryJob?.isActive == true) return
+        routeCandidateRecoveryJob = viewModelScope.launch {
+            try {
+                val deviceId = runCatching { authManager.getOrCreateDeviceId() }.getOrNull()
+                    ?: return@launch
+                val pairedRoutes = runCatching {
+                    PairingPreferences.getDeviceEndpoints(getApplication(), deviceId).first()
+                }.getOrDefault(emptyList())
+                if (pairedRoutes.isEmpty()) return@launch
+                if (connectionStore.activeConnectionId.value != connectionId) return@launch
+                val latest = connectionStore.connections.value
+                    .firstOrNull { it.id == connectionId }
+                    ?: return@launch
+                val recovered = mergeRelayTransportIntoStandardRoutes(
+                    standardRoutes = latest.routeCandidates.ifEmpty { standardRoutes },
+                    relayRoutes = pairedRoutes,
+                )
+                if (recovered != latest.routeCandidates) {
+                    connectionStore.updateConnection(latest.copy(routeCandidates = recovered))
+                }
+            } finally {
+                routeCandidateRecoveryJob = null
+            }
+        }
     }
 
     private fun normalizeStandardRouteCandidates(
@@ -1557,6 +1635,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         MutableStateFlow(StandardVoiceAvailability.Unknown)
     val standardVoiceAvailability: StateFlow<StandardVoiceAvailability> =
         _standardVoiceAvailability.asStateFlow()
+    private val standardVoiceProbeMutex = Mutex()
+    private var dashboardTransientFailureOwner: Pair<String, String>? = null
+    private var dashboardTransientFailureCount = 0
 
     private val _hostResourcePressure = MutableStateFlow(HostResourcePressureStatus())
     val hostResourcePressure: StateFlow<HostResourcePressureStatus> =
@@ -1709,7 +1790,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun dashboardRelayRequestForIngress(relayUrl: String): Request? {
         val dashboardUrl = dashboardOriginForRelayIngress(activeDashboardUrl(), relayUrl)
             ?: return null
-        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        val client = upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
         return try {
             val ticket = client.requestWsTicket().getOrNull()?.ticket ?: return null
             dashboardRelayWebSocketRequest(relayUrl, ticket)
@@ -2165,6 +2247,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         get() = profileController.effectiveDisplayProfile
 
     fun refreshDashboardProfiles() = profileController.refreshDashboardProfiles()
+    fun refreshDeferredProfileMetadata() = profileController.refreshDeferredProfileMetadata()
 
     suspend fun listProfileScopedSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(limit)
@@ -2172,8 +2255,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     suspend fun listProfileScopedSessions(
         profileName: String?,
         limit: Int = 200,
+        offset: Int = 0,
+        excludeSources: Collection<String> = emptyList(),
     ): Result<List<SessionItem>>? =
-        profileController.listProfileScopedSessions(profileName, limit)
+        profileController.listProfileScopedSessions(profileName, limit, offset, excludeSources)
 
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
@@ -2932,12 +3017,21 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // Turn-complete notification (default ON). RelayApp mirrors this into
+    // Turn-complete notification. An absent preference follows the platform
+    // grant: pre-Android-13 stays enabled, while API 33+ cannot claim alerts
+    // are on until POST_NOTIFICATIONS is actually granted.
     // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
     // + the POST_NOTIFICATIONS runtime request on first enable.
+    private val defaultNotifyTurnComplete: Boolean = defaultChatAlertsEnabled(
+        sdkInt = Build.VERSION.SDK_INT,
+        notificationsPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+                application,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+    )
     val notifyTurnComplete: StateFlow<Boolean> = application.relayDataStore.data
-        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: true }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: defaultNotifyTurnComplete }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, defaultNotifyTurnComplete)
 
     fun setNotifyTurnComplete(enabled: Boolean) {
         viewModelScope.launch {
@@ -3987,6 +4081,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
         connectionStore.updateConnection(existing.copy(label = newLabel.trim()))
         return Result.success(Unit)
+    }
+
+    /** Persist Git repository-discovery consent for exactly the active installation. */
+    fun setGitRepoScanningEnabled(enabled: Boolean) {
+        val connectionId = activeConnectionId.value ?: return
+        viewModelScope.launch {
+            val current = connections.value.firstOrNull { it.id == connectionId } ?: return@launch
+            if (current.gitRepoScanningEnabled == enabled) return@launch
+            connectionStore.updateConnection(current.copy(gitRepoScanningEnabled = enabled))
+        }
     }
 
     /**
@@ -5112,7 +5216,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 // snaps to the real profile (and re-scopes the chat) the moment the
                 // sheet fetches the list. Best-effort; the agentProfiles collector
                 // resolves the pending name once the list lands.
-                refreshDashboardProfiles()
+                profileController.refreshDashboardProfileScope()
             }
         }
 
@@ -5160,6 +5264,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             upstreamTransport.gatewayAvailability.collect { availability ->
                 if (availability == GatewayAvailability.Unknown) return@collect
+                activeConnectionSnapshot()?.let { connection ->
+                    recoverLegacyRelayRouteMetadataInBackground(
+                        connectionId = connection.id,
+                        standardRoutes = connection.routeCandidates,
+                    )
+                }
                 if (_lastSessionId.value != null) return@collect
                 val connectionId = activeConnectionId.value ?: return@collect
                 profileController.refreshLastSessionForProfile(
@@ -5297,9 +5407,19 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * visiting the tab.
      */
     private suspend fun probeStandardVoice() {
+        if (!standardVoiceProbeMutex.tryLock()) return
+        try {
+            probeStandardVoiceOwned()
+        } finally {
+            standardVoiceProbeMutex.unlock()
+        }
+    }
+
+    private suspend fun probeStandardVoiceOwned() {
         val connectionId = connectionStore.activeConnectionId.value
         val dashboardUrl = activeDashboardUrl()
         if (connectionId == null || dashboardUrl.isNullOrBlank()) {
+            clearDashboardTransientFailures()
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
             _standardAudioApiReachable.value = false
             _hostResourcePressure.value = HostResourcePressureStatus()
@@ -5307,11 +5427,32 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             updateGatewayAvailability(GatewayAvailability.Unknown)
             return
         }
-        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+        val client = upstreamTransport.dashboardClientFor(connectionId, dashboardUrl)
         try {
-            val status = client.getStatus().getOrNull()
+            val statusResult = client.getStatus()
+            val status = statusResult.getOrNull()
             if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
             if (status == null) {
+                val failure = statusResult.exceptionOrNull()
+                if (failure?.isDashboardAuthProviderUnavailable() == true) {
+                    recordDashboardProviderUnavailable(connectionId)
+                    return
+                }
+                if (isTransientDashboardTransportFailure(failure) &&
+                    !recordDashboardTransientFailure(connectionId, dashboardUrl)
+                ) {
+                    recordDashboardGatewayFailure(
+                        dashboardUrl = dashboardUrl,
+                        detail = "Dashboard status probe timed out; keeping Gateway in reconnecting state.",
+                    )
+                    if (_standardVoiceAvailability.value != StandardVoiceAvailability.Ready) {
+                        _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+                        _standardAudioApiReachable.value = false
+                    }
+                    updateGatewayAvailability(GatewayAvailability.Unknown)
+                    return
+                }
+                clearDashboardTransientFailures()
                 recordDashboardGatewayFailure(
                     dashboardUrl = dashboardUrl,
                     detail = "Dashboard status probe returned no response.",
@@ -5326,8 +5467,34 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 recordDashboardStatusIfChanged(connectionId, status = null, session = null)
                 return
             }
-            val session = if (status.authRequired) client.currentSession().getOrNull() else null
+            clearDashboardTransientFailures()
+            val sessionResult: Result<DashboardAuthSession?> = if (status.authRequired) {
+                client.currentSession().map { it }
+            } else {
+                Result.success(null)
+            }
+            val sessionFailure = sessionResult.exceptionOrNull()
             if (!ownsDashboardProbe(connectionId, dashboardUrl)) return
+            if (sessionFailure != null) {
+                if (sessionFailure.isDashboardAuthProviderUnavailable()) {
+                    recordDashboardProviderUnavailable(connectionId)
+                    return
+                }
+                if (isTransientDashboardTransportFailure(sessionFailure) &&
+                    !recordDashboardTransientFailure(connectionId, dashboardUrl)
+                ) {
+                    _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+                    _standardAudioApiReachable.value = false
+                    updateGatewayAvailability(GatewayAvailability.Unknown)
+                    return
+                }
+                clearDashboardTransientFailures()
+                _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
+                _standardAudioApiReachable.value = false
+                updateGatewayAvailability(GatewayAvailability.Unreachable)
+                return
+            }
+            val session = sessionResult.getOrNull()
             val authed = !status.authRequired || session?.authenticated == true
             val (chatDisplaySettings, audioRoutesPresent) = if (authed) {
                 coroutineScope {
@@ -5345,10 +5512,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             _hostResourcePressure.value = status.hostResourcePressure()
             recordDashboardStatusIfChanged(connectionId, status, session)
             _serverChatDisplaySettings.value = chatDisplaySettings
-            // Gateway chat shares the voice probe's dashboard checks; it has
-            // no audio-route requirement.
+            // Dashboard reachability/auth enables Manage and session REST,
+            // but Chat is connected only after the independent /api/ws client
+            // receives gateway.ready. Unknown preserves Gateway preference and
+            // lets the visible-chat owner establish that socket.
             updateGatewayAvailability(
-                if (authed) GatewayAvailability.Ready else GatewayAvailability.SignInRequired,
+                if (authed) GatewayAvailability.Unknown else GatewayAvailability.SignInRequired,
             )
             val availability = when {
                 !authed -> StandardVoiceAvailability.SignInRequired
@@ -5380,6 +5549,17 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 dashboardUrl = dashboardUrl,
                 detail = "Dashboard status probe failed (${e.javaClass.simpleName}).",
             )
+            if (isTransientDashboardTransportFailure(e) &&
+                !recordDashboardTransientFailure(connectionId, dashboardUrl)
+            ) {
+                if (_standardVoiceAvailability.value != StandardVoiceAvailability.Ready) {
+                    _standardVoiceAvailability.value = StandardVoiceAvailability.Unknown
+                    _standardAudioApiReachable.value = false
+                }
+                updateGatewayAvailability(GatewayAvailability.Unknown)
+                return
+            }
+            clearDashboardTransientFailures()
             _standardVoiceAvailability.value = StandardVoiceAvailability.Unreachable
             _standardAudioApiReachable.value = false
             _hostResourcePressure.value = HostResourcePressureStatus()
@@ -5388,6 +5568,49 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         } finally {
             client.shutdown()
         }
+    }
+
+    /** Returns true once this exact route exhausts its transient startup grace. */
+    private fun recordDashboardTransientFailure(
+        connectionId: String,
+        dashboardUrl: String,
+    ): Boolean {
+        val owner = connectionId to dashboardUrl.trim().trimEnd('/')
+        if (dashboardTransientFailureOwner != owner) {
+            dashboardTransientFailureOwner = owner
+            dashboardTransientFailureCount = 0
+        }
+        dashboardTransientFailureCount += 1
+        return shouldSettleDashboardTransientFailures(dashboardTransientFailureCount)
+    }
+
+    private fun clearDashboardTransientFailures() {
+        dashboardTransientFailureOwner = null
+        dashboardTransientFailureCount = 0
+    }
+
+    private suspend fun recordDashboardProviderUnavailable(connectionId: String) {
+        clearDashboardTransientFailures()
+        _standardVoiceAvailability.value = StandardVoiceAvailability.SignInRequired
+        _standardAudioApiReachable.value = false
+        _hostResourcePressure.value = HostResourcePressureStatus()
+        _serverChatDisplaySettings.value = null
+        updateGatewayAvailability(GatewayAvailability.SignInRequired)
+        val message = ctx.getString(R.string.dashboard_signin_provider_unavailable_choose)
+        val previous = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.dashboardLastStatus
+        connectionStore.setDashboardStatus(
+            connectionId = connectionId,
+            status = (previous ?: com.hermesandroid.relay.data.DashboardConnectionStatus()).copy(
+                checkedAtMillis = System.currentTimeMillis(),
+                reachable = true,
+                authRequired = true,
+                authenticated = false,
+                gatewayTicketAvailable = false,
+                message = message,
+            ),
+        )
     }
 
     /**
@@ -7918,7 +8141,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Last-session persistence follows the selected UI profile identity.
         // The null Server-default sentinel stays separate from whichever named
         // profile the server's sticky default currently resolves to.
-        val profileName = profileController.selectedProfile.value?.name
+        val profileName = profileController.selectionIdentityProfileName()
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {

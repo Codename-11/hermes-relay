@@ -82,6 +82,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -122,6 +123,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 internal enum class SessionDrawerFilter {
     All,
@@ -211,6 +214,9 @@ fun SessionDrawerContent(
     activeProfileName: String = "default",
     isLoading: Boolean = false,
     loadFailed: Boolean = false,
+    isLoadingMore: Boolean = false,
+    hasMore: Boolean = false,
+    loadMoreFailed: Boolean = false,
     isOpen: Boolean = true,
     activityStates: Map<String, SessionActivityState> = emptyMap(),
     animationEnabled: Boolean = true,
@@ -219,6 +225,8 @@ fun SessionDrawerContent(
     supervisedSessionActions: SupervisedSessionActions? = null,
     newChatEnabled: Boolean = true,
     onRefresh: (() -> Unit)? = null,
+    onLoadMore: (() -> Unit)? = null,
+    onRetryLoadMore: (() -> Unit)? = null,
     /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
     onOpenBotMode: (() -> Unit)? = null,
     onNewChat: () -> Unit,
@@ -305,8 +313,10 @@ fun SessionDrawerContent(
     val activeFilter = resolveSessionDrawerFilter(filter, showThreads, effectiveArchiveSupported)
     // External gateway sources present (discord/telegram/cron/…) for the source
     // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
-    val presentSources = sourceSessions
-        .mapNotNull { it.source?.trim()?.lowercase()?.takeIf { s -> s.isNotBlank() } }
+    val presentSources = (
+        sourceSessions.mapNotNull { it.source?.trim()?.lowercase()?.takeIf { s -> s.isNotBlank() } } +
+            hiddenSources
+        )
         .distinct()
         .filter { sourceBadge(it) != null }
         .sorted()
@@ -344,6 +354,29 @@ fun SessionDrawerContent(
         .toList()
     val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, scopedActivityStates)
     val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, scopedActivityStates)
+    LaunchedEffect(
+        listState,
+        isOpen,
+        showAllProfiles,
+        hasMore,
+        isLoadingMore,
+        loadMoreFailed,
+        visibleRows.size,
+        onLoadMore,
+    ) {
+        if (!isOpen || showAllProfiles || !hasMore || loadMoreFailed || onLoadMore == null) {
+            return@LaunchedEffect
+        }
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+            layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - 5
+        }
+            .distinctUntilChanged()
+            .collect { nearEnd ->
+                if (nearEnd && !isLoadingMore) onLoadMore()
+            }
+    }
     val drawerNowMillis = rememberDrawerClock(
         isEnabled = isOpen && (
             viewOptions.showUpdated || viewOptions.grouping == SessionDrawerGrouping.Project
@@ -897,6 +930,32 @@ fun SessionDrawerContent(
                             onCopySessionId = { onCopySessionId?.invoke(session.sessionId) },
                             onDelete = { deleteDialogTarget = row to showAllProfiles },
                         )
+                    }
+                }
+                if (!showAllProfiles && isLoadingMore) {
+                    item(key = "sessions-loading-more") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                        }
+                    }
+                }
+                if (!showAllProfiles && loadMoreFailed && onRetryLoadMore != null) {
+                    item(key = "sessions-load-more-retry") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TextButton(onClick = onRetryLoadMore) {
+                                Text(stringResource(R.string.chat_retry))
+                            }
+                        }
                     }
                 }
             }

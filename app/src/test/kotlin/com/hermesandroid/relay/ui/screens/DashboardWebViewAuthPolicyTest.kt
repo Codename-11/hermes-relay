@@ -13,6 +13,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -165,6 +166,41 @@ class DashboardWebViewAuthPolicyTest {
         verify(exactly = 1) { manager.setAcceptThirdPartyCookies(webView, true) }
         verify(exactly = 1) { settings.javaScriptEnabled = true }
         verify(exactly = 1) { settings.domStorageEnabled = true }
+    }
+
+    @Test
+    fun explicitSignInExpiryCompletesBeforeLoginCanContinue() = runTest {
+        val callbacks = mutableListOf<(Boolean) -> Unit>()
+        var flushed = false
+
+        val expiry = async {
+            expireDashboardWebViewSessionCookies(
+                baseUrl = "https://hermes.example.test/base",
+                setCookie = { _, _, callback -> callbacks += callback },
+                flush = { flushed = true },
+            )
+        }
+        testScheduler.runCurrent()
+
+        assertFalse(expiry.isCompleted)
+        assertTrue(callbacks.isNotEmpty())
+        callbacks.forEach { it(true) }
+
+        assertTrue(expiry.await())
+        assertTrue(flushed)
+    }
+
+    @Test
+    fun cookieExpiryPlanTargetsSessionVariantsAndReverseProxyPathsOnly() {
+        val deletions = dashboardWebViewSessionCookieDeletions(
+            "https://hermes.example.test/base",
+        )
+
+        assertTrue(deletions.any { it.header.startsWith("hermes_session=") && "Path=/base" in it.header })
+        assertTrue(deletions.any { it.header.startsWith("__Host-hermes_session_at=") && "Path=/" in it.header })
+        assertTrue(deletions.any { it.header.startsWith("__Secure-hermes_session_provider=") })
+        assertTrue(deletions.all { it.url.startsWith("https://hermes.example.test/") })
+        assertTrue(deletions.none { "theme=" in it.header })
     }
 
     @Test

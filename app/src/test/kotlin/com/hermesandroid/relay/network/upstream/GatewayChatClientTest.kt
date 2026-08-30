@@ -59,6 +59,7 @@ class GatewayClientHarness(
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
+    var malformedTicketMint = false
     val transientTicketFailures = AtomicInteger(0)
     var ticketResponseDelayMs = 0L
     var closeBeforeReadyCode: Int? = null
@@ -605,6 +606,8 @@ class GatewayClientHarness(
                         ticketMints.incrementAndGet()
                         if (failTicketMint) {
                             MockResponse().setResponseCode(401).setBody("""{"error":"no session"}""")
+                        } else if (malformedTicketMint) {
+                            MockResponse().setResponseCode(200).setBody("""{"ttl_seconds":30}""")
                         } else if (transientTicketFailures.getAndUpdate { remaining ->
                                 (remaining - 1).coerceAtLeast(0)
                             } > 0
@@ -781,7 +784,7 @@ class GatewayChatClientTest {
         initialDashboardClient = DashboardApiClient(
             baseUrl = harness.server.url("/").toString().trimEnd('/'),
             okHttpClient = OkHttpClient(),
-            sessionReadTimeoutMillis = ticketTimeoutMs,
+            controlReadTimeoutMillis = ticketTimeoutMs,
         ),
         okHttpClient = OkHttpClient(),
         callbackDispatcher = { it() },
@@ -1425,6 +1428,9 @@ class GatewayChatClientTest {
         }
 
         assertTrue(client.prewarmAwait("stored-session"))
+        val resume = harness.awaitRpc("session.resume")
+        assertEquals(true, (resume["defer_history"] as JsonPrimitive).booleanOrNull)
+        assertEquals(true, (resume["omit_messages"] as JsonPrimitive).booleanOrNull)
         assertTrue("cold resume was not reported", resumedLatch.await(5, TimeUnit.SECONDS))
         assertTrue(client.prewarmAwait("stored-session"))
         Thread.sleep(100)
@@ -1882,6 +1888,7 @@ class GatewayChatClientTest {
         assertEquals("auth failure must not repeat an identical ticket request", 1, harness.ticketMints.get())
         assertTrue(signInRequiredMarked)
         assertFalse(unreachableMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
     }
 
     @Test
@@ -1903,7 +1910,22 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `ticket timeout is bounded once and marks gateway unreachable`() {
+    fun `malformed ticket response is terminal and is not retried`() {
+        harness.malformedTicketMint = true
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
+    }
+
+    @Test
+    fun `ticket timeout gets one bounded retry but stays unresolved for visible reconnect`() {
         harness.ticketResponseDelayMs = 500L
         rebuildClient(ticketTimeoutMs = 75L)
         val r = Recorder()
@@ -1914,10 +1936,11 @@ class GatewayChatClientTest {
         }
 
         assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
-        assertEquals(1, harness.ticketMints.get())
+        assertEquals(2, harness.ticketMints.get())
         assertTrue(r.preflightFailures.single().contains("timeout", ignoreCase = true))
-        assertTrue(unreachableMarked)
+        assertFalse("transient timeouts must not publish a terminal unreachable verdict", unreachableMarked)
         assertFalse(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Retryable, client.reconnectDisposition.value)
     }
 
     @Test
@@ -1934,6 +1957,7 @@ class GatewayChatClientTest {
         assertEquals(1, harness.ticketMints.get())
         assertTrue(r.preflightFailures.single().contains("authentication", ignoreCase = true))
         assertTrue(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
     }
 
     @Test
@@ -1951,6 +1975,7 @@ class GatewayChatClientTest {
         assertTrue(r.preflightFailures.single().contains("origin", ignoreCase = true))
         assertTrue(unreachableMarked)
         assertFalse(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
     }
 
     @Test

@@ -48,8 +48,16 @@ No expongas directamente a Internet un puerto de Dashboard, API o Relay sin
 cifrar; para el acceso remoto utiliza Tailscale, una VPN o HTTPS.
 :::
 
-El inicio de sesión del dashboard usa cookies y tickets efímeros del Gateway.
-La clave de API es independiente y no inicia sesión en el dashboard.
+El inicio de sesión del dashboard usa un bearer nativo en gateways actuales o
+cookies del origen exacto en gateways de compatibilidad, junto con tickets
+efímeros del Gateway. La clave de API es independiente.
+
+La ruta guardada en Android puede ser una dirección LAN, Tailscale o pública.
+OIDC todavía necesita un callback HTTPS accesible en
+`<origen-publico-del-dashboard>/auth/callback`. Hermes normalmente obtiene ese
+origen de cabeceras de proxy confiables. Configura upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` solo si esa detección no
+es fiable; Android verifica un origen de inicio de sesión distinto antes de guardarlo.
 
 ## 3. Conecta y conversa
 

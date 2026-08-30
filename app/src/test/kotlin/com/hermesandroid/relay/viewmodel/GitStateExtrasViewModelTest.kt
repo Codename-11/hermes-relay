@@ -47,7 +47,8 @@ class GitStateExtrasViewModelTest {
 
     private fun viewModel(grant: Boolean = true): GitStateViewModel {
         val vm = GitStateViewModel(application)
-        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.loadRepos()
         vm.setWriteGrant(ownerKey, grant)
         return vm
     }

@@ -103,6 +103,7 @@ class NativeDashboardAuthorization internal constructor(
     internal val verifier: String,
     internal val state: String,
     internal val generation: Long,
+    internal val usesAlternateOrigin: Boolean,
 )
 
 class NativeDashboardAuthClient(
@@ -146,14 +147,9 @@ class NativeDashboardAuthClient(
             .addQueryParameter("code_challenge_method", "S256")
             .addQueryParameter("redirect_uri", redirectUri)
             .addQueryParameter("state", state)
-            // Match the official Desktop client for Nous-hosted gateways: the
-            // gateway selects its single native-eligible provider. The provider
-            // name advertised to UI clients is presentation/configuration data,
-            // not a stable native-broker identifier. Other providers retain the
-            // explicit selector for direct client use and tests.
             .apply {
                 provider
-                    ?.takeIf { it.isNotBlank() && !it.equals("nous", ignoreCase = true) }
+                    ?.takeIf { it.isNotBlank() }
                     ?.let { addQueryParameter("provider", it) }
             }
             .build()
@@ -161,7 +157,13 @@ class NativeDashboardAuthClient(
         val generation = NativeTokenRefreshCoordinator.beginAuthorization(
             tokenStore.coordinationKey,
         )
-        return NativeDashboardAuthorization(url, verifier, state, generation)
+        return NativeDashboardAuthorization(
+            authorizationUrl = url,
+            verifier = verifier,
+            state = state,
+            generation = generation,
+            usesAlternateOrigin = !sameDashboardBase(authorizationBaseUrl, baseUrl),
+        )
     }
 
     /**
@@ -196,6 +198,7 @@ class NativeDashboardAuthClient(
         authorization: NativeDashboardAuthorization,
         callbackTarget: String,
         commitAllowed: () -> Boolean = { true },
+        onValidated: () -> Unit = {},
     ): NativeDashboardTokens {
         val callback = callbackTarget.toHttpUrlOrNull()
             ?: "http://127.0.0.1$callbackTarget".toHttpUrlOrNull()
@@ -219,6 +222,7 @@ class NativeDashboardAuthClient(
             ?: throw NativeDashboardCallbackException(
                 "Native sign-in callback did not include an authorization code",
             )
+        runCatching(onValidated)
         val payload = NativeTokenExchange(code = code, codeVerifier = authorization.verifier)
         return postTokens(
             path = "/auth/native/token",
@@ -317,6 +321,10 @@ class NativeDashboardAuthClient(
                 throw NativeDashboardInactiveAuthorizationException()
             }
             tokenStore.save(tokens)
+            NativeTokenRefreshCoordinator.markBootstrapApproved(
+                tokenStore.coordinationKey,
+                tokens.accessToken,
+            )
         }
         return tokens
     }
@@ -493,8 +501,44 @@ class DashboardBearerAuth(
     private val clockSeconds: () -> Long = { System.currentTimeMillis() / 1000L },
 ) : Interceptor, Authenticator {
     private val authClient = NativeDashboardAuthClient(baseUrl, tokenStore)
+    @Volatile
+    private var cookieAuthAvailable: ((okhttp3.HttpUrl) -> Boolean)? = null
+    @Volatile
+    private var preferNativeBearerAfterCookieProviderFailure = false
+
+    internal fun preferCookiesWhen(predicate: (okhttp3.HttpUrl) -> Boolean) {
+        cookieAuthAvailable = predicate
+    }
+
+    private fun shouldPreferCookie(url: okhttp3.HttpUrl): Boolean =
+        !preferNativeBearerAfterCookieProviderFailure &&
+            runCatching { cookieAuthAvailable?.invoke(url) == true }.getOrDefault(false)
 
     override fun intercept(chain: Interceptor.Chain): Response {
+        if (shouldPreferCookie(chain.request().url)) {
+            val cookieResponse = chain.proceed(chain.request())
+            if (!cookieResponse.isAuthProviderUnavailable()) return cookieResponse
+            val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
+                ?: return cookieResponse
+            val accessToken = normalizeCredentialForHeader(
+                tokens.accessToken,
+                "Dashboard credential",
+            )
+            cookieResponse.close()
+            val bearerResponse = chain.proceed(
+                chain.request().newBuilder()
+                    .bearerAuthorization(accessToken, "Dashboard credential")
+                    .build(),
+            )
+            if (bearerResponse.isSuccessful) {
+                // Preserve the cookie on disk: upstream's 503 intentionally
+                // avoids logging browsers out during an IdP outage. This exact
+                // Dashboard client merely stops presenting the stranded cookie
+                // first after its connection-scoped bearer proves valid.
+                preferNativeBearerAfterCookieProviderFailure = true
+            }
+            return bearerResponse
+        }
         val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
         val request = tokens?.let {
             chain.request().newBuilder()
@@ -530,7 +574,17 @@ class DashboardBearerAuth(
 
     override fun authenticate(route: Route?, response: Response): Request? {
         if (responseCount(response) >= 2) return null
-        val previous = response.request.header("Authorization") ?: return null
+        val previous = response.request.header("Authorization")
+        if (previous == null) {
+            if (!shouldPreferCookie(response.request.url)) return null
+            val tokens = usableTokens(
+                forceRefresh = false,
+                failedAccessToken = null,
+            ) ?: return null
+            return response.request.newBuilder()
+                .bearerAuthorization(tokens.accessToken, "Dashboard credential")
+                .build()
+        }
         val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
         val tokens = usableTokens(
             forceRefresh = true,
@@ -555,10 +609,38 @@ class DashboardBearerAuth(
             if (failedAccessToken != null && current.accessToken != failedAccessToken) {
                 return@synchronized current
             }
+            val needsNousBootstrap = current.provider.equals("nous", ignoreCase = true) &&
+                current.refreshToken.isNotBlank() &&
+                !NativeTokenRefreshCoordinator.isBootstrapApproved(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            if (needsNousBootstrap &&
+                NativeTokenRefreshCoordinator.isBootstrapRejected(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            ) {
+                return@synchronized null
+            }
             val nearExpiry = current.expiresAt <= 0L || clockSeconds() >= current.expiresAt - 60L
-            if (!forceRefresh && !nearExpiry) return@synchronized current
-            runCatching { authClient.refresh(current) }.getOrNull()
+            if (!forceRefresh && !nearExpiry && !needsNousBootstrap) return@synchronized current
+            val refreshed = runCatching { authClient.refresh(current) }.getOrNull()
+            if (refreshed == null && needsNousBootstrap) {
+                NativeTokenRefreshCoordinator.markBootstrapRejected(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            }
+            refreshed
         }
+
+    private fun Response.isAuthProviderUnavailable(): Boolean {
+        if (code != 503) return false
+        val detail = runCatching { peekBody(1_024L).string() }.getOrDefault("")
+        return detail.contains("Auth provider", ignoreCase = true) &&
+            detail.contains("unreachable", ignoreCase = true)
+    }
 
     private fun responseCount(response: Response): Int {
         var count = 1
@@ -632,6 +714,8 @@ private inline fun <reified T : Throwable> Throwable.firstCauseOfType(): T? {
 private object NativeTokenRefreshCoordinator {
     private val locks = ConcurrentHashMap<String, Any>()
     private val generations = ConcurrentHashMap<String, Long>()
+    private val bootstrapApproved = ConcurrentHashMap<String, String>()
+    private val bootstrapRejected = ConcurrentHashMap<String, String>()
 
     fun lockFor(key: String): Any = locks.computeIfAbsent(key) { Any() }
 
@@ -651,10 +735,28 @@ private object NativeTokenRefreshCoordinator {
         }
     }
 
+    fun isBootstrapApproved(key: String, accessToken: String): Boolean =
+        bootstrapApproved[key] == accessToken
+
+    fun isBootstrapRejected(key: String, accessToken: String): Boolean =
+        bootstrapRejected[key] == accessToken
+
+    fun markBootstrapApproved(key: String, accessToken: String) {
+        bootstrapApproved[key] = accessToken
+        bootstrapRejected.remove(key)
+    }
+
+    fun markBootstrapRejected(key: String, accessToken: String) {
+        bootstrapRejected[key] = accessToken
+        bootstrapApproved.remove(key)
+    }
+
     fun clear(store: NativeDashboardTokenStore) {
         synchronized(lockFor(store.coordinationKey)) {
             generations[store.coordinationKey] =
                 (generations[store.coordinationKey] ?: 0L) + 1L
+            bootstrapApproved.remove(store.coordinationKey)
+            bootstrapRejected.remove(store.coordinationKey)
             store.clear()
         }
     }

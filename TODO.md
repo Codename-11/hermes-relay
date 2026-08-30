@@ -1162,16 +1162,19 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 ### Session drawer audit follow-ups
 
-- **Persist and server-back Pin/Archive behavior.** The drawer currently keeps
-  both sets in composable memory. They reset when the drawer/app is recreated,
-  and Archive does not call the existing upstream profile-scoped archive API or
-  load archived rows. Either wire Archive end to end and persist Pin locally,
-  or remove the misleading actions until those contracts are complete.
-- **Paginate large session stores.** Android requests only the 200 most-recent
-  rows and filters/searches them locally. Older sessions are therefore
-  undiscoverable on long-lived profiles even though upstream list APIs support
-  `offset`. Add incremental paging (and server search where capability-backed)
-  without regressing profile scoping or compression-tip projection.
+- **Certify first-open latency against a large profile store.** Verify a cold
+  launch, immediate drawer open, repeated close/open, and profile switches on a
+  real high-row-count Dashboard. The first bounded page must not wait on
+  Gateway socket readiness; cached rows must remain visible; a timeout must end
+  without another long automatic read; and the final failure must be retryable
+  **Unavailable**, never "No sessions." Capture both client timing and the
+  server's session-list request duration before calling the path fixed.
+- **Certify progressive paging on large stores.** Android loads 50 visible-source
+  recents first and appends 50-row `offset` pages near the end of the drawer.
+  Exercise repeated near-end triggers, a profile/route switch during page load,
+  hidden-source preference changes, terminal short pages, and server search
+  without regressing ownership, cached rows, pin/archive state, or compression
+  tips.
 
 The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions` clobber guard, the post-turn title reconcile (gateway), and the subtle "not auto-named here" drawer note on SSE. These two are the larger follow-ups:
 

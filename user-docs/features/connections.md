@@ -127,6 +127,13 @@ sanitized API, route, relay, session, and voice events such as health timeouts,
 selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
 strings, and token-like values are hidden. The same consolidated log is available
 from **Settings -> Diagnostics**, where you can clear the in-app buffer.
+Native Dashboard sign-in adds an Auth timeline covering browser launch,
+configured-versus-alternate authorization origin, validated callback, Continue
+or cancel, completion, elapsed time, and a typed failure stage. It records only
+provider class and route role—not provider-specific names, hostnames, callback
+parameters, codes, cookies, or tokens. **Review support information** shows the
+exact combined reliability reports and recent diagnostics before the user copies
+or shares anything; nothing uploads automatically.
 
 Diagnostics also reports the optional Relay plugin separately from basic relay
 reachability. When the plugin exposes version metadata, the row shows the

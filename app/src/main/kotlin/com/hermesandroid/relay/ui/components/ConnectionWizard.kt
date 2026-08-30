@@ -411,7 +411,7 @@ fun ConnectionWizard(
         nearbyResults = emptyList()
         nearbyMessage = null
         wizardScope.launch {
-            runCatching { HermesLanDiscovery.scan(context) }
+            runCatching { HermesLanDiscovery.scan(context, dashboardOnly = true) }
                 .onSuccess { found ->
                     // Dashboard/Gateway is the normal Hermes path. API-only
                     // discoveries remain available under Other ways.

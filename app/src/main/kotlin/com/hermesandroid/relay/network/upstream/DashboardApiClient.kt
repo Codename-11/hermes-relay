@@ -321,6 +321,7 @@ data class ElevenLabsVoices(
 class DashboardApiClient(
     baseUrl: String,
     private val okHttpClient: OkHttpClient = defaultClient(),
+    private val ownsHttpClient: Boolean = true,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -328,6 +329,7 @@ class DashboardApiClient(
     },
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val sessionReadTimeoutMillis: Long = SESSION_READ_TIMEOUT_MILLIS,
+    private val controlReadTimeoutMillis: Long = CONTROL_READ_TIMEOUT_MILLIS,
     private val sessionEnrichmentBudgetMillis: Long = SESSION_ENRICHMENT_BUDGET_MILLIS,
 ) {
     private val baseUrl: String = baseUrl.trim().trimEnd('/')
@@ -1034,7 +1036,9 @@ class DashboardApiClient(
     suspend fun listSessions(
         profile: String? = null,
         limit: Int = SESSION_LIST_WINDOW_LIMIT,
+        offset: Int = 0,
         archived: String? = null,
+        excludeSources: Collection<String> = emptyList(),
     ): Result<List<SessionItem>> =
         withContext(Dispatchers.IO) {
             val readDeadlineNanos = System.nanoTime() +
@@ -1045,7 +1049,7 @@ class DashboardApiClient(
                     // Upstream dashboard GET /api/sessions rejects pages over 100.
                     // Keep Android's 200-row drawer window via two bounded pages.
                     add("limit=${page.limit}")
-                    add("offset=${page.offset}")
+                    add("offset=${offset.coerceAtLeast(0) + page.offset}")
                     add("order=recent")
                     add("min_messages=1")
                     val name = profile?.trim().orEmpty()
@@ -1054,6 +1058,17 @@ class DashboardApiClient(
                     // Omitted unless requested so older hosts see an unchanged request.
                     val archivedMode = archived?.trim().orEmpty()
                     if (archivedMode.isNotBlank()) add("archived=${pathSegment(archivedMode)}")
+                    val excluded = excludeSources
+                        .asSequence()
+                        .map(String::trim)
+                        .filter(String::isNotBlank)
+                        .map(String::lowercase)
+                        .distinct()
+                        .sorted()
+                        .toList()
+                    if (excluded.isNotEmpty()) {
+                        add("exclude_sources=${queryValue(excluded.joinToString(","))}")
+                    }
                 }.joinToString(prefix = "?", separator = "&")
                 val remainingReadMillis = TimeUnit.NANOSECONDS.toMillis(
                     readDeadlineNanos - System.nanoTime(),
@@ -1507,11 +1522,11 @@ class DashboardApiClient(
         executeJson(
             request,
             "Dashboard websocket ticket",
-            callTimeoutMillis = sessionReadTimeoutMillis,
+            callTimeoutMillis = controlReadTimeoutMillis,
         ).mapCatching { root ->
             val ticket = root.stringField("ticket")
                 ?: root.stringField("ws_ticket")
-                ?: throw IOException("Dashboard websocket ticket response missing ticket")
+                ?: throw IllegalStateException("Dashboard websocket ticket response missing ticket")
             DashboardWsTicket(
                 ticket = ticket,
                 ttlSeconds = root.intField("ttl_seconds") ?: root.intField("ttl"),
@@ -1533,9 +1548,12 @@ class DashboardApiClient(
         profile = profile,
     )
 
-    fun shutdown() = shutdownOffMainThread("DashboardApiClient-shutdown") {
-        okHttpClient.dispatcher.executorService.shutdown()
-        okHttpClient.connectionPool.evictAll()
+    fun shutdown() {
+        if (!ownsHttpClient) return
+        shutdownOffMainThread("DashboardApiClient-shutdown") {
+            okHttpClient.dispatcher.executorService.shutdown()
+            okHttpClient.connectionPool.evictAll()
+        }
     }
 
     private suspend fun getJson(
@@ -1637,7 +1655,12 @@ class DashboardApiClient(
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private const val DEFAULT_SESSION_PROFILE_SCOPE = "__dashboard_default__"
-        private const val SESSION_READ_TIMEOUT_MILLIS = 8_000L
+        // Desktop allows 60s for its 40-row recents request. Android uses a
+        // similarly small initial window and a bounded 20s mobile budget;
+        // the old 8s deadline repeatedly cancelled valid first-load reads on
+        // large profile databases before any row could be shown.
+        private const val SESSION_READ_TIMEOUT_MILLIS = 20_000L
+        private const val CONTROL_READ_TIMEOUT_MILLIS = 8_000L
         private const val SESSION_ENRICHMENT_BUDGET_MILLIS = 1_500L
         internal const val ACTIVE_SESSION_PR_MISS_TTL_MILLIS = 60_000L
         // Mirrors current upstream `_MANAGED_FILE_MAX_BYTES`; enforcing it
@@ -1781,8 +1804,9 @@ class DashboardApiClient(
             cookieStore: DashboardCookieStore = InMemoryDashboardCookieStore(),
             bearerAuth: DashboardBearerAuth? = null,
         ): OkHttpClient {
+            val cookieJar = DashboardCookieJar(cookieStore)
             val builder = OkHttpClient.Builder()
-                .cookieJar(DashboardCookieJar(cookieStore))
+                .cookieJar(cookieJar)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 // Skills-hub search fans out server-side with a 30s overall
                 // timeout; keep the read window above it so a slow-but-successful
@@ -1790,6 +1814,7 @@ class DashboardApiClient(
                 .readTimeout(45, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
             bearerAuth?.let {
+                it.preferCookiesWhen(cookieJar::hasCookiesFor)
                 builder.addInterceptor(it)
                 builder.authenticator(it)
             }
@@ -2149,14 +2174,20 @@ class DashboardCookieJar(
     private val store: DashboardCookieStore,
     private val clockMillis: () -> Long = { System.currentTimeMillis() },
 ) : CookieJar {
+    fun hasCookiesFor(url: HttpUrl): Boolean = loadForRequest(url).isNotEmpty()
+
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         val now = clockMillis()
         val incoming = cookies.map { StoredDashboardCookie.fromCookie(it) }
             .filterNot { it.isExpired(now) }
+        val incomingSessionFamilies = incoming.mapNotNullTo(mutableSetOf()) {
+            it.sessionFamilyKey()
+        }
         val retained = store.load()
             .filterNot { it.isExpired(now) }
             .filterNot { old -> incoming.any { it.key == old.key } }
-        store.save(retained + incoming)
+            .filterNot { old -> old.sessionFamilyKey() in incomingSessionFamilies }
+        store.save(collapseDashboardSessionCookieVariants(retained + incoming))
     }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
@@ -2164,7 +2195,9 @@ class DashboardCookieJar(
         // Load once (each load() is a decrypt + JSON decode); prune expired
         // entries back to disk only when something actually expired.
         val all = store.load()
-        val stored = all.filterNot { it.isExpired(now) }
+        val stored = collapseDashboardSessionCookieVariants(
+            all.filterNot { it.isExpired(now) },
+        )
         if (stored.size != all.size) {
             store.save(stored)
         }
@@ -2234,11 +2267,76 @@ fun importDashboardCookieHeader(
         .filterNot { it.isExpired(now) }
     if (imported.isEmpty()) return 0
 
+    val importedSessionFamilies = imported.mapNotNullTo(mutableSetOf()) {
+        it.sessionFamilyKey()
+    }
     val retained = store.load()
         .filterNot { it.isExpired(now) }
         .filterNot { old -> imported.any { it.key == old.key } }
-    store.save(retained + imported)
+        .filterNot { old -> old.sessionFamilyKey() in importedSessionFamilies }
+    store.save(collapseDashboardSessionCookieVariants(retained + imported))
     return imported.size
+}
+
+private val DASHBOARD_SESSION_COOKIE_FAMILIES = setOf(
+    "hermes_session",
+    "hermes_session_at",
+    "hermes_session_rt",
+    "hermes_session_provider",
+)
+
+internal val DASHBOARD_SESSION_COOKIE_VARIANT_NAMES: List<String> =
+    DASHBOARD_SESSION_COOKIE_FAMILIES.flatMap { name ->
+        listOf(name, "__Host-$name", "__Secure-$name")
+    }
+
+private fun isDashboardSessionCookieName(name: String): Boolean =
+    name.lowercase()
+        .removePrefix("__host-")
+        .removePrefix("__secure-") in DASHBOARD_SESSION_COOKIE_FAMILIES
+
+/**
+ * Clear only Hermes session cookies that would be attached to [requestUrl].
+ * Called solely after an explicit provider selection; background 503 probes
+ * never mutate auth state.
+ */
+internal fun clearDashboardSessionCookiesForRequest(
+    store: DashboardCookieStore,
+    requestUrl: String,
+): Int {
+    val url = requestUrl.toHttpUrlOrNull() ?: return 0
+    val current = store.load()
+    val retained = current.filterNot { stored ->
+        isDashboardSessionCookieName(stored.name) && stored.toCookie()?.matches(url) == true
+    }
+    if (retained.size != current.size) store.save(retained)
+    return current.size - retained.size
+}
+
+private fun StoredDashboardCookie.sessionFamilyKey(): String? {
+    val normalized = name.lowercase()
+        .removePrefix("__host-")
+        .removePrefix("__secure-")
+    if (normalized !in DASHBOARD_SESSION_COOKIE_FAMILIES) return null
+    return "$normalized|${domain.lowercase()}|$path"
+}
+
+/**
+ * HTTPS/proxy changes can leave bare, `__Host-`, and `__Secure-` variants in
+ * Android's imported WebView store. Hermes treats those names as one logical
+ * session family and prefers the strict prefix, so coexistence can revive an
+ * older provider session. Preserve list order and keep only the newest variant.
+ */
+private fun collapseDashboardSessionCookieVariants(
+    cookies: List<StoredDashboardCookie>,
+): List<StoredDashboardCookie> {
+    val lastIndexByFamily = mutableMapOf<String, Int>()
+    cookies.forEachIndexed { index, cookie ->
+        cookie.sessionFamilyKey()?.let { lastIndexByFamily[it] = index }
+    }
+    return cookies.filterIndexed { index, cookie ->
+        cookie.sessionFamilyKey()?.let { lastIndexByFamily[it] == index } ?: true
+    }
 }
 
 @Serializable
@@ -2311,6 +2409,47 @@ internal class DashboardHttpException(
     val statusCode: Int,
     message: String,
 ) : IOException(message)
+
+internal fun Throwable.isDashboardAuthProviderUnavailable(): Boolean {
+    var current: Throwable? = this
+    val seen = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && seen.add(current)) {
+        if (
+            current is DashboardHttpException &&
+            current.statusCode == 503 &&
+            current.message.orEmpty().contains("Auth provider", ignoreCase = true) &&
+            current.message.orEmpty().contains("unreachable", ignoreCase = true)
+        ) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}
+
+internal fun Throwable.isDashboardSignInRequiredFailure(): Boolean {
+    if (isDashboardAuthProviderUnavailable()) return true
+    var current: Throwable? = this
+    val seen = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && seen.add(current)) {
+        if (
+            current is DashboardHttpException &&
+            current.statusCode == 401 &&
+            (
+                current.message.orEmpty().contains("no_cookie", ignoreCase = true) ||
+                    current.message.orEmpty().contains("unauthenticated", ignoreCase = true)
+                )
+        ) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}
 
 private fun apiFailure(response: Response, operation: String): IOException {
     val bodyDetail = runCatching { response.body.string() }.getOrDefault("")

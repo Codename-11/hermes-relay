@@ -28,7 +28,7 @@ enum class GatewayAvailability {
     /** No probe has completed yet (startup, connection switch). */
     Unknown,
 
-    /** Dashboard reachable and authenticated (or auth not required). */
+    /** The `/api/ws` socket completed `gateway.ready` for the active route. */
     Ready,
 
     /** Dashboard reachable and gated, but no signed-in session — Manage sign-in unlocks it. */
@@ -53,6 +53,13 @@ enum class GatewayConnectionState {
     Connecting,
     AwaitingReady,
     Ready,
+}
+
+/** Whether an idle Gateway may be retried automatically by a visible Chat surface. */
+enum class GatewayReconnectDisposition {
+    None,
+    Retryable,
+    Terminal,
 }
 
 /** Profile-persisted approval policy introduced by upstream gateway contract v3. */

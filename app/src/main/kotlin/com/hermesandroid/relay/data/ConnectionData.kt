@@ -87,6 +87,11 @@ data class Connection(
     val routeCandidates: List<EndpointCandidate> = emptyList(),
     /** Optional user preference such as "lan" or "tailscale"; null means Auto. */
     val preferredRouteRole: String? = null,
+    /**
+     * Explicit per-installation consent for Relay Git repository discovery.
+     * Missing legacy values remain off; route/profile changes do not broaden it.
+     */
+    val gitRepoScanningEnabled: Boolean = false,
     /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
     /** Last time the user explicitly selected this connection. */

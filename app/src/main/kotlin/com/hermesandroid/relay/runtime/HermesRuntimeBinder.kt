@@ -27,6 +27,7 @@ import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
+import com.hermesandroid.relay.viewmodel.SESSION_DIRECTORY_PAGE_SIZE
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceState
 import java.util.concurrent.TimeUnit
@@ -191,7 +192,19 @@ internal class HermesRuntimeBinder(
             }
         }
         chat.setProfileSessionLister { profileName ->
-            connection.listProfileScopedSessions(profileName)
+            connection.listProfileScopedSessions(
+                profileName = profileName,
+                limit = SESSION_DIRECTORY_PAGE_SIZE,
+                excludeSources = connection.hiddenSources.value,
+            )
+        }
+        chat.setProfileSessionPageLister { profileName, offset, limit ->
+            connection.listProfileScopedSessions(
+                profileName = profileName,
+                limit = limit,
+                offset = offset,
+                excludeSources = connection.hiddenSources.value,
+            )
         }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
@@ -297,23 +310,41 @@ internal class HermesRuntimeBinder(
                 connection.activeConnectionId,
                 connection.effectiveSessionProfileName,
                 connection.lastSessionId,
-            ) { ready, connectionId, profileName, sessionId ->
-                ProfileContextInputs(ready, connectionId, profileName, sessionId)
+                connection.activeEndpoint,
+            ) { ready, connectionId, profileName, sessionId, activeEndpoint ->
+                ProfileContextInputs(
+                    ready,
+                    connectionId,
+                    profileName,
+                    sessionId,
+                    dashboardRouteResolved = activeEndpoint != null,
+                )
             }
             combine(
                 contextInputs,
                 connection.profileSelectionSettled,
                 connection.lockedProfileName,
-            ) { inputs, settled, lockedProfileName ->
+                connection.hiddenSources,
+            ) { inputs, settled, lockedProfileName, hiddenSources ->
                 inputs.copy(
                     profileSelectionSettled = settled,
                     profileLocked = lockedProfileName != null,
+                    hiddenSources = hiddenSources,
                 )
             }.collectLatest { inputs ->
                 profileContextReady.value = false
-                if (!inputs.chatReady) return@collectLatest
-                if (!inputs.profileSelectionSettled) delay(PROFILE_SETTLE_BACKSTOP_MS)
-                else delay(PROFILE_CONTEXT_COALESCE_MS)
+                if (!shouldRefreshSessionDirectory(inputs.chatReady, inputs.dashboardRouteResolved)) {
+                    return@collectLatest
+                }
+                if (!inputs.profileSelectionSettled) {
+                    delay(PROFILE_SETTLE_BACKSTOP_MS)
+                    // The backstop is diagnostic patience, not permission to
+                    // issue an unscoped read. Server-default ownership remains
+                    // unknown until the lightweight active-profile scope lands.
+                    if (!connection.profileSelectionSettled.value) return@collectLatest
+                } else {
+                    delay(PROFILE_CONTEXT_COALESCE_MS)
+                }
                 val contextKey = AgentDisplay.profileContextKey(
                     connectionId = inputs.connectionId,
                     profileName = inputs.profileName,
@@ -325,6 +356,28 @@ internal class HermesRuntimeBinder(
                 }
                 chat.refreshSessions()
                 profileContextReady.value = true
+            }
+        }
+        jobs += runtime.coroutineScope.launch {
+            var metadataHydratedRoute: Pair<String, String>? = null
+            chat.sessionDirectoryReadyEvents.collect { event ->
+                if (!chat.ownsSessionDirectoryReadyEvent(event)) return@collect
+                val connectionId = connection.activeConnectionId.value ?: return@collect
+                val expectedContextKey = AgentDisplay.profileContextKey(
+                    connectionId = connectionId,
+                    profileName = connection.effectiveSessionProfileName.value,
+                )
+                if (event.contextKey != expectedContextKey) return@collect
+                val dashboardUrl = connection.effectiveDashboardUrl.value
+                    .takeIf(String::isNotBlank)
+                    ?: return@collect
+                val routeKey = connectionId to dashboardUrl.trim().trimEnd('/').lowercase()
+                if (metadataHydratedRoute == routeKey) return@collect
+                metadataHydratedRoute = routeKey
+                // `/api/profiles`, Gateway avatars, pets, skills, and model
+                // metadata are not session-directory prerequisites. Hydrate
+                // them only after exact-owner rows have already published.
+                connection.refreshDeferredProfileMetadata()
             }
         }
         jobs += runtime.coroutineScope.launch {
@@ -495,8 +548,10 @@ internal class HermesRuntimeBinder(
         val connectionId: String?,
         val profileName: String?,
         val sessionId: String?,
+        val dashboardRouteResolved: Boolean,
         val profileSelectionSettled: Boolean = false,
         val profileLocked: Boolean = false,
+        val hiddenSources: Set<String> = emptySet(),
     )
 
     private companion object {
@@ -505,6 +560,16 @@ internal class HermesRuntimeBinder(
         const val GATEWAY_ROUTE_SETTLE_MS = 750L
     }
 }
+
+/**
+ * Session browsing is Dashboard HTTP state, not Gateway-socket state. API-only
+ * connections still use chat readiness; Dashboard connections can refresh once
+ * the resolver has selected a live route, after the profile-settle fence.
+ */
+internal fun shouldRefreshSessionDirectory(
+    chatReady: Boolean,
+    dashboardRouteResolved: Boolean,
+): Boolean = chatReady || dashboardRouteResolved
 
 internal fun assistantCanTransmitScreenContext(engineMode: VoiceEngineMode): Boolean =
     engineMode == VoiceEngineMode.HermesVoiceOutput

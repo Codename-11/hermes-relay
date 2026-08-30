@@ -49,8 +49,16 @@ Stelle einen unverschlüsselten Dashboard-, API- oder Relay-Port niemals direkt
 ins Internet; verwende für den Fernzugriff Tailscale, ein VPN oder HTTPS.
 :::
 
-Die Dashboard-Anmeldung verwendet Cookies und kurzlebige Gateway-Tickets. Ein
-API-Schlüssel ist davon getrennt und kein Dashboard-Login.
+Die Dashboard-Anmeldung verwendet auf aktuellen Gateways ein natives
+Bearer-Token, auf Kompatibilitäts-Gateways hostgebundene Cookies und jeweils
+kurzlebige Gateway-Tickets. Ein API-Schlüssel ist davon getrennt.
+
+Die in Android gespeicherte Route darf eine LAN-, Tailscale- oder öffentliche
+Adresse sein. OIDC benötigt trotzdem einen erreichbaren HTTPS-Rückruf unter
+`<öffentliche-dashboard-adresse>/auth/callback`. Hermes leitet diese Adresse
+normalerweise aus vertrauenswürdigen Proxy-Headern ab. Setze upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` nur, wenn diese Ableitung
+unzuverlässig ist; Android prüft eine abweichende Anmeldeadresse vor dem Speichern.
 
 ## 3. Verbinden und chatten
 

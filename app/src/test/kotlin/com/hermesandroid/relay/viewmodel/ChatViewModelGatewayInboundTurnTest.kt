@@ -19,9 +19,11 @@ import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardHttpException
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayClientHarness
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayReconnectDisposition
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -146,6 +148,37 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun ordinaryProfileSwitchDoesNotInitializeModelCatalogAheadOfSessions() {
+        val modelOptionsBefore = gatewayHarness.rpcLog.count { it.first == "model.options" }
+
+        viewModel.activateGatewayProfile(
+            Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel"),
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            modelOptionsBefore,
+            gatewayHarness.rpcLog.count { it.first == "model.options" },
+        )
+        assertEquals("gpt-5.6-sol", viewModel.gatewayCurrentModel.value)
+    }
+
+    @Test
+    fun attachingReadyGatewayDoesNotHydrateControlStateAheadOfSessions() {
+        viewModel.updateGatewayClient(null)
+        val eagerMethods = setOf("model.options", "commands.catalog", "config.get")
+        val callsBefore = gatewayHarness.rpcLog.count { it.first in eagerMethods }
+
+        viewModel.updateGatewayClient(gatewayClient)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            callsBefore,
+            gatewayHarness.rpcLog.count { it.first in eagerMethods },
+        )
+    }
+
+    @Test
     fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
         DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
@@ -245,6 +278,34 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(failure?.recoverable ?: true)
         assertTrue(failure?.rawError.orEmpty().contains("failed-switch-session"))
         assertEquals("failed-switch-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun successfulExactHistoryRetryClearsOnlyItsStaleFailure() {
+        viewModel.setProfileMessageLoaderWithMode { _, _, _ ->
+            Result.failure(java.io.InterruptedIOException("history timed out"))
+        }
+        viewModel.switchSession("recovered-history-session")
+        awaitCondition {
+            viewModel.chatFailure.value?.turnId == "history-recovered-history-session"
+        }
+
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "recovered-row",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Recovered"),
+                    ),
+                ),
+            )
+        }
+        viewModel.switchSession("recovered-history-session")
+
+        awaitCondition { handler.messages.value.any { it.content == "Recovered" } }
+        assertNull(viewModel.chatFailure.value)
     }
 
     @Test
@@ -601,6 +662,87 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun automaticProfileRestoreWaitsForExactDirectorySuccessBeforePrewarm() {
+        val profile = Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel")
+        val contextKey = AgentDisplay.profileContextKey("connection-a", profile.name)
+        val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
+        val directoryStarted = CompletableDeferred<Unit>()
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.setProfileSessionLister { profileName ->
+            assertEquals(profile.name, profileName)
+            directoryStarted.complete(Unit)
+            directoryResult.await()
+        }
+        val resumesBefore = gatewayHarness.rpcLog.count { it.first == "session.resume" }
+
+        viewModel.activateGatewayProfile(profile)
+        viewModel.setChatVisible(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        viewModel.switchProfileContext(contextKey, "sentinel-session")
+        viewModel.refreshSessions()
+
+        awaitCondition { directoryStarted.isCompleted }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+
+        directoryResult.complete(Result.failure(java.io.InterruptedIOException("timeout")))
+        awaitCondition { viewModel.sessionListUnavailable.value }
+        assertEquals(resumesBefore, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+
+        viewModel.setProfileSessionLister {
+            Result.success(listOf(SessionItem(id = "sentinel-session", title = "Sentinel session")))
+        }
+        serverWs.send(gatewayHarness.eventFrame("sessions.changed", buildJsonObject {}, null))
+
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "session.resume" } == resumesBefore + 1
+        }
+        val resume = gatewayHarness.rpcLog.last { it.first == "session.resume" }.second
+        assertEquals(
+            "sentinel-session",
+            (resume["session_id"] as? JsonPrimitive)?.content,
+        )
+        assertEquals(
+            profile.name,
+            (resume["profile"] as? JsonPrimitive)?.content,
+        )
+    }
+
+    @Test
+    fun coldVisibleFreshDraftWaitsForDirectoryBeforeGatewayPrewarm() {
+        val profile = Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel")
+        val contextKey = AgentDisplay.profileContextKey("connection-a", profile.name)
+        val directoryStarted = CompletableDeferred<Unit>()
+        val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.setProfileSessionLister {
+            directoryStarted.complete(Unit)
+            directoryResult.await()
+        }
+        handler.setSessionId(null)
+        serverWs.close(1012, "cold start")
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
+        val mintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(mintsBefore, gatewayHarness.ticketMints.get())
+        viewModel.switchProfileContext(contextKey, sessionId = null)
+        viewModel.refreshSessions()
+        awaitCondition { directoryStarted.isCompleted }
+        assertEquals(mintsBefore, gatewayHarness.ticketMints.get())
+
+        directoryResult.complete(Result.success(emptyList()))
+
+        awaitCondition { gatewayHarness.ticketMints.get() == mintsBefore + 1 }
+        gatewayHarness.awaitServerSocket()
+    }
+
+    @Test
     fun failedSessionListIsUnavailableInsteadOfAuthoritativeEmpty() {
         viewModel.setProfileSessionLister {
             Result.failure(IllegalStateException("temporary dashboard failure"))
@@ -612,6 +754,26 @@ class ChatViewModelGatewayInboundTurnTest {
             !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
         }
         assertTrue(handler.sessions.value.isEmpty())
+    }
+
+    @Test
+    fun sessionListSignInFailureDoesNotPublishGenericChatToast() {
+        viewModel.setProfileSessionLister {
+            Result.failure(
+                DashboardHttpException(
+                    401,
+                    "Session failed - HTTP 401: {\"reason\":\"no_cookie\"}",
+                ),
+            )
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertNull(viewModel.chatFailure.value)
+        assertNull(viewModel.error.value)
     }
 
     @Test
@@ -640,10 +802,197 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun failedProfileRefreshRetriesOnceAfterRouteReadinessSettles() {
+    fun coalescedTrailingSuccessClearsTheInitialFailure() {
         val calls = AtomicInteger(0)
+        val releaseFirst = CompletableDeferred<Unit>()
         viewModel.setProfileSessionLister {
             if (calls.incrementAndGet() == 1) {
+                releaseFirst.await()
+                Result.failure(java.io.InterruptedIOException("timeout"))
+            } else {
+                Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() == 1 }
+        assertTrue(viewModel.isLoadingSessions.value)
+        assertFalse(viewModel.sessionListUnavailable.value)
+        releaseFirst.complete(Unit)
+        awaitCondition {
+            calls.get() == 2 &&
+                handler.sessions.value.singleOrNull()?.sessionId == "fresh" &&
+                !viewModel.isLoadingSessions.value &&
+                !viewModel.sessionListUnavailable.value
+        }
+    }
+
+    @Test
+    fun drawerFreshnessGateDoesNotQueueDuplicateStartupRead() {
+        val calls = AtomicInteger(0)
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            releaseLoad.await()
+            Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessionsIfStale()
+        awaitCondition { calls.get() == 1 }
+        releaseLoad.complete(Unit)
+        awaitCondition {
+            handler.sessions.value.singleOrNull()?.sessionId == "fresh" &&
+                !viewModel.isLoadingSessions.value
+        }
+
+        viewModel.refreshSessionsIfStale()
+        Thread.sleep(100)
+
+        assertEquals(1, calls.get())
+    }
+
+    @Test
+    fun sessionDirectoryLoadsAdditionalPagesProgressively() {
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, offset, limit ->
+            assertEquals(SESSION_DIRECTORY_PAGE_SIZE, offset)
+            assertEquals(SESSION_DIRECTORY_PAGE_SIZE, limit)
+            Result.success(
+                listOf(
+                    SessionItem(id = "older-1", title = "Older 1"),
+                    SessionItem(id = "older-2", title = "Older 2"),
+                ),
+            )
+        }
+
+        viewModel.refreshSessions()
+        awaitCondition {
+            handler.sessions.value.size == SESSION_DIRECTORY_PAGE_SIZE &&
+                viewModel.hasMoreSessions.value
+        }
+
+        viewModel.loadMoreSessions()
+
+        awaitCondition {
+            handler.sessions.value.size == SESSION_DIRECTORY_PAGE_SIZE + 2 &&
+                !viewModel.isLoadingMoreSessions.value &&
+                !viewModel.hasMoreSessions.value
+        }
+        assertEquals(52, handler.sessions.value.map { it.sessionId }.distinct().size)
+    }
+
+    @Test
+    fun staleSessionPageCannotAppendAfterProfileSwitch() {
+        var activeProfile = "alpha"
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "alpha-$index", title = "Alpha $index")
+        }
+        val pageStarted = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            pageStarted.complete(Unit)
+            releasePage.await()
+            Result.success(listOf(SessionItem(id = "stale-page", title = "Stale")))
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        runBlocking { pageStarted.await() }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        releasePage.complete(Unit)
+        Thread.sleep(100)
+
+        assertTrue(handler.sessions.value.none { it.sessionId == "stale-page" })
+        assertFalse(viewModel.isLoadingMoreSessions.value)
+    }
+
+    @Test
+    fun failedSessionPageWaitsForExplicitRetry() {
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        val pageCalls = AtomicInteger(0)
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            if (pageCalls.incrementAndGet() == 1) {
+                Result.failure(java.io.InterruptedIOException("timeout"))
+            } else {
+                Result.success(listOf(SessionItem(id = "older", title = "Older")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        awaitCondition { viewModel.sessionPageLoadFailed.value }
+
+        viewModel.loadMoreSessions()
+        Thread.sleep(100)
+        assertEquals(1, pageCalls.get())
+
+        viewModel.retryLoadMoreSessions()
+        awaitCondition {
+            pageCalls.get() == 2 &&
+                handler.sessions.value.any { it.sessionId == "older" } &&
+                !viewModel.sessionPageLoadFailed.value
+        }
+    }
+
+    @Test
+    fun connectionSwitchFullyResetsDeferredSessionPageState() {
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        val pageStarted = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            pageStarted.complete(Unit)
+            releasePage.await()
+            Result.success(listOf(SessionItem(id = "stale", title = "Stale")))
+        }
+        viewModel.observeConnectionSwitches(switches)
+
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        runBlocking { pageStarted.await() }
+        switches.tryEmit("connection-b")
+
+        awaitCondition {
+            !viewModel.isLoadingMoreSessions.value &&
+                !viewModel.hasMoreSessions.value &&
+                !viewModel.sessionPageLoadFailed.value
+        }
+        releasePage.complete(Unit)
+        Thread.sleep(100)
+        assertTrue(handler.sessions.value.none { it.sessionId == "stale" })
+    }
+
+    @Test
+    fun transientProfileRouteFailureRetriesUntilReadinessSettles() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() <= 2) {
                 Result.failure(IllegalStateException("dashboard route still settling"))
             } else {
                 Result.success(listOf(SessionItem(id = "recent", title = "Recent session")))
@@ -653,11 +1002,30 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.refreshSessions()
 
         awaitCondition {
-            calls.get() == 2 &&
+            calls.get() == 3 &&
                 handler.sessions.value.singleOrNull()?.sessionId == "recent" &&
                 !viewModel.sessionListUnavailable.value
         }
-        assertEquals(2, calls.get())
+        assertEquals(3, calls.get())
+    }
+
+    @Test
+    fun failedProfileRequestDoesNotStartAnotherLongRead() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            Result.failure(java.io.InterruptedIOException("timeout"))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            calls.get() == 1 &&
+                viewModel.sessionListUnavailable.value &&
+                !viewModel.isLoadingSessions.value
+        }
+        Thread.sleep(2_500)
+        assertEquals(1, calls.get())
     }
 
     @Test
@@ -2309,6 +2677,47 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun profileSwitchCancelsCooldownReconnectOwnedByOldSession() {
+        gatewayHarness.ticketResponseDelayMs = 500L
+        val delayedClient = replaceGatewayClient(ticketTimeoutMs = 75L)
+        val baselineMints = gatewayHarness.ticketMints.get()
+        var profile = "alpha"
+        viewModel.setSessionProfileNameProvider { profile }
+        viewModel.setChatVisible(true)
+        awaitCondition {
+            gatewayHarness.ticketMints.get() >= baselineMints + 2 &&
+                delayedClient.reconnectDisposition.value ==
+                GatewayReconnectDisposition.Retryable
+        }
+        val mintsAfterFailure = gatewayHarness.ticketMints.get()
+
+        profile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        gatewayHarness.ticketResponseDelayMs = 0L
+        shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+
+        assertEquals(mintsAfterFailure, gatewayHarness.ticketMints.get())
+    }
+
+    @Test
+    fun visibleChatDoesNotPrewarmTerminalGatewayFailure() {
+        gatewayHarness.malformedTicketMint = true
+        val terminalClient = replaceGatewayClient(ticketTimeoutMs = 75L)
+        val baselineMints = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        awaitCondition {
+            terminalClient.reconnectDisposition.value == GatewayReconnectDisposition.Terminal
+        }
+        shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+
+        assertEquals(baselineMints + 1, gatewayHarness.ticketMints.get())
+    }
+
+    @Test
     fun foregroundMultiTurnRecoversWhenReconnectReportsSettledWithoutMessageComplete() {
         viewModel.setChatVisible(true)
         viewModel.sendMessage("Run a long foreground task")
@@ -2734,6 +3143,28 @@ class ChatViewModelGatewayInboundTurnTest {
             content = JsonPrimitive(answer),
         ),
     )
+
+    private fun replaceGatewayClient(ticketTimeoutMs: Long): GatewayChatClient {
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+                controlReadTimeoutMillis = ticketTimeoutMs,
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block ->
+                Handler(Looper.getMainLooper()).post(block)
+            },
+            scope = gatewayScope,
+            reconnectJitterUnit = { Math.nextDown(1.0) },
+        )
+        viewModel.updateGatewayClient(gatewayClient)
+        return gatewayClient
+    }
 
     private fun awaitCondition(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)

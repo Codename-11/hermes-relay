@@ -164,6 +164,22 @@ class TransportIngressTests(PluginApiTestCase):
             "/api/plugins/hermes-relay/transport",
         )
 
+    def test_get_transport_does_not_wait_for_a_request_body(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/health")
+            self.assertEqual(request.content, b"")
+            return httpx.Response(200, json={"status": "ok"})
+
+        _install_mock_transport(self, handler)
+        with patch.object(
+            plugin_api.Request,
+            "body",
+            new=AsyncMock(side_effect=AssertionError("GET body must not be read")),
+        ), patch.object(plugin_api, "_dashboard_proxy_secret", return_value="proxy-secret"):
+            response = self.client.get("/transport/health")
+
+        self.assertEqual(response.status_code, 200)
+
     def test_client_route_requires_separate_relay_session_header(self) -> None:
         response = self.client.get("/transport/sessions")
         self.assertEqual(response.status_code, 401)

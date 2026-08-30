@@ -9,6 +9,7 @@ dirty/conflict trees map to 409, so the UI can render a readable message.
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 import tempfile
@@ -19,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from plugin.dashboard import git_api
+from plugin.dashboard import git_api, mobile_plugin_api
 from plugin import git_state
 
 
@@ -72,6 +73,29 @@ class GitWriteApiTests(unittest.TestCase):
     def _stage(self, path: str) -> None:
         (self.repo / path).write_text("x", encoding="utf-8")
         self.client.post("/git/stage", json={"repo": "alpha", "paths": [path]})
+
+    def test_blocking_git_routes_use_fastapi_threadpool_dispatch(self) -> None:
+        for route in (
+            git_api.get_repos,
+            git_api.get_status,
+            git_api.get_branches,
+            git_api.get_diff,
+            git_api.get_file,
+            git_api.post_stage,
+            git_api.post_unstage,
+            git_api.post_discard,
+            git_api.post_commit,
+            git_api.post_commit_selected,
+            git_api.post_fetch,
+            git_api.post_pull,
+            git_api.post_push,
+            git_api.post_checkout,
+            git_api.post_stash_checkout,
+        ):
+            self.assertFalse(inspect.iscoroutinefunction(route), route.__name__)
+        self.assertTrue(inspect.iscoroutinefunction(git_api.post_commit_message))
+        self.assertTrue(inspect.iscoroutinefunction(git_api.post_commit_message_selected))
+        self.assertFalse(inspect.iscoroutinefunction(mobile_plugin_api.get_mobile_page))
 
     def test_stage_returns_fresh_status(self) -> None:
         (self.repo / "new.txt").write_text("x", encoding="utf-8")

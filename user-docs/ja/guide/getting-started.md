@@ -47,8 +47,16 @@ Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat
 直接公開せず、リモートアクセスには Tailscale、VPN、HTTPS を使用します。
 :::
 
-ダッシュボードログインは Cookie と短時間の Gateway チケットを使用します。
-API キーは別の認証情報で、ダッシュボードへのログインには使いません。
+ダッシュボードログインは、現在の Gateway ではネイティブ bearer、互換 Gateway
+では厳密な origin の Cookie を使用し、どちらも短時間の Gateway チケットを
+組み合わせます。API キーは別の認証情報です。
+
+Android に保存するルートは LAN、Tailscale、公開アドレスのいずれでも構いません。
+OIDC には到達可能な HTTPS コールバック
+`<公開-dashboard-origin>/auth/callback` が必要です。Hermes は通常、信頼済み
+プロキシヘッダーからこの origin を復元します。それが確実でない場合だけ upstream の
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` を設定してください。
+Android は異なるサインイン origin を保存前に検証します。
 
 ## 3. 接続して会話する
 

@@ -205,6 +205,16 @@ route; the app keeps both sessions afterwards.
 
 ## Other Remote Paths
 
+::: tip OIDC callback behind a reverse proxy
+Register `<external Hermes Dashboard base>/auth/callback` as the allowed redirect
+in Authelia, Authentik, or another identity provider. This is the browser-facing
+Hermes Dashboard base, not the identity provider's issuer URL. Hermes normally
+reconstructs it from trusted `X-Forwarded-*` headers. Set upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when that
+reconstruction is unreliable, and include any path prefix. Android may still
+connect over LAN or Tailscale and does not require a second sign-in URL field.
+:::
+
 Reverse proxies should expose the standard Dashboard/Gateway and whichever
 optional capabilities you use:
 

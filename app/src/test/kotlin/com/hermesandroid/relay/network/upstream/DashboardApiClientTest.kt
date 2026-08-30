@@ -440,6 +440,143 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun importingNewProviderSessionReplacesOldCookiePrefixVariants() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("__Host-hermes_session_at", "old-access", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_rt", "old-refresh", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_provider", "nous", "hermes.example.test", secure = true),
+            ),
+        )
+
+        importDashboardCookieHeader(
+            store = store,
+            url = "https://hermes.example.test/auth/callback",
+            cookieHeader =
+                "hermes_session_at=new-access; " +
+                    "hermes_session_rt=new-refresh; " +
+                    "hermes_session_provider=self-hosted",
+        )
+
+        assertEquals(
+            listOf("hermes_session_at", "hermes_session_rt", "hermes_session_provider"),
+            store.load().map { it.name },
+        )
+        assertEquals(
+            listOf("new-access", "new-refresh", "self-hosted"),
+            store.load().map { it.value },
+        )
+    }
+
+    @Test
+    fun existingCookiePrefixDuplicatesCollapseToNewestVariantBeforeRequest() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                storedCookie("__Host-hermes_session_at", "old-access", "hermes.example.test", secure = true),
+                storedCookie("__Host-hermes_session_provider", "nous", "hermes.example.test", secure = true),
+                storedCookie("hermes_session_at", "new-access", "hermes.example.test", secure = true),
+                storedCookie("hermes_session_provider", "self-hosted", "hermes.example.test", secure = true),
+            ),
+        )
+
+        val cookies = DashboardCookieJar(store).loadForRequest(
+            "https://hermes.example.test/api/auth/me".toHttpUrl(),
+        )
+
+        assertEquals(listOf("hermes_session_at", "hermes_session_provider"), cookies.map { it.name })
+        assertEquals(listOf("new-access", "self-hosted"), cookies.map { it.value })
+        assertEquals(listOf("hermes_session_at", "hermes_session_provider"), store.load().map { it.name })
+    }
+
+    @Test
+    fun explicitSignInClearsOnlyMatchingHermesSessionCookies() {
+        val store = InMemoryDashboardCookieStore()
+        store.save(
+            listOf(
+                StoredDashboardCookie(
+                    "__Host-hermes_session_at", "old-access", Long.MAX_VALUE,
+                    "hermes.example.test", "/", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "__Secure-hermes_session_rt", "old-refresh", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_provider", "nous", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session", "legacy", Long.MAX_VALUE,
+                    "hermes.example.test", "/base", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "theme", "dark", Long.MAX_VALUE,
+                    "hermes.example.test", "/", true, false, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_at", "foreign", Long.MAX_VALUE,
+                    "other.example.test", "/", true, true, true, true,
+                ),
+                StoredDashboardCookie(
+                    "hermes_session_at", "other-path", Long.MAX_VALUE,
+                    "hermes.example.test", "/other", true, true, true, true,
+                ),
+            ),
+        )
+
+        val cleared = clearDashboardSessionCookiesForRequest(
+            store,
+            "https://hermes.example.test/base/auth/login",
+        )
+
+        assertEquals(4, cleared)
+        assertEquals(
+            listOf("theme", "hermes_session_at", "hermes_session_at"),
+            store.load().map { it.name },
+        )
+        assertEquals(
+            listOf("hermes.example.test", "other.example.test", "hermes.example.test"),
+            store.load().map { it.domain },
+        )
+    }
+
+    @Test
+    fun providerUnavailableClassifierRejectsGeneric503() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(503)
+                .setBody("""{"detail":"Auth provider 'nous' unreachable"}"""),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(503)
+                .setBody("""{"detail":"Service unavailable"}"""),
+        )
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+
+        val providerFailure = client.getStatus().exceptionOrNull()
+        val genericFailure = client.getStatus().exceptionOrNull()
+
+        assertTrue(providerFailure?.isDashboardAuthProviderUnavailable() == true)
+        assertFalse(genericFailure?.isDashboardAuthProviderUnavailable() == true)
+    }
+
+    @Test
+    fun signInRequiredClassifierAcceptsNoCookieButRejectsForbidden() {
+        val noCookie = DashboardHttpException(
+            401,
+            "Session failed - HTTP 401: {\"reason\":\"no_cookie\",\"detail\":\"Unauthorized\"}",
+        )
+        val forbidden = DashboardHttpException(
+            403,
+            "Session failed - HTTP 403: forbidden",
+        )
+
+        assertTrue(noCookie.isDashboardSignInRequiredFailure())
+        assertFalse(forbidden.isDashboardSignInRequiredFailure())
+    }
+
+    @Test
     fun getStatus_defaultsMissingAuthFieldsForOlderDashboard() = runTest {
         server.enqueue(
             MockResponse()
@@ -927,6 +1064,30 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun listSessions_carriesProgressiveOffsetAndHiddenSourceExclusions() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"sessions":[],"total":120,"limit":50,"offset":50}"""),
+        )
+
+        DashboardApiClient(baseUrl = server.url("/").toString())
+            .listSessions(
+                profile = "victor",
+                limit = 50,
+                offset = 50,
+                excludeSources = setOf("Webhook", "cron", "cron"),
+            )
+            .getOrThrow()
+
+        val url = server.takeRequest().requestUrl!!
+        assertEquals("50", url.queryParameter("limit"))
+        assertEquals("50", url.queryParameter("offset"))
+        assertEquals("victor", url.queryParameter("profile"))
+        assertEquals("cron,webhook", url.queryParameter("exclude_sources"))
+    }
+
+    @Test
     fun listSessions_enrichesWorkspaceRowsWithTranscriptBackedPullRequest() = runTest {
         server.enqueue(
             MockResponse().setHeader("Content-Type", "application/json").setBody(
@@ -1270,7 +1431,8 @@ class DashboardApiClientTest {
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
         val client = DashboardApiClient(
             baseUrl = server.url("/").toString(),
-            sessionReadTimeoutMillis = 100L,
+            sessionReadTimeoutMillis = 5_000L,
+            controlReadTimeoutMillis = 100L,
         )
 
         assertTrue(client.requestWsTicket().isFailure)

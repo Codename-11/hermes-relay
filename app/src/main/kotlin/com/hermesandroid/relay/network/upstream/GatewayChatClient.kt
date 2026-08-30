@@ -210,6 +210,8 @@ class GatewayChatClient(
 
         /** Cooldown after a failed connect so rapid sends don't hammer a down server. */
         private const val CONNECT_FAILURE_COOLDOWN_MS = 5_000L
+        private const val MAX_CONNECT_FAILURE_COOLDOWN_MS = 30_000L
+        private const val COLD_START_FAILURE_EPISODE_LIMIT = 5
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
@@ -276,6 +278,13 @@ class GatewayChatClient(
 
     private val _connectionState = MutableStateFlow(GatewayConnectionState.Idle)
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
+    private val _reconnectDisposition = MutableStateFlow(GatewayReconnectDisposition.Retryable)
+    val reconnectDisposition: StateFlow<GatewayReconnectDisposition> =
+        _reconnectDisposition.asStateFlow()
+
+    /** Delay a foreground reconnect only while the bounded failure cooldown is active. */
+    fun remainingConnectCooldownMillis(nowMillis: Long = System.currentTimeMillis()): Long =
+        (connectCooldownUntil - nowMillis).coerceAtLeast(0L)
 
     /**
      * Per-socket feature probe for upstream's session-scoped `process.*` RPCs.
@@ -501,6 +510,10 @@ class GatewayChatClient(
     @Volatile
     private var processEventListener: ((GatewayProcessEvent) -> Unit)? = null
 
+    /** Process-wide durable-session invalidation/liveness edge. */
+    @Volatile
+    private var sessionDirectoryInvalidationListener: (() -> Unit)? = null
+
     /**
      * Which upload RPC name this socket understands — set after the first
      * successful upload so the legacy fallback is probed at most once per
@@ -515,6 +528,8 @@ class GatewayChatClient(
 
     @Volatile
     private var connectCooldownUntil: Long = 0L
+    private var hasEverReachedReady = false
+    private var coldStartFailureEpisodes = 0
 
     /**
      * When true, the socket is never auto-closed on background — the opt-in
@@ -894,6 +909,10 @@ class GatewayChatClient(
 
     fun setProcessEventListener(listener: ((GatewayProcessEvent) -> Unit)?) {
         processEventListener = listener
+    }
+
+    fun setSessionDirectoryInvalidationListener(listener: (() -> Unit)?) {
+        sessionDirectoryInvalidationListener = listener
     }
 
     /**
@@ -2531,6 +2550,7 @@ class GatewayChatClient(
         unmatchedTurnCompleteListener = null
         backgroundInteractionListener = null
         processEventListener = null
+        sessionDirectoryInvalidationListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
         // Stop the foreground collector — a replaced client must not keep
@@ -2552,11 +2572,13 @@ class GatewayChatClient(
 
         // A just-died pooled socket can poison the first WebSocket upgrade, so
         // that narrow transport failure gets one fresh-ticket retry. A ticket
-        // 5xx is transient too (notably while the Dashboard restarts), while
-        // auth rejection, rate limiting, and local HTTP timeouts stay single-
-        // attempt so reconnect never doubles an authoritative delay.
+        // 5xx and transport failures are transient (notably while the
+        // Dashboard or Android's active network settles). Auth rejection and
+        // rate limiting stay single-attempt; a bounded ticket timeout gets one
+        // fresh attempt instead of leaving cold start permanently disconnected.
         var lastFailure = "gateway connect failed"
         var terminalStage: GatewayConnectFailureStage? = null
+        var terminalRetryAfterCooldown = false
         for (attempt in 0 until CONNECT_ATTEMPTS) {
             try {
                 connectOnce()
@@ -2565,6 +2587,7 @@ class GatewayChatClient(
             } catch (e: GatewayConnectAttemptException) {
                 lastFailure = e.message ?: lastFailure
                 terminalStage = e.stage
+                terminalRetryAfterCooldown = e.retryAfterCooldown
                 Log.w(
                     TAG,
                     "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed " +
@@ -2577,11 +2600,43 @@ class GatewayChatClient(
             GatewayConnectFailureStage.TicketAuth,
             GatewayConnectFailureStage.UpgradeAuth -> onGatewaySignInRequired()
             GatewayConnectFailureStage.Ticket,
-            GatewayConnectFailureStage.Upgrade -> onGatewayUnreachable()
+            GatewayConnectFailureStage.Upgrade -> {
+                // A timeout is not a definitive availability verdict. Keep
+                // the Gateway unresolved so the visible-chat owner remains
+                // on this transport and can retry after the cooldown.
+                if (!terminalRetryAfterCooldown) onGatewayUnreachable()
+            }
             GatewayConnectFailureStage.Unsupported -> onGatewayUnsupported()
             null -> Unit
         }
-        connectCooldownUntil = System.currentTimeMillis() + CONNECT_FAILURE_COOLDOWN_MS
+        if (terminalRetryAfterCooldown && !hasEverReachedReady) {
+            coldStartFailureEpisodes += 1
+        }
+        val coldStartBudgetExhausted = terminalRetryAfterCooldown &&
+            !hasEverReachedReady &&
+            coldStartFailureEpisodes >= COLD_START_FAILURE_EPISODE_LIMIT
+        if (coldStartBudgetExhausted) onGatewayUnreachable()
+        _reconnectDisposition.value = if (
+            terminalRetryAfterCooldown && !coldStartBudgetExhausted
+        ) {
+            GatewayReconnectDisposition.Retryable
+        } else {
+            GatewayReconnectDisposition.Terminal
+        }
+        val backoffCeiling = if (hasEverReachedReady) {
+            CONNECT_FAILURE_COOLDOWN_MS
+        } else {
+            (CONNECT_FAILURE_COOLDOWN_MS shl
+                (coldStartFailureEpisodes - 1).coerceIn(0, 3))
+                .coerceAtMost(MAX_CONNECT_FAILURE_COOLDOWN_MS)
+        }
+        connectCooldownUntil = maxOf(
+            connectCooldownUntil,
+            System.currentTimeMillis() + fullJitterDelayMs(
+                backoffCeiling,
+                reconnectJitterUnit(),
+            ),
+        )
         _connectionState.value = GatewayConnectionState.Idle
         throw GatewayPreflightException(lastFailure)
     }
@@ -2595,6 +2650,11 @@ class GatewayChatClient(
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
             val statusCode = (e as? DashboardHttpException)?.statusCode
             val authFailure = statusCode in setOf(401, 403)
+            val rateLimited = statusCode == 429
+            if (rateLimited) {
+                connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+            }
+            val transportFailure = e is java.io.IOException && e !is javax.net.ssl.SSLException
             throw GatewayConnectAttemptException(
                 message = "ws-ticket mint failed: ${e.message}",
                 stage = if (authFailure) {
@@ -2602,7 +2662,11 @@ class GatewayChatClient(
                 } else {
                     GatewayConnectFailureStage.Ticket
                 },
-                retryable = statusCode != null && statusCode in 500..599,
+                retryable = !authFailure && !rateLimited &&
+                    (statusCode in 500..599 || (statusCode == null && transportFailure)),
+                retryAfterCooldown = rateLimited ||
+                    (!authFailure && (statusCode in 500..599 ||
+                        (statusCode == null && transportFailure))),
             )
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
@@ -2634,7 +2698,7 @@ class GatewayChatClient(
                 GatewayConnectAttemptException(
                     "gateway.ready never arrived",
                     GatewayConnectFailureStage.Upgrade,
-                    retryable = false,
+                    retryable = true,
                 )
             } else {
                 null
@@ -2653,6 +2717,9 @@ class GatewayChatClient(
         // apart from a slow WS upgrade + gateway.ready (socket/TLS) on device.
         val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
         Log.i(TAG, "Gateway connected (/api/ws ready) — ticket=${ticketMs}ms ws=${wsMs}ms")
+        hasEverReachedReady = true
+        coldStartFailureEpisodes = 0
+        _reconnectDisposition.value = GatewayReconnectDisposition.None
         _connectionState.value = GatewayConnectionState.Ready
         onGatewayReady()
     }
@@ -2682,6 +2749,14 @@ class GatewayChatClient(
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
                 put("source", sessionSource)
+                // Android already hydrates the visible transcript through the
+                // profile-scoped Dashboard REST owner. Match official Desktop's
+                // bounded resume contract: register the live runtime now and let
+                // Gateway hydrate model history off the RPC response path instead
+                // of synchronously reading and returning the same transcript.
+                // Older Gateways ignore these additive parameters.
+                put("defer_history", true)
+                put("omit_messages", true)
                 requestedProfile?.let { put("profile", it) }
             },
         )
@@ -2994,19 +3069,45 @@ class GatewayChatClient(
             // the connection as gone immediately: the server is going away.
             webSocket.close(code, null)
             if (this@GatewayChatClient.webSocket === webSocket) {
+                val wasReady = _connectionState.value == GatewayConnectionState.Ready
+                val closeFailure = if (!wasReady) preReadyCloseFailure(code, reason) else null
                 if (!ready.isCompleted) {
-                    ready.completeExceptionally(preReadyCloseFailure(code, reason))
+                    ready.completeExceptionally(closeFailure!!)
                 }
-                onSocketDown("closing: $code $reason")
+                if (wasReady && code == 4401) onGatewaySignInRequired()
+                if (wasReady && code == 4403) onGatewayUnreachable()
+                onSocketDown(
+                    "closing: $code $reason",
+                    disposition = when {
+                        wasReady && code !in setOf(4401, 4403) ->
+                            GatewayReconnectDisposition.Retryable
+                        closeFailure?.retryAfterCooldown == true ->
+                            GatewayReconnectDisposition.Retryable
+                        else -> GatewayReconnectDisposition.Terminal
+                    },
+                )
             }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (this@GatewayChatClient.webSocket === webSocket) {
+                val wasReady = _connectionState.value == GatewayConnectionState.Ready
+                val closeFailure = if (!wasReady) preReadyCloseFailure(code, reason) else null
                 if (!ready.isCompleted) {
-                    ready.completeExceptionally(preReadyCloseFailure(code, reason))
+                    ready.completeExceptionally(closeFailure!!)
                 }
-                onSocketDown("closed: $code $reason")
+                if (wasReady && code == 4401) onGatewaySignInRequired()
+                if (wasReady && code == 4403) onGatewayUnreachable()
+                onSocketDown(
+                    "closed: $code $reason",
+                    disposition = when {
+                        wasReady && code !in setOf(4401, 4403) ->
+                            GatewayReconnectDisposition.Retryable
+                        closeFailure?.retryAfterCooldown == true ->
+                            GatewayReconnectDisposition.Retryable
+                        else -> GatewayReconnectDisposition.Terminal
+                    },
+                )
             }
         }
 
@@ -3035,6 +3136,7 @@ class GatewayChatClient(
                         "gateway websocket rate limited",
                         GatewayConnectFailureStage.Upgrade,
                         retryable = false,
+                        retryAfterCooldown = true,
                     )
                 }
                 else -> GatewayConnectAttemptException(
@@ -3044,7 +3146,14 @@ class GatewayChatClient(
                 )
             }
             if (!ready.isCompleted) ready.completeExceptionally(connectFailure)
-            onSocketDown("failure: ${t.message}")
+            onSocketDown(
+                "failure: ${t.message}",
+                disposition = if (connectFailure.retryAfterCooldown) {
+                    GatewayReconnectDisposition.Retryable
+                } else {
+                    GatewayReconnectDisposition.Terminal
+                },
+            )
         }
     }
 
@@ -3064,7 +3173,7 @@ class GatewayChatClient(
             else -> GatewayConnectAttemptException(
                 "gateway closed before ready (code=$code, $safeReason)",
                 GatewayConnectFailureStage.Upgrade,
-                retryable = false,
+                retryable = code in setOf(1001, 1011, 1012, 1013),
             )
         }
     }
@@ -3112,6 +3221,11 @@ class GatewayChatClient(
 
         if (type == "gateway.ready") {
             ready.complete(Unit)
+            return
+        }
+
+        if (type == "sessions.changed") {
+            callbackDispatcher { sessionDirectoryInvalidationListener?.invoke() }
             return
         }
 
@@ -3398,7 +3512,10 @@ class GatewayChatClient(
         callbackDispatcher { processEventListener?.invoke(event) }
     }
 
-    private fun onSocketDown(reason: String) {
+    private fun onSocketDown(
+        reason: String,
+        disposition: GatewayReconnectDisposition = GatewayReconnectDisposition.Retryable,
+    ) {
         Log.i(TAG, "Gateway socket down ($reason)")
         // Capture the in-flight session id BEFORE clearing it — the mid-turn
         // rejoin restores it so the running turn's tail (still tagged with this
@@ -3412,6 +3529,7 @@ class GatewayChatClient(
         _processCapability.value = GatewayProcessCapability.Unknown
         _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _reconnectDisposition.value = disposition
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
@@ -3598,6 +3716,7 @@ class GatewayChatClient(
         _processCapability.value = GatewayProcessCapability.Unknown
         _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _reconnectDisposition.value = GatewayReconnectDisposition.None
         _connectionState.value = GatewayConnectionState.Idle
     }
 
@@ -4258,6 +4377,7 @@ internal class GatewayConnectAttemptException(
     message: String,
     val stage: GatewayConnectFailureStage,
     val retryable: Boolean,
+    val retryAfterCooldown: Boolean = retryable,
 ) : Exception(message)
 
 internal enum class GatewayConnectFailureStage(val logName: String) {

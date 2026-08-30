@@ -177,6 +177,7 @@ fun OnboardingScreen(
     ) { granted ->
         notificationsPermitted =
             granted || AppPermissionStatusProbe.snapshot(context).notificationsPermitted
+        connectionViewModel.setNotifyTurnComplete(notificationsPermitted)
     }
 
     Surface(
@@ -288,7 +289,14 @@ fun OnboardingScreen(
                                 )
                             },
                             onReviewPermissions = onOpenPermissions,
-                            onFinish = onComplete,
+                            onFinish = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    !notificationsPermitted
+                                ) {
+                                    connectionViewModel.setNotifyTurnComplete(false)
+                                }
+                                onComplete()
+                            },
                         )
                     }
                 }

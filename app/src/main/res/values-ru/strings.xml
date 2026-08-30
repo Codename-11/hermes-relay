@@ -425,6 +425,13 @@
     <string name="cw_pairing_code_label">Код сопряжения</string>
     <string name="cw_pairing_code_placeholder">например, ABC123</string>
     <string name="cw_pair_button">Сопрячь</string>
+    <string name="cw_mixed_route_plain">%1$s использует незашифрованный HTTP/WS. Используйте только в доверенной частной сети или через управляемую вами VPN.</string>
+    <string name="cw_mixed_route_secure">%1$s использует HTTPS/WSS с шифрованием транспорта.</string>
+    <string name="cw_mixed_safe">Приложение проверяет эти маршруты и выбирает доступный. Предпочтительный маршрут можно изменить позже.</string>
+    <string name="cw_pair_in_progress">Выполняется…</string>
+    <string name="cw_pair_status_preparing_gateway">Подготовка шлюза…</string>
+    <string name="cw_pair_status_opening_sign_in">Открытие безопасного входа…</string>
+    <string name="cw_pair_status_pairing_relay">Сопряжение Relay…</string>
     <string name="cw_show_code_subtitle">Используйте это, когда не можете отсканировать QR-код сопряжения Relay. Установите свои URL-адреса, затем зарегистрируйте код ниже на хосте, работающем с Hermes-Relay.</string>
     <string name="cw_step_copy_code">1. Скопируйте этот код</string>
     <string name="cw_copy_pairing_code">Скопировать код сопряжения</string>
@@ -785,7 +792,7 @@
     <string name="chat_settings_8k">8К</string>
     <string name="chat_settings_16k">16К</string>
     <string name="chat_settings_gateway_needs_signin">Шлюзу требуется вход в систему Manage</string>
-    <string name="chat_settings_gateway_needs_signin_desc">Войдите один раз из вкладки Manage, чтобы разблокировать живое мышление через /api/ws.</string>
+    <string name="chat_settings_gateway_needs_signin_desc">Войдите один раз, чтобы открыть чат, сессии, управление и стандартный голос для этого подключения Hermes.</string>
     <string name="chat_settings_completions">Завершения</string>
     <string name="chat_settings_offline">офлайн</string>
     <string name="conn_back">Назад</string>
@@ -1890,7 +1897,7 @@
     <string name="dashboard_minutes_ago">%1$dm назад</string>
     <string name="dashboard_hours_ago">%1$dh назад</string>
     <string name="dashboard_signin_required_title">Требуется вход в панель управления</string>
-    <string name="dashboard_signin_required_body">Manage использует сеанс панели управления Гермесом по адресу %1$s.</string>
+<string name="dashboard_signin_required_body">Войдите в Hermes по адресу %1$s для чата, сеансов, управления и стандартного голоса.</string>
     <string name="dashboard_signin_route_hint">Сохраненный сеанс панели управления не может быть повторно использован на маршруте %1$s. Войдите снова, чтобы обновить его на всех доверенных маршрутах этого подключения.</string>
     <string name="dashboard_signin_with_provider">Войти с помощью %1$s</string>
     <string name="dashboard_username_password">Имя пользователя и пароль</string>
@@ -1899,11 +1906,13 @@
     <string name="dashboard_sign_in">Войти</string>
     <string name="dashboard_signing_in">Вход…</string>
     <string name="dashboard_no_supported_provider">Эта панель управления не рекламирует поддерживаемого поставщика входа для Android.</string>
+    <string name="dashboard_signin_provider_unavailable_choose">Сохранённый поставщик входа недоступен. Выберите другого настроенного поставщика или повторите попытку позже.</string>
     <string name="dashboard_oauth_initial_status">Завершите вход на защищенной странице панели управления.</string>
     <string name="dashboard_oauth_verifying">Проверка сеанса панели управления…</string>
     <string name="dashboard_oauth_not_accepted">Вход еще не принят. Завершите процесс панели управления, чтобы продолжить.</string>
     <string name="dashboard_oauth_verify_failed">Проверка входа в панель управления не удалась</string>
-    <string name="dashboard_native_signin_opening">Завершите вход в браузере, затем вернитесь сюда.</string>
+<string name="dashboard_native_signin_opening">Завершите вход в браузере. Если провайдер не вернул вас, вернитесь сюда и нажмите «Продолжить вход».</string>
+<string name="dashboard_native_signin_continue">Продолжить вход</string>
     <string name="dashboard_native_signin_cancelled">Вход в браузере отменен.</string>
     <string name="dashboard_native_signin_requires_https">Безопасный вход в браузере требует HTTPS-адреса панели управления.</string>
     <string name="dashboard_native_signin_unavailable">Безопасный вход в браузере недоступен для этого подключения. Обновите подключение и попробуйте снова.</string>
@@ -3769,6 +3778,9 @@
     <string name="plugins_remove">Удалить</string>
     <string name="plugins_remove_confirm">Удалить «%1$s»? Эта страница плагина больше не будет отображаться на подключённых устройствах Android.</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">Сканирование репозиториев на хосте</string>
+    <string name="git_state_host_scanning_on_desc">Включено для этого шлюза · Для записи Git по-прежнему нужно отдельное разрешение.</string>
+    <string name="git_state_host_scanning_off_desc">Разрешает телефону запрашивать у этого шлюза сканирование настроенных корней Git для поиска репозиториев, веток и изменений. Для записи Git нужно отдельное разрешение.</string>
     <string name="git_state_back">Назад</string>
     <string name="git_state_staged">В индексе</string>
     <string name="git_state_modified">Изменённые</string>
@@ -3812,7 +3824,7 @@
     <string name="git_state_switch_stash">Переключить (сохранить изменения, если есть)</string>
     <string name="support_bundle_review">Проверить сведения для поддержки</string>
     <string name="support_bundle_title">Сведения для поддержки</string>
-    <string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с не более чем %1$d отчётами.</string>
+<string name="support_bundle_privacy">Ничего не загружается автоматически. Проверьте локальный экспорт с %1$d недавними отчётами и записями диагностики.</string>
     <string name="support_bundle_copied">Сведения для поддержки скопированы</string>
     <string name="support_bundle_no_share">Сведения для поддержки скопированы — приложение для отправки не найдено</string>
     <string name="support_bundle_share_title">Поделиться сведениями поддержки Hermes-Relay</string>
@@ -4182,7 +4194,7 @@
     <string name="custom_theme_modified">Несохраненные изменения</string>
     <string name="custom_theme_saved_count">Сохранено тем: %1$d</string>
     <string name="chat_settings_show_git_workspace">Показывать рабочую область Git в чате</string>
-    <string name="chat_settings_show_git_workspace_desc">Показывает ветку и изменения над полем ввода</string>
+    <string name="chat_settings_show_git_workspace_desc">Показывает состояние Git и изменения в чате, когда сканирование репозиториев на хосте включено. Полная рабочая область Git остаётся доступной, когда этот параметр выключен.</string>
     <string name="chat_git_open_workspace">Открыть рабочую область Git</string>
     <string name="chat_git_branch">Ветка %1$s</string>
     <string name="chat_git_additions">Добавлено строк: %1$d</string>
@@ -4190,6 +4202,7 @@
     <plurals name="chat_git_change_count"><item quantity="one">%1$d изменение</item><item quantity="few">%1$d изменения</item><item quantity="many">%1$d изменений</item><item quantity="other">%1$d изменения</item></plurals>
     <string name="settings_git_workspace">Рабочая область Git</string>
     <string name="settings_git_workspace_desc">Изменения, ветки, коммиты и удалённые репозитории</string>
+    <string name="settings_git_workspace_off_desc">Выкл. · Сканирование репозиториев на хосте включается вручную</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>
@@ -4205,13 +4218,13 @@
     <string name="dashboard_address_editor_body">Укажите адрес Dashboard и Gateway для этого телефона. Частные маршруты LAN и Tailscale могут использовать HTTP или HTTPS; публичным маршрутам требуется HTTPS.</string>
     <string name="dashboard_address_editor_title">Адрес шлюза</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
+<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">Введите адрес Hermes Gateway</string>
     <string name="dashboard_gateway_configured">Configured address</string>
-    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
-    <string name="dashboard_gateway_secure_origin">Источник входа</string>
+<string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
+<string name="dashboard_gateway_secure_origin">Адрес аутентифицированной панели</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>

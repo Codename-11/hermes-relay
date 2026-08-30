@@ -76,12 +76,15 @@ enum class EndpointSurface {
  *
  * ### Semantics (locked by ADR 24)
  *
- *  * **Strict priority.** `priority = 0` is highest. If a priority-0
- *    candidate is reachable we use it; reachability never promotes a lower
- *    priority over a higher one. Reachability is **only** the tiebreaker
- *    among candidates that share the same priority.
- *  * **Reachability probe.** Dashboard-first routes use `GET
- *    ${dashboard.url}/api/status`; legacy API routes use `GET
+ *  * **Strict selection priority with speculative probes.** `priority = 0`
+ *    is highest. All supported priority groups start probing together so one
+ *    dead route cannot add its full timeout before the fallback even starts,
+ *    but a lower-priority result is considered only after every higher group
+ *    has failed. Reachability is **only** the tiebreaker among candidates that
+ *    share the same priority.
+ *  * **Reachability probe.** Dashboard-first routes use lightweight `GET
+ *    ${dashboard.url}/api/health` and fall back to `/api/status` only for a
+ *    confirmed legacy host without the health route. Legacy API routes use `GET
  *    ${api.url}/health`. Relay-only routes use `GET ${relay.httpUrl}/health`.
  *    Each request has a 4-second
  *    per-candidate timeout. Positive results are cached longer than negative
@@ -134,6 +137,14 @@ class EndpointResolver(
         val baseUrl: String,
         val requestUrl: String,
         val path: String,
+        val legacyFallbackRequestUrl: String? = null,
+        val legacyFallbackPath: String? = null,
+    )
+
+    private data class ProbeHttpResult(
+        val code: Int,
+        val successful: Boolean,
+        val bodyPreview: String,
     )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
@@ -268,12 +279,11 @@ class EndpointResolver(
     /**
      * Run the resolver against [candidates].
      *
-     *  1. Group by `priority` ascending.
-     *  2. For each priority group, race the selected surface's health probe
-     *     against every candidate in the group. First 2xx wins; ties
-     *     broken by whichever response lands first.
-     *  3. If the entire group is unreachable, fall through to the next
-     *     priority group.
+     *  1. Group by `priority` ascending and by supported/experimental tier.
+     *  2. Start every supported priority group speculatively, while awaiting
+     *     their results in strict priority order. Within a group, first 2xx
+     *     wins. If higher groups fail, a completed fallback is ready at once.
+     *  3. Probe the experimental tier only when every supported group fails.
      *  4. If no candidate is reachable, return `null` — the caller falls back
      *     to its legacy single-URL path.
      *
@@ -294,14 +304,15 @@ class EndpointResolver(
         // last-resort fallback without displacing Tailscale or direct TLS.
         val supported = eligible.filterNot { it.experimental || it.role.equals("outbound_broker", ignoreCase = true) }
         val experimental = eligible.filter { it.experimental || it.role.equals("outbound_broker", ignoreCase = true) }
-        val groups = (supported.groupBy { it.priority }.toSortedMap().values +
-            experimental.groupBy { it.priority }.toSortedMap().values)
+        val tiers = listOf(
+            supported.groupBy { it.priority }.toSortedMap().values.toList(),
+            experimental.groupBy { it.priority }.toSortedMap().values.toList(),
+        )
 
-        for (group in groups) {
-            val priority = group.first().priority
-            Log.d(TAG, "probing priority=$priority group (size=${group.size})")
-            val winner = raceGroup(group, surface)
+        for (groups in tiers) {
+            val winner = racePriorityGroups(groups, surface)
             if (winner != null) {
+                val priority = winner.priority
                 val winnerUrl = probeTarget(winner, surface)?.baseUrl
                 Log.i(TAG, "resolve winner: role=${winner.role} " +
                     "surface=$surface route=$winnerUrl priority=$priority")
@@ -325,6 +336,31 @@ class EndpointResolver(
             detail = "${eligible.size} configured $surface route(s) failed health probes",
         )
         return null
+    }
+
+    /**
+     * Start all groups in one stability tier together, but consume them in
+     * strict priority order. Cancelling losing waiters never cancels the shared
+     * physical probes, so their cache/outcome records still warm later calls.
+     */
+    private suspend fun racePriorityGroups(
+        groups: List<List<EndpointCandidate>>,
+        surface: EndpointSurface,
+    ): EndpointCandidate? = coroutineScope {
+        if (groups.isEmpty()) return@coroutineScope null
+        val races = groups.map { group ->
+            val priority = group.first().priority
+            Log.d(TAG, "probing priority=$priority group (size=${group.size})")
+            group to async(Dispatchers.IO) { raceGroup(group, surface) }
+        }
+        for ((_, race) in races) {
+            val winner = race.await()
+            if (winner != null) {
+                races.forEach { (_, other) -> if (other !== race) other.cancel() }
+                return@coroutineScope winner
+            }
+        }
+        null
     }
 
     /**
@@ -516,19 +552,22 @@ class EndpointResolver(
             .writeTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .callTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .build()
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .header("Accept", "*/*")
-        // Hermes API's aiohttp health route accepts GET but returns 405 to
-        // HEAD. That response proves connectivity while the old probe marked
-        // the route unreachable. Health payloads are tiny, so follow the
-        // endpoint's actual public contract on every surface.
-        val request = requestBuilder.get().build()
         return withContext(Dispatchers.IO) {
             try {
                 withTimeoutOrNull(PROBE_TIMEOUT_MS + 200L) {
-                    fastClient.newCall(request).execute().use { resp ->
-                        val ok = resp.isSuccessful
+                    val primary = executeProbeHttp(fastClient, url)
+                    val fallbackUrl = target.legacyFallbackRequestUrl
+                        ?.takeIf { dashboardHealthNeedsLegacyFallback(primary) }
+                        ?.toHttpUrlOrNull()
+                    val result = fallbackUrl?.let { executeProbeHttp(fastClient, it) } ?: primary
+                    val resultPath = if (fallbackUrl != null) {
+                        target.legacyFallbackPath ?: target.path
+                    } else {
+                        target.path
+                    }
+                    val resultUrl = fallbackUrl?.toString() ?: target.requestUrl
+                    result.let { response ->
+                        val ok = response.successful
                         val probeTitle = if (ok) {
                             context?.getString(R.string.endpoint_diag_probe_ok) ?: "Endpoint probe ok"
                         } else {
@@ -539,22 +578,25 @@ class EndpointResolver(
                             surface = surface,
                             generation = generation,
                             reachable = ok,
-                            detail = if (ok) null else "HTTP ${resp.code} from ${target.path}",
+                            detail = if (ok) null else "HTTP ${response.code} from $resultPath",
                         ) {
                             DiagnosticsLog.record(
                                 category = DiagnosticCategory.Endpoint,
                                 severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
                                 title = probeTitle,
-                                detail = if (ok) null else "HTTP ${resp.code}",
+                                detail = if (ok) null else "HTTP ${response.code}",
                                 operation = operation,
                                 endpointRole = candidate.role,
                                 configuredUrl = target.baseUrl,
-                                requestUrl = target.requestUrl,
+                                requestUrl = resultUrl,
                                 elapsedMs = clock() - startedAtMs,
                                 suggestion = if (ok) {
                                     null
                                 } else {
-                                    NetworkDiagnosticGuidance.forHttpStatus(resp.code, surface.diagnosticTarget())
+                                    NetworkDiagnosticGuidance.forHttpStatus(
+                                        response.code,
+                                        surface.diagnosticTarget(),
+                                    )
                                 },
                             )
                         }
@@ -631,6 +673,26 @@ class EndpointResolver(
         }
     }
 
+    private fun executeProbeHttp(client: OkHttpClient, url: okhttp3.HttpUrl): ProbeHttpResult {
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        return client.newCall(request).execute().use { response ->
+            ProbeHttpResult(
+                code = response.code,
+                successful = response.isSuccessful,
+                bodyPreview = response.peekBody(4_096L).string(),
+            )
+        }
+    }
+
+    /** Official Desktop compatibility for Hermes versions predating `/api/health`. */
+    private fun dashboardHealthNeedsLegacyFallback(result: ProbeHttpResult): Boolean =
+        result.code == 404 ||
+            (result.code == 401 && result.bodyPreview.contains("no_cookie", ignoreCase = true))
+
     /** Commit one physical probe only if it still belongs to the active cache generation. */
     private suspend fun completeProbe(
         candidate: EndpointCandidate,
@@ -663,10 +725,22 @@ class EndpointResolver(
     ): ProbeTarget? {
         if (surface == EndpointSurface.Dashboard) {
             candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { base ->
-                return ProbeTarget(base, "$base/api/status", "/dashboard/api/status")
+                return ProbeTarget(
+                    baseUrl = base,
+                    requestUrl = "$base/api/health",
+                    path = "/dashboard/api/health",
+                    legacyFallbackRequestUrl = "$base/api/status",
+                    legacyFallbackPath = "/dashboard/api/status",
+                )
             }
             candidate.dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }?.let { base ->
-                return ProbeTarget(base, "$base/api/status", "/api/status")
+                return ProbeTarget(
+                    baseUrl = base,
+                    requestUrl = "$base/api/health",
+                    path = "/api/health",
+                    legacyFallbackRequestUrl = "$base/api/status",
+                    legacyFallbackPath = "/api/status",
+                )
             }
             return null
         }
@@ -694,8 +768,10 @@ class EndpointResolver(
             ?.let { base ->
                 return ProbeTarget(
                     baseUrl = base,
-                    requestUrl = "$base/api/status",
-                    path = "/api/status",
+                    requestUrl = "$base/api/health",
+                    path = "/api/health",
+                    legacyFallbackRequestUrl = "$base/api/status",
+                    legacyFallbackPath = "/api/status",
                 )
             }
 

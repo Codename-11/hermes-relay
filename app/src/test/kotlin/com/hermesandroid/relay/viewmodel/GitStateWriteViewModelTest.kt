@@ -48,7 +48,8 @@ class GitStateWriteViewModelTest {
 
     private fun viewModel(grant: Boolean = true): GitStateViewModel {
         val vm = GitStateViewModel(application)
-        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.loadRepos()
         vm.setWriteGrant(ownerKey, grant)
         return vm
     }
@@ -174,7 +175,12 @@ class GitStateWriteViewModelTest {
         val priorTarget = vm.currentTarget()!!
         enqueueJson("""{"repos":[]}""")
 
-        vm.configure(DashboardApiClient(server.url("/").toString()), "connection-b")
+        vm.configure(
+            DashboardApiClient(server.url("/").toString()),
+            "connection-b",
+            scanningEnabled = true,
+        )
+        vm.loadRepos()
         vm.setWriteGrant(ownerKey, true)
         withTimeout(5_000) { vm.repos.filterIsInstance<GitStateUiState.Ready>().first() }
         vm.push(GitConfirmationStrings.PUSH, expectedTarget = priorTarget)

@@ -429,6 +429,13 @@
     <string name="cw_pairing_code_label">配对码</string>
     <string name="cw_pairing_code_placeholder">例如 ABC123</string>
     <string name="cw_pair_button">配对</string>
+    <string name="cw_mixed_route_plain">%1$s 使用未加密的 HTTP/WS。请仅在受信任的专用网络或您控制的 VPN 中使用。</string>
+    <string name="cw_mixed_route_secure">%1$s 使用带传输加密的 HTTPS/WSS。</string>
+    <string name="cw_mixed_safe">应用会探测这些路由并选择可用路由。您可以稍后更改首选路由。</string>
+    <string name="cw_pair_in_progress">正在处理…</string>
+    <string name="cw_pair_status_preparing_gateway">正在准备网关…</string>
+    <string name="cw_pair_status_opening_sign_in">正在打开安全登录…</string>
+    <string name="cw_pair_status_pairing_relay">正在配对 Relay…</string>
     <string name="cw_show_code_subtitle">无法扫描 Relay 配对二维码时使用。设置您的地址，然后在运行 Hermes-Relay 的主机上注册下面的配对码。</string>
     <string name="cw_step_copy_code">1. 复制此配对码</string>
     <string name="cw_copy_pairing_code">复制配对码</string>
@@ -811,7 +818,7 @@
     <string name="chat_settings_8k">8K</string>
     <string name="chat_settings_16k">16K</string>
     <string name="chat_settings_gateway_needs_signin">网关需要管理登录</string>
-    <string name="chat_settings_gateway_needs_signin_desc">从管理标签页登录一次以解锁 /api/ws 上的实时思考。</string>
+    <string name="chat_settings_gateway_needs_signin_desc">登录一次即可为此 Hermes 连接启用 Chat、会话、管理和标准语音。</string>
     <string name="chat_settings_completions">Completions</string>
     <string name="chat_settings_offline">离线</string>
 
@@ -1846,7 +1853,7 @@
 
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">需要登录仪表盘</string>
-    <string name="dashboard_signin_required_body">管理功能使用位于 %1$s 的 Hermes 仪表盘会话。</string>
+<string name="dashboard_signin_required_body">登录 %1$s 的 Hermes 以使用聊天、会话、管理和标准语音。</string>
     <string name="dashboard_signin_route_hint">无法在 %1$s 路由上复用已保存的仪表板会话。请重新登录，以便在此连接的可信路由之间刷新会话。</string>
     <string name="dashboard_signin_with_provider">使用 %1$s 登录</string>
     <string name="dashboard_username_password">用户名与密码</string>
@@ -1855,6 +1862,7 @@
     <string name="dashboard_sign_in">登录</string>
     <string name="dashboard_signing_in">正在登录……</string>
     <string name="dashboard_no_supported_provider">该仪表盘未提供受 Android 支持的登录方式。</string>
+    <string name="dashboard_signin_provider_unavailable_choose">已保存的登录提供商当前不可用。请选择其他已配置的提供商，或稍后重试。</string>
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">请在安全的仪表盘页面完成登录。</string>
@@ -3514,7 +3522,8 @@
     <string name="dev_settings_image_generation_lab">图像生成实验室</string>
     <string name="dev_settings_image_generation_lab_desc">预览生成循环和最终图像显现效果</string>
     <string name="dev_settings_open_image_generation_lab_cd">打开图像生成实验室</string>
-    <string name="dashboard_native_signin_opening">请在浏览器中完成登录，然后返回此处。</string>
+<string name="dashboard_native_signin_opening">请在浏览器中完成登录。如果提供商登录后没有返回，请回到此处并点按“继续登录”。</string>
+<string name="dashboard_native_signin_continue">继续登录</string>
     <string name="dashboard_native_signin_cancelled">已取消浏览器登录。</string>
     <string name="dashboard_native_signin_requires_https">安全浏览器登录需要 HTTPS 控制面板地址。</string>
     <string name="dashboard_native_signin_unavailable">此连接无法使用安全浏览器登录。请刷新连接后重试。</string>
@@ -3966,6 +3975,9 @@
     <string name="plugins_remove">移除</string>
     <string name="plugins_remove_confirm">要移除“%1$s”吗？此插件页面将不再显示在已连接的 Android 设备上。</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">主机仓库扫描</string>
+    <string name="git_state_host_scanning_on_desc">已为此网关启用 · Git 写入仍需单独授权。</string>
+    <string name="git_state_host_scanning_off_desc">允许此手机请求网关扫描已配置的 Git 根目录，以查找仓库、分支和更改状态。Git 写入需要单独授权。</string>
     <string name="git_state_back">返回</string>
     <string name="git_state_staged">已暂存</string>
     <string name="git_state_modified">已修改</string>
@@ -4009,7 +4021,7 @@
     <string name="git_state_switch_stash">切换（有更改时暂存）</string>
     <string name="support_bundle_review">查看支持信息</string>
     <string name="support_bundle_title">支持信息</string>
-    <string name="support_bundle_privacy">不会自动上传任何内容。请查看最多包含 %1$d 个报告的本地导出。</string>
+<string name="support_bundle_privacy">不会自动上传任何内容。请检查包含 %1$d 条近期报告和诊断的本地导出。</string>
     <string name="support_bundle_copied">支持信息已复制</string>
     <string name="support_bundle_no_share">支持信息已复制 — 未找到可分享的应用</string>
     <string name="support_bundle_share_title">分享 Hermes-Relay 支持信息</string>
@@ -4370,7 +4382,7 @@
     <string name="custom_theme_modified">未保存的更改</string>
     <string name="custom_theme_saved_count">已保存 %1$d 个预设</string>
     <string name="chat_settings_show_git_workspace">在聊天中显示 Git 工作区</string>
-    <string name="chat_settings_show_git_workspace_desc">在输入框上方显示分支和更改</string>
+    <string name="chat_settings_show_git_workspace_desc">启用主机仓库扫描后，在 Chat 中显示 Git 状态和更改。关闭此项时仍可使用完整的 Git 工作区。</string>
     <string name="chat_git_open_workspace">打开 Git 工作区</string>
     <string name="chat_git_branch">分支 %1$s</string>
     <string name="chat_git_additions">新增 %1$d 行</string>
@@ -4378,6 +4390,7 @@
     <plurals name="chat_git_change_count"><item quantity="other">%1$d 个更改</item></plurals>
     <string name="settings_git_workspace">Git 工作区</string>
     <string name="settings_git_workspace_desc">查看更改、分支、提交和远程仓库</string>
+    <string name="settings_git_workspace_off_desc">关闭 · 主机仓库扫描需手动启用</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>
@@ -4393,13 +4406,13 @@
     <string name="dashboard_address_editor_body">设置此手机使用的 Dashboard 和 Gateway 地址。私有 LAN 与 Tailscale 路由可使用 HTTP 或 HTTPS；公共路由必须使用 HTTPS。</string>
     <string name="dashboard_address_editor_title">网关地址</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-    <string name="dashboard_address_oidc_hint">Self-hosted OIDC must start and return on one exact Dashboard address; use HTTPS for public access. API fallback and Relay are optional advanced capabilities.</string>
+<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
     <string name="dashboard_address_placeholder">https://hermes.example.com</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">输入 Hermes Gateway 地址</string>
     <string name="dashboard_gateway_configured">Configured address</string>
-    <string name="dashboard_gateway_oidc_explainer">Sign-in and callback use one exact Dashboard address; public access requires HTTPS. LAN and Tailscale are access paths; API fallback and Relay are optional.</string>
-    <string name="dashboard_gateway_secure_origin">登录来源</string>
+<string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
+<string name="dashboard_gateway_secure_origin">已认证的仪表盘地址</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
