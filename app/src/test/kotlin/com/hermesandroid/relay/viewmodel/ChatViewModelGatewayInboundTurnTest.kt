@@ -1342,8 +1342,12 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { viewModel.pendingAsk.value?.ask?.requestId == "clarify-detached" }
 
         viewModel.switchSession(secondSession)
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition { handler.currentSessionId.value == secondSession }
+        assertEquals(
+            "passive navigation must not resume and claim the second session",
+            1,
+            gatewayHarness.rpcLog.count { it.first == "session.resume" },
+        )
         awaitCondition { checkpointStore.checkpoint?.pendingAsk?.requestId == "clarify-detached" }
 
         serverWs.send(
