@@ -289,6 +289,45 @@ class DashboardIngressPairingTests(unittest.TestCase):
                 sign=False,
             )
 
+    def test_top_level_relay_rejects_duplicate_matching_ingresses(self) -> None:
+        duplicate_ingresses = [
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://PUBLIC.EXAMPLE:443/"},
+                "relay": {
+                    "url": "wss://public.example:443/api/plugins/hermes-relay/transport/",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            pair.build_pairing_qr_payload(
+                host=None,
+                port=None,
+                key=None,
+                tls=None,
+                relay={"url": "ws://192.168.1.20:8767", "code": "ABC123"},
+                endpoints=duplicate_ingresses,
+                dashboard_url="https://public.example",
+                sign=False,
+            )
+
+        self.assertEqual(
+            [candidate["priority"] for candidate in duplicate_ingresses],
+            [0, 1],
+        )
+
 # ── register_code_command ───────────────────────────────────────────────────
 
 

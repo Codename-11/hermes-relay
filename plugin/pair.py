@@ -295,6 +295,7 @@ def build_payload(
                 expected_relay_key = _relay_ingress_key(
                     dashboard_relay_ingress_url(normalized_dashboard_url)
                 )
+                matching_ingresses: list[dict] = []
                 for candidate in endpoints or []:
                     if not isinstance(candidate, dict):
                         continue
@@ -312,12 +313,13 @@ def build_payload(
                     except ValueError:
                         continue
                     if dashboard_matches and relay_matches:
-                        ingress_relay = candidate_relay
-                        break
-                if ingress_relay is None:
+                        matching_ingresses.append(candidate_relay)
+                if len(matching_ingresses) != 1:
                     raise ValueError(
-                        "dashboard_url has no exact same-origin Relay ingress candidate"
+                        "dashboard_url must have exactly one exact same-origin "
+                        "Relay ingress candidate"
                     )
+                ingress_relay = matching_ingresses[0]
             else:
                 ingress_relay = next(
                     (

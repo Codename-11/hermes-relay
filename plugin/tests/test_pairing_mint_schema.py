@@ -249,6 +249,38 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(response.status, 400)
         self.assertIn("same-origin Relay ingress", (await response.json())["error"])
 
+    async def test_dashboard_mint_rejects_duplicate_selected_origin_ingresses(self) -> None:
+        endpoints = [
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://PUBLIC.EXAMPLE:443/"},
+                "relay": {
+                    "url": "wss://public.example:443/api/plugins/hermes-relay/transport/",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        response = await self.client.post(
+            "/pairing/mint",
+            json={
+                "dashboard_url": "https://public.example",
+                "endpoints": endpoints,
+            },
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("exactly one", (await response.json())["error"])
+
     async def test_dashboard_url_camel_alias_is_accepted(self) -> None:
         result = await self._mint({
             "dashboardUrl": "https://dash.example.com",
