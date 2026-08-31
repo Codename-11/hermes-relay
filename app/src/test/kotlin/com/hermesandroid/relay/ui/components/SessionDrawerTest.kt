@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
+import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
 import org.junit.Rule
 import org.junit.Test
@@ -37,11 +38,155 @@ class SessionDrawerTest {
     val compose = createComposeRule()
 
     @Test
+    fun `failed first load is unavailable and retryable not empty`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    isLoading = false,
+                    loadFailed = true,
+                    onRefresh = { refreshes += 1 },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("No sessions yet").assertDoesNotExist()
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun `cached rows remain visible and disclose failed revalidation`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("cached", "Cached recent", null)),
+                    currentSessionId = null,
+                    loadFailed = true,
+                    onRefresh = { refreshes += 1 },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Cached recent").assertIsDisplayed()
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun `failed all profiles load is unavailable and retryable not empty`() {
+        var refreshes = 0
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    allProfilesSupported = true,
+                    allProfileSessionsLoadFailed = true,
+                    onRefreshAllProfiles = { refreshes += 1 },
+                    onSelectProfileSession = { _, _ -> },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All Profiles").performClick()
+        compose.onNodeWithText("Unavailable").assertIsDisplayed()
+        compose.onNodeWithText("No sessions yet").assertDoesNotExist()
+        var refreshesBeforeRetry = 0
+        compose.runOnIdle { refreshesBeforeRetry = refreshes }
+        compose.onNodeWithText("Refresh sessions").performClick()
+        assertEquals(refreshesBeforeRetry + 1, refreshes)
+    }
+
+    @Test
     fun `unpinned action uses a distinct lighter outlined star`() {
         assertNotEquals(sessionPinIcon(pinned = true), sessionPinIcon(pinned = false))
         assertTrue(sessionPinIcon(pinned = true).name.contains("Star"))
         assertTrue(sessionPinIcon(pinned = false).name.contains("StarBorder"))
         assertEquals(0.45f, UNPINNED_STAR_ALPHA, 0.0f)
+    }
+
+    @Test
+    fun `provisional thread exposes local delete only`() {
+        var deletedProvisional: String? = null
+        var deletedServerSession: String? = null
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    threadsCapabilityActive = true,
+                    provisionalThreads = listOf(
+                        ProvisionalThreadRow(
+                            chatId = "reminders",
+                            title = "Reminder",
+                            messageCount = 1,
+                            lastActivityAt = 1L,
+                        ),
+                    ),
+                    onDeleteProvisionalThread = { deletedProvisional = it },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = { deletedServerSession = it },
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Session actions").performClick()
+        compose.onNodeWithText("Pin session").assertDoesNotExist()
+        compose.onNodeWithText("Rename").assertDoesNotExist()
+        compose.onNodeWithText("Delete").performClick()
+        compose.onNodeWithText("Remove Thread?").assertIsDisplayed()
+        compose.onNodeWithText(
+            "This removes \"Reminder\" from this device. It does not delete promoted or server history.",
+        ).assertIsDisplayed()
+        compose.onNodeWithText("Delete").performClick()
+
+        compose.runOnIdle {
+            assertEquals("reminders", deletedProvisional)
+            assertEquals(null, deletedServerSession)
+        }
+    }
+
+    @Test
+    fun `provisional thread hides actions when supervised deletion is disabled`() {
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    supervisedSessionActions = SupervisedSessionActions(delete = false),
+                    provisionalThreads = listOf(
+                        ProvisionalThreadRow("reminders", "Reminder", 1, 1L),
+                    ),
+                    onDeleteProvisionalThread = {},
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Session actions").assertDoesNotExist()
     }
 
     @Test
@@ -304,9 +449,8 @@ class SessionDrawerTest {
     }
 
     @Test
-    fun `new chat from all profiles requests an explicit default draft`() {
+    fun `new chat from all profiles keeps the current conversation owner`() {
         var scopedNewChats = 0
-        var defaultNewChats = 0
         compose.setContent {
             MaterialTheme {
                 SessionDrawerContent(
@@ -319,7 +463,6 @@ class SessionDrawerTest {
                     onRefreshAllProfiles = {},
                     onSelectProfileSession = { _, _ -> },
                     onNewChat = { scopedNewChats++ },
-                    onNewDefaultChat = { defaultNewChats++ },
                     onSelectSession = {},
                     onDeleteSession = {},
                     onRenameSession = { _, _ -> },
@@ -332,8 +475,7 @@ class SessionDrawerTest {
         compose.onNodeWithText("New Chat").performClick()
 
         compose.runOnIdle {
-            assertEquals(0, scopedNewChats)
-            assertEquals(1, defaultNewChats)
+            assertEquals(1, scopedNewChats)
         }
     }
 

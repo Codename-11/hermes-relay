@@ -119,7 +119,7 @@ Play 2:1 clipping), and only mock public-safe data.
 ### Run
 
 ```bash
-./gradlew :app:testGooglePlayDebugUnitTest --tests "*StoreScreenshotTest*"
+./gradlew :app:testGooglePlayDebugUnitTest --tests "*StoreScreenshotTest*" --tests "*GitWorkspaceScreenshotTest*"
 # Output: app/build/store-shots/<scene>.png  (1080x2160, exactly 2:1)
 ```
 
@@ -149,6 +149,9 @@ The canonical marketing lineup intentionally exercises current product seams:
   coverage beyond the two Play-listing frames.
 - Supplemental `14_startup` preserves the lower-information empty-chat frame
   outside the eight-slot Play lineup.
+- Supplemental `15_git_workspace` renders the real native Git screen from a
+  deterministic plugin API fixture. It is used by README, user docs, and the
+  website but intentionally remains outside the eight-slot Play lineup.
 
 ### Render any view going forward
 

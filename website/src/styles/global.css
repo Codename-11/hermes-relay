@@ -730,7 +730,7 @@ img {
 
 .screen-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 20px;
   width: 100%;
   max-width: none;
@@ -1701,6 +1701,7 @@ img {
 
   .screen-strip {
     margin-left: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .desktop-ui-inline {

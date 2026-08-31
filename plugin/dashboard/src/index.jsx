@@ -2,23 +2,28 @@ const SDK = window.__HERMES_PLUGIN_SDK__;
 const { React } = SDK;
 const { useState, useEffect, useCallback } = SDK.hooks;
 
-import RelayManagement from "./tabs/RelayManagement.jsx";
-import BridgeActivity from "./tabs/BridgeActivity.jsx";
-import MediaInspector from "./tabs/MediaInspector.jsx";
+import RelayDevices, {
+  RelayOverview,
+  RelaySettings,
+} from "./tabs/RelayManagement.jsx";
+import ActivityHub from "./tabs/ActivityHub.jsx";
 import RemoteAccess from "./tabs/RemoteAccess.jsx";
+import GitState from "./tabs/GitState.jsx";
 import RelayStatusSlot from "./components/RelayStatusSlot.jsx";
 import MobileConnectDialog from "./components/MobileConnectDialog.jsx";
-import { Button, Switch } from "./lib/ui-shims.jsx";
+import { Switch } from "./lib/ui-shims.jsx";
 
-const { Label } = SDK.components;
+const { Label, Tabs, TabsList, TabsTrigger } = SDK.components;
 
 const AUTO_REFRESH_KEY = "hermes-relay-autorefresh";
 
 const TABS = [
-  { key: "management", label: "Management" },
+  { key: "overview", label: "Overview" },
+  { key: "devices", label: "Devices" },
   { key: "activity", label: "Activity" },
-  { key: "media", label: "Media" },
   { key: "remote", label: "Remote Access" },
+  { key: "git", label: "Git" },
+  { key: "settings", label: "Settings" },
 ];
 
 function readAutoRefresh() {
@@ -39,20 +44,7 @@ function writeAutoRefresh(value) {
   }
 }
 
-function TabButton({ active, onClick, children }) {
-  const base =
-    "px-4 py-2 text-sm font-medium border-b-2 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-  const on = "border-foreground text-foreground";
-  const off = "border-transparent text-muted-foreground hover:text-foreground";
-  return (
-    <button type="button" onClick={onClick} className={`${base} ${active ? on : off}`}>
-      {children}
-    </button>
-  );
-}
-
 function RelayPluginRoot() {
-  const [tab, setTab] = useState("management");
   const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
   const [autoRefresh, setAutoRefreshState] = useState(readAutoRefresh);
 
@@ -70,50 +62,55 @@ function RelayPluginRoot() {
   const closeMobileConnect = useCallback(() => setMobileConnectOpen(false), []);
 
   return (
-    <div className="hermes-relay-plugin space-y-4 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Relay</h1>
-          <p className="text-sm text-muted-foreground">
-            Connect clients and manage Relay sessions, activity, media, and remote access.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            size="sm"
-            onClick={openMobileConnect}
-          >
-            Connect mobile app
-          </Button>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="auto-refresh"
-              checked={autoRefresh}
-              onCheckedChange={setAutoRefresh}
-            />
-            <Label htmlFor="auto-refresh">Auto-refresh</Label>
-          </div>
-        </div>
-      </div>
+    <div className="hermes-relay-plugin p-4">
+      <Tabs defaultValue="overview" className="hr-plugin-tabs">
+        {(tab, setTab) => (
+          <>
+            <div className="hr-plugin-toolbar">
+              <TabsList className="hr-plugin-tablist">
+                {TABS.map((item) => (
+                  <TabsTrigger
+                    key={item.key}
+                    active={tab === item.key}
+                    value={item.key}
+                    onClick={() => setTab(item.key)}
+                  >
+                    {item.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <div className="hr-live-control">
+                <Switch
+                  id="auto-refresh"
+                  checked={autoRefresh}
+                  onCheckedChange={setAutoRefresh}
+                />
+                <Label htmlFor="auto-refresh">Live</Label>
+              </div>
+            </div>
 
-      <div role="tablist" className="flex items-center gap-1 border-b border-border">
-        {TABS.map((t) => (
-          <TabButton
-            key={t.key}
-            active={tab === t.key}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </TabButton>
-        ))}
-      </div>
-
-      <div className="mt-4">
-        {tab === "management" && <RelayManagement autoRefresh={autoRefresh} />}
-        {tab === "activity" && <BridgeActivity autoRefresh={autoRefresh} />}
-        {tab === "media" && <MediaInspector autoRefresh={autoRefresh} />}
-        {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
-      </div>
+            <div className="hr-tab-content">
+              {tab === "overview" && (
+                <RelayOverview
+                  autoRefresh={autoRefresh}
+                  onConnectMobile={openMobileConnect}
+                  onNavigate={setTab}
+                />
+              )}
+              {tab === "devices" && (
+                <RelayDevices
+                  autoRefresh={autoRefresh}
+                  onConnectMobile={openMobileConnect}
+                />
+              )}
+              {tab === "activity" && <ActivityHub autoRefresh={autoRefresh} />}
+              {tab === "remote" && <RemoteAccess autoRefresh={autoRefresh} />}
+              {tab === "git" && <GitState autoRefresh={autoRefresh} />}
+              {tab === "settings" && <RelaySettings autoRefresh={autoRefresh} />}
+            </div>
+          </>
+        )}
+      </Tabs>
       <MobileConnectDialog
         open={mobileConnectOpen}
         onClose={closeMobileConnect}

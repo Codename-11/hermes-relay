@@ -56,6 +56,12 @@ def _session_live_item(sid, session, current_sid=""):
         "session_key": session.get("session_key", sid),
         "status": _session_live_status(sid, session),
     }
+
+def _mirror_subagent_child(event):
+    child = event.get("child_session_id")
+    if event.get("type") == "subagent.text":
+        return (child, "reasoning.delta", "message.delta")
+    return child
 '''
 
 METHODS_SOURCE = '''
@@ -65,6 +71,9 @@ def method(name):
 @method("session.resume")
 def _(rid, params):
     target = params.get("session_id", "")
+    lazy = bool(params.get("lazy"))
+    close_on_disconnect = bool(params.get("close_on_disconnect"))
+    include_ancestors = not lazy
     found = db.get_session(target)
     if not found:
         return _err(rid, 4007, "session not found")

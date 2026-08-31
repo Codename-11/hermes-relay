@@ -31,8 +31,6 @@
 .hermes-relay-plugin,
 .hermes-relay-plugin * {
   box-sizing: border-box;
-  letter-spacing: 0 !important;
-  text-transform: none !important;
 }
 
 .hermes-relay-plugin h1,
@@ -66,9 +64,9 @@
   overflow-wrap: anywhere;
 }
 
-.hermes-relay-plugin input,
 .hermes-relay-plugin select,
-.hermes-relay-plugin textarea {
+.hermes-relay-plugin textarea,
+.hermes-relay-plugin input:not([class]) {
   font: inherit;
   color: inherit;
 }
@@ -85,10 +83,6 @@
  * colour explicitly via ``text-foreground`` / ``text-muted-foreground``, so they
  * are unaffected by dropping the inherit.
  */
-.hermes-relay-plugin button {
-  font: inherit;
-}
-
 .hermes-relay-plugin button {
   display: inline-flex;
   min-height: 2rem;
@@ -198,6 +192,10 @@
 }
 
 @media (min-width: 1024px) {
+  .hermes-relay-plugin .lg\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .hermes-relay-plugin .lg\:grid-cols-4 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -710,6 +708,543 @@
   flex-wrap: wrap;
 }
 
+.hermes-relay-plugin .hr-switch {
+  position: relative;
+  display: inline-flex;
+  width: 2.25rem;
+  min-width: 2.25rem;
+  height: 1.25rem;
+  min-height: 1.25rem;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0;
+  border: 1px solid var(--hr-border);
+  border-radius: 0;
+  background: var(--hr-bg);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.hermes-relay-plugin .hr-switch.checked {
+  border-color: color-mix(in srgb, var(--hr-success) 48%, transparent);
+  background: color-mix(in srgb, var(--hr-success) 18%, transparent);
+}
+
+.hermes-relay-plugin .hr-switch-thumb {
+  display: block;
+  width: 0.85rem;
+  height: 0.85rem;
+  transform: translateX(0.2rem);
+  background: color-mix(in srgb, var(--hr-muted) 70%, transparent);
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.hermes-relay-plugin .hr-switch.checked .hr-switch-thumb {
+  transform: translateX(1rem);
+  background: var(--hr-success);
+}
+
+.hermes-relay-plugin .hr-switch:focus-visible {
+  outline: 1px solid var(--hr-ring);
+  outline-offset: 2px;
+}
+
+/* Hermes-Relay information architecture ---------------------------------- */
+
+.hermes-relay-plugin .hr-plugin-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-plugin-tablist {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-live-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding-bottom: 0.35rem;
+  color: var(--hr-muted);
+  font-size: 0.75rem;
+}
+
+.hermes-relay-plugin .hr-tab-content {
+  min-width: 0;
+}
+
+.hermes-relay-plugin .hr-service-card {
+  overflow: hidden;
+}
+
+.hermes-relay-plugin .hr-service-header {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hermes-relay-plugin .hr-service-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+}
+
+.hermes-relay-plugin .hr-service-details > div {
+  display: grid;
+  min-width: 9rem;
+  gap: 0.2rem;
+  padding-right: 1.5rem;
+  margin-right: 1.5rem;
+  border-right: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-service-details span {
+  color: var(--hr-muted);
+  font-size: 0.75rem;
+}
+
+.hermes-relay-plugin .hr-service-details strong {
+  font-family: var(--theme-font-mono, ui-monospace, monospace);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.hermes-relay-plugin .hr-inline-error {
+  padding: 0 1rem 1rem;
+}
+
+.hermes-relay-plugin .hr-overview-grid,
+.hermes-relay-plugin .hr-connection-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.hermes-relay-plugin .hr-overview-device {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-device-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.hermes-relay-plugin .hr-device-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem;
+  border: 1px solid var(--hr-border);
+  background: color-mix(in srgb, var(--hr-surface-muted) 55%, transparent);
+}
+
+.hermes-relay-plugin .hr-device-card-compact {
+  padding: 0.75rem;
+}
+
+.hermes-relay-plugin .hr-device-main {
+  display: grid;
+  min-width: 0;
+  gap: 0.45rem;
+}
+
+.hermes-relay-plugin .hr-device-title-row,
+.hermes-relay-plugin .hr-device-meta,
+.hermes-relay-plugin .hr-grant-list,
+.hermes-relay-plugin .hr-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.hermes-relay-plugin .hr-device-meta > span + span::before {
+  content: "·";
+  margin-right: 0.45rem;
+  color: var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-device-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.hermes-relay-plugin .hr-status-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.hermes-relay-plugin .hr-status-dot-success {
+  background: var(--hr-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hr-success) 14%, transparent);
+}
+
+.hermes-relay-plugin .hr-empty-state {
+  display: grid;
+  place-items: center;
+  gap: 0.35rem;
+  min-height: 9rem;
+  padding: 1.5rem;
+  text-align: center;
+  border: 1px dashed var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-activity-list {
+  display: grid;
+}
+
+.hermes-relay-plugin .hr-activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-activity-row:first-child {
+  padding-top: 0;
+}
+
+.hermes-relay-plugin .hr-activity-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-activity-method {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hermes-relay-plugin .hr-activity-tablist {
+  width: fit-content;
+}
+
+/* Settings follows the upstream Config page's rail + content pattern. */
+
+.hermes-relay-plugin .hr-settings-layout {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.hermes-relay-plugin .hr-settings-nav {
+  display: grid;
+  gap: 1px;
+  padding: 0.5rem;
+  border: 1px solid var(--hr-border);
+  background: color-mix(in srgb, var(--hr-surface-muted) 55%, transparent);
+}
+
+.hermes-relay-plugin .hr-settings-nav-label {
+  padding: 0.4rem 0.55rem 0.6rem;
+  color: var(--hr-muted);
+  font-family: var(--theme-font-display, var(--theme-font-sans));
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hermes-relay-plugin .hr-settings-nav-item {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 0.55rem 0.65rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--hr-muted);
+  font-family: var(--theme-font-sans);
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.hermes-relay-plugin .hr-settings-nav-item:hover,
+.hermes-relay-plugin .hr-settings-nav-item.active {
+  background: var(--hr-surface-muted);
+  color: var(--hr-text);
+}
+
+.hermes-relay-plugin .hr-settings-nav-item.active {
+  box-shadow: inset 2px 0 0 var(--hr-text);
+}
+
+.hermes-relay-plugin .hr-settings-content {
+  min-width: 0;
+}
+
+.hermes-relay-plugin .hr-audit-details {
+  border: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-audit-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hermes-relay-plugin .hr-audit-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hermes-relay-plugin .hr-audit-blocks,
+.hermes-relay-plugin .hr-audit-empty {
+  padding: 0 0.75rem 0.75rem;
+}
+
+/* Pairing uses the host Dialog primitive; these rules only compose its body. */
+
+.hermes-relay-plugin.hr-pair-dialog {
+  width: min(72rem, calc(100vw - 2rem));
+  max-width: 72rem;
+  max-height: min(90vh, 52rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.hermes-relay-plugin.hr-pair-dialog [data-slot="dialog-header"] {
+  padding-right: 3rem;
+}
+
+.hermes-relay-plugin .hr-pair-body {
+  display: grid;
+  grid-template-columns: minmax(34rem, 1.05fr) minmax(22rem, 0.95fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.hermes-relay-plugin .hr-pair-qr-column,
+.hermes-relay-plugin .hr-pair-options-column {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.hermes-relay-plugin .hr-pair-loading {
+  display: grid;
+  min-height: 20rem;
+  place-items: center;
+  border: 1px dashed var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-pair-code-row,
+.hermes-relay-plugin .hr-pair-connection-header,
+.hermes-relay-plugin .hr-endpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.hermes-relay-plugin .hr-pair-panel,
+.hermes-relay-plugin .hr-pair-advanced {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--hr-border);
+  background: color-mix(in srgb, var(--hr-surface-muted) 50%, transparent);
+}
+
+.hermes-relay-plugin .hr-pair-panel-title,
+.hermes-relay-plugin .hr-pair-advanced > summary {
+  font-family: var(--theme-font-display, var(--theme-font-sans));
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hermes-relay-plugin .hr-endpoint-list {
+  display: grid;
+  border-top: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-endpoint-route {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-endpoint-route:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-endpoint-route > .hr-endpoint-row {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-endpoint-row {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-endpoint-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.hermes-relay-plugin .hr-endpoint-surfaces {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.hermes-relay-plugin .hr-endpoint-surface {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hermes-relay-plugin .hr-endpoint-address {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hermes-relay-plugin .hr-pair-advanced {
+  padding: 0;
+}
+
+.hermes-relay-plugin .hr-pair-advanced > summary {
+  padding: 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hermes-relay-plugin .hr-pair-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hermes-relay-plugin .hr-pair-advanced-content {
+  padding: 0 0.85rem 0.85rem;
+  border-top: 1px solid var(--hr-border);
+}
+
+.hermes-relay-plugin .hr-pair-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+}
+
+@media (max-width: 860px) {
+  .hermes-relay-plugin .hr-overview-grid,
+  .hermes-relay-plugin .hr-connection-choice-grid,
+  .hermes-relay-plugin .hr-settings-layout,
+  .hermes-relay-plugin .hr-pair-body {
+    grid-template-columns: 1fr;
+  }
+
+  .hermes-relay-plugin .hr-settings-nav {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .hermes-relay-plugin .hr-settings-nav-label {
+    display: none;
+  }
+
+  .hermes-relay-plugin .hr-settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .hermes-relay-plugin .hr-settings-nav-item.active {
+    box-shadow: inset 0 -2px 0 var(--hr-text);
+  }
+}
+
+@media (max-width: 640px) {
+  .hermes-relay-plugin .hr-plugin-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .hermes-relay-plugin .hr-live-control {
+    align-self: flex-end;
+    padding-bottom: 0;
+  }
+
+  .hermes-relay-plugin .hr-service-header,
+  .hermes-relay-plugin .hr-device-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hermes-relay-plugin .hr-service-details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .hermes-relay-plugin .hr-service-details > div {
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border-right: 0;
+  }
+
+  .hermes-relay-plugin .hr-device-actions {
+    justify-content: flex-start;
+  }
+
+  .hermes-relay-plugin.hr-pair-dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+  }
+
+  .hermes-relay-plugin .hr-pair-body {
+    padding: 0.75rem;
+  }
+
+  .hermes-relay-plugin .hr-pair-connection-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hermes-relay-plugin .hr-pair-connection-header select {
+    width: 100%;
+  }
+
+  .hermes-relay-plugin .hr-endpoint-surface {
+    grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr);
+  }
+
+  .hermes-relay-plugin .hr-endpoint-surface > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .hermes-relay-plugin .fixed {
   position: fixed;
 }
@@ -817,6 +1352,23 @@
   width: min(280px, calc(100vw - 5rem)) !important;
   height: auto !important;
   max-width: 100%;
+}
+
+.hermes-relay-plugin .hr-pairing-qr {
+  overflow-x: auto;
+}
+
+.hermes-relay-plugin .hr-pairing-qr canvas {
+  width: auto !important;
+  height: auto !important;
+  max-width: none;
+  image-rendering: pixelated;
+}
+
+@media (max-width: 980px) {
+  .hermes-relay-plugin .hr-pair-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {

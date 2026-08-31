@@ -1,12 +1,15 @@
 package com.hermesandroid.relay.network.upstream
 
 import com.hermesandroid.relay.BuildConfig
+import com.hermesandroid.relay.ui.screens.nativeDashboardAuthDiagnosticDetail
+import com.hermesandroid.relay.ui.screens.nativeDashboardDiagnosticProviderKind
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Socket
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -43,7 +46,11 @@ class NativeDashboardSignInCoordinatorTest {
         val authClient = NativeDashboardAuthClient(server.url("/").toString(), store)
         val coordinator = NativeDashboardSignInCoordinator(authClient)
 
-        val tokens = completeSignIn(coordinator, provider = "google")
+        val tokens = completeSignIn(
+            coordinator,
+            provider = "google",
+            onAuthorizationPrepared = { error("diagnostic observer failure") },
+        )
 
         assertEquals("access-1", tokens.accessToken)
         assertEquals(tokens, store.tokens)
@@ -58,11 +65,15 @@ class NativeDashboardSignInCoordinatorTest {
         val coordinator = NativeDashboardSignInCoordinator(
             NativeDashboardAuthClient(server.url("/").toString(), store),
         )
+        val validatedCallbacks = AtomicInteger()
 
         coroutineScope {
             val authorizationUrl = CompletableDeferred<String>()
             val result = async {
-                coordinator.signIn("github") { authorizationUrl.complete(it) }
+                coordinator.signIn(
+                    provider = "github",
+                    onCallbackValidated = { validatedCallbacks.incrementAndGet() },
+                ) { authorizationUrl.complete(it) }
             }
             val authorize = URI(authorizationUrl.await())
             val redirect = URI(query(authorize)["redirect_uri"]!!)
@@ -80,6 +91,7 @@ class NativeDashboardSignInCoordinatorTest {
             assertFalse(rejected.contains("attacker-secret"))
             assertFalse(rejected.contains("wrong-secret"))
             assertFalse(result.isCompleted)
+            assertEquals(0, validatedCallbacks.get())
 
             val accepted = sendCallbackResponse(
                 redirect,
@@ -98,6 +110,7 @@ class NativeDashboardSignInCoordinatorTest {
             assertFalse(accepted.contains("code-1"))
             assertFalse(accepted.contains(state))
             assertEquals("access-1", result.await().accessToken)
+            assertEquals(1, validatedCallbacks.get())
         }
     }
 
@@ -176,20 +189,67 @@ class NativeDashboardSignInCoordinatorTest {
     }
 
     @Test
-    fun androidRedirectMode_usesBrowserForNous_andCookieFlowForSelfHostedOidc() {
+    fun androidRedirectMode_usesAdvertisedCapability_forEveryProviderName() {
         val flows = listOf("cookie", "native_pkce")
 
+        listOf("nous", "self-hosted", "oidc", "google", "basic").forEach { provider ->
+            assertEquals(
+                provider,
+                DashboardRedirectAuthMode.NativePkce,
+                androidDashboardRedirectAuthMode(provider, flows),
+            )
+            assertEquals(
+                provider,
+                DashboardRedirectAuthMode.WebView,
+                androidDashboardRedirectAuthMode(provider, listOf("cookie")),
+            )
+        }
         assertEquals(
             DashboardRedirectAuthMode.NativePkce,
-            androidDashboardRedirectAuthMode("nous", flows),
+            androidDashboardRedirectAuthMode(
+                providerName = "self-hosted",
+                authFlows = flows,
+                competingRedirectProviders = 2,
+            ),
         )
         assertEquals(
-            DashboardRedirectAuthMode.WebView,
-            androidDashboardRedirectAuthMode("oidc", flows),
+            DashboardRedirectAuthMode.NativePkce,
+            androidDashboardRedirectAuthMode(
+                providerName = "nous",
+                authFlows = flows,
+                competingRedirectProviders = 2,
+            ),
         )
         assertEquals(
-            DashboardRedirectAuthMode.WebView,
-            androidDashboardRedirectAuthMode("nous", listOf("cookie")),
+            DashboardRedirectAuthMode.NativePkce,
+            androidDashboardRedirectAuthMode(
+                providerName = "basic",
+                authFlows = flows,
+                competingRedirectProviders = 1,
+            ),
+        )
+        assertEquals(null, nativeDashboardAuthorizationProvider("nous", 1))
+        assertEquals("nous", nativeDashboardAuthorizationProvider("nous", 2))
+        assertEquals("self-hosted", nativeDashboardAuthorizationProvider("self-hosted", 1))
+    }
+
+    @Test
+    fun authDiagnosticsUseSafeProviderClassesAndBoundedAttemptMetadata() {
+        assertEquals("nous", nativeDashboardDiagnosticProviderKind("Nous"))
+        assertEquals("self_hosted_oidc", nativeDashboardDiagnosticProviderKind("self-hosted"))
+        assertEquals("password", nativeDashboardDiagnosticProviderKind("basic"))
+        assertEquals("custom", nativeDashboardDiagnosticProviderKind("private-provider-name"))
+        assertEquals("gateway_selected", nativeDashboardDiagnosticProviderKind(null))
+        assertEquals(
+            "stage=failed attempt=2 provider=nous failure=token_http_503 " +
+                "authorization_origin=alternate",
+            nativeDashboardAuthDiagnosticDetail(
+                stage = "failed",
+                attempt = 2,
+                providerKind = "nous",
+                failureStage = "token_http_503",
+                authorizationOrigin = "alternate",
+            ),
         )
     }
 
@@ -208,10 +268,14 @@ class NativeDashboardSignInCoordinatorTest {
     private suspend fun completeSignIn(
         coordinator: NativeDashboardSignInCoordinator,
         provider: String,
+        onAuthorizationPrepared: (Boolean) -> Unit = {},
     ): NativeDashboardTokens = coroutineScope {
         val authorizationUrl = CompletableDeferred<String>()
         val result = async {
-            coordinator.signIn(provider) { authorizationUrl.complete(it) }
+            coordinator.signIn(
+                provider = provider,
+                onAuthorizationPrepared = onAuthorizationPrepared,
+            ) { authorizationUrl.complete(it) }
         }
         val authorize = URI(authorizationUrl.await())
         val authorizeQuery = query(authorize)

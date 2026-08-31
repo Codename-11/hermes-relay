@@ -734,8 +734,11 @@ cat > "$TS_SHIM_PATH" <<SHIM
 #
 # Usage:
 #   hermes-relay-tailscale status
-#   hermes-relay-tailscale enable [--port N] [--api-port N] [--relay-only]
-#   hermes-relay-tailscale disable [--port N] [--api-port N] [--relay-only]
+#   hermes-relay-tailscale enable [--dashboard-listener-port 10443] [--dashboard-target-port 9119] [--api-port 8642] [--no-api]
+#   hermes-relay-tailscale disable [--dashboard-listener-port 10443] [--dashboard-target-port 9119] [--api-port 8642] [--no-api]
+#   hermes-relay-tailscale enable --dashboard-listener-port 443  # advanced override; only when :443 is free
+#   hermes-relay-tailscale enable --port 8767   # explicit legacy/direct Relay
+#   hermes-relay-tailscale disable --port 8767  # explicit legacy/direct Relay
 #
 # Override the venv python path with \$HERMES_VENV_PY if needed. When unset,
 # the install-time detected interpreter is tried first, then classic + uv layouts.
@@ -841,7 +844,10 @@ fi
 
 # ── 7/7  Offer (don't force) Tailscale serve enablement ───────────────────
 # ADR 25 — first-class Tailscale helper. The relay stays loopback-bound on
-# :8767 and the Hermes API server commonly stays loopback-bound on :8642;
+# :8767 while the recommended Tailscale ingress listens on HTTPS :10443 and
+# proxies local Dashboard :9119; Relay rides Dashboard's same-origin plugin
+# transport. The optional Hermes API server may also be published on :8642
+# for headless compatibility.
 # `tailscale serve` terminates TLS + identity for the tailnet. This step is
 # fully optional:
 #
@@ -857,7 +863,7 @@ fi
 # `hermes gateway run --tailscale` flag lands on hermes-agent main. The
 # capability probe lives in plugin/relay/tailscale.py::canonical_upstream_present.
 if command -v tailscale >/dev/null 2>&1; then
-    step 7 7 "Optional — publish relay over Tailscale"
+    step 7 7 "Optional — publish Dashboard over Tailscale"
     if [ -n "${TS_DECLINE:-}" ]; then
         info "  TS_DECLINE=1 set — skipping Tailscale serve offer"
     else
@@ -873,8 +879,8 @@ if command -v tailscale >/dev/null 2>&1; then
             fi
         else
             printf "\n"
-            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Tailscale is installed. Publish relay + API over your tailnet?"
-            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Runs tailscale serve for ${C_BOLD}:8767${C_RESET} (relay) and ${C_BOLD}:8642${C_RESET} (Hermes API)."
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Tailscale is installed. Publish Dashboard + optional API over your tailnet?"
+            printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Runs dedicated HTTPS ${C_BOLD}:10443${C_RESET} → local Dashboard ${C_BOLD}:9119${C_RESET} (including Relay path), plus ${C_BOLD}:8642${C_RESET} for optional API fallback."
             printf "    ${C_DIM}%s${C_RESET} %s\n" "$SYM_INFO" "Loopback services stay private; Tailscale handles TLS + identity."
             printf "\n    ${C_BOLD}Enable now?${C_RESET} ${C_DIM}[y/N]${C_RESET} "
             read -r ts_reply </dev/tty || ts_reply=""
@@ -885,8 +891,8 @@ if command -v tailscale >/dev/null 2>&1; then
         fi
 
         if [ -n "$ts_do" ]; then
-            if "$VENV_PY" -m plugin.relay.tailscale_cli enable --port 8767 --api-port 8642 >/dev/null 2>&1; then
-                ok "tailscale serve enabled on https://<your-tailnet-host>:8767 and :8642"
+            if "$VENV_PY" -m plugin.relay.tailscale_cli enable >/dev/null 2>&1; then
+                ok "tailscale serve enabled on HTTPS :10443 for local Dashboard :9119, plus optional API :8642"
                 info "  Check:  ${C_BOLD}hermes-relay-tailscale status${C_RESET}"
                 info "  Revoke: ${C_BOLD}hermes-relay-tailscale disable${C_RESET}"
             else
@@ -962,7 +968,9 @@ printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-pair --mode auto --prefer tails
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-status${C_RESET}             ${C_DIM}# show live phone state${C_RESET}\n" "$SYM_INFO"
 printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Remote access${C_RESET}\n"
-printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale enable${C_RESET}   ${C_DIM}# publish relay :8767 + API :8642 on your tailnet${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale enable${C_RESET}   ${C_DIM}# HTTPS :10443 → Dashboard :9119 + optional API :8642${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale enable --dashboard-listener-port 443${C_RESET} ${C_DIM}# advanced override; only if :443 is free${C_RESET}\n" "$SYM_INFO"
+printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale enable --port 8767${C_RESET} ${C_DIM}# legacy/direct Relay only${C_RESET}\n" "$SYM_INFO"
 printf "    ${C_DIM}%s${C_RESET} ${C_BOLD}hermes-relay-tailscale status${C_RESET}   ${C_DIM}# show served Tailscale ports${C_RESET}\n" "$SYM_INFO"
 printf "\n"
 printf "  ${C_BOLD}${C_CYAN}Self-setup / troubleshoot${C_RESET}\n"

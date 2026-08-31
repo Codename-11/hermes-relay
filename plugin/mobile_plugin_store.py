@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+RESERVED_PLUGIN_IDS = frozenset({"git"})
 MAX_DOCUMENT_BYTES = 512 * 1024
 ALLOWED_LIFECYCLES = frozenset({"session", "persistent"})
 ALLOWED_ELEMENT_TYPES = frozenset(
@@ -132,6 +133,8 @@ class MobilePluginStore:
         for path in sorted(self.root.glob("*.json")):
             if not PLUGIN_ID_RE.fullmatch(path.stem):
                 continue
+            if path.stem in RESERVED_PLUGIN_IDS:
+                continue
             entry = self._read(path.stem, required=False)
             if entry:
                 entries.append({k: v for k, v in entry.items() if k != "document"})
@@ -139,6 +142,26 @@ class MobilePluginStore:
 
     def manifest(self) -> dict[str, Any]:
         contributions = []
+        # Static read-only Git page contributed by the relay plugin itself.
+        # It carries no filesystem paths (per the android-plugins.md document
+        # contract); repo data flows through the /git/* API responses and is
+        # rendered as plain text by the host. No plugin.api.write grant is
+        # required for the read-only Git surface.
+        contributions.append(
+            {
+                "id": "git",
+                "surface": "page",
+                "title": "Git",
+                "description": "Browse repositories on this Hermes host",
+                "status": "published",
+                "lifecycle": "persistent",
+                "revision": 1,
+                "document": {
+                    "method": "GET",
+                    "path": "mobile/pages/git",
+                },
+            }
+        )
         for summary in self.list():
             is_draft = summary["status"] == "draft"
             contributions.append(
@@ -180,6 +203,8 @@ class MobilePluginStore:
         normalized = str(plugin_id).strip().lower()
         if not PLUGIN_ID_RE.fullmatch(normalized):
             raise MobilePluginStoreError("invalid plugin id")
+        if normalized in RESERVED_PLUGIN_IDS:
+            raise MobilePluginStoreError("plugin id is reserved")
         return normalized
 
     @staticmethod
@@ -311,6 +336,8 @@ class MobilePluginStore:
             if required:
                 raise MobilePluginNotFoundError(plugin_id)
             return {}
+        except MobilePluginStoreError:
+            raise
         except (OSError, ValueError, json.JSONDecodeError):
             if required:
                 raise MobilePluginNotFoundError(plugin_id)

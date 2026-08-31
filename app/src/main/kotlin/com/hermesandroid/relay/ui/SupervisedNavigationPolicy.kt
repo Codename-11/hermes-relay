@@ -12,6 +12,23 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
         normalized == Screen.SupervisedAppearanceSettings.route
 }
 
+internal fun mayStartAddConnection(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+): Boolean = !supervisedEnabled || parentAccessUnlocked
+
+internal inline fun runAddConnectionAction(
+    supervisedEnabled: Boolean,
+    parentAccessUnlocked: Boolean,
+    navigateToPair: () -> Unit,
+    prepareConnection: () -> Unit,
+): Boolean {
+    if (!mayStartAddConnection(supervisedEnabled, parentAccessUnlocked)) return false
+    navigateToPair()
+    prepareConnection()
+    return true
+}
+
 /** Do not inspect or mutate a NavController until its first destination exists. */
 internal fun shouldRedirectSupervisedRoute(
     supervisedEnabled: Boolean,
@@ -44,6 +61,25 @@ internal fun isRelayNavigationHydrated(
     supervisedPolicyHydrated: Boolean,
 ): Boolean = connectionStoreHydrated &&
     (activeConnectionId == null || supervisedPolicyHydrated)
+
+/**
+ * Keep the NavHost mounted while a new connection's supervised policy loads.
+ * Setup and Dashboard sign-in expose no protected conversation/settings data,
+ * so they may remain visible; every other route stays covered fail-closed.
+ */
+internal fun shouldCoverRelayNavigation(
+    navigationHydrated: Boolean,
+    routeContentAllowed: Boolean,
+    currentRoute: String?,
+): Boolean {
+    if (!routeContentAllowed) return true
+    if (navigationHydrated) return false
+    return currentRoute?.substringBefore('?') !in setOf(
+        Screen.Onboarding.route,
+        Screen.Pair.route.substringBefore('?'),
+        Screen.DashboardSignIn.route.substringBefore('?'),
+    )
+}
 
 /** A parent unlock never follows the user back into the supervised chat root. */
 internal fun shouldRelockParentAccess(

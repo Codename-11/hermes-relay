@@ -30,13 +30,16 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.ui.components.BackgroundTaskCardTest",
     "com.hermesandroid.relay.ui.components.DotMatrixIndicatorTest",
     "com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest",
+    "com.hermesandroid.relay.ui.components.ChangelogParserTest",
     "com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest",
+    "com.hermesandroid.relay.ui.screens.ChangelogScreenTest",
     "com.hermesandroid.relay.ui.screens.ChatUnreadStateTest",
 )
 REPOSITORY_CHECKS = (
     "check-android-locales.py",
     "check-user-docs-locales.py",
     "check-android-collection-apis.py",
+    "check-android-release-notes.py",
     "check-version-tracks.py",
 )
 

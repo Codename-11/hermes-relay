@@ -59,6 +59,10 @@ class GatewayClientHarness(
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     var failTicketMint = false
+    var malformedTicketMint = false
+    val transientTicketFailures = AtomicInteger(0)
+    var ticketResponseDelayMs = 0L
+    var closeBeforeReadyCode: Int? = null
     var resumeFails = false
 
     /** Authoritative profile owner echoed by session results; null follows request. */
@@ -73,6 +77,12 @@ class GatewayClientHarness(
 
     @Volatile
     var recoveryAssistant = ""
+
+    @Volatile
+    var recoveryMessages: JsonArray = JsonArray(emptyList())
+
+    @Volatile
+    var resumeEventsBeforeAck: List<Pair<String, JsonObject?>> = emptyList()
 
     @Volatile
     var recoveryInflightStreaming: Boolean? = null
@@ -231,11 +241,18 @@ class GatewayClientHarness(
     val suppressAckMethods: MutableSet<String> = ConcurrentHashMap.newKeySet()
     val pendingAcks = LinkedBlockingQueue<PendingAck>()
 
+    @Volatile
+    var suppressGatewayReady: Boolean = false
+
     private val wsListener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
             serverSockets.add(webSocket)
             allServerSockets.add(webSocket)
-            webSocket.send(eventFrame("gateway.ready", null, null))
+            closeBeforeReadyCode?.let { code ->
+                webSocket.close(code, if (code == 4401) "sign in required" else "origin rejected")
+                return
+            }
+            if (!suppressGatewayReady) sendGatewayReady(webSocket)
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -539,6 +556,16 @@ class GatewayClientHarness(
                     put("error", buildJsonObject { put("message", "$method refused") })
                 }
             }
+            if (method == "session.resume" && result != null) {
+                val liveId = (result["session_id"] as? JsonPrimitive)?.contentOrNull
+                val events = resumeEventsBeforeAck
+                resumeEventsBeforeAck = emptyList()
+                if (!liveId.isNullOrBlank()) {
+                    events.forEach { (type, payload) ->
+                        webSocket.send(eventFrame(type, payload, liveId))
+                    }
+                }
+            }
             webSocket.send(reply.toString())
         }
     }
@@ -549,6 +576,7 @@ class GatewayClientHarness(
         put("session_id", sessionId)
         put("running", recoveryRunning)
         put("status", if (recoveryRunning) "streaming" else "idle")
+        put("messages", recoveryMessages)
         if (!omitSessionProfileMetadata || recoveryProject != null) {
             put("info", buildJsonObject {
                 if (!omitSessionProfileMetadata) {
@@ -598,11 +626,19 @@ class GatewayClientHarness(
                         ticketMints.incrementAndGet()
                         if (failTicketMint) {
                             MockResponse().setResponseCode(401).setBody("""{"error":"no session"}""")
+                        } else if (malformedTicketMint) {
+                            MockResponse().setResponseCode(200).setBody("""{"ttl_seconds":30}""")
+                        } else if (transientTicketFailures.getAndUpdate { remaining ->
+                                (remaining - 1).coerceAtLeast(0)
+                            } > 0
+                        ) {
+                            MockResponse().setResponseCode(502).setBody("Bad Gateway")
                         } else {
                             MockResponse()
                                 .setResponseCode(200)
                                 .setHeader("Content-Type", "application/json")
                                 .setBody("""{"ticket":"tkt-${ticketMints.get()}","ttl_seconds":30}""")
+                                .setBodyDelay(ticketResponseDelayMs, TimeUnit.MILLISECONDS)
                         }
                     }
                     path.startsWith("/api/ws") -> MockResponse().withWebSocketUpgrade(wsListener)
@@ -626,6 +662,10 @@ class GatewayClientHarness(
 
     fun awaitServerSocket(): WebSocket =
         serverSockets.poll(5, TimeUnit.SECONDS) ?: error("server socket never opened")
+
+    fun sendGatewayReady(webSocket: WebSocket) {
+        webSocket.send(eventFrame("gateway.ready", null, null))
+    }
 
     fun awaitRpc(method: String): JsonObject {
         val deadline = System.currentTimeMillis() + 5_000
@@ -710,6 +750,9 @@ class GatewayChatClientTest {
     private lateinit var scope: CoroutineScope
     private lateinit var client: GatewayChatClient
     private var unsupportedMarked = false
+    private var signInRequiredMarked = false
+    private var unreachableMarked = false
+    private var readyMarked = false
 
     private class Recorder {
         val starts = AtomicInteger(0)
@@ -760,14 +803,20 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        callbackDispatcher: (block: () -> Unit) -> Unit = { it() },
+        ticketTimeoutMs: Long = 8_000L,
     ) = GatewayChatClient(
         initialDashboardClient = DashboardApiClient(
             baseUrl = harness.server.url("/").toString().trimEnd('/'),
             okHttpClient = OkHttpClient(),
+            controlReadTimeoutMillis = ticketTimeoutMs,
         ),
         okHttpClient = OkHttpClient(),
-        callbackDispatcher = { it() },
+        callbackDispatcher = callbackDispatcher,
         onGatewayUnsupported = { unsupportedMarked = true },
+        onGatewaySignInRequired = { signInRequiredMarked = true },
+        onGatewayUnreachable = { unreachableMarked = true },
+        onGatewayReady = { readyMarked = true },
         scope = scope,
         // Keep the mid-turn reconnect window short so `failed rejoin`
         // surfaces its error well within the test's await budget.
@@ -797,10 +846,16 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        ticketTimeoutMs: Long = 8_000L,
     ) {
         client.shutdown()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        client = buildClient(rpcTimeoutMs, promptSubmitTimeoutMs, turnIdleTimeoutMs)
+        client = buildClient(
+            rpcTimeoutMs = rpcTimeoutMs,
+            promptSubmitTimeoutMs = promptSubmitTimeoutMs,
+            turnIdleTimeoutMs = turnIdleTimeoutMs,
+            ticketTimeoutMs = ticketTimeoutMs,
+        )
     }
 
     private fun waitUntil(timeoutMs: Long = 2_000L, condition: () -> Boolean) {
@@ -816,6 +871,9 @@ class GatewayChatClientTest {
         harness = GatewayClientHarness()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         unsupportedMarked = false
+        signInRequiredMarked = false
+        unreachableMarked = false
+        readyMarked = false
         client = buildClient()
     }
 
@@ -1400,11 +1458,35 @@ class GatewayChatClientTest {
         }
 
         assertTrue(client.prewarmAwait("stored-session"))
+        val resume = harness.awaitRpc("session.resume")
+        assertEquals(true, (resume["defer_history"] as JsonPrimitive).booleanOrNull)
+        assertEquals(true, (resume["omit_messages"] as JsonPrimitive).booleanOrNull)
         assertTrue("cold resume was not reported", resumedLatch.await(5, TimeUnit.SECONDS))
         assertTrue(client.prewarmAwait("stored-session"))
         Thread.sleep(100)
 
         assertEquals(listOf("stored-session"), resumedSessions.toList())
+    }
+
+    @Test
+    fun `observation warmup never claims or interrupts a foreign runtime`() = runBlocking {
+        val registrations = AtomicInteger(0)
+        client.setUnsolicitedTurnProvider {
+            registrations.incrementAndGet()
+            GatewayInboundTurnRegistration(Recorder().callbacks) { true }
+        }
+
+        assertTrue(client.observeAwait())
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, "foreign-runtime"))
+        delay(100)
+        client.shutdown()
+
+        assertEquals(0, registrations.get())
+        assertFalse(harness.rpcLog.any { it.first == "session.resume" })
+        assertFalse(harness.rpcLog.any { it.first == "session.activate" })
+        assertFalse(harness.rpcLog.any { it.first == "session.interrupt" })
+        assertFalse(harness.rpcLog.any { it.first == "prompt.submit" })
     }
 
     @Test
@@ -1854,6 +1936,97 @@ class GatewayChatClientTest {
         assertTrue(r.preflightFailures.isNotEmpty())
         assertTrue(r.errors.isEmpty())
         assertTrue(r.textDeltas.isEmpty())
+        assertEquals("auth failure must not repeat an identical ticket request", 1, harness.ticketMints.get())
+        assertTrue(signInRequiredMarked)
+        assertFalse(unreachableMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
+    }
+
+    @Test
+    fun `transient ticket server failure retries immediately with a fresh ticket`() {
+        harness.transientTicketFailures.set(1)
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+        }
+
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertEquals(2, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(r.errors.isEmpty())
+        assertFalse("a recovered attempt must not publish unreachable", unreachableMarked)
+        assertTrue("gateway.ready must publish live readiness", readyMarked)
+    }
+
+    @Test
+    fun `malformed ticket response is terminal and is not retried`() {
+        harness.malformedTicketMint = true
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
+    }
+
+    @Test
+    fun `ticket timeout gets one bounded retry but stays unresolved for visible reconnect`() {
+        harness.ticketResponseDelayMs = 500L
+        rebuildClient(ticketTimeoutMs = 75L)
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(2, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("timeout", ignoreCase = true))
+        assertFalse("transient timeouts must not publish a terminal unreachable verdict", unreachableMarked)
+        assertFalse(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Retryable, client.reconnectDisposition.value)
+    }
+
+    @Test
+    fun `pre-ready auth close settles promptly without a second ticket`() {
+        harness.closeBeforeReadyCode = 4401
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("authentication", ignoreCase = true))
+        assertTrue(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
+    }
+
+    @Test
+    fun `pre-ready origin guard close settles promptly without a second ticket`() {
+        harness.closeBeforeReadyCode = 4403
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) {
+            r.preflightFailures += it
+            r.completeLatch.countDown()
+        }
+
+        assertTrue(r.completeLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, harness.ticketMints.get())
+        assertTrue(r.preflightFailures.single().contains("origin", ignoreCase = true))
+        assertTrue(unreachableMarked)
+        assertFalse(signInRequiredMarked)
+        assertEquals(GatewayReconnectDisposition.Terminal, client.reconnectDisposition.value)
     }
 
     @Test
@@ -2180,6 +2353,196 @@ class GatewayChatClientTest {
         assertEquals("live-1", (params["session_id"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("child-17", (params["subagent_id"] as? JsonPrimitive)?.contentOrNull)
         assertEquals("focus on Android", (params["text"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `child watch is profile pinned bounded and isolated from main session`() = runBlocking {
+        harness.sessionProfileOverride = "operator"
+        harness.resumeLiveSessionIds["parent-session"] = "live-parent"
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        client.sessionProfileProvider = { "operator" }
+
+        assertTrue(client.prewarmAwait("parent-session"))
+        val serverWs = harness.awaitServerSocket()
+        assertEquals("live-parent", client.currentLiveSessionId("parent-session"))
+
+        harness.recoveryRunning = true
+        harness.recoveryMessages = JsonArray(listOf(
+            buildJsonObject { put("role", "user"); put("text", "old") },
+            buildJsonObject { put("role", "assistant"); put("text", "recent") },
+            buildJsonObject { put("role", "assistant"); put("text", "newest") },
+        ))
+        val childRecorder = Recorder()
+        val watch = client.openChildWatch(
+            childSessionId = "child-session",
+            profile = "operator",
+            callbacks = childRecorder.callbacks,
+            historyLimit = 2,
+        ).getOrThrow()
+
+        val resume = harness.awaitRpcCount("session.resume", 2).last()
+        assertEquals("child-session", (resume["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("operator", (resume["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(true, (resume["lazy"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals(true, (resume["close_on_disconnect"] as? JsonPrimitive)?.booleanOrNull)
+        assertEquals("live-child", watch.liveSessionId)
+        assertTrue(watch.running)
+        assertTrue(watch.historyTruncated)
+        assertEquals(listOf("recent", "newest"), watch.messages.map { it.contentText })
+        assertEquals("live-parent", client.currentLiveSessionId("parent-session"))
+
+        serverWs.send(harness.eventFrame("message.start", null, "live-child"))
+        serverWs.send(
+            harness.eventFrame(
+                "reasoning.delta",
+                buildJsonObject { put("text", "checking") },
+                "live-child",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "working") },
+                "live-child",
+            ),
+        )
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "done") },
+                "live-child",
+            ),
+        )
+
+        assertTrue(childRecorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("checking"), childRecorder.thinkingDeltas.toList())
+        assertTrue(childRecorder.textDeltas.contains("working"))
+        assertTrue(childRecorder.errors.isEmpty())
+
+        client.closeChildWatch(watch).getOrThrow()
+        val close = harness.awaitRpc("session.close")
+        assertEquals("live-child", (close["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("live-parent", client.currentLiveSessionId("parent-session"))
+    }
+
+    @Test
+    fun `concurrent child opens keep newest generation and stale close is harmless`() = runBlocking {
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        val recorders = listOf(Recorder(), Recorder())
+        val opens = recorders.map { recorder ->
+            async(Dispatchers.IO) {
+                client.openChildWatch(
+                    "child-session",
+                    callbacks = recorder.callbacks,
+                ).getOrThrow()
+            }
+        }
+        val watches = opens.map { it.await() }
+        harness.awaitServerSocket()
+        val stale = watches.minBy { it.generation }
+        val newest = watches.maxBy { it.generation }
+
+        client.closeChildWatch(stale).getOrThrow()
+        assertTrue(harness.rpcLog.none { it.first == "session.close" })
+
+        client.closeChildWatch(newest).getOrThrow()
+        val close = harness.awaitRpc("session.close")
+        assertEquals("live-child", (close["session_id"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(1, recorders.sumOf { it.resumeFailures.size })
+    }
+
+    @Test
+    fun `child watch replays terminal event that arrives before resume ack`() = runBlocking {
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        harness.recoveryRunning = true
+        harness.resumeEventsBeforeAck = listOf(
+            "message.start" to null,
+            "message.delta" to buildJsonObject { put("text", "pre-ack") },
+            "message.complete" to buildJsonObject { put("text", "done") },
+        )
+        val recorder = Recorder()
+
+        val watch = client.openChildWatch(
+            "child-session",
+            callbacks = recorder.callbacks,
+        ).getOrThrow()
+        harness.awaitServerSocket()
+
+        assertEquals("live-child", watch.liveSessionId)
+        assertFalse(watch.running)
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(recorder.textDeltas.contains("pre-ack"))
+        assertTrue(recorder.errors.isEmpty())
+    }
+
+    @Test
+    fun `failed child watch close can be retried`() = runBlocking {
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        val watch = client.openChildWatch(
+            "child-session",
+            callbacks = Recorder().callbacks,
+        ).getOrThrow()
+        harness.awaitServerSocket()
+        harness.rpcErrors["session.close"] = 5000 to "busy"
+
+        assertTrue(client.closeChildWatch(watch).isFailure)
+        harness.rpcErrors.remove("session.close")
+        client.closeChildWatch(watch).getOrThrow()
+
+        val closes = harness.awaitRpcCount("session.close", 2)
+        assertEquals(2, closes.size)
+        assertTrue(closes.all {
+            (it["session_id"] as? JsonPrimitive)?.contentOrNull == "live-child"
+        })
+    }
+
+    @Test
+    fun `queued child callback is dropped after exact watch closes`() = runBlocking {
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val queuedCallbacks = ConcurrentLinkedQueue<() -> Unit>()
+        client = buildClient(callbackDispatcher = { queuedCallbacks += it })
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        val recorder = Recorder()
+        val watch = client.openChildWatch(
+            "child-session",
+            callbacks = recorder.callbacks,
+        ).getOrThrow()
+        val serverWs = harness.awaitServerSocket()
+
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "stale") },
+                "live-child",
+            ),
+        )
+        awaitCondition { queuedCallbacks.isNotEmpty() }
+        client.closeChildWatch(watch).getOrThrow()
+        while (true) queuedCallbacks.poll()?.invoke() ?: break
+
+        assertTrue(recorder.textDeltas.isEmpty())
+    }
+
+    @Test
+    fun `child watch history enforces total character bound`() = runBlocking {
+        harness.resumeLiveSessionIds["child-session"] = "live-child"
+        harness.recoveryMessages = JsonArray(listOf(
+            buildJsonObject { put("role", "assistant"); put("text", "kept") },
+            buildJsonObject {
+                put("role", "assistant")
+                put("text", "x".repeat(GatewayChatClient.MAX_CHILD_WATCH_HISTORY_CHARS + 1))
+            },
+        ))
+
+        val watch = client.openChildWatch(
+            "child-session",
+            callbacks = Recorder().callbacks,
+        ).getOrThrow()
+        harness.awaitServerSocket()
+
+        assertTrue(watch.historyTruncated)
+        assertEquals(listOf("kept"), watch.messages.map { it.contentText })
     }
 
     @Test

@@ -28,6 +28,7 @@ import json
 import unittest
 from typing import Any
 
+from plugin.phone_platform import _normalize_reply
 from plugin.relay.channels.proactive import ProactiveChannel, ProactiveError
 
 
@@ -333,6 +334,34 @@ class ProactiveChannelTests(unittest.TestCase):
             self.assertEqual(ch.reply_count, 1)
             # Drained — buffer is empty.
             self.assertEqual(ch.buffered_reply_count(), 0)
+
+        _run(run())
+
+    def test_custom_chat_id_survives_relay_drain_and_adapter_normalization(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            ws = _FakeWs()
+            await ch.handle(
+                ws,
+                {
+                    "type": "proactive.reply",
+                    "payload": {
+                        "text": "continue this thread",
+                        "chat_id": "thread-project-461",
+                        "reply_to": "prompt-1",
+                        "message_id": "reply-1",
+                    },
+                },
+            )
+
+            replies = await ch.take_replies(timeout=0.1)
+            self.assertEqual(len(replies), 1)
+            normalized = _normalize_reply(replies[0], "configured-home")
+            self.assertIsNotNone(normalized)
+            assert normalized is not None
+            self.assertEqual(normalized["chat_id"], "thread-project-461")
+            self.assertEqual(normalized["reply_to"], "prompt-1")
+            self.assertEqual(normalized["message_id"], "reply-1")
 
         _run(run())
 

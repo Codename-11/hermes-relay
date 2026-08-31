@@ -140,6 +140,86 @@ class SecureProxyMintTests(AioHTTPTestCase):
         self.assertEqual(direct["proxy"], self.proxy["proxy"])
         connector.publish_bootstrap.assert_awaited_once()
 
+    async def test_secure_link_keeps_explicit_legacy_routes_after_lan_and_reach_last(self) -> None:
+        connector = MagicMock()
+        connector.status.return_value = {"connected": True}
+        connector.publish_bootstrap = AsyncMock(return_value="t" * 43)
+        connector.stop = AsyncMock()
+        connector.connect_url = "wss://reach.example/v1/connect"
+        connector.host_id = "h" * 22
+        self.app["server"].secure_link_connector = connector
+        endpoints = [
+            {
+                "role": "tailscale",
+                "priority": 0,
+                "dashboard": {"url": "http://100.64.0.20:9119"},
+                "relay": {
+                    "url": "ws://100.64.0.20:9119/api/plugins/hermes-relay/transport",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "lan",
+                "priority": 2,
+                "dashboard": {"url": "http://192.168.1.20:9119"},
+                "relay": {
+                    "url": "ws://192.168.1.20:9119/api/plugins/hermes-relay/transport",
+                    "transport_hint": "ws",
+                },
+            },
+            {
+                "role": "public_legacy",
+                "priority": 3,
+                "legacy": True,
+                "recommended": False,
+                "relay": {"url": "wss://public.example:8767", "transport_hint": "wss"},
+            },
+            {
+                "role": "legacy_direct",
+                "priority": 4,
+                "legacy": True,
+                "recommended": False,
+                "relay": {"url": "ws://192.168.1.20:8767", "transport_hint": "ws"},
+            },
+        ]
+
+        with patch("plugin.pair._tailscale_status", return_value=None):
+            response = await self.client.post(
+                "/pairing/mint",
+                json={
+                    "endpoints": endpoints,
+                    "legacy_direct_relay": True,
+                    "ttl_seconds": 3600,
+                },
+            )
+
+        self.assertEqual(response.status, 200, await response.text())
+        candidates = json.loads((await response.json())["qr_payload"])["endpoints"]
+        roles = [candidate["role"] for candidate in candidates]
+        self.assertEqual(roles, [
+            "tailscale",
+            "public",
+            "plugin_proxy",
+            "lan",
+            "public_legacy",
+            "legacy_direct",
+            "outbound_broker",
+        ])
+        self.assertEqual(
+            [candidate["priority"] for candidate in candidates],
+            list(range(len(candidates))),
+        )
+        self.assertEqual(candidates[-1]["role"], "outbound_broker")
+
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is required")
 class SecureProxyIdentityTests(unittest.TestCase):

@@ -391,6 +391,32 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    val showGitWorkspaceInChat by
+                        connectionViewModel.showGitWorkspaceInChat.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.chat_settings_show_git_workspace),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(R.string.chat_settings_show_git_workspace_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = showGitWorkspaceInChat,
+                            onCheckedChange = connectionViewModel::setShowGitWorkspaceInChat,
+                        )
+                    }
+
+                    HorizontalDivider()
+
                     val recentPromptsEnabled by
                         connectionViewModel.chatRecentPromptsEnabled.collectAsState()
                     Row(
@@ -523,7 +549,7 @@ fun ChatSettingsScreen(
                     val settingsContext = LocalContext.current
                     val notifyPermissionLauncher = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestPermission()
-                    ) { /* Notifier re-checks the grant at post time. */ }
+                    ) { granted -> connectionViewModel.setNotifyTurnComplete(granted) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,

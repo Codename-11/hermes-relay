@@ -38,6 +38,10 @@ jobs:
         working-directory: plugin/dashboard
         run: npm run build
 
+      - name: Test dashboard source
+        working-directory: plugin/dashboard
+        run: npm test
+
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
@@ -54,7 +58,11 @@ jobs:
         run: pip install -r relay_server/requirements.txt fastapi httpx requests
 
       - name: Run dashboard API tests
-        run: python -m unittest plugin.dashboard.test_plugin_api
+        run: >-
+          python -m unittest
+          plugin.dashboard.test_plugin_api
+          plugin.dashboard.test_git_api
+          plugin.dashboard.test_mobile_plugin_api
 
       - name: Verify dashboard bundle outputs
         run: |

@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.14.0] - 2026-08-30
+
+### Added
+
+- **Android can preview delegated agent work without leaving the parent chat.** The current-chat activity sheet shows bounded lifecycle, progress, and tool previews for concurrent children, opens vanilla Hermes child history read-only when the Gateway exposes it, and stays explicit when reconnect gaps or older routes leave details unavailable. (#447)
+- **Android presents Relay Git as a first-class native workspace.** A compact optional Chat rail opens repository status, line totals, filters, diffs, branches, staging, commits, and remotes; the full workspace remains available from Settings when Chat controls are hidden. An updated optional Hermes-Relay Plugin is required for Git operations.
+
+### Changed
+
+- **Connections now explain and recover each Dashboard, Relay, and optional API route independently.** LAN, Tailscale, and public HTTPS can fail over without allowing an unauthenticated or different-origin Relay route to borrow Dashboard credentials. Protected same-origin Relay health challenges are recognized as authentication boundaries instead of outages. An updated optional Hermes-Relay Plugin is required for same-origin Relay ingress. (Related: #399)
+- **Android What's New leads with one curated release highlight without interrupting startup.** A timed post-update toast can be swiped or closed, previews additional feature/fix counts when a release has meaningful secondary items, expands into the centered highlight view on request, and keeps the full technical history available. Each release can present one plain-language summary, up to three primary benefits, and up to two quieter improvements, while release checks keep the structured entry, fallback, Play copy, and public release records aligned.
+
+### Fixed
+
+- **Android wake-word detection now loads a compatible native ONNX Runtime.** Packaged sherpa and Java JNI consumers are checked against the shared runtime for every supported ABI before release. (#444)
+- **Android Continuous voice waits for barge-in microphone teardown before listening again.** Multi-turn hands-free conversations no longer lose the microphone after a response finishes with barge-in enabled. (#464)
+- **Opening Android no longer claims or interrupts a turn already running in Hermes Desktop/TUI.** Passive foreground and session browsing now use read-only Gateway status plus profile-scoped history; live-session resume remains reserved for explicit Android actions and exact Android-owned recovery. (Related: #365)
+- **Android provisional Threads can be removed without touching server history.** The drawer now offers a local-only removal action, reconciles promoted phone sessions without duplicate rows, and keeps Thread routing isolated to the active saved connection. (#461)
+- **Android Clarify cards make custom answers explicit and keyboard-friendly.** Choice prompts label their Other answer field, submit trimmed text from the keyboard, and do not restore an authoritatively expired prompt after session navigation. (#446)
+- **The visible Android Sphere keeps its smooth procedural motion across startup and chat.** Backgrounded and motion-disabled surfaces remain still without reducing foreground animation to a stepped ambient pulse.
+- **Android Voice Focus keeps Stop and immediate spoken steering available across every interaction mode.** Hold-to-talk now interrupts Thinking and Transcribing turns before capturing the replacement direction, remains operable through TalkBack, Switch Access, and keyboard controls, preserves pointer press-and-release behavior across floating controls, and Google Play no longer offers the sideload-only system overlay action.
+- **Android Assistant sessions explain when no speech was captured instead of appearing stuck at Ready.** Retry feedback survives the separate system overlay process, recreated session UI requests the current turn state, and locked sessions keep transcript, response, and technical error text private. (Related: #424)
+- **Android New Chat keeps the current profile and stays fresh across profile switches.** Starting from All Profiles no longer forces the literal default profile, choosing another profile from an empty draft no longer reopens that profile's previous session after route settlement or restart, and leaving a provisional phone Thread cannot route the next turn to its old chat under the new profile. (#436)
+- **Android Dashboard connections and profile drawers no longer wait on unavailable optional routes.** Dashboard, API fallback, and Relay probes run independently; API/Relay never gate a normal Dashboard connection, Gateway auth/ticket failures are not blindly retried, and authenticated session history remains available without a live Gateway socket. Concurrent route probes are shared and generation-safe, healthy same-priority routes win immediately, superseded session reads cancel their HTTP calls, and optional PR decoration stays outside the session-list critical path.
+
+### Removed
+
+- **Android Chat no longer includes the hidden clean-focus presentation.** The long-press gesture, overlapping instructional pill, reduced composer, and alternate fading transcript were removed so Chat keeps one complete interaction model. Voice Focus remains available.
+
+## [Plugin 1.11.0] - 2026-08-30
+
+### Added
+
+- **Hermes-Relay Plugin provides a bounded Git workspace API for authenticated Dashboard clients.** Configured repository roots, path validation, tracked line totals, scoped write grants, and explicit confirmation protect repository reads and mutations.
+- **Relay extensions can use the authenticated Dashboard origin as one network ingress.** Fixed allowlisted HTTP and WebSocket paths proxy to the local Relay while Dashboard admission and Relay session authentication remain separate. (Related: #399)
+
+### Changed
+
+- **Hermes-Relay Dashboard management is organized around operator tasks.** Overview, Devices, Activity, Remote Access, Git, and Settings now have separate native Dashboard surfaces; pairing is QR-first, paired clients use responsive cards, and token-backed media is labeled as a bounded diagnostic instead of a health counter. (#486)
+- **Dashboard, CLI, and TUI pairing advertise the same explicit route set.** Recommended Tailscale uses dedicated HTTPS `:10443` for local Dashboard `:9119`, public HTTPS and LAN stay visible fallbacks, and old `:443`/`:9119` plus direct `:8767` remain migration compatibility.
+- **Pairing receipts explain transport protection before exposing an invite.** Per-surface probes distinguish application TLS, tailnet encryption, optional API fallback, and authenticated Relay ingress.
+
+### Fixed
+
+- **Public and roaming pairing no longer invent closed direct Relay or Dashboard ports.** Exact Dashboard origins own their same-origin Relay paths, ambiguous or plaintext public candidates fail closed, and inactive optional API routes are omitted.
+- **Dense pairing QRs scan reliably.** Dashboard, CLI, and TUI render integer-sized modules with a full quiet zone.
+- **Remote-access migration keeps existing listeners safe.** Recommended setup avoids taking over `:443`, explicit legacy cleanup remains available, and default disable actions remove only the listeners they own.
+
+## [0.4.0-beta.6] - 2026-08-30
+
+### Changed
+
+- **Hermes-Relay CLI+UI preserves the complete multi-route pairing topology.** Dashboard, Relay, optional API, priorities, and transport protection remain attached to one saved host across LAN, Tailscale, and public routes. (Related: #399)
+
+### Fixed
+
+- **Desktop rejects Dashboard-ingress Relay dials until it can mint Dashboard WebSocket tickets.** The daemon and host selector choose a compatible direct Relay fallback instead of attempting an unauthenticated same-origin ingress.
+- **API-less pairing remains valid.** Dashboard and direct Relay routes can pair without inventing an optional API server, while secure-first ranking keeps plain LAN as the final fallback.
+
 ## [Android 1.13.2] - 2026-08-25
 
 ### Added

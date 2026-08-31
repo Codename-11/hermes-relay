@@ -141,7 +141,7 @@ The companion has a durable home and an optional autonomous roaming mode:
   dragging itself remains finger-driven.
 - Roaming requires an idle agent, the foreground app, enabled animation, and an
   available safe rail. Agent activity, scrolling, dragging, an open pet menu,
-  startup, voice, clean/ambient mode, Android animator scale 0, or TalkBack touch
+  startup, voice, Android animator scale 0, or TalkBack touch
   exploration stops autonomous travel. During scrolling, the pet follows its
   current measured or synthetic habitat rail while it remains valid; it does
   not re-dock or teleport. The IME/short-screen compact layout uses 50 dp base
@@ -676,7 +676,7 @@ fallback checks with a pack missing one or more optional rows:
   opening and closing the keyboard moves that dock with the input rail without
   hiding the pet or placing it over transcript content.
 - [ ] Opening or closing the session drawer, command palette, model/reasoning/
-  context/process/agent sheets, clean mode, or either voice presentation keeps
+  context/process/agent sheets or either voice presentation keeps
   the pet absent until the owning surface has fully closed. Slash autocomplete
   and recent-prompt chips remain usable and never become walkable terrain.
 - [ ] After a plain assistant response, it approaches through the outer gutter,

@@ -23,6 +23,9 @@ import asyncio
 import base64
 import binascii
 import copy
+import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -95,6 +98,7 @@ from .model_capabilities import (
     SCHEMA_VERSION as MODEL_CAPABILITIES_SCHEMA_VERSION,
 )
 from .provider_usage import collect_provider_usage, resolve_profile_home
+from .qr_sign import load_or_create_secret
 from .session_store import read_phone_threads
 from .voice import VoiceHandler
 from .voice_output import VoiceOutputHandler
@@ -103,6 +107,42 @@ from .realtime_agent import RealtimeAgentHandler
 from ..enhancements.context_injection import injected_context_payload
 
 logger = logging.getLogger("hermes_relay")
+
+_DASHBOARD_PROXY_SECRET_HEADER = "X-Hermes-Dashboard-Proxy-Secret"
+_DASHBOARD_PROXY_CONTEXT = b"hermes-relay/dashboard-ingress/v1"
+_PROXY_PEER_HEADER = "X-Hermes-Proxy-Peer"
+_PROXY_PROTO_HEADER = "X-Hermes-Proxy-Proto"
+
+
+def _dashboard_proxy_secret() -> str:
+    configured = os.environ.get("HERMES_RELAY_DASHBOARD_PROXY_SECRET", "").strip()
+    if configured:
+        return hashlib.sha256(_DASHBOARD_PROXY_CONTEXT + configured.encode()).hexdigest()
+    return hmac.new(
+        load_or_create_secret(), _DASHBOARD_PROXY_CONTEXT, hashlib.sha256
+    ).hexdigest()
+
+
+def _trusted_dashboard_ingress(
+    request: web.Request,
+    server: "RelayServer",
+) -> tuple[str, str] | None:
+    """Return the Dashboard-preserved peer/protocol for a trusted loopback hop."""
+    remote = request.remote or ""
+    if remote not in {"127.0.0.1", "::1"}:
+        return None
+    supplied = request.headers.get(_DASHBOARD_PROXY_SECRET_HEADER, "")
+    if not supplied or not secrets.compare_digest(supplied, _dashboard_proxy_secret()):
+        return None
+    peer = request.headers.get(_PROXY_PEER_HEADER, "").strip()
+    try:
+        peer = str(ipaddress.ip_address(peer))
+    except ValueError:
+        peer = remote
+    proto = request.headers.get(_PROXY_PROTO_HEADER, "").strip().lower()
+    if proto not in {"ws", "wss"}:
+        proto = "unknown"
+    return peer, proto
 
 
 # ── Server state ─────────────────────────────────────────────────────────────
@@ -429,7 +469,7 @@ async def handle_pairing_register(request: web.Request) -> web.Response:
 
 def _parse_pairing_metadata(
     payload: dict[str, Any],
-) -> tuple[float | None, dict[str, float] | None, str | None, str | None]:
+) -> tuple[int | None, dict[str, int] | None, str | None, str | None]:
     """Extract ``ttl_seconds`` / ``grants`` / ``transport_hint`` from a
     ``/pairing/register`` or ``/pairing/approve`` JSON body.
 
@@ -438,21 +478,24 @@ def _parse_pairing_metadata(
     validation failure. Missing fields are reported as ``None``, which
     the auth layer interprets as "use defaults".
     """
-    ttl_seconds: float | None = None
+    ttl_seconds: int | None = None
     raw_ttl = payload.get("ttl_seconds")
     if raw_ttl is not None:
         if not isinstance(raw_ttl, (int, float)) or isinstance(raw_ttl, bool):
             return None, None, None, "ttl_seconds must be a number"
         if raw_ttl < 0:
             return None, None, None, "ttl_seconds must be >= 0 (0 = never)"
-        ttl_seconds = float(raw_ttl)
+        numeric_ttl = float(raw_ttl)
+        if not math.isfinite(numeric_ttl) or not numeric_ttl.is_integer():
+            return None, None, None, "ttl_seconds must be a whole number of seconds"
+        ttl_seconds = int(numeric_ttl)
 
-    grants: dict[str, float] | None = None
+    grants: dict[str, int] | None = None
     raw_grants = payload.get("grants")
     if raw_grants is not None:
         if not isinstance(raw_grants, dict):
             return None, None, None, "grants must be an object"
-        cleaned: dict[str, float] = {}
+        cleaned: dict[str, int] = {}
         for channel, value in raw_grants.items():
             if not isinstance(channel, str):
                 return None, None, None, "grants keys must be strings"
@@ -460,7 +503,10 @@ def _parse_pairing_metadata(
                 return None, None, None, f"grants['{channel}'] must be a number"
             if value < 0:
                 return None, None, None, f"grants['{channel}'] must be >= 0"
-            cleaned[channel] = float(value)
+            numeric_value = float(value)
+            if not math.isfinite(numeric_value) or not numeric_value.is_integer():
+                return None, None, None, f"grants['{channel}'] must be whole seconds"
+            cleaned[channel] = int(numeric_value)
         grants = cleaned
 
     transport_hint: str | None = None
@@ -538,6 +584,8 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         build_pairing_qr_payload,
         build_relay_pairing_block,
         normalize_endpoint_candidates,
+        normalize_dashboard_url,
+        endpoint_role_for_url,
         read_server_config,
         _relay_lan_base_url,
         _resolve_lan_ip,
@@ -547,61 +595,100 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
     # Defaults come from ``RelayConfig.webapi_url`` (the Hermes API gateway
     # URL the relay is fronting). The dashboard's "editable pair URL" UI
     # overrides any of host/port/tls via the request body.
-    default_api_url = urlparse(server.config.webapi_url or "http://localhost:8642")
+    default_api_url = urlparse(server.config.webapi_url or "")
     api_host_override = payload.get("host")
     api_port_override = payload.get("port")
     api_tls_override = payload.get("tls")
     dashboard_url_raw = payload.get("dashboard_url") or payload.get("dashboardUrl")
 
-    raw_api_host = str(
-        api_host_override
-        if api_host_override
-        else (default_api_url.hostname or "")
-    ).strip()
-    if not raw_api_host or raw_api_host == "0.0.0.0":
+    try:
+        local_api_config = read_server_config()
+    except Exception as exc:  # pragma: no cover - defensive config fallback
+        logger.warning("Pairing mint could not read Hermes API config: %s", exc)
+        local_api_config = {}
+    api_enabled_raw = payload.get("api_enabled")
+    if api_enabled_raw is not None and not isinstance(api_enabled_raw, bool):
         return web.json_response(
-            {
-                "ok": False,
-                "error": "missing 'host' — API server address could not be resolved",
-            },
-            status=400,
+            {"ok": False, "error": "api_enabled must be a boolean"}, status=400
         )
-    api_host = _resolve_lan_ip(raw_api_host)
+    api_enabled = (
+        api_enabled_raw
+        if isinstance(api_enabled_raw, bool)
+        else True
+    )
 
-    if api_port_override is not None:
-        try:
-            api_port = int(api_port_override)
-        except (TypeError, ValueError):
+    api_host: str | None = None
+    api_port: int | None = None
+    api_tls: bool | None = None
+    api_key: str | None = None
+    if api_enabled:
+        raw_api_host = str(
+            api_host_override
+            if api_host_override
+            else (default_api_url.hostname or local_api_config.get("host") or "")
+        ).strip()
+        if not raw_api_host or raw_api_host == "0.0.0.0":
             return web.json_response(
-                {"ok": False, "error": "'port' must be an integer"}, status=400
+                {
+                    "ok": False,
+                    "error": "missing 'host' — API server address could not be resolved",
+                },
+                status=400,
             )
-    elif default_api_url.port is not None:
-        api_port = default_api_url.port
-    else:
-        api_port = 443 if default_api_url.scheme == "https" else 8642
+        api_host = _resolve_lan_ip(raw_api_host)
 
-    if api_tls_override is not None:
-        api_tls = bool(api_tls_override)
-    else:
-        api_tls = default_api_url.scheme == "https"
+        if api_port_override is not None:
+            try:
+                api_port = int(api_port_override)
+            except (TypeError, ValueError):
+                return web.json_response(
+                    {"ok": False, "error": "'port' must be an integer"}, status=400
+                )
+        elif default_api_url.port is not None:
+            api_port = default_api_url.port
+        else:
+            api_port = int(local_api_config.get("port") or 8642)
 
-    if "api_key" in payload:
-        api_key_raw = payload.get("api_key")
-        api_key = str(api_key_raw) if api_key_raw is not None else ""
-    else:
-        try:
-            api_key = str(read_server_config().get("key") or "")
-        except Exception as exc:  # pragma: no cover - defensive config fallback
-            logger.warning(
-                "Pairing mint could not read Hermes API key from local config: %s",
-                exc,
+        if api_tls_override is not None:
+            api_tls = bool(api_tls_override)
+        else:
+            api_tls = default_api_url.scheme == "https" or bool(local_api_config.get("tls"))
+
+        if "api_key" in payload:
+            api_key_raw = payload.get("api_key")
+            api_key = str(api_key_raw) if api_key_raw is not None else ""
+        else:
+            api_key = str(local_api_config.get("key") or "")
+        api_role = endpoint_role_for_url(
+            f"{'https' if api_tls else 'http'}://{api_host}:{api_port}"
+        )
+        if api_role == "public" and api_tls is not True:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "public API routes must enable TLS",
+                },
+                status=400,
             )
-            api_key = ""
     dashboard_url = (
         str(dashboard_url_raw).strip().rstrip("/")
         if dashboard_url_raw is not None
         else None
     ) or None
+    if dashboard_url is not None:
+        try:
+            dashboard_url = normalize_dashboard_url(dashboard_url)
+        except ValueError as exc:
+            return web.json_response(
+                {"ok": False, "error": str(exc)}, status=400
+            )
+    legacy_direct_relay_raw = payload.get("legacy_direct_relay", False)
+    if not isinstance(legacy_direct_relay_raw, bool):
+        return web.json_response(
+            {"ok": False, "error": "legacy_direct_relay must be a boolean"},
+            status=400,
+        )
+    legacy_direct_relay = legacy_direct_relay_raw
 
     # ── Pairing metadata ─────────────────────────────────────────────────
     ttl_seconds, grants, transport_hint, err = _parse_pairing_metadata(payload)
@@ -646,18 +733,29 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         server.config.host, server.config.port, tls=relay_tls
     )
     if endpoints_list is not None:
-        normalized_endpoints = normalize_endpoint_candidates(
-            endpoints_list,
-            api_port=api_port,
-            relay_port=server.config.port,
-            api_tls=api_tls,
-            relay_tls=relay_tls,
-        )
+        try:
+            normalized_endpoints = normalize_endpoint_candidates(
+                endpoints_list,
+                api_port=api_port,
+                relay_port=server.config.port,
+                api_tls=api_tls,
+                relay_tls=relay_tls,
+            )
+        except ValueError as exc:
+            return web.json_response(
+                {"ok": False, "error": str(exc)}, status=400
+            )
         if normalized_endpoints != endpoints_list:
             logger.info(
                 "Normalized pairing endpoint candidates before QR signing",
             )
         endpoints_list = normalized_endpoints
+        if not api_enabled and endpoints_list is not None:
+            endpoints_list = [
+                ({key: value for key, value in candidate.items() if key != "api"}
+                 if isinstance(candidate, dict) else candidate)
+                for candidate in endpoints_list
+            ]
     pairing_expires_at = int(time.time() + _PAIRING_CODE_TTL)
     secure_link_candidates: list[dict[str, Any]] = []
     if server.secure_proxy_candidate is not None:
@@ -714,14 +812,24 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
                   if str(candidate.get("role", "")).lower() == "public"]
         lan = [candidate for candidate in existing
                if str(candidate.get("role", "")).lower() == "lan"]
+        legacy = [candidate for candidate in existing
+                  if candidate.get("legacy") is True
+                  or str(candidate.get("role", "")).lower()
+                  in {"legacy_direct", "public_legacy"}]
         other = [candidate for candidate in existing
                  if str(candidate.get("role", "")).lower()
-                 not in {"tailscale", "public", "lan"}]
+                 not in {
+                     "tailscale", "public", "lan",
+                     "legacy_direct", "public_legacy",
+                 }
+                 and candidate.get("legacy") is not True]
         direct = [candidate for candidate in secure_link_candidates
                   if str(candidate.get("role", "")).lower() == "plugin_proxy"]
         reach = [candidate for candidate in secure_link_candidates
                  if str(candidate.get("role", "")).lower() == "outbound_broker"]
-        endpoints_list = [*tailscale, *public, *direct, *other, *lan, *reach]
+        endpoints_list = [
+            *tailscale, *public, *direct, *other, *lan, *legacy, *reach,
+        ]
         for priority, candidate in enumerate(endpoints_list):
             candidate["priority"] = priority
             if str(candidate.get("role", "")).lower() == "tailscale":
@@ -735,16 +843,20 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         transport_hint=transport_hint,
     )
 
-    qr_payload = build_pairing_qr_payload(
-        host=api_host,
-        port=api_port,
-        key=api_key,
-        tls=api_tls,
-        relay=relay_block,
-        sign=True,
-        endpoints=endpoints_list or None,
-        dashboard_url=dashboard_url,
-    )
+    try:
+        qr_payload = build_pairing_qr_payload(
+            host=api_host,
+            port=api_port,
+            key=api_key,
+            tls=api_tls,
+            relay=relay_block,
+            sign=True,
+            endpoints=endpoints_list or None,
+            dashboard_url=dashboard_url,
+            legacy_direct_relay=legacy_direct_relay,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
     pairing_url = build_pairing_invite_url(qr_payload)
 
     # This is the pairing-code expiry (how long the user has to scan),
@@ -768,13 +880,18 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
 
     logger.info(
         "Minted pairing code via /pairing/mint: %s "
-        "(api=%s://%s:%d api_key=%s relay=%s)",
+        "(api=%s relay=%s)",
         code,
-        "https" if api_tls else "http",
-        api_host,
-        api_port,
-        "present" if api_key else "absent",
+        (
+            f"{'https' if api_tls else 'http'}://{api_host}:{api_port} "
+            f"key={'present' if api_key else 'absent'}"
+            if api_enabled else "disabled"
+        ),
         relay_url,
+    )
+    signed_payload = json.loads(qr_payload)
+    advertised_relay_url = str(
+        signed_payload.get("relay", {}).get("url") or relay_url
     )
     mint_response: dict[str, Any] = {
         "ok": True,
@@ -782,11 +899,12 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         "qr_payload": qr_payload,
         "pairing_url": pairing_url,
         "expires_at": expires_at,
-        "host": api_host,
-        "port": api_port,
-        "tls": api_tls,
-        "relay_url": relay_url,
+        "relay_url": advertised_relay_url,
     }
+    if legacy_direct_relay:
+        mint_response["legacy_direct_relay_url"] = relay_url
+    if api_enabled:
+        mint_response.update({"host": api_host, "port": api_port, "tls": api_tls})
     if dashboard_url is not None:
         mint_response["dashboard_url"] = dashboard_url
     if endpoints_list is not None:
@@ -4094,6 +4212,10 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     )
     if via_secure_link:
         remote_ip = request.headers.get("X-Hermes-Proxy-Peer", "").strip() or remote_ip
+    dashboard_ingress = _trusted_dashboard_ingress(request, server)
+    if dashboard_ingress is not None:
+        remote_ip, outer_proto = dashboard_ingress
+        request["hermes_dashboard_outer_proto"] = outer_proto
 
     # Rate-limit check
     if server.rate_limiter.is_blocked(remote_ip):
@@ -4163,6 +4285,9 @@ def _detect_transport_hint(request: web.Request) -> str:
     Anything ambiguous returns ``"unknown"``.
     """
     try:
+        dashboard_proto = request.get("hermes_dashboard_outer_proto")
+        if dashboard_proto in {"ws", "wss"}:
+            return str(dashboard_proto)
         transport = request.transport
         if transport is not None:
             ssl_obj = transport.get_extra_info("ssl_object")

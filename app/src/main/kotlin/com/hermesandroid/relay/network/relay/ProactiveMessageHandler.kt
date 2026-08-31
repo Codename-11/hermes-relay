@@ -102,22 +102,18 @@ class ProactiveMessageHandler(
     /** Route a parsed message: into the open Thread if it belongs there, else
      *  the durable inbox log + the surface its hint selects. */
     private fun dispatch(msg: ProactiveMessage) {
-        // Persist first even when the currently open Thread consumes the live
-        // message. Agent-initiated outbound sends do not create a gateway
-        // session until the phone replies, so this cache is the provisional
-        // Thread transcript during that gap.
-        toInbox?.invoke(msg)
         // The surfacing hint selects the additional surface. Thread injection
         // is best-effort presentation of the persisted row, not itself a reason
         // to suppress an explicitly requested notification.
-        when (msg.surfacing?.lowercase()) {
+        val notificationId = when (msg.surfacing?.lowercase()) {
             "inbox" -> {
                 injectIntoThread?.invoke(msg)
+                null
             }
             "session" -> {
                 val delivered = injectIntoThread?.invoke(msg) == true ||
                     toSession?.invoke(msg) == true
-                if (!delivered) notify(msg)
+                if (delivered) null else notify(msg)
             }
             // null / "default" / "notification" / anything unrecognized.
             else -> {
@@ -125,9 +121,13 @@ class ProactiveMessageHandler(
                 notify(msg)
             }
         }
+        // Every message remains in the bounded local cache. Persist the exact
+        // posted notification slot as part of that row so a later local Thread
+        // removal can cancel only its own notification.
+        toInbox?.invoke(msg.copy(notificationId = notificationId))
     }
 
-    private fun notify(msg: ProactiveMessage) {
+    private fun notify(msg: ProactiveMessage): Int? =
         ProactiveMessageNotifier.notify(
             context = context,
             title = msg.title,
@@ -135,7 +135,6 @@ class ProactiveMessageHandler(
             messageId = msg.messageId,
             chatId = msg.chatId,
         )
-    }
 
     private fun parse(payload: JsonObject): ProactiveMessage? {
         val text = payload["text"]?.jsonPrimitive?.contentOrNull
@@ -172,4 +171,6 @@ data class ProactiveMessage(
     val replyTo: String? = null,
     /** True only when Relay explicitly marked this as a reconnect queue flush. */
     val arrivedWhileAway: Boolean = false,
+    /** Exact Android notification slot when this delivery posted one. */
+    val notificationId: Int? = null,
 )

@@ -134,25 +134,28 @@ You have a few ways to make a connection secure. Pick whichever fits your setup:
 ### 1. Tailscale (recommended)
 
 Putting both devices on a tailnet gives you WireGuard encryption immediately — you're
-secure (🛡️) with no certificates to manage. If you also want TLS-fronted `https://`/`wss://`
-routes, run Tailscale Serve:
+secure (🛡️) with no certificates to manage. The recommended helper also creates
+the TLS-fronted Dashboard origin:
 
 ```bash
-tailscale serve --https=<port> http://127.0.0.1:<port>
+tailscale serve --bg --https=10443 http://127.0.0.1:9119
 ```
 
-The `hermes-relay-tailscale` helper fronts the two relay-owned services for you — relay
-(`:8767`) and the Hermes API server (`:8642`):
+The `hermes-relay-tailscale` helper configures a dedicated HTTPS listener
+(`:10443` by default) for local Dashboard `:9119`, including the plugin's
+same-origin Relay transport. This avoids conflicts when Traefik, Caddy, nginx,
+or another service already owns `:443`.
+The API fallback on `:8642` remains optional:
 
 ```bash
 hermes-relay-tailscale enable
 ```
 
-The **dashboard** (`:9119`, used for Manage and vanilla voice) is **not** fronted by the
-helper — if you want a TLS route to the dashboard, you front it yourself with
-`tailscale serve --https=9119 http://127.0.0.1:9119`. Without that, your dashboard surface
-rides plain `http` over the tailnet — which is still WireGuard-encrypted and secure, just
-not TLS.
+The phone uses the advertised `https://host.ts.net:10443` listener, not local target
+port `:9119`. A manually exposed `http://100.x.y.z:9119` route is still
+WireGuard-encrypted and secure over the tailnet, but it has no application TLS.
+Old `:443` and `:9119` listeners remain migration/explicit routes; direct Relay
+`:8767` remains only for older paired clients until re-pairing.
 
 ### 2. A public reverse proxy
 

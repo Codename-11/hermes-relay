@@ -150,6 +150,7 @@ jobs:
       - name: Validate release metadata and Android API compatibility
         run: |
           python3 scripts/check-version-tracks.py
+          python3 scripts/check-android-release-notes.py
           python3 scripts/check-privacy-policy.py
           python3 scripts/check-android-locales.py
           python3 scripts/check-android-collection-apis.py
@@ -261,6 +262,19 @@ jobs:
         run: |
           python3 scripts/check-android-collection-apis.py \
             --apk app/build/outputs/apk/sideload/candidate/*.apk
+
+      - name: Verify stable packaged ONNX Runtime compatibility
+        if: ${{ needs.validate.outputs.prerelease != 'true' }}
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/release/*.apk \
+            app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Verify candidate packaged ONNX Runtime compatibility
+        if: ${{ needs.validate.outputs.prerelease == 'true' }}
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/sideload/candidate/*.apk
 
       - name: List produced artifacts (debug aid)
         run: |

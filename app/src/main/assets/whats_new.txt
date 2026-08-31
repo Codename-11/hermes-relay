@@ -1,5 +1,10 @@
-v1.13.2 - Supervised Mode and clearer activity
+v1.14.0 - Connections that follow you
 
-* Configure a profile-pinned Supervised Mode with device-authenticated parent settings.
-* Keep Supervised Chat visible when parent access relocks after full settings.
-* Keep uncertain session activity neutral until live work is confirmed.
+Reliable routes
+* Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.
+* Preview delegated agent work and use the optional native Git workspace.
+* Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls.
+
+Also improved
+* Wake-word detection now packages a compatible native runtime for every supported ABI.
+* Protected Relay health checks no longer appear as broken routes.

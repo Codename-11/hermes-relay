@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-import plugin, { profileQueryKey } from '../plugin.js'
+import plugin, { pairingMintBody, profileQueryKey } from '../plugin.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -105,6 +105,15 @@ test('unload disposes entry points, lazy pane, locale bundle, and module state',
 test('query keys isolate cached backend state by active profile', () => {
   assert.deepEqual(profileQueryKey('default', 'overview'), ['hermes-relay', 'default', 'overview'])
   assert.notDeepEqual(profileQueryKey('work', 'sessions'), profileQueryKey('personal', 'sessions'))
+})
+
+test('pairing keeps direct Relay compatibility explicit', () => {
+  assert.deepEqual(pairingMintBody(), { mode: 'auto' })
+  assert.deepEqual(pairingMintBody({ desktopCompatibility: false }), { mode: 'auto' })
+  assert.deepEqual(pairingMintBody({ desktopCompatibility: true }), {
+    mode: 'auto',
+    legacy_direct_relay: true
+  })
 })
 
 test('unified package uses only runtime-plugin imports and contains no auto-open primitive', async () => {

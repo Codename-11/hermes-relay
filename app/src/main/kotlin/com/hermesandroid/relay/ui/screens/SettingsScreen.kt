@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Extension
@@ -171,6 +172,7 @@ fun SettingsScreen(
     // `connection · model · personality` without re-reading ChatViewModel
     // state from a different place.
     chatViewModel: ChatViewModel,
+    gitRepoScanningEnabled: Boolean,
     // (The `onNavigateToChatWithAgentSheet` param that used to live here
     // was removed as part of the 2026-04-21 pairing-audit fix. Tapping the
     // Active Agent card now opens the consolidated AgentInfoSheet INLINE
@@ -190,6 +192,7 @@ fun SettingsScreen(
     onNavigateToManage: () -> Unit,
     onNavigateToProviderUsage: () -> Unit,
     onNavigateToPlugins: () -> Unit,
+    onNavigateToGitWorkspace: () -> Unit,
     onNavigateToChatSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit,
     onNavigateToBridge: () -> Unit,
@@ -604,6 +607,20 @@ fun SettingsScreen(
             )
 
             SettingsCategoryRow(
+                icon = Icons.Filled.AccountTree,
+                title = stringResource(R.string.settings_git_workspace),
+                subtitle = stringResource(
+                    if (gitRepoScanningEnabled) {
+                        R.string.settings_git_workspace_desc
+                    } else {
+                        R.string.settings_git_workspace_off_desc
+                    },
+                ),
+                onClick = onNavigateToGitWorkspace,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Chat,
                 title = stringResource(R.string.settings_chat),
                 subtitle = stringResource(R.string.settings_chat_desc),
@@ -1007,7 +1024,7 @@ private fun QuickControlsCard(
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* Posting re-checks the grant. */ }
+    ) { granted -> connectionViewModel.setNotifyTurnComplete(granted) }
     val requestNotificationPermission = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             androidx.core.content.ContextCompat.checkSelfPermission(

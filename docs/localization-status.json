@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -25,12 +25,12 @@
       "docs_locale": "de",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "486fa0b9ea0f08c19be9407d8c30b2c2363182151c31d71ecd81dee996c19632",
-        "guide/getting-started.md": "1c2d5a9d04b86dc784802c1e0d9c5818de13f0b4792f6e000bf12f003f352b8d",
+        "guide/quick-start.md": "8e46128280d9db518ea0dcf13109929ff93cfe9b0b491db808ff72ad3be862a4",
+        "guide/getting-started.md": "dc5d299e599402e8be4a3d0cf378176cc078e55e36c5b86319e2541079c9f9dd",
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
-        "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
+        "guide/troubleshooting.md": "83e64a645bc3686fcc9d9fc861b9b8344aebb4756743dcd235b76af78c33ab8a"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "en": {
       "native_name": "English",
@@ -48,7 +48,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -60,19 +60,19 @@
       "docs_locale": "es",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "486fa0b9ea0f08c19be9407d8c30b2c2363182151c31d71ecd81dee996c19632",
-        "guide/getting-started.md": "1c2d5a9d04b86dc784802c1e0d9c5818de13f0b4792f6e000bf12f003f352b8d",
+        "guide/quick-start.md": "8e46128280d9db518ea0dcf13109929ff93cfe9b0b491db808ff72ad3be862a4",
+        "guide/getting-started.md": "dc5d299e599402e8be4a3d0cf378176cc078e55e36c5b86319e2541079c9f9dd",
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
-        "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
+        "guide/troubleshooting.md": "83e64a645bc3686fcc9d9fc861b9b8344aebb4756743dcd235b76af78c33ab8a"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "ja": {
       "native_name": "日本語",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -84,19 +84,19 @@
       "docs_locale": "ja",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "486fa0b9ea0f08c19be9407d8c30b2c2363182151c31d71ecd81dee996c19632",
-        "guide/getting-started.md": "1c2d5a9d04b86dc784802c1e0d9c5818de13f0b4792f6e000bf12f003f352b8d",
+        "guide/quick-start.md": "8e46128280d9db518ea0dcf13109929ff93cfe9b0b491db808ff72ad3be862a4",
+        "guide/getting-started.md": "dc5d299e599402e8be4a3d0cf378176cc078e55e36c5b86319e2541079c9f9dd",
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
-        "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
+        "guide/troubleshooting.md": "83e64a645bc3686fcc9d9fc861b9b8344aebb4756743dcd235b76af78c33ab8a"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "pt-BR": {
       "native_name": "Português (Brasil)",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -108,19 +108,19 @@
       "docs_locale": "pt-BR",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "486fa0b9ea0f08c19be9407d8c30b2c2363182151c31d71ecd81dee996c19632",
-        "guide/getting-started.md": "1c2d5a9d04b86dc784802c1e0d9c5818de13f0b4792f6e000bf12f003f352b8d",
+        "guide/quick-start.md": "8e46128280d9db518ea0dcf13109929ff93cfe9b0b491db808ff72ad3be862a4",
+        "guide/getting-started.md": "dc5d299e599402e8be4a3d0cf378176cc078e55e36c5b86319e2541079c9f9dd",
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
-        "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
+        "guide/troubleshooting.md": "83e64a645bc3686fcc9d9fc861b9b8344aebb4756743dcd235b76af78c33ab8a"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     },
     "ru": {
       "native_name": "Русский",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -135,7 +135,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "f34c3772ee5a6b73514f4ce891cc2b5cbedcfc941798dcdf563682c725ef7bf0",
+        "main": "8c6660316b05c0ae69e9f4fbdb468e52c2c011bfafe24f090fcdb6862c2f836b",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -147,12 +147,12 @@
       "docs_locale": "zh-CN",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "486fa0b9ea0f08c19be9407d8c30b2c2363182151c31d71ecd81dee996c19632",
-        "guide/getting-started.md": "1c2d5a9d04b86dc784802c1e0d9c5818de13f0b4792f6e000bf12f003f352b8d",
+        "guide/quick-start.md": "8e46128280d9db518ea0dcf13109929ff93cfe9b0b491db808ff72ad3be862a4",
+        "guide/getting-started.md": "dc5d299e599402e8be4a3d0cf378176cc078e55e36c5b86319e2541079c9f9dd",
         "guide/release-tracks.md": "1e793410f433b12f503ac1649afec8820a712aff74b38202693aa9a0d6ad0a26",
-        "guide/troubleshooting.md": "43677454b94dd7810adc9b685266598353b851b549b151de31cfa053cf74f6c1"
+        "guide/troubleshooting.md": "83e64a645bc3686fcc9d9fc861b9b8344aebb4756743dcd235b76af78c33ab8a"
       },
-      "website_source_sha256": "2de54aed7fd3c4e02ecbf57a4e9069ce64a3fd8d2874dc41b63732924fb354e1"
+      "website_source_sha256": "d2d244b8b4f51dbec1503e134acdbc5252574b38511fe1fcda1b7b0a63e5f9a3"
     }
   }
 }

@@ -3,9 +3,7 @@ package com.hermesandroid.relay.network.relay
 import android.content.Context
 import com.hermesandroid.relay.network.relay.models.Envelope
 import com.hermesandroid.relay.notifications.ProactiveMessageNotifier
-import io.mockk.Runs
 import io.mockk.every
-import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
@@ -26,7 +24,7 @@ class ProactiveMessageHandlerTest {
         mockkObject(ProactiveMessageNotifier)
         every {
             ProactiveMessageNotifier.notify(any(), any(), any(), any(), any())
-        } just Runs
+        } returns 42
     }
 
     @After
@@ -44,6 +42,7 @@ class ProactiveMessageHandlerTest {
         handler.onMessage(messageEnvelope(surfacing = "notification"))
 
         assertEquals(1, persisted.size)
+        assertEquals(42, persisted.single().notificationId)
         verify(exactly = 1) {
             ProactiveMessageNotifier.notify(context, "Hermes", "ready", "m-1", "phone")
         }
@@ -51,7 +50,8 @@ class ProactiveMessageHandlerTest {
 
     @Test
     fun `inbox surfacing persists silently`() {
-        val handler = ProactiveMessageHandler(context, toInbox = {}).apply {
+        val persisted = mutableListOf<ProactiveMessage>()
+        val handler = ProactiveMessageHandler(context, toInbox = persisted::add).apply {
             injectIntoThread = { true }
         }
 
@@ -60,6 +60,7 @@ class ProactiveMessageHandlerTest {
         verify(exactly = 0) {
             ProactiveMessageNotifier.notify(any(), any(), any(), any(), any())
         }
+        assertEquals(null, persisted.single().notificationId)
     }
 
     @Test

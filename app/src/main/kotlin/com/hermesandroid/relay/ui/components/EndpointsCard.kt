@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,15 +58,16 @@ import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.SurfaceSecurityKind
+import com.hermesandroid.relay.data.classifySurfaceSecurity
 import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.secureLinkServices
-import com.hermesandroid.relay.data.isEncryptedOverlayRoute
 import com.hermesandroid.relay.data.isKnownRole
-import com.hermesandroid.relay.data.isTlsUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
+import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
@@ -100,7 +103,7 @@ fun EndpointsCard(
     /**
      * Live transient override installed by "Use now" (or by preference
      * restoration — equal to [preferredRole] in that case). Drives the
-     * automatic / preferred / manual annotation on the Current line.
+     * automatic / preferred / manual annotation on the selected-candidate line.
      */
     manualOverrideRole: String?,
     onUseNow: (EndpointCandidate) -> Unit,
@@ -117,6 +120,7 @@ fun EndpointsCard(
      * resolver's cache-key scheme.
      */
     outcomeFor: (EndpointCandidate) -> RouteProbeOutcome? = { null },
+    surfaceOutcomeFor: (EndpointCandidate, EndpointSurface) -> RouteProbeOutcome? = { _, _ -> null },
     /** Auth state applies only to the currently active Dashboard route. */
     dashboardAuthenticated: Boolean? = null,
     dashboardSignInRequired: Boolean = false,
@@ -133,11 +137,11 @@ fun EndpointsCard(
     // Pre-resolve strings
     val noRoutesStoredText = stringResource(R.string.endpoints_no_routes_stored)
     val addRouteText = stringResource(R.string.endpoints_add_route)
-    val resolvingText = stringResource(R.string.endpoints_resolving)
     val manualUntilDisconnectText = stringResource(R.string.endpoints_manual_until_disconnect)
     val preferredText = stringResource(R.string.endpoints_preferred)
     val automaticText = stringResource(R.string.endpoints_automatic)
     val currentRouteText = stringResource(R.string.endpoints_current_route)
+    val noActiveFallbackText = stringResource(R.string.endpoints_no_active_fallback)
 
     if (endpoints.isEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -166,18 +170,41 @@ fun EndpointsCard(
     val stopPreferringText = stringResource(R.string.endpoints_stop_preferring)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = currentRouteText.format(
-                activeEndpoint?.displayLabel() ?: resolvingText,
-                when {
-                    manualSwitchActive -> manualUntilDisconnectText
-                    manualOverrideRole != null -> preferredText
-                    else -> automaticText
-                }
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        val activeOutcome = activeEndpoint?.let(outcomeFor)
+        if (activeEndpoint == null) {
+            Text(
+                text = noActiveFallbackText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = currentRouteText.format(
+                    activeEndpoint.displayLabel(),
+                    when {
+                        manualSwitchActive -> manualUntilDisconnectText
+                        manualOverrideRole != null -> preferredText
+                        else -> automaticText
+                    }
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = stringResource(
+                    R.string.endpoints_selection_reason,
+                    activeEndpoint.priority,
+                    when (routeReachabilityPresentation(isProbing, activeOutcome)) {
+                        RouteReachabilityPresentation.Checking -> stringResource(R.string.endpoints_checking)
+                        RouteReachabilityPresentation.Reachable -> stringResource(R.string.endpoints_reachable_now)
+                        RouteReachabilityPresentation.Unreachable -> stringResource(R.string.endpoints_last_check_failed)
+                        RouteReachabilityPresentation.NotChecked -> stringResource(R.string.endpoints_reachability_not_checked)
+                    },
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         endpoints.forEachIndexed { index, candidate ->
             if (index > 0) HorizontalDivider()
             EndpointRow(
@@ -188,6 +215,7 @@ fun EndpointsCard(
                 isPreferred = preferredRole?.equals(candidate.role, ignoreCase = true) == true,
                 isProbing = isProbing,
                 outcome = outcomeFor(candidate),
+                surfaceOutcomeFor = surfaceOutcomeFor,
                 dashboardAuthenticated = dashboardAuthenticated.takeIf { activeEndpoint != null &&
                     activeEndpoint.role.equals(candidate.role, ignoreCase = true) &&
                     activeEndpoint.routeAuthority() == candidate.routeAuthority()
@@ -232,6 +260,7 @@ fun EndpointsCard(
 /**
  * One row: role chip + host:port + transport hint + health chip + 3-dot menu.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EndpointRow(
     candidate: EndpointCandidate,
@@ -239,6 +268,7 @@ private fun EndpointRow(
     isPreferred: Boolean,
     isProbing: Boolean = false,
     outcome: RouteProbeOutcome? = null,
+    surfaceOutcomeFor: (EndpointCandidate, EndpointSurface) -> RouteProbeOutcome? = { _, _ -> null },
     dashboardAuthenticated: Boolean? = null,
     dashboardSignInRequired: Boolean = false,
     onUseNow: () -> Unit,
@@ -276,28 +306,38 @@ private fun EndpointRow(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
                         text = candidate.displayLabel(),
                         style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    SurfaceSecurityGlyph(kind = candidate.routeSecurityKind())
-                    if (isActive) {
-                        ActiveChip(stringResource(R.string.endpoints_active))
-                    } else if (isPreferred) {
-                        PreferredChip(stringResource(R.string.endpoints_preferred_chip))
-                    } else {
-                        FallbackChip(stringResource(R.string.endpoints_fallback))
+                    Text(
+                        text = routeTransportLabel(candidate),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    when {
+                        isActive -> ActiveChip(stringResource(R.string.endpoints_active))
+                        isPreferred -> PreferredChip(stringResource(R.string.endpoints_preferred_chip))
+                        else -> FallbackChip(stringResource(R.string.endpoints_fallback))
                     }
-                    if (!candidate.isKnownRole()) {
-                        // Show the raw role for custom-VPN entries so users
-                        // can tell "netbird-eu" from "wireguard-home" at a
-                        // glance without poking into the menu.
+                    if (!candidate.isKnownRole() && candidate.displayName.isNullOrBlank()) {
                         Text(
-                            text = "(${candidate.role})",
+                            text = candidate.role,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                         )
                     }
                 }
@@ -307,7 +347,7 @@ private fun EndpointRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    outcome == null -> Unit // never probed — say nothing
+                    outcome == null || outcome.isSupersededProbeFailure() -> Unit
                     outcome.reachable -> Text(
                         text = stringResource(R.string.endpoints_reachable),
                         style = MaterialTheme.typography.labelSmall,
@@ -484,6 +524,7 @@ private fun EndpointRow(
                 candidate = candidate,
                 dashboardAuthenticated = dashboardAuthenticated,
                 dashboardSignInRequired = dashboardSignInRequired,
+                outcomeFor = { surface -> surfaceOutcomeFor(candidate, surface) },
                 modifier = Modifier.padding(start = 26.dp, end = 4.dp, top = 8.dp),
             )
         }
@@ -536,13 +577,16 @@ private fun RouteSurfaceMap(
     candidate: EndpointCandidate,
     dashboardAuthenticated: Boolean? = null,
     dashboardSignInRequired: Boolean = false,
+    outcomeFor: (EndpointSurface) -> RouteProbeOutcome? = { null },
     modifier: Modifier = Modifier,
 ) {
     val dashboardUrl = candidate.dashboard?.url
         ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
     val apiUrl = candidate.api?.url
     val relayUrl = candidate.relay?.url
-
+    val dashboardOutcome = outcomeFor(EndpointSurface.Dashboard)
+    val apiOutcome = outcomeFor(EndpointSurface.Api)
+    val relayOutcome = outcomeFor(EndpointSurface.Relay)
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
         shape = appearanceRoundedCornerShape(10.dp),
@@ -558,26 +602,28 @@ private fun RouteSurfaceMap(
                 status = when {
                     dashboardSignInRequired -> stringResource(R.string.active_section_sign_in_required)
                     dashboardAuthenticated == true -> stringResource(R.string.active_section_signed_in)
-                    dashboardUrl != null -> stringResource(R.string.active_section_configured)
-                    else -> stringResource(R.string.active_section_not_configured)
+                    else -> routeSurfaceRuntimeStatus(dashboardUrl, dashboardOutcome)
                 },
-                warning = dashboardSignInRequired,
+                warning = dashboardSignInRequired || dashboardOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(
+                    candidate,
+                    EndpointSurface.Dashboard,
+                    dashboardUrl,
+                ),
             )
             RouteSurfaceRow(
                 label = stringResource(R.string.active_section_api_server),
                 url = apiUrl,
-                status = stringResource(
-                    if (apiUrl != null) R.string.active_section_configured
-                    else R.string.active_section_not_configured,
-                ),
+                status = routeSurfaceRuntimeStatus(apiUrl, apiOutcome),
+                warning = apiOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(candidate, EndpointSurface.Api, apiUrl),
             )
             RouteSurfaceRow(
                 label = stringResource(R.string.active_section_relay),
                 url = relayUrl,
-                status = stringResource(
-                    if (relayUrl != null) R.string.active_section_configured
-                    else R.string.active_section_not_configured,
-                ),
+                status = routeSurfaceRuntimeStatus(relayUrl, relayOutcome),
+                warning = relayOutcome.isDefinitiveFailure(),
+                security = routeSurfaceSecurityPresentation(candidate, EndpointSurface.Relay, relayUrl),
             )
         }
     }
@@ -589,6 +635,7 @@ private fun RouteSurfaceRow(
     url: String?,
     status: String,
     warning: Boolean = false,
+    security: RouteSurfaceSecurityPresentation = RouteSurfaceSecurityPresentation.NotConfigured,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -609,6 +656,31 @@ private fun RouteSurfaceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (security != RouteSurfaceSecurityPresentation.NotConfigured) {
+                Text(
+                    text = when (security) {
+                        RouteSurfaceSecurityPresentation.ApplicationTls ->
+                            stringResource(R.string.endpoints_security_application_tls)
+                        RouteSurfaceSecurityPresentation.TailscaleOverlay ->
+                            stringResource(R.string.endpoints_security_tailscale_overlay)
+                        RouteSurfaceSecurityPresentation.WireGuardOverlay ->
+                            stringResource(R.string.endpoints_security_wireguard_overlay)
+                        RouteSurfaceSecurityPresentation.SecureLink ->
+                            stringResource(R.string.endpoints_security_secure_link)
+                        RouteSurfaceSecurityPresentation.PrivatePlain ->
+                            stringResource(R.string.endpoints_security_private_plain)
+                        RouteSurfaceSecurityPresentation.PublicPlain ->
+                            stringResource(R.string.endpoints_security_public_plain)
+                        RouteSurfaceSecurityPresentation.NotConfigured -> ""
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (security == RouteSurfaceSecurityPresentation.PublicPlain) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
         Text(
             text = status,
@@ -700,26 +772,241 @@ private fun FallbackChip(label: String) {
 
 /**
  * Role → Material icon. Known roles get their canonical glyph; anything
- * else falls through to [Icons.Filled.Shield] (generic "Custom VPN").
+ * else falls through to [Icons.Filled.Shield] (generic custom route).
  */
 private fun roleIcon(role: String): ImageVector = when (role.lowercase()) {
     "lan" -> Icons.Filled.Lan
     "tailscale" -> Icons.Filled.VpnKey
     "public" -> Icons.Filled.Public
+    "dashboard", "authenticated_dashboard", "https" -> Icons.Filled.Public
     else -> Icons.Filled.Shield
 }
 
+@Composable
+private fun routeSurfaceRuntimeStatus(
+    url: String?,
+    outcome: RouteProbeOutcome?,
+): String = when (routeSurfaceProbePresentation(url, outcome)) {
+    RouteSurfaceProbePresentation.NotConfigured ->
+        stringResource(R.string.active_section_not_configured)
+    RouteSurfaceProbePresentation.NotChecked ->
+        stringResource(R.string.active_section_not_checked_separately)
+    RouteSurfaceProbePresentation.Reachable -> stringResource(R.string.endpoints_reachable)
+    RouteSurfaceProbePresentation.Unreachable -> stringResource(
+        R.string.endpoints_unreachable,
+        outcome?.detail ?: stringResource(R.string.endpoints_unreachable_no_detail),
+    )
+}
+
+internal enum class RouteSurfaceProbePresentation {
+    NotConfigured,
+    NotChecked,
+    Reachable,
+    Unreachable,
+}
+
+internal enum class RouteReachabilityPresentation {
+    Checking,
+    Reachable,
+    Unreachable,
+    NotChecked,
+}
+
+/** Honest selection context: a selected route is not proof of a fresh probe. */
+internal fun routeReachabilityPresentation(
+    isProbing: Boolean,
+    outcome: RouteProbeOutcome?,
+): RouteReachabilityPresentation = when {
+    isProbing -> RouteReachabilityPresentation.Checking
+    outcome == null || outcome.isSupersededProbeFailure() -> RouteReachabilityPresentation.NotChecked
+    outcome.reachable -> RouteReachabilityPresentation.Reachable
+    else -> RouteReachabilityPresentation.Unreachable
+}
+
+internal enum class RouteSurfaceSecurityPresentation {
+    ApplicationTls,
+    TailscaleOverlay,
+    WireGuardOverlay,
+    SecureLink,
+    PrivatePlain,
+    PublicPlain,
+    NotConfigured,
+}
+
 /**
- * Per-route security classification for the picker glyph. Keyed on the
- * candidate's own scheme + role (no device-level Tailscale detection needed —
- * a `tailscale`/`plugin_proxy` role is encrypted regardless), so each row can
- * be classified independently before it's the active route.
+ * Separates application TLS from private overlay encryption. An HTTP/WS
+ * Tailscale route is WireGuard-encrypted in transit, but it does not have
+ * application-layer TLS; public plaintext remains an error.
  */
-private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
-    hasSecureProxy() -> SurfaceSecurityKind.Tls
-    isTlsUrl(primaryRouteUrl().orEmpty()) -> SurfaceSecurityKind.Tls
-    isEncryptedOverlayRoute(isTailscaleDetected = false) -> SurfaceSecurityKind.Overlay
-    else -> SurfaceSecurityKind.Plain
+internal fun routeSurfaceSecurityPresentation(
+    candidate: EndpointCandidate,
+    surface: EndpointSurface,
+    url: String?,
+): RouteSurfaceSecurityPresentation {
+    if (url.isNullOrBlank()) return RouteSurfaceSecurityPresentation.NotConfigured
+    val label = when (surface) {
+        EndpointSurface.Standard,
+        EndpointSurface.Dashboard -> "Dashboard & Gateway"
+        EndpointSurface.Api -> "API fallback"
+        EndpointSurface.Relay -> "Relay tools"
+    }
+    val securityVerdict = classifySurfaceSecurity(
+        label = label,
+        url = url,
+        activeEndpoint = candidate,
+        isTailscaleDetected = false,
+    )
+    val role = candidate.role.trim().lowercase()
+    return when (securityVerdict.kind) {
+        SurfaceSecurityKind.Tls -> when (securityVerdict.mechanism) {
+            "Hermes Secure Link", "Hermes Reach" -> RouteSurfaceSecurityPresentation.SecureLink
+            else -> RouteSurfaceSecurityPresentation.ApplicationTls
+        }
+        SurfaceSecurityKind.Overlay -> when (securityVerdict.mechanism) {
+            "Tailscale" -> RouteSurfaceSecurityPresentation.TailscaleOverlay
+            else -> RouteSurfaceSecurityPresentation.WireGuardOverlay
+        }
+        SurfaceSecurityKind.Plain -> if (role == "public" || role == "https") {
+            RouteSurfaceSecurityPresentation.PublicPlain
+        } else {
+            RouteSurfaceSecurityPresentation.PrivatePlain
+        }
+    }
+}
+
+internal fun routeSurfaceProbePresentation(
+    url: String?,
+    outcome: RouteProbeOutcome?,
+): RouteSurfaceProbePresentation = when {
+    url == null -> RouteSurfaceProbePresentation.NotConfigured
+    outcome == null || outcome.isSupersededProbeFailure() -> RouteSurfaceProbePresentation.NotChecked
+    outcome.reachable -> RouteSurfaceProbePresentation.Reachable
+    else -> RouteSurfaceProbePresentation.Unreachable
+}
+
+private fun RouteProbeOutcome?.isDefinitiveFailure(): Boolean =
+    this != null && !reachable && !isSupersededProbeFailure()
+
+/** A cancelled shared probe is unknown/checking state, never proof of outage. */
+internal fun RouteProbeOutcome.isSupersededProbeFailure(): Boolean {
+    if (reachable) return false
+    val value = detail.orEmpty().lowercase()
+    return value.contains("interruptedioexception") ||
+        value.contains("canceled") ||
+        value.contains("cancelled") ||
+        value.contains("superseded")
+}
+
+/** Explicit HTTP/HTTPS route identity; security warnings stay surface-scoped. */
+internal fun routeTransportLabel(candidate: EndpointCandidate): String {
+    val routeUrl = candidate.dashboard?.url
+        ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
+        ?: candidate.primaryRouteUrl()
+    return when (runCatching { URI(routeUrl.orEmpty()).scheme?.lowercase() }.getOrNull()) {
+        "https" -> "HTTPS"
+        "http" -> "HTTP"
+        "wss" -> "WSS"
+        "ws" -> "WS"
+        else -> "—"
+    }
+}
+
+/** Plain transport warnings belong to Relay, not to an allowed HTTP Gateway. */
+internal fun EndpointCandidate.hasPlainRelayTransport(): Boolean {
+    val relayScheme = runCatching { URI(relay?.url.orEmpty()).scheme?.lowercase() }.getOrNull()
+    if (relayScheme !in setOf("ws", "http")) return false
+    val routeHint = security.orEmpty().lowercase()
+    return role.lowercase() != "tailscale" &&
+        !routeHint.contains("tailscale") &&
+        !routeHint.contains("wireguard")
+}
+
+/** First-class editor for the Dashboard/Gateway origin used by Manage, chat, sessions, and OIDC. */
+@Composable
+fun DashboardAddressEditorDialog(
+    initialUrl: String,
+    onSave: (dashboardUrl: String, onResult: (String?) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val normalized = remember(url) {
+        url.takeIf { it.isNotBlank() }?.let(Connection::normalizeDashboardUrlInput).orEmpty()
+    }
+    val valid = remember(normalized) { isValidDashboardEditorAddress(normalized) }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text(stringResource(R.string.dashboard_address_editor_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.dashboard_address_editor_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        errorText = null
+                    },
+                    label = { Text(stringResource(R.string.dashboard_address_label)) },
+                    placeholder = { Text(stringResource(R.string.dashboard_address_placeholder)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    isError = errorText != null,
+                    supportingText = {
+                        Text(
+                            text = errorText ?: if (url.isBlank()) {
+                                stringResource(R.string.dashboard_address_required)
+                            } else {
+                                stringResource(R.string.dashboard_address_preview, normalized)
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = stringResource(R.string.dashboard_address_oidc_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = valid && !saving && normalized != initialUrl.trim().trimEnd('/'),
+                onClick = {
+                    saving = true
+                    onSave(normalized) { error ->
+                        saving = false
+                        if (error == null) onDismiss() else errorText = error
+                    }
+                },
+            ) {
+                Text(
+                    if (saving) stringResource(R.string.endpoints_saving)
+                    else stringResource(R.string.endpoints_save),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) {
+                Text(stringResource(R.string.endpoints_cancel))
+            }
+        },
+    )
+}
+
+private fun isValidDashboardEditorAddress(address: String): Boolean {
+    val parsed = runCatching { URI(address) }.getOrNull() ?: return false
+    return parsed.scheme?.lowercase() in setOf("http", "https") &&
+        !parsed.host.isNullOrBlank() &&
+        parsed.userInfo == null &&
+        parsed.query == null &&
+        parsed.fragment == null
 }
 
 /**
@@ -737,6 +1024,7 @@ private fun EndpointCandidate.routeSecurityKind(): SurfaceSecurityKind = when {
  *   receives a user-facing error string to render inline, or null on
  *   success (the dialog then closes itself).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RouteEditorDialog(
     original: EndpointCandidate?,
@@ -745,11 +1033,11 @@ fun RouteEditorDialog(
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    val knownRoles = listOf("tailscale", "public")
+    val knownRoles = GATEWAY_ROUTE_EDITOR_ROLES
     var selectedRole by remember {
         mutableStateOf(
             when (original?.role?.lowercase()) {
-                null -> "tailscale"
+                null -> "lan"
                 in knownRoles -> original.role.lowercase()
                 else -> CUSTOM_ROLE
             },
@@ -760,7 +1048,7 @@ fun RouteEditorDialog(
             original?.role?.takeIf { it.lowercase() !in knownRoles }.orEmpty(),
         )
     }
-    var url by remember(original) { mutableStateOf(original?.primaryRouteUrl().orEmpty()) }
+    var url by remember(original) { mutableStateOf(routeEditorInitialGatewayUrl(original)) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
@@ -784,7 +1072,12 @@ fun RouteEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedRole == "lan",
+                        onClick = { selectedRole = "lan" },
+                        label = { Text(stringResource(R.string.cw_role_lan)) },
+                    )
                     FilterChip(
                         selected = selectedRole == "tailscale",
                         onClick = { selectedRole = "tailscale" },
@@ -908,3 +1201,6 @@ private const val REMOTE_ACCESS_DOCS_URL =
     "https://hermes-relay.dev/docs/guide/remote-access"
 
 private const val CUSTOM_ROLE = "__custom__"
+internal val GATEWAY_ROUTE_EDITOR_ROLES = listOf("lan", "tailscale", "public")
+internal fun routeEditorInitialGatewayUrl(original: EndpointCandidate?): String =
+    original?.gatewayRouteUrl().orEmpty()

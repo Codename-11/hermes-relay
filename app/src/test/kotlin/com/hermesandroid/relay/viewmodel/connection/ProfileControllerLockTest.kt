@@ -4,15 +4,18 @@ import android.content.Context
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -34,6 +37,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Profile-**lock** behavior of [ProfileController].
@@ -75,7 +79,10 @@ class ProfileControllerLockTest {
     private lateinit var activeConnectionId: MutableStateFlow<String?>
     private lateinit var controller: ProfileController
     private lateinit var dashboardClient: DashboardApiClient
+    private var gatewayClient: GatewayChatClient? = null
     private var dashboardUrl: String? = null
+    private var streamingEndpoint: String = "completions"
+    private var gatewayAvailability: GatewayAvailability = GatewayAvailability.Ready
 
     private val lastSessionIds = mutableListOf<String?>()
 
@@ -97,6 +104,8 @@ class ProfileControllerLockTest {
         activeConnectionId = MutableStateFlow<String?>(connectionId)
         dashboardClient = mockk(relaxed = true)
         dashboardUrl = null
+        streamingEndpoint = "completions"
+        gatewayAvailability = GatewayAvailability.Ready
 
         controller = ProfileController(
             context = context,
@@ -108,17 +117,136 @@ class ProfileControllerLockTest {
             // Non-"auto" so activeSessionTransport() resolves deterministically
             // (no gateway probe gating) — keeps refreshLastSessionForProfile from
             // bailing early on Unknown.
-            streamingEndpointProvider = { "completions" },
-            gatewayAvailabilityProvider = { GatewayAvailability.Ready },
+            streamingEndpointProvider = { streamingEndpoint },
+            gatewayAvailabilityProvider = { gatewayAvailability },
             setLastSessionId = { lastSessionIds += it },
             legacyDefaultSessionId = { null },
             rebuildChatApiClient = { },
+            gatewayClientProvider = { gatewayClient },
         )
 
         // Guarantee a clean lock slot — the underlying "profile_selections"
         // DataStore is name-scoped and could carry residual state across runs in
         // the same JVM.
         runBlocking { controller.profileLockStore.clear(connectionId) }
+    }
+
+    @Test
+    fun stalledGatewayRosterDoesNotBlockDashboardProfileHydration() {
+        dashboardUrl = "https://dashboard.example"
+        val releaseGateway = CompletableDeferred<Unit>()
+        gatewayClient = mockk(relaxed = true)
+        coEvery { gatewayClient!!.listProfiles() } coAnswers {
+            releaseGateway.await()
+            Result.success(emptyList())
+        }
+        coEvery { dashboardClient.getActiveProfileScope() } returns Result.success(
+            DashboardProfileScope(active = "pinned", current = "default"),
+        )
+        coEvery { dashboardClient.listProfiles() } returns Result.success(
+            listOf(Profile(name = "pinned", model = "model")),
+        )
+        controller.setPendingConnectionId(connectionId)
+        controller.setPendingName(null)
+
+        controller.refreshDashboardProfiles()
+
+        assertEquals(
+            "pinned",
+            awaitFlow(controller.effectiveSessionProfileName) { it == "pinned" },
+        )
+        assertFalse(releaseGateway.isCompleted)
+        coVerify(exactly = 1) { dashboardClient.getActiveProfileScope() }
+        coVerify(exactly = 1) { dashboardClient.listProfiles() }
+    }
+
+    @Test
+    fun persistedNamedProfileScopesSessionsBeforeHeavyRosterHydration() {
+        dashboardUrl = "https://dashboard.example"
+        gatewayClient = mockk(relaxed = true)
+        coEvery { dashboardClient.getActiveProfileScope() } returns Result.success(
+            DashboardProfileScope(active = "default", current = "default"),
+        )
+        controller.setPendingConnectionId(connectionId)
+        controller.setPendingName("mizu")
+
+        controller.refreshDashboardProfileScope()
+
+        assertEquals("mizu", awaitFlow(controller.effectiveSessionProfileName) { it == "mizu" })
+        assertEquals("mizu", awaitFlow(controller.effectiveDisplayProfile) { it?.name == "mizu" }?.name)
+        assertTrue(awaitFlow(controller.selectionSettled) { it })
+        coVerify(exactly = 1) { dashboardClient.getActiveProfileScope() }
+        coVerify(exactly = 0) { dashboardClient.listProfiles() }
+        coVerify(exactly = 0) { gatewayClient!!.listProfiles() }
+        coVerify(exactly = 0) { gatewayClient!!.petInfo(any(), any()) }
+    }
+
+    @Test
+    fun pendingNamedProfileImmediatelyRestoresItsOwnSessionBucket() {
+        runBlocking {
+            controller.profileSessionStore.setSessionId(
+                connectionId,
+                null,
+                SessionTransport.SSE,
+                "server-default-session",
+            )
+            controller.profileSessionStore.setSessionId(
+                connectionId,
+                "mizu",
+                SessionTransport.SSE,
+                "mizu-session",
+            )
+        }
+        controller.setPendingConnectionId(connectionId)
+        controller.setPendingName("mizu")
+
+        controller.refreshLastSessionForProfile(connectionId, null)
+
+        val restored = awaitFlowValue { lastSessionIds.lastOrNull() == "mizu-session" }
+        assertTrue(restored)
+        assertFalse(lastSessionIds.contains("server-default-session"))
+    }
+
+    @Test
+    fun autoUnknownRestoresGatewayBucketUntilDefinitiveFallback() {
+        streamingEndpoint = "auto"
+        gatewayAvailability = GatewayAvailability.Unknown
+
+        assertEquals(SessionTransport.GATEWAY, controller.activeSessionTransport())
+
+        gatewayAvailability = GatewayAvailability.Unreachable
+        assertEquals(SessionTransport.SSE, controller.activeSessionTransport())
+    }
+
+    @Test
+    fun olderDashboardScopeResponseCannotOverwriteNewerRefresh() {
+        dashboardUrl = "https://dashboard.example"
+        val calls = AtomicInteger(0)
+        val firstStarted = CompletableDeferred<Unit>()
+        val first = CompletableDeferred<DashboardProfileScope>()
+        val second = CompletableDeferred<DashboardProfileScope>()
+        coEvery { dashboardClient.getActiveProfileScope() } coAnswers {
+            Result.success(
+                if (calls.incrementAndGet() == 1) {
+                    firstStarted.complete(Unit)
+                    first.await()
+                } else {
+                    second.await()
+                },
+            )
+        }
+        controller.setPendingConnectionId(connectionId)
+        controller.setPendingName(null)
+
+        controller.refreshDashboardProfileScope()
+        runBlocking { withTimeout(5_000) { firstStarted.await() } }
+        controller.refreshDashboardProfileScope()
+        second.complete(DashboardProfileScope(active = "newer", current = "default"))
+        assertEquals("newer", awaitFlow(controller.effectiveSessionProfileName) { it == "newer" })
+        first.complete(DashboardProfileScope(active = "older", current = "default"))
+        Thread.sleep(100)
+
+        assertEquals("newer", controller.effectiveSessionProfileName.value)
     }
 
     @After
@@ -141,6 +269,15 @@ class ProfileControllerLockTest {
 
     private fun awaitSelected(name: String?) =
         awaitFlow(controller.selectedProfile) { it?.name == name }
+
+    private fun awaitFlowValue(predicate: () -> Boolean): Boolean = runBlocking {
+        withTimeout(5_000) {
+            while (!predicate()) {
+                kotlinx.coroutines.delay(20)
+            }
+            true
+        }
+    }
 
     // --- lockProfile(profile) -----------------------------------------------
 
@@ -365,5 +502,43 @@ class ProfileControllerLockTest {
         // selectProfile to a different target is now honored.
         controller.selectProfile(coder)
         assertEquals(coder, controller.selectedProfile.value)
+    }
+
+    @Test
+    fun freshDraftFencesRestoreAndClearsOnlyItsConnectionProfileTransport() = runBlocking {
+        val sessions = controller.profileSessionStore
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "old-sse")
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.GATEWAY, "old-gateway")
+        sessions.setSessionId("other-connection", mizu.name, SessionTransport.SSE, "other-sse")
+        controller.selectProfile(mizu)
+        awaitSelected(mizu.name)
+
+        controller.markFreshDraft(connectionId, mizu.name, SessionTransport.SSE)
+        withTimeout(5_000) {
+            sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.SSE)
+                .first { it == null }
+        }
+
+        // Simulate an older read observing the pre-clear value: the live intent
+        // fence still wins until a real session supersedes the draft.
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "stale-sse")
+        controller.refreshLastSessionForProfile(connectionId, mizu.name)
+        assertNull(lastSessionIds.last())
+
+        assertEquals(
+            "old-gateway",
+            sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.GATEWAY).first(),
+        )
+        assertEquals(
+            "other-sse",
+            sessions.sessionIdFlow("other-connection", mizu.name, SessionTransport.SSE).first(),
+        )
+
+        controller.markSessionPersisted(connectionId, mizu.name, SessionTransport.SSE)
+        sessions.setSessionId(connectionId, mizu.name, SessionTransport.SSE, "new-sse")
+        controller.refreshLastSessionForProfile(connectionId, mizu.name)
+        withTimeout(5_000) {
+            while (lastSessionIds.lastOrNull() != "new-sse") Thread.sleep(10)
+        }
     }
 }

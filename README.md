@@ -105,7 +105,7 @@ The wizard probes everything and finishes with a capability card:
 One dashboard sign-in unlocks Chat, Manage, sessions, and standard voice. That's
 the whole Vanilla Hermes setup.
 
-> **Going places?** Add the Dashboard's Tailscale address — for example `http://100.x.y.z:9119` or a separately published `https://host.ts.net` URL — under **Settings → Connections → Routes**. Android tests it as a Dashboard route; no API server or API key is required. The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://hermes-relay.dev/docs/guide/remote-access).
+> **Going places?** Add the Dashboard's Tailscale address — for example `http://100.x.y.z:9119` or a separately published `https://host.ts.net` URL — under **Settings → Gateways → Routes**. Android tests it as a Dashboard route; no API server or API key is required. The app uses LAN at home and switches routes automatically when you leave. See [Remote access](https://hermes-relay.dev/docs/guide/remote-access).
 
 ### 4 · Recommended: pair Relay for the complete experience
 
@@ -124,7 +124,7 @@ Use `--no-ssl` only on a trusted LAN or VPN. Use the
 exposing any Hermes surface beyond that network.
 
 Refresh or restart the Dashboard/Gateway, open **Relay → Pair new device**, and
-scan the one-time QR from Android **Settings → Connections → Pair Hermes Relay**.
+scan the one-time QR from Android **Settings → Gateways → Access → Pair Relay**.
 Leave mode on **Auto** for the recommended route discovery. The same dialog
 shows a copyable invite for Desktop CLI clients:
 
@@ -154,10 +154,15 @@ manual fallbacks when QR or clipboard transfer is unavailable.
   <tr>
     <td align="center" width="25%"><img src="assets/screenshots/05_themes.png" alt="App themes" width="100%"><br><sub><b>App themes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/06_manage.png" alt="Manage your agent" width="100%"><br><sub><b>Manage your agent</b></sub></td>
-    <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Connections and routes" width="100%"><br><sub><b>Connections &amp; routes</b></sub></td>
+    <td align="center" width="25%"><img src="assets/screenshots/07_connections.png" alt="Gateways and routes" width="100%"><br><sub><b>Gateways &amp; routes</b></sub></td>
     <td align="center" width="25%"><img src="assets/screenshots/08_appearance.png" alt="Agent avatar &amp; skins" width="100%"><br><sub><b>Avatars &amp; skins</b></sub></td>
   </tr>
 </table>
+
+<p align="center">
+  <img src="assets/screenshots/supplemental/15_git_workspace.png" alt="Native Git workspace showing repository changes, an inline diff, and staging controls" width="260"><br>
+  <sub><b>Native Git workspace</b> — optional Hermes-Relay plugin</sub>
+</p>
 
 ### Simplified Chinese
 

@@ -1,7 +1,14 @@
 package com.hermesandroid.relay.ui.components
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -20,13 +27,20 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -37,10 +51,12 @@ import androidx.compose.ui.unit.dp
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
- * "What's New" sheet, shown automatically on a version bump (RelayApp) and from
- * the About screen.
+ * Expanded "What's New" sheet, opened from the non-blocking post-update toast
+ * or directly from the About screen.
  *
  * As of the multi-version changelog work, the single source of truth is the
  * bundled [changelog.json] asset (see [ChangelogStore]). This dialog renders the
@@ -60,6 +76,9 @@ fun WhatsNewDialog(
     onViewHistory: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var visible by remember { mutableStateOf(false) }
+    var exiting by remember { mutableStateOf(false) }
     // Prefer the structured changelog's latest entry; fall back to the legacy
     // text asset so a missing/garbled JSON never leaves the dialog empty.
     val latest = remember { ChangelogStore.load(context).versions.firstOrNull() }
@@ -67,20 +86,39 @@ fun WhatsNewDialog(
         latest?.toNotes() ?: parseWhatsNew(loadWhatsNew(context))
     }
 
+    fun leave(afterExit: () -> Unit) {
+        if (exiting) return
+        exiting = true
+        scope.launch {
+            visible = false
+            delay(180)
+            afterExit()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!exiting) visible = true
+    }
+
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { leave(onDismiss) },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 32.dp)
-                .widthIn(max = 560.dp)
-                .heightIn(max = 680.dp),
-            shape = appearanceRoundedCornerShape(24.dp),
-            tonalElevation = 6.dp,
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(220)) + scaleIn(tween(220), initialScale = 0.92f),
+            exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.96f),
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 32.dp)
+                    .widthIn(max = 560.dp)
+                    .heightIn(max = 680.dp),
+                shape = appearanceRoundedCornerShape(24.dp),
+                tonalElevation = 6.dp,
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -99,7 +137,7 @@ fun WhatsNewDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = { leave(onDismiss) }) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = stringResource(R.string.changelog_close),
@@ -146,19 +184,47 @@ fun WhatsNewDialog(
                         }
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    onViewHistory?.let { action ->
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = action,
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.whats_new_full_history)) }
+                    WhatsNewActions(
+                        onDismiss = { leave(onDismiss) },
+                        onViewHistory = onViewHistory?.let { action -> { leave(action) } },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhatsNewActions(
+    onDismiss: () -> Unit,
+    onViewHistory: (() -> Unit)?,
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+    ) {
+        val stackActions = LocalDensity.current.fontScale >= 1.3f || maxWidth < 320.dp
+        if (stackActions) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                onViewHistory?.let { action ->
+                    OutlinedButton(onClick = action, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.whats_new_full_history))
                     }
-                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.whats_new_got_it))
+                }
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.whats_new_got_it))
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                onViewHistory?.let { action ->
+                    OutlinedButton(onClick = action, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.whats_new_full_history))
                     }
+                }
+                Button(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.whats_new_got_it))
                 }
             }
         }
@@ -222,15 +288,55 @@ fun ColumnScope.VersionNotesBody(groups: List<WhatsNewGroup>) {
  * followed by [VersionNotesBody]. Used by ChangelogScreen for each release.
  */
 @Composable
-fun VersionNotesBlock(entry: ChangelogVersion) {
+fun VersionNotesBlock(
+    entry: ChangelogVersion,
+    showVersionLine: Boolean = true,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = entry.subtitle(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        VersionNotesBody(entry.toGroups())
+        val highlight = entry.highlight
+        if (highlight == null) {
+            if (showVersionLine) {
+                Text(
+                    text = entry.subtitle(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            VersionNotesBody(entry.toGroups())
+        } else {
+            if (showVersionLine) {
+                Text(
+                    text = entry.versionLine(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = highlight.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            highlight.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            VersionNotesBody(listOf(WhatsNewGroup(header = null, bullets = highlight.bullets)))
+            if (entry.improvements.isNotEmpty()) {
+                VersionNotesBody(
+                    listOf(
+                        WhatsNewGroup(
+                            header = stringResource(R.string.changelog_also_improved),
+                            bullets = entry.improvements,
+                        ),
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -245,12 +351,32 @@ data class ChangelogSection(
     val bullets: List<String> = emptyList(),
 )
 
+/** Editorially selected reason to care about a release. */
+@Serializable
+data class ChangelogHighlight(
+    val title: String,
+    val summary: String? = null,
+    val bullets: List<String> = emptyList(),
+)
+
+/** Compact preview of noteworthy items beyond the primary highlight. */
+@Serializable
+data class ChangelogToastDigest(
+    val additionalFeatureCount: Int = 0,
+    val fixCount: Int = 0,
+    val preview: List<String> = emptyList(),
+)
+
 /** A single released version's user-facing notes. */
 @Serializable
 data class ChangelogVersion(
     val version: String,
     val title: String? = null,
     val date: String? = null,
+    val highlight: ChangelogHighlight? = null,
+    val improvements: List<String> = emptyList(),
+    val toastDigest: ChangelogToastDigest? = null,
+    val playNotes: String? = null,
     val sections: List<ChangelogSection> = emptyList(),
 ) {
     /** "v1.2.0 — Make it yours · 2026-06-20" (each token optional but version). */
@@ -261,8 +387,21 @@ data class ChangelogVersion(
         return head + titlePart + datePart
     }
 
+    /** Compact metadata line used when a curated highlight owns the headline. */
+    fun versionLine(): String {
+        val datePart = date?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
+        return "v$version$datePart"
+    }
+
     fun toGroups(): List<WhatsNewGroup> =
-        sections.map { WhatsNewGroup(it.header?.takeIf { h -> h.isNotBlank() }, it.bullets) }
+        highlight?.let { curated ->
+            buildList {
+                add(WhatsNewGroup(curated.title.takeIf { it.isNotBlank() }, curated.bullets))
+                if (improvements.isNotEmpty()) {
+                    add(WhatsNewGroup("Also improved", improvements))
+                }
+            }
+        } ?: sections.map { WhatsNewGroup(it.header?.takeIf { h -> h.isNotBlank() }, it.bullets) }
 
     /** Adapt this version into the dialog's [WhatsNewNotes] shape. */
     fun toNotes(): WhatsNewNotes = WhatsNewNotes(

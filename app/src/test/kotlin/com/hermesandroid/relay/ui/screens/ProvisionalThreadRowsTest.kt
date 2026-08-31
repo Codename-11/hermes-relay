@@ -36,6 +36,21 @@ class ProvisionalThreadRowsTest {
         assertTrue("phone" in rows)
     }
 
+    @Test
+    fun promotedChatIdSuppressesOnlyItsProvisionalRow() {
+        val rows = buildProvisionalThreadRows(
+            entries = listOf(
+                entry("promoted", connectionId = "connection-a", chatId = "reminders"),
+                entry("still-local", connectionId = "connection-a", chatId = "updates"),
+            ),
+            activeConnectionId = "connection-a",
+            realThreadChatIds = listOf("reminders"),
+        )
+
+        assertFalse("reminders" in rows)
+        assertEquals(listOf("still-local"), rows.getValue("updates").map { it.id })
+    }
+
     private fun entry(id: String, connectionId: String?, chatId: String?) =
         ProactiveInboxEntry(
             id = id,

@@ -277,4 +277,40 @@ class AgentDisplayTest {
         assertEquals("conn::__server_default__", AgentDisplay.profileContextKey("conn", null))
         assertEquals("conn::mizu", AgentDisplay.profileContextKey("conn", "mizu"))
     }
+
+    @Test
+    fun parseProfileContextKey_preservesRequestIdentityAndConnectionScope() {
+        val serverDefault = AgentDisplay.parseProfileContextKey(
+            AgentDisplay.profileContextKey("connection-a", null),
+        )
+        assertEquals("connection-a", serverDefault?.connectionId)
+        assertEquals(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, serverDefault?.profileKey)
+        assertNull(serverDefault?.requestProfileName)
+
+        val literalDefault = AgentDisplay.parseProfileContextKey(
+            AgentDisplay.profileContextKey("connection-a", "default"),
+        )
+        assertEquals("default", literalDefault?.profileKey)
+        assertEquals("default", literalDefault?.requestProfileName)
+
+        val named = AgentDisplay.parseProfileContextKey(
+            AgentDisplay.profileContextKey("connection-b", "mizu"),
+        )
+        assertEquals("connection-b", named?.connectionId)
+        assertEquals("mizu", named?.requestProfileName)
+
+        val delimitedProfile = AgentDisplay.parseProfileContextKey(
+            AgentDisplay.profileContextKey("connection-c", "team::writer"),
+        )
+        assertEquals("connection-c", delimitedProfile?.connectionId)
+        assertEquals("team::writer", delimitedProfile?.requestProfileName)
+    }
+
+    @Test
+    fun parseProfileContextKey_failsClosedForLegacyOrMalformedKeys() {
+        assertNull(AgentDisplay.parseProfileContextKey("connection/profile-default"))
+        assertNull(AgentDisplay.parseProfileContextKey("connection-a::"))
+        assertNull(AgentDisplay.parseProfileContextKey("::default"))
+        assertNull(AgentDisplay.parseProfileContextKey(null))
+    }
 }

@@ -104,6 +104,24 @@ The legacy `relay_server/` directory is a thin compatibility shim around `plugin
 | **CI/CD** | GitHub Actions (lint, build, test, signed APK artifacts) |
 | **Min SDK** | 26 (Android 8.0) / Target SDK 36 |
 
+## Issues and automated triage
+
+New issues may receive one first response headed **Hermes-Relay automated
+triage**. It reads the live report against current code, documentation, related
+issues, and public release state; it may add existing type/area labels and ask
+for a focused, safe diagnostic such as the app version, interaction mode, or a
+sanitized log excerpt.
+
+GitHub displays the response as authored by `hermes-relay-triage[bot]`, a
+repository-scoped App rather than a maintainer's personal account.
+
+That reply is an acknowledgement and initial analysis, not a maintainer
+decision. The automated path may assign `Codename-11` as the fixed owner for
+follow-up, but assignment does not mean acceptance, priority, implementation,
+or a release commitment. It does not close issues, choose another assignee, set
+milestones or priority, promise a fix or release, or continue the conversation.
+A maintainer will follow up on the thread.
+
 ## Running the Relay Locally
 
 Only needed if you're working on the bridge, voice, notifications, or media features. Chat alone doesn't need the relay.
@@ -144,6 +162,23 @@ and merge back into `dev` via merge-commit/no-ff PRs. This includes small
 documentation fixes.
 `main` is release history, not the normal contribution target; it receives
 approved release PRs from `dev` and focused hotfix PRs based on production tags.
+
+Pull requests use [the repository template](.github/pull_request_template.md).
+Keep the body grounded: describe the outcome and focused changes, list exact
+verification, include visual evidence when applicable, state compatibility or
+risk, and preserve contributor lineage when replacing or salvaging prior work.
+Check an item when it is satisfied or when its N/A rationale is written in the
+body; do not use checked boxes as a substitute for evidence.
+
+New external-contributor, non-draft pull requests may receive one
+**Hermes-Relay automated PR intake** reply from `hermes-relay-triage[bot]`.
+Owner-authored `Codename-11` PRs and bot PRs skip this lane. For eligible PRs,
+the bot checks the live body, base branch, changed-path areas, template
+completeness, stated verification, visual proof, and lineage without checking
+out or executing contributor code. It may add bounded area/intake labels and
+identify missing evidence, but it does not review code correctness, approve,
+request changes, merge, close, assign, request reviewers, push commits, edit the
+PR, rerun workflows, or select review bundles.
 
 `origin/dev` is the canonical integration ref. Keep local `dev` as a clean,
 fast-forward-only mirror and create each task in its own branch/worktree from the

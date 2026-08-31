@@ -108,6 +108,12 @@
       "title": "Start a conversation",
       "source": "assets/screenshots/supplemental/14_startup.png",
       "captureNote": "Current empty-chat chrome, idle visualization, model and effort controls, and public-safe suggestions."
+    },
+    {
+      "id": "15_git_workspace",
+      "title": "Native Git workspace",
+      "source": "assets/screenshots/supplemental/15_git_workspace.png",
+      "captureNote": "Real native Git workspace with public-safe repository status, line totals, filters, selection, inline diff, branch controls, commit action, and no live host data."
     }
   ]
 }

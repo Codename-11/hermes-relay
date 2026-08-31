@@ -57,7 +57,7 @@ import { theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { getSession } from '../remoteSessions.js'
-import { probeCandidatesByPriority, secureFirstCandidates } from '../pairingQr.js'
+import { assertDesktopCompatibleRelayUrl, probeCandidatesByPriority, secureFirstCandidates } from '../pairingQr.js'
 import {
   advertisedDesktopTools,
   desktopHandlers,
@@ -875,6 +875,15 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   }
   if (sub === 'stop') {
     return stopDaemon(args)
+  }
+  const explicitRelayUrl = resolveRemoteOrNull(args)
+  if (explicitRelayUrl) {
+    try {
+      assertDesktopCompatibleRelayUrl(explicitRelayUrl)
+    } catch (error) {
+      process.stderr.write(`daemon: ${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
   }
   if (sub === 'restart') {
     if (user) return restartDaemonAsUser(args)

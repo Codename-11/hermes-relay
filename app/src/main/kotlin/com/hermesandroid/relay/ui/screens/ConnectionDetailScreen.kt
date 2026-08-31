@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,13 +16,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,28 +52,38 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.capabilities
+import com.hermesandroid.relay.data.displayLabel
+import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.ui.components.ActiveCardAdvancedSection
-import com.hermesandroid.relay.ui.components.ActiveCardFeaturesSection
 import com.hermesandroid.relay.ui.components.ActiveCardRoutesSection
 import com.hermesandroid.relay.ui.components.ActiveCardSecurityPosture
 import com.hermesandroid.relay.ui.components.ApiServerInfoSheet
+import com.hermesandroid.relay.ui.components.DashboardAddressEditorDialog
 import com.hermesandroid.relay.ui.components.InsecureConnectionAckDialog
 import com.hermesandroid.relay.ui.components.RelayInfoSheet
-import com.hermesandroid.relay.ui.components.SessionInfoSheet
+import com.hermesandroid.relay.ui.components.sameGatewayRouteBase
+import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
+import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
+import kotlinx.coroutines.launch
 
 /**
  * Tabbed detail for a single Hermes connection — the level-2 screen the
@@ -75,10 +94,9 @@ import com.hermesandroid.relay.viewmodel.RelayUiState
  *  - TopAppBar: back + connection label + an `Active` badge (active conn) +
  *    an overflow `⋮` menu (Rename / Re-pair / Revoke / Remove).
  *  - When this connection is the **active** one, a 4-tab segmented bar:
- *    **Overview** (status header + the steps/timeline capability list) ·
- *    **Routes** (ADR 24 endpoint management) · **Advanced** (manual URL /
- *    insecure / manual pairing) · **Security** (transport posture + the
- *    prominent Relay sessions entry).
+ *    **Overview** (current route + capability outcomes) · **Routes** (ADR 24
+ *    endpoint management) · **Access** (transport posture + Relay sessions) ·
+ *    **Advanced** (manual URL / insecure / manual pairing).
  *  - When this connection is **not** active, only Overview shows — the deep
  *    live content reads the single active-connection VM state, so we surface
  *    a "Switch to this connection" CTA instead of stale/foreign data.
@@ -105,34 +123,41 @@ fun ConnectionDetailScreen(
 ) {
     val context = LocalContext.current
     val isDarkTheme = LocalBrand.current.isDark
+    val snackbarHost = LocalSnackbarHost.current
+    val scope = rememberCoroutineScope()
+    val routeResetFailed = stringResource(R.string.active_section_use_selected_route_failed)
 
     val connections by connectionViewModel.connections.collectAsState()
+    val connectionsHydrated by connectionViewModel.connectionsHydrated.collectAsState()
     val activeConnectionId by connectionViewModel.activeConnectionId.collectAsState()
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val connection = connections.firstOrNull { it.id == connectionId }
-    // Connection was removed (e.g. via the overflow menu) — leave the screen.
-    LaunchedEffect(connection == null) {
-        if (connection == null) onBack()
+    if (!connectionsHydrated) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+    // Connection was removed (e.g. via the overflow menu) — leave the screen
+    // only after the store has authoritatively hydrated.
+    LaunchedEffect(connectionsHydrated, connection == null) {
+        if (connectionsHydrated && connection == null) onBack()
     }
     if (connection == null) return
 
     val isActive = connectionId == activeConnectionId
 
     // Screen-scoped sheet/dialog visibility (survives tab switches + scroll).
-    var showSessionInfoSheet by remember { mutableStateOf(false) }
     var showApiInfoSheet by remember { mutableStateOf(false) }
     var showRelayInfoSheet by remember { mutableStateOf(false) }
     var showInsecureAckDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var showDashboardEditor by remember { mutableStateOf(false) }
     var showRevokeConfirm by remember { mutableStateOf(false) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    val tabs = if (isActive) {
-        listOf(DetailTab.Overview, DetailTab.Routes, DetailTab.Advanced, DetailTab.Security)
-    } else {
-        listOf(DetailTab.Overview)
-    }
+    val tabs = detailTabs(isActive)
     // Reset selection when the active/non-active shape changes so we never
     // index past the available tabs.
     var selectedTab by remember(isActive) { mutableStateOf(0) }
@@ -247,8 +272,8 @@ fun ConnectionDetailScreen(
                                 Text(when (tab) {
                                     DetailTab.Overview -> stringResource(R.string.detail_tab_overview)
                                     DetailTab.Routes -> stringResource(R.string.detail_tab_routes)
+                                    DetailTab.Access -> stringResource(R.string.detail_tab_access)
                                     DetailTab.Advanced -> stringResource(R.string.detail_tab_advanced)
-                                    DetailTab.Security -> stringResource(R.string.detail_tab_security)
                                 })
                             },
                         )
@@ -276,7 +301,11 @@ fun ConnectionDetailScreen(
                                 onOpenApiInfo = { showApiInfoSheet = true },
                                 onOpenDashboard = onNavigateToManage,
                                 onOpenRelayInfo = { showRelayInfoSheet = true },
-                                onOpenSessionInfo = { showSessionInfoSheet = true },
+                                onOpenRoutes = {
+                                    selectedTab = tabs.indexOf(DetailTab.Routes)
+                                        .takeIf { it >= 0 }
+                                        ?: selectedTab
+                                },
                             )
                         } else {
                             InactiveOverview(
@@ -291,8 +320,22 @@ fun ConnectionDetailScreen(
                         connectionViewModel = connectionViewModel,
                         connection = connection,
                         liveState = relayUiState,
-                        onEditDashboard = {
-                            selectedTab = tabs.indexOf(DetailTab.Advanced)
+                        onEditDashboard = { showDashboardEditor = true },
+                    )
+
+                    DetailTab.Access -> ActiveCardSecurityPosture(
+                        connectionViewModel = connectionViewModel,
+                        onNavigateToPairedDevices = onNavigateToPairedDevices,
+                        onRevokeRelay = { showRevokeConfirm = true },
+                        onOpenDashboardSignIn = onNavigateToManage,
+                        onUseSelectedRoute = {
+                            connectionViewModel.useSelectedDashboardRoute { result ->
+                                result.onFailure {
+                                    scope.launch {
+                                        snackbarHost.showSnackbar(routeResetFailed)
+                                    }
+                                }
+                            }
                         },
                     )
 
@@ -302,12 +345,6 @@ fun ConnectionDetailScreen(
                         onPairRelay = { onRepair(connectionId) },
                         onInsecureAckRequested = { showInsecureAckDialog = true },
                     )
-
-                    DetailTab.Security -> ActiveCardSecurityPosture(
-                        connectionViewModel = connectionViewModel,
-                        onNavigateToPairedDevices = onNavigateToPairedDevices,
-                        onRevokeRelay = { showRevokeConfirm = true },
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -316,12 +353,6 @@ fun ConnectionDetailScreen(
     }
 
     // ── Screen-scope sheets + dialogs ────────────────────────────────────
-    if (showSessionInfoSheet) {
-        SessionInfoSheet(
-            connectionViewModel = connectionViewModel,
-            onDismiss = { showSessionInfoSheet = false },
-        )
-    }
     if (showApiInfoSheet) {
         ApiServerInfoSheet(
             connectionViewModel = connectionViewModel,
@@ -342,6 +373,15 @@ fun ConnectionDetailScreen(
                 showInsecureAckDialog = false
             },
             onCancel = { showInsecureAckDialog = false },
+        )
+    }
+    if (showDashboardEditor) {
+        DashboardAddressEditorDialog(
+            initialUrl = connection.resolvedDashboardUrl,
+            onSave = { dashboardUrl, onResult ->
+                connectionViewModel.updateDashboardAddress(dashboardUrl, onResult)
+            },
+            onDismiss = { showDashboardEditor = false },
         )
     }
     if (showRenameDialog) {
@@ -400,17 +440,22 @@ fun ConnectionDetailScreen(
     }
 }
 
-private enum class DetailTab {
+internal enum class DetailTab {
     Overview,
     Routes,
+    Access,
     Advanced,
-    Security,
+}
+
+internal fun detailTabs(isActive: Boolean): List<DetailTab> = if (isActive) {
+    listOf(DetailTab.Overview, DetailTab.Routes, DetailTab.Access, DetailTab.Advanced)
+} else {
+    listOf(DetailTab.Overview)
 }
 
 /**
- * Overview for the **active** connection: a one-line status header followed
- * by the steps/timeline capability list ([ActiveCardFeaturesSection]) and
- * quick actions. The timeline is intentionally the hero of this tab.
+ * Overview for the **active** connection: the selected route, the three
+ * standard upstream outcomes, and optional Relay/API drill-down rows.
  */
 @Composable
 private fun ActiveOverview(
@@ -422,80 +467,165 @@ private fun ActiveOverview(
     onOpenApiInfo: () -> Unit,
     onOpenDashboard: () -> Unit,
     onOpenRelayInfo: () -> Unit,
-    onOpenSessionInfo: () -> Unit,
+    onOpenRoutes: () -> Unit,
 ) {
-    val hostname = connection.primaryHost.ifBlank { connection.label }
-    val dashboardReady = connection.dashboardLastStatus?.reachable == true
+    val gatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val apiReachable by connectionViewModel.apiServerReachable.collectAsState()
+    val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
+    val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
+    val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
+    val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
+    val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
+    val usingApiFallback = apiReachable && gatewayAvailability in setOf(
+        GatewayAvailability.SignInRequired,
+        GatewayAvailability.Unreachable,
+        GatewayAvailability.Unsupported,
+    )
+    val currentRouteUrl = if (usingApiFallback) {
+        activeEndpoint?.api?.url ?: connection.apiServerUrl
+    } else {
+        effectiveDashboardUrl
+    }
 
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
+    val route = resolveDetailRoutePresentation(
+        activeEndpoint = activeEndpoint,
+        effectiveDashboardUrl = currentRouteUrl,
+    )
+    val routeStatus = when {
+        gatewayAvailability == GatewayAvailability.Ready || usingApiFallback ->
+            OverviewStatus(stringResource(R.string.active_section_reachable), OverviewTone.Good)
+        gatewayAvailability == GatewayAvailability.SignInRequired ->
+            OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
+        gatewayAvailability == GatewayAvailability.Unknown ||
+            apiHealth == ConnectionViewModel.HealthStatus.Probing ->
+            OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
+        gatewayAvailability == GatewayAvailability.Unsupported ->
+            OverviewStatus(stringResource(R.string.active_section_unsupported), OverviewTone.Warning)
+        else -> OverviewStatus(stringResource(R.string.active_section_unreachable), OverviewTone.Warning)
+    }
+    val chatStatus = when {
+        gatewayAvailability == GatewayAvailability.Ready || usingApiFallback ->
+            OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
+        gatewayAvailability == GatewayAvailability.SignInRequired ->
+            OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
+        gatewayAvailability == GatewayAvailability.Unreachable && !apiReachable ->
+            OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
+        else -> OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
+    }
+    val dashboardStatus = connection.dashboardLastStatus
+    val dashboardSignInRequired =
+        dashboardStatus?.authRequired == true && dashboardStatus.authenticated != true
+    val manageStatus = when {
+        connection.resolvedDashboardUrl.isBlank() ->
+            OverviewStatus(stringResource(R.string.active_section_missing), OverviewTone.Warning)
+        dashboardStatus == null ->
+            OverviewStatus(stringResource(R.string.active_section_unchecked), OverviewTone.Neutral)
+        !dashboardStatus.reachable ->
+            OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
+        dashboardSignInRequired ->
+            OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
+        else -> OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
+    }
+    val voiceStatus = when (standardVoiceAvailability) {
+        StandardVoiceAvailability.Ready ->
+            OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
+        StandardVoiceAvailability.SignInRequired ->
+            OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
+        StandardVoiceAvailability.Unsupported ->
+            OverviewStatus(stringResource(R.string.active_section_unsupported), OverviewTone.Warning)
+        StandardVoiceAvailability.Unreachable ->
+            OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
+        StandardVoiceAvailability.Unknown ->
+            OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
+    }
+    val relayStatus = when (relayUiState) {
+        RelayUiState.NotConfigured ->
+            OverviewStatus(stringResource(R.string.relay_state_optional), OverviewTone.Neutral)
+        RelayUiState.Connected ->
+            OverviewStatus(stringResource(R.string.relay_state_ready), OverviewTone.Good)
+        RelayUiState.Connecting ->
+            OverviewStatus(stringResource(R.string.relay_state_reconnecting), OverviewTone.Info)
+        RelayUiState.Stale,
+        RelayUiState.Disconnected ->
+            OverviewStatus(stringResource(R.string.relay_state_unavailable), OverviewTone.Warning)
+        RelayUiState.Expired ->
+            OverviewStatus(stringResource(R.string.relay_state_needs_repair), OverviewTone.Warning)
+    }
+    val apiStatus = when (
+        resolveOptionalApiPresentation(
+            gatewayReady = gatewayAvailability == GatewayAvailability.Ready,
+            apiReachable = apiReachable,
+            apiConfigured = connection.apiServerUrl.isNotBlank(),
+            apiProbing = apiHealth == ConnectionViewModel.HealthStatus.Probing,
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Dashboard,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.detail_dashboard_primary),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = connection.resolvedDashboardUrl.ifBlank { hostname },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            HorizontalDivider()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Text(
-                    text = if (dashboardReady) {
-                        stringResource(R.string.detail_core_ready)
-                    } else {
-                        stringResource(R.string.detail_core_configured)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (dashboardReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
+        OptionalApiPresentation.Checking ->
+            OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
+        OptionalApiPresentation.Ready ->
+            OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
+        OptionalApiPresentation.Optional ->
+            OverviewStatus(stringResource(R.string.relay_state_optional), OverviewTone.Neutral)
+        OptionalApiPresentation.Offline ->
+            OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
     }
 
     Text(
-        text = stringResource(R.string.detail_overview_summary),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        text = stringResource(R.string.detail_current_route),
+        style = MaterialTheme.typography.titleSmall,
+    )
+    CurrentRouteOverviewCard(
+        route = route,
+        status = routeStatus,
+        onEdit = onOpenRoutes,
     )
 
-    ActiveCardFeaturesSection(
-        connectionViewModel = connectionViewModel,
-        onOpenApiInfo = onOpenApiInfo,
-        onOpenDashboard = onOpenDashboard,
-        onOpenRelayInfo = onOpenRelayInfo,
-        onOpenSessionInfo = onOpenSessionInfo,
-        onPairRelay = onRepair,
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OverviewCapabilityCard(
+            icon = Icons.Filled.Chat,
+            label = stringResource(R.string.conn_chat_label),
+            status = chatStatus,
+            modifier = Modifier.weight(1f),
+        )
+        OverviewCapabilityCard(
+            icon = Icons.Filled.Dashboard,
+            label = stringResource(R.string.conn_manage_label),
+            status = manageStatus,
+            modifier = Modifier.weight(1f),
+            onClick = onOpenDashboard,
+        )
+        OverviewCapabilityCard(
+            icon = Icons.Filled.GraphicEq,
+            label = stringResource(R.string.conn_voice_label),
+            status = voiceStatus,
+            modifier = Modifier.weight(1f),
+            onClick = if (
+                standardVoiceAvailability == StandardVoiceAvailability.SignInRequired
+            ) {
+                onOpenDashboard
+            } else {
+                null
+            },
+        )
+    }
+
+    HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
+    OverviewOptionalRow(
+        icon = Icons.Filled.Link,
+        label = stringResource(R.string.active_section_relay_connected_features),
+        description = stringResource(R.string.active_section_relay_optional_summary),
+        status = relayStatus,
+        onClick = if (relayConfigured) onOpenRelayInfo else onRepair,
+    )
+    HorizontalDivider()
+    OverviewOptionalRow(
+        icon = Icons.Filled.Code,
+        label = stringResource(R.string.api_fallback_title),
+        description = stringResource(R.string.active_section_api_not_required),
+        status = apiStatus,
+        onClick = onOpenApiInfo,
     )
 
     Row(
@@ -505,6 +635,220 @@ private fun ActiveOverview(
         if (relayUiState == RelayUiState.Stale) {
             Button(onClick = onReconnect) { Text(stringResource(R.string.detail_reconnect)) }
         }
+    }
+}
+
+private enum class OverviewTone { Neutral, Good, Info, Warning }
+
+internal enum class OptionalApiPresentation { Checking, Ready, Optional, Offline }
+
+internal fun resolveOptionalApiPresentation(
+    gatewayReady: Boolean,
+    apiReachable: Boolean,
+    apiConfigured: Boolean,
+    apiProbing: Boolean,
+): OptionalApiPresentation = when {
+    apiProbing -> OptionalApiPresentation.Checking
+    apiReachable -> OptionalApiPresentation.Ready
+    gatewayReady || !apiConfigured -> OptionalApiPresentation.Optional
+    else -> OptionalApiPresentation.Offline
+}
+
+private data class OverviewStatus(
+    val text: String,
+    val tone: OverviewTone,
+)
+
+@Composable
+private fun overviewStatusColor(status: OverviewStatus): Color = when (status.tone) {
+    OverviewTone.Good -> com.hermesandroid.relay.ui.theme.RelayRefresh.Green
+    OverviewTone.Info -> MaterialTheme.colorScheme.primary
+    OverviewTone.Warning -> MaterialTheme.colorScheme.error
+    OverviewTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+internal data class DetailRoutePresentation(
+    val label: String,
+    val address: String,
+)
+
+internal fun resolveDetailRoutePresentation(
+    activeEndpoint: EndpointCandidate?,
+    effectiveDashboardUrl: String,
+): DetailRoutePresentation {
+    val candidateGatewayUrl = activeEndpoint?.gatewayRouteUrl()
+    val address = effectiveDashboardUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }
+        ?: candidateGatewayUrl.orEmpty()
+    val candidateOwnsAddress = candidateGatewayUrl != null &&
+        address.isNotBlank() &&
+        sameGatewayRouteBase(candidateGatewayUrl, address)
+    val inferredRole = activeEndpoint?.role
+        ?.lowercase()
+        ?.takeIf { candidateOwnsAddress }
+        ?: Connection.inferRouteRole(address)
+    val role = when (inferredRole) {
+        "lan" -> "LAN"
+        "tailscale" -> "Tailscale"
+        "public" -> "Public"
+        "https" -> "Public"
+        "dashboard", "authenticated_dashboard" -> "Dashboard"
+        else -> activeEndpoint?.displayLabel()?.takeIf { candidateOwnsAddress } ?: "Gateway"
+    }
+    val transport = when {
+        address.startsWith("https://", ignoreCase = true) -> "HTTPS"
+        address.startsWith("http://", ignoreCase = true) -> "HTTP"
+        else -> null
+    }
+    val label = transport?.let { if (role.equals(it, ignoreCase = true)) role else "$role ($it)" }
+        ?: role
+    return DetailRoutePresentation(label = label, address = address)
+}
+
+@Composable
+private fun CurrentRouteOverviewCard(
+    route: DetailRoutePresentation,
+    status: OverviewStatus,
+    onEdit: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Language,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = route.label, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = status.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = overviewStatusColor(status),
+                    )
+                }
+                TextButton(onClick = onEdit) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text(stringResource(R.string.active_section_edit))
+                }
+            }
+            Text(
+                text = route.address.ifBlank { stringResource(R.string.active_section_not_configured) },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OverviewCapabilityCard(
+    icon: ImageVector,
+    label: String,
+    status: OverviewStatus,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClickLabel = label, onClick = onClick)
+            } else {
+                Modifier
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = status.text,
+                style = MaterialTheme.typography.labelMedium,
+                color = overviewStatusColor(status),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OverviewOptionalRow(
+    icon: ImageVector,
+    label: String,
+    description: String,
+    status: OverviewStatus,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = label, onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(24.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = status.text,
+            style = MaterialTheme.typography.labelSmall,
+            color = overviewStatusColor(status),
+            maxLines = 1,
+        )
+        Icon(
+            imageVector = Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

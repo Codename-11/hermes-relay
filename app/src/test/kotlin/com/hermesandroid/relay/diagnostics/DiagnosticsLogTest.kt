@@ -51,4 +51,27 @@ class DiagnosticsLogTest {
     fun sanitizeUrlHandlesBlank() {
         assertNull(DiagnosticsLog.sanitizeUrl("   "))
     }
+
+    @Test
+    fun supportTextIsBoundedAndReappliesSecretRedaction() {
+        val entries = (1..85).map { index ->
+            DiagnosticLogEntry(
+                timestampMs = index.toLong(),
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Info,
+                title = "Auth $index",
+                detail = "token=secret-$index",
+                operation = "dashboard_native_pkce",
+                configuredUrl = "https://private.example.test/path?token=secret-$index",
+            )
+        }
+
+        val text = DiagnosticsLog.supportText(entries)
+
+        assertEquals(80, Regex("===== Diagnostic ").findAll(text).count())
+        assertFalse(text.contains("secret-"))
+        assertFalse(text.contains("private.example.test"))
+        assertFalse(text.contains("Auth 1\n"))
+        assertTrue(text.contains("Auth 85"))
+    }
 }

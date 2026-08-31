@@ -257,7 +257,10 @@ private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?
 
     val msg = t.message.orEmpty().lowercase()
 
-    if ("cannot create audiorecord" in msg || "audiorecord failed to initialize" in msg) {
+    if ("cannot create audiorecord" in msg ||
+        "audiorecord failed to initialize" in msg ||
+        "microphone is in use by another voice feature" in msg
+    ) {
         return HumanError(
             title = ctx?.getString(R.string.error_classify_mic_unavailable) ?: "Microphone unavailable",
             body = ctx?.getString(R.string.error_classify_mic_unavailable_body)

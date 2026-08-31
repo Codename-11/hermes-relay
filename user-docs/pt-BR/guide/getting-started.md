@@ -48,8 +48,16 @@ Não exponha diretamente uma porta de Dashboard, API ou Relay sem criptografia �
 para acesso remoto, use Tailscale, VPN ou HTTPS.
 :::
 
-O login do dashboard usa cookies e tickets temporários do Gateway. A chave de
-API é separada e não autentica no dashboard.
+O login do dashboard usa um bearer nativo em gateways atuais ou cookies da
+origem exata em gateways de compatibilidade, junto com tickets temporários do
+Gateway. A chave de API é separada.
+
+A rota salva no Android pode ser um endereço LAN, Tailscale ou público. O OIDC
+ainda precisa de um callback HTTPS acessível em
+`<origem-publica-do-dashboard>/auth/callback`. O Hermes normalmente deriva essa
+origem de cabeçalhos confiáveis do proxy. Configure upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` somente se essa detecção
+não for confiável; o Android verifica uma origem de login diferente antes de salvá-la.
 
 ## 3. Conecte e converse
 
@@ -60,8 +68,10 @@ API é separada e não autentica no dashboard.
 5. Em **Concluir configuração**, ative as notificações do Android se quiser alertas do chat em segundo plano. Câmera, microfone e os demais recursos continuam opcionais e são configurados individualmente; toque em **Agora não** para seguir direto.
 6. Adicione API fallback, Relay ou rotas remotas depois em **Advanced**, se necessário.
 
-Você pode adicionar e testar um endereço Dashboard do Tailscale como
-`http://100.x.y.z:9119`, ou um endereço `.ts.net` publicado separadamente, sem configurar o servidor de API nem uma chave de API.
+`hermes-relay-tailscale enable` publica `https://host.ts.net:10443` em uma porta
+dedicada do tailnet e encaminha para o Dashboard local `:9119`, junto com a rota Relay
+da mesma origem. Uma rota deliberadamente direta como
+`http://100.x.y.z:9119` também funciona, mas não tem TLS de aplicação.
 
 A mesma sessão libera Chat, sessões, Manage e Voice. Relay sem pareamento e API
 fallback indisponível são estados normais.

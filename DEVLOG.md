@@ -1,5 +1,103 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-27 — Fixed issue ownership and bounded PR intake
+
+The automated issue first-response lane now assigns only `Codename-11` when the
+maintainer is absent. The assignee is fixed in the write wrapper rather than
+chosen by webhook or model output, and represents follow-up ownership only—not
+acceptance, priority, implementation, or a release promise.
+
+A separate pull-request route now handles external-contributor, non-bot,
+non-draft `opened`, `reopened`, and `ready_for_review` events. Owner-authored
+`Codename-11` PRs are dropped before model dispatch. Eligible PRs are read from
+live metadata plus trusted `dev` policy/template without executing contributor
+code; the route applies only bounded area/intake labels and posts one
+App-authored intake reply. It cannot approve, request changes, merge, close,
+assign, request reviewers, push, edit PR text, rerun CI, select
+`review-candidate`, or claim correctness. The external-contributor production
+canary retained its exact head/base/open state and proved marker idempotency.
+
+## 2026-08-26 — Canonical pull request intake contract
+
+The repository now supplies one pull request template derived from the structure
+already used by successful Android, plugin, desktop, docs, release, and salvage
+PRs. It asks for a concise summary, focused changes, exact verification, visual
+evidence when applicable, compatibility/risk notes, contributor lineage, and the
+existing cross-surface checklist.
+
+Checkboxes require evidence or an explicit N/A rationale. The template does not
+turn every surface into a mandatory test lane, does not replace CI or maintainer
+review, and keeps normal work targeting `dev` while preserving the documented
+release/hotfix exceptions.
+
+## 2026-08-26 — Android OIDC origin continuity and route latency
+
+Dashboard authentication now follows upstream `/api/status.auth_flows`:
+interactive redirect and password providers use native PKCE when advertised,
+with exact-host cookies retained only for older gateways or client-local native
+failure. A different provider-declared callback is fenced by installation
+identity and explicit review before becoming the authenticated Dashboard/Gateway
+origin. Public origins require HTTPS; reviewed literal LAN, Tailscale, and
+loopback HTTP retains upstream compatibility. Cookies are never copied between
+hosts, API and Relay ownership remain separate, unsafe callbacks are rejected,
+and third-party cookies are enabled only for the short-lived compatibility
+WebView.
+
+The saved authenticated origin is now modeled as connection-level
+Dashboard/Gateway state rather than as a synthetic network candidate. The
+Routes screen presents a dedicated Dashboard & Gateway card with edit and
+re-check actions, keeps LAN, Tailscale, API, and Relay under Network routes, and
+does not expose internal role keys or describe arbitrary routes as VPNs. Changing
+the Dashboard origin clears origin-bound cookies and bearer state before the new
+address is verified. The compact footer shows the active surface and transport
+without allowing long model or profile names to displace the route label.
+
+For self-hosted OIDC, authorization and callback use one exact Dashboard
+address. Split DNS remains the preferred public-HTTPS/local-performance shape,
+but a second public URL is not a universal onboarding field. Android does not
+treat the identity origin as ownership of optional API or Relay paths.
+
+Optional API discovery no longer blocks a healthy Dashboard/Gateway route.
+Concurrent probes are shared, negative results are cached for a bounded window,
+same-priority routes race by completion, and connection generations prevent a
+late old route from overwriting a new one. Invalidated probes cannot publish a
+stale unreachable result or diagnostic. Dashboard session and message reads
+now cancel with their coroutine, one bounded budget covers the complete session
+list, WebSocket-ticket minting is bounded, and optional pull-request decoration
+falls off the critical path while preserving exact profile-scoped rows.
+Gateway ticket/auth failures receive one bounded classified attempt rather than
+two serialized waits. A pre-ready WebSocket close settles immediately, while
+optional API and Relay work remains background capability discovery.
+
+Focused auth, Dashboard, resolver, route, and native-sign-in coverage passed
+135 tests on the final `origin/dev` merge, followed by Android lint and sideload
+assembly. The matching Android 16 sideload was installed in place with app data
+preserved. Cold-route evidence showed Dashboard selection completing in hundreds
+of milliseconds, unavailable API fallback work continuing in the background,
+and unauthenticated ticket failures returning immediately instead of stalling.
+An upstream-compatible live-writer certification separately kept five full
+profile-roster RPCs below one second while concurrent ticket mints stayed in
+single-digit milliseconds. Final interactive provider consent/callback remains
+a human gate because the test device was locked after deployment.
+
+## 2026-08-26 — Bounded public issue triage contract
+
+New GitHub issues may receive one clearly identified Hermes-Relay automated
+triage response grounded in the live report, current code and documentation,
+related open/closed issues, and verified public release state. The lane may add
+existing type/area labels, request focused sanitized diagnostics, and flag a
+thread for maintainer review.
+
+The automated path is intentionally not an issue-lifecycle owner: it cannot
+close, assign, milestone, prioritize, promise a fix/release/timeline, or continue
+replying after the first response. Replies identify themselves as automated and
+explicitly hand the remaining decision to a maintainer. Contributor guidance and
+agent instructions carry the same boundary.
+
+Public labels and comments are attributed to the repository-scoped
+`hermes-relay-triage[bot]` GitHub App rather than a maintainer's personal
+account. The App identity does not expand the bounded action contract.
+
 ## 2026-08-24 — Single dev integration authority
 
 `origin/dev` is the sole integration authority. Primary local `dev` checkouts are

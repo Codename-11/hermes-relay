@@ -104,6 +104,12 @@ class GatewayChatClient(
     private val callbackDispatcher: (block: () -> Unit) -> Unit = MainThreadDispatcher,
     /** Surface for "this server has no usable /api/ws" — flips availability to Unsupported. */
     private val onGatewayUnsupported: () -> Unit = {},
+    /** Ticket/upgrade auth rejection is distinct from an unsupported Gateway. */
+    private val onGatewaySignInRequired: () -> Unit = {},
+    /** A bounded ticket/connect failure makes this route unreachable for now. */
+    private val onGatewayUnreachable: () -> Unit = {},
+    /** A completed gateway.ready handshake is authoritative live transport evidence. */
+    private val onGatewayReady: () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** Max wall-clock a single mid-turn reconnect keeps retrying before failing the turn. */
     private val midTurnRejoinWindowMs: Long = MAX_MIDTURN_REJOIN_MS,
@@ -204,11 +210,16 @@ class GatewayChatClient(
 
         /** Cooldown after a failed connect so rapid sends don't hammer a down server. */
         private const val CONNECT_FAILURE_COOLDOWN_MS = 5_000L
+        private const val MAX_CONNECT_FAILURE_COOLDOWN_MS = 30_000L
+        private const val COLD_START_FAILURE_EPISODE_LIMIT = 5
         private const val RATE_LIMIT_COOLDOWN_MS = 300_000L
         private const val CONNECT_ATTEMPTS = 2
         private const val INBOUND_BIND_TIMEOUT_MS = 2_000L
         private const val CANCELLED_TURN_SUBMIT_WAIT_MS = 2_000L
         private const val MAX_RECOVERY_BUFFERED_EVENTS = 256
+        internal const val MAX_CHILD_WATCH_HISTORY_ITEMS = 200
+        internal const val MAX_CHILD_WATCH_HISTORY_CHARS = 64_000
+        private const val MAX_PENDING_CHILD_WATCH_EVENTS = 256
 
         /** Distinct socket-loss (flap) events per turn we'll try to recover from. */
         private const val MAX_TURN_REJOINS = 4
@@ -270,6 +281,13 @@ class GatewayChatClient(
 
     private val _connectionState = MutableStateFlow(GatewayConnectionState.Idle)
     val connectionState: StateFlow<GatewayConnectionState> = _connectionState.asStateFlow()
+    private val _reconnectDisposition = MutableStateFlow(GatewayReconnectDisposition.Retryable)
+    val reconnectDisposition: StateFlow<GatewayReconnectDisposition> =
+        _reconnectDisposition.asStateFlow()
+
+    /** Delay a foreground reconnect only while the bounded failure cooldown is active. */
+    fun remainingConnectCooldownMillis(nowMillis: Long = System.currentTimeMillis()): Long =
+        (connectCooldownUntil - nowMillis).coerceAtLeast(0L)
 
     /**
      * Per-socket feature probe for upstream's session-scoped `process.*` RPCs.
@@ -381,6 +399,15 @@ class GatewayChatClient(
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
 
+    /** Monotonic client-local fence for lazy child watch open/close races. */
+    private val childWatchGeneration = AtomicLong(0)
+
+    /** Live child runtime id -> exact watcher that owns its callbacks. */
+    private val childWatches = ConcurrentHashMap<String, ChildWatchRegistration>()
+
+    /** Events that race a lazy `session.resume` acknowledgement. */
+    private val pendingChildWatchOpens = ConcurrentHashMap<Long, PendingChildWatchOpen>()
+
     /** Live (per-connection) session id ←→ the stored DB id it was resumed/created from. */
     @Volatile
     private var liveSessionId: String? = null
@@ -447,6 +474,62 @@ class GatewayChatClient(
         @Volatile var pendingAsk: GatewayAsk? = null,
     )
 
+    private class ChildWatchRegistration(
+        val storedSessionId: String,
+        val liveSessionId: String,
+        val profile: String?,
+        val generation: Long,
+        val callbacks: GatewayTurnCallbacks,
+    ) {
+        lateinit var mapper: GatewayEventMapper
+    }
+
+    private data class ChildWatchEvent(
+        val sessionId: String,
+        val type: String,
+        val payload: JsonObject?,
+    )
+
+    private data class PendingChildWatchReplay(
+        val events: List<ChildWatchEvent>,
+        val truncated: Boolean,
+    )
+
+    private class PendingChildWatchOpen {
+        private val lock = Any()
+        private val events = mutableListOf<ChildWatchEvent>()
+        private var closed = false
+        private var truncated = false
+
+        fun capture(event: ChildWatchEvent): Boolean = synchronized(lock) {
+            if (closed) return@synchronized false
+            if (events.size >= MAX_PENDING_CHILD_WATCH_EVENTS) {
+                events.removeAt(0)
+                truncated = true
+            }
+            events += event
+            true
+        }
+
+        fun closeAndTake(sessionId: String): PendingChildWatchReplay = synchronized(lock) {
+            closed = true
+            PendingChildWatchReplay(
+                events = events.filter { it.sessionId == sessionId },
+                truncated = truncated,
+            ).also { events.clear() }
+        }
+
+        fun close() = synchronized(lock) {
+            closed = true
+            events.clear()
+        }
+    }
+
+    private data class BoundedChildHistory(
+        val messages: List<MessageItem>,
+        val truncated: Boolean,
+    )
+
     /**
      * Upstream may emit the interrupted turn's tail and terminal event after
      * `session.interrupt` returns. Keep a short exact-session tombstone so that
@@ -495,6 +578,10 @@ class GatewayChatClient(
     @Volatile
     private var processEventListener: ((GatewayProcessEvent) -> Unit)? = null
 
+    /** Process-wide durable-session invalidation/liveness edge. */
+    @Volatile
+    private var sessionDirectoryInvalidationListener: (() -> Unit)? = null
+
     /**
      * Which upload RPC name this socket understands — set after the first
      * successful upload so the legacy fallback is probed at most once per
@@ -509,6 +596,8 @@ class GatewayChatClient(
 
     @Volatile
     private var connectCooldownUntil: Long = 0L
+    private var hasEverReachedReady = false
+    private var coldStartFailureEpisodes = 0
 
     /**
      * When true, the socket is never auto-closed on background — the opt-in
@@ -890,6 +979,10 @@ class GatewayChatClient(
         processEventListener = listener
     }
 
+    fun setSessionDirectoryInvalidationListener(listener: (() -> Unit)?) {
+        sessionDirectoryInvalidationListener = listener
+    }
+
     /**
      * Establish the socket (and resume an existing session) ahead of the
      * user's first send, so a warm turn reaches first token in tens of ms
@@ -904,6 +997,30 @@ class GatewayChatClient(
      */
     fun prewarm(storedSessionId: String?) {
         scope.launch { prewarmAwait(storedSessionId) }
+    }
+
+    /**
+     * Establish only the shared Gateway socket for read-only observation.
+     *
+     * `session.resume` and `session.activate` attach a live runtime to this
+     * transport. Opening Chat, foreground restoration, and selecting a saved
+     * transcript must not claim a turn that another Desktop/TUI client owns,
+     * so those paths use this socket-only warmup and observe through REST
+     * history plus `session.active_list` instead.
+     */
+    fun observe(onReady: (() -> Unit)? = null) {
+        scope.launch {
+            if (observeAwait() && onReady != null) callbackDispatcher(onReady)
+        }
+    }
+
+    /** Suspending [observe]; returns true once the read-only socket is ready. */
+    suspend fun observeAwait(): Boolean = try {
+        connectMutex.withLock { ensureConnected() }
+        true
+    } catch (e: Exception) {
+        Log.d(TAG, "Gateway observation warmup skipped: ${e.message}")
+        false
     }
 
     /**
@@ -945,6 +1062,200 @@ class GatewayChatClient(
             }
         }
         return sessionReady
+    }
+
+    /**
+     * Open the vanilla-upstream child-session watcher advertised by
+     * `subagent.*.child_session_id`. This RPC deliberately does not mutate
+     * [liveSessionId], [storedSessionId], or [liveSessionProfile]: the parent
+     * conversation keeps owning the main mapper while the returned short live
+     * id routes a second, read-only event stream on the same socket.
+     *
+     * Returned history is bounded locally even when an upstream gateway sends
+     * the child's entire transcript in the resume acknowledgement. The server
+     * may still enforce its own larger resume safety limit before replying.
+     */
+    suspend fun openChildWatch(
+        childSessionId: String,
+        profile: String? = currentSessionProfile(),
+        callbacks: GatewayTurnCallbacks,
+        historyLimit: Int = MAX_CHILD_WATCH_HISTORY_ITEMS,
+    ): Result<GatewayChildWatch> = runCatching {
+        val storedChildId = childSessionId.trim()
+        require(storedChildId.isNotEmpty()) { "child session id is required" }
+        val requestedProfile = profile?.trim()?.takeIf(String::isNotEmpty)
+        connectMutex.withLock {
+            // Allocate and register under the same mutex as the resume RPC so
+            // concurrent opens complete in generation order; an older caller
+            // can never `put` after a newer one for the same live child id.
+            val generation = childWatchGeneration.incrementAndGet()
+            val pending = PendingChildWatchOpen()
+            pendingChildWatchOpens[generation] = pending
+            try {
+                ensureConnected()
+                val result = rpc(
+                    "session.resume",
+                    buildJsonObject {
+                        put("session_id", storedChildId)
+                        put("cols", DEFAULT_COLS)
+                        put("source", sessionSource)
+                        put("lazy", true)
+                        put("close_on_disconnect", true)
+                        requestedProfile?.let { put("profile", it) }
+                    },
+                ).getOrElse { error ->
+                    throw GatewayPreflightException(
+                        "child session resume failed: ${error.message}",
+                    )
+                }
+                val liveChildId = result.stringField("session_id")?.takeIf(String::isNotBlank)
+                    ?: throw GatewayPreflightException(
+                        "child session resume returned no live session id",
+                    )
+                try {
+                    requireConfirmedSessionProfile(result, requestedProfile)
+                } catch (error: GatewayPreflightException) {
+                    // The wrong profile must not leave an unowned lazy watcher behind.
+                    rpc(
+                        "session.close",
+                        buildJsonObject { put("session_id", liveChildId) },
+                    )
+                    throw error
+                }
+
+                val registration = ChildWatchRegistration(
+                    storedSessionId = storedChildId,
+                    liveSessionId = liveChildId,
+                    profile = requestedProfile,
+                    generation = generation,
+                    callbacks = callbacks,
+                )
+                val dispatchedCallbacks = dispatchOn(callbacks) {
+                    childWatches[liveChildId] === registration
+                }
+                registration.mapper = GatewayEventMapper(
+                    dispatchedCallbacks,
+                    dedupeAdjacentMessageStarts = true,
+                )
+                childWatches.put(liveChildId, registration)?.let { prior ->
+                    if (prior.generation != generation) {
+                        notifyChildWatchFailure(
+                            prior,
+                            "Child watch was replaced by a newer view",
+                        )
+                    }
+                }
+
+                // Replay only frames tagged with the exact live id returned by
+                // this resume. Unknown gateway sessions captured during the
+                // narrow ack race remain foreign and are discarded.
+                val replay = pending.closeAndTake(liveChildId)
+                if (replay.truncated) dispatchedCallbacks.onReconcileRequired()
+                replay.events.forEach { event ->
+                    if (childWatches[liveChildId] === registration) {
+                        registration.mapper.onEvent(event.type, event.payload)
+                    }
+                }
+                val replayedTerminal = replay.events.any {
+                    it.type == "message.complete" || it.type == "error"
+                }
+
+                val history = parseChildWatchMessages(result, historyLimit)
+                GatewayChildWatch(
+                    storedSessionId = storedChildId,
+                    liveSessionId = liveChildId,
+                    profile = requestedProfile,
+                    generation = generation,
+                    messages = history.messages,
+                    historyTruncated = history.truncated,
+                    running = !replayedTerminal && result.booleanField("running") == true,
+                    status = if (replayedTerminal) "idle" else result.stringField("status"),
+                )
+            } finally {
+                pendingChildWatchOpens.remove(generation, pending)
+                pending.close()
+            }
+        }
+    }
+
+    /**
+     * Close only the exact lazy watcher represented by [watch]. A stale handle
+     * is a no-op so it can never close a newer watcher whose live id was reused.
+     * The parent session and delegated child continue running server-side.
+     */
+    suspend fun closeChildWatch(watch: GatewayChildWatch): Result<Unit> =
+        connectMutex.withLock {
+            val registration = childWatches[watch.liveSessionId]
+                ?: return@withLock Result.success(Unit)
+            if (
+                registration.generation != watch.generation ||
+                registration.storedSessionId != watch.storedSessionId ||
+                registration.profile != watch.profile ||
+                !childWatches.remove(watch.liveSessionId, registration)
+            ) {
+                return@withLock Result.success(Unit)
+            }
+            if (webSocket == null || readySignal?.isCompleted != true) {
+                return@withLock Result.success(Unit)
+            }
+            val result = rpc(
+                "session.close",
+                buildJsonObject { put("session_id", watch.liveSessionId) },
+            )
+            result.fold(
+                onSuccess = { Result.success(Unit) },
+                onFailure = { error ->
+                    // Permit an exact-handle retry. Opens share connectMutex,
+                    // so no newer registration can race this restoration.
+                    childWatches.putIfAbsent(watch.liveSessionId, registration)
+                    Result.failure(error)
+                },
+            )
+        }
+
+    private fun parseChildWatchMessages(
+        result: JsonObject,
+        requestedLimit: Int,
+    ): BoundedChildHistory {
+        val limit = requestedLimit.coerceIn(1, MAX_CHILD_WATCH_HISTORY_ITEMS)
+        val all = (result["messages"] as? JsonArray).orEmpty()
+        val raw = all.takeLast(limit)
+        var retainedChars = 0
+        var truncated = all.size > raw.size
+        val newestFirst = raw.asReversed().mapNotNull { element ->
+            val message = element as? JsonObject ?: run {
+                truncated = true
+                return@mapNotNull null
+            }
+            // Gateway display history uses `text`; the shared session DTO uses
+            // `content`. Normalize only that projection boundary.
+            val normalized = JsonObject(message.toMutableMap().apply {
+                if (!containsKey("content")) {
+                    put("content", message["text"] ?: message["context"] ?: JsonNull)
+                }
+                if (!containsKey("tool_name") && message.containsKey("name")) {
+                    put("tool_name", message["name"] ?: JsonNull)
+                }
+            })
+            val serializedChars = normalized.toString().length
+            if (serializedChars > MAX_CHILD_WATCH_HISTORY_CHARS - retainedChars) {
+                truncated = true
+                return@mapNotNull null
+            }
+            val decoded = runCatching {
+                json.decodeFromJsonElement(MessageItem.serializer(), normalized)
+            }.onFailure {
+                Log.w(TAG, "child watch returned an unreadable history row", it)
+            }.getOrNull()
+            if (decoded == null) {
+                truncated = true
+                null
+            } else {
+                retainedChars += serializedChars
+                decoded
+            }
+        }
+        return BoundedChildHistory(newestFirst.asReversed(), truncated)
     }
 
     /**
@@ -2525,6 +2836,7 @@ class GatewayChatClient(
         unmatchedTurnCompleteListener = null
         backgroundInteractionListener = null
         processEventListener = null
+        sessionDirectoryInvalidationListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
         // Stop the foreground collector — a replaced client must not keep
@@ -2544,21 +2856,73 @@ class GatewayChatClient(
             throw GatewayPreflightException("gateway connect cooling down")
         }
 
-        // Two attempts: a just-died socket (network switch, server restart)
-        // can poison the first try via a stale pooled connection. Each
-        // attempt mints a FRESH single-use ticket — never reuse one.
+        // A just-died pooled socket can poison the first WebSocket upgrade, so
+        // that narrow transport failure gets one fresh-ticket retry. A ticket
+        // 5xx and transport failures are transient (notably while the
+        // Dashboard or Android's active network settles). Auth rejection and
+        // rate limiting stay single-attempt; a bounded ticket timeout gets one
+        // fresh attempt instead of leaving cold start permanently disconnected.
         var lastFailure = "gateway connect failed"
-        repeat(CONNECT_ATTEMPTS) { attempt ->
+        var terminalStage: GatewayConnectFailureStage? = null
+        var terminalRetryAfterCooldown = false
+        for (attempt in 0 until CONNECT_ATTEMPTS) {
             try {
                 connectOnce()
                 connectCooldownUntil = 0L
                 return
             } catch (e: GatewayConnectAttemptException) {
                 lastFailure = e.message ?: lastFailure
-                Log.w(TAG, "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed: $lastFailure")
+                terminalStage = e.stage
+                terminalRetryAfterCooldown = e.retryAfterCooldown
+                Log.w(
+                    TAG,
+                    "Gateway connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed " +
+                        "(stage=${e.stage.logName}, retryable=${e.retryable}): $lastFailure",
+                )
+                if (!e.retryable) break
             }
         }
-        connectCooldownUntil = System.currentTimeMillis() + CONNECT_FAILURE_COOLDOWN_MS
+        when (terminalStage) {
+            GatewayConnectFailureStage.TicketAuth,
+            GatewayConnectFailureStage.UpgradeAuth -> onGatewaySignInRequired()
+            GatewayConnectFailureStage.Ticket,
+            GatewayConnectFailureStage.Upgrade -> {
+                // A timeout is not a definitive availability verdict. Keep
+                // the Gateway unresolved so the visible-chat owner remains
+                // on this transport and can retry after the cooldown.
+                if (!terminalRetryAfterCooldown) onGatewayUnreachable()
+            }
+            GatewayConnectFailureStage.Unsupported -> onGatewayUnsupported()
+            null -> Unit
+        }
+        if (terminalRetryAfterCooldown && !hasEverReachedReady) {
+            coldStartFailureEpisodes += 1
+        }
+        val coldStartBudgetExhausted = terminalRetryAfterCooldown &&
+            !hasEverReachedReady &&
+            coldStartFailureEpisodes >= COLD_START_FAILURE_EPISODE_LIMIT
+        if (coldStartBudgetExhausted) onGatewayUnreachable()
+        _reconnectDisposition.value = if (
+            terminalRetryAfterCooldown && !coldStartBudgetExhausted
+        ) {
+            GatewayReconnectDisposition.Retryable
+        } else {
+            GatewayReconnectDisposition.Terminal
+        }
+        val backoffCeiling = if (hasEverReachedReady) {
+            CONNECT_FAILURE_COOLDOWN_MS
+        } else {
+            (CONNECT_FAILURE_COOLDOWN_MS shl
+                (coldStartFailureEpisodes - 1).coerceIn(0, 3))
+                .coerceAtMost(MAX_CONNECT_FAILURE_COOLDOWN_MS)
+        }
+        connectCooldownUntil = maxOf(
+            connectCooldownUntil,
+            System.currentTimeMillis() + fullJitterDelayMs(
+                backoffCeiling,
+                reconnectJitterUnit(),
+            ),
+        )
         _connectionState.value = GatewayConnectionState.Idle
         throw GatewayPreflightException(lastFailure)
     }
@@ -2570,14 +2934,37 @@ class GatewayChatClient(
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _connectionState.value = GatewayConnectionState.MintingTicket
         val ticket = dashboardClient.requestWsTicket().getOrElse { e ->
-            throw GatewayConnectAttemptException("ws-ticket mint failed: ${e.message}")
+            val statusCode = (e as? DashboardHttpException)?.statusCode
+            val authFailure = statusCode in setOf(401, 403)
+            val rateLimited = statusCode == 429
+            if (rateLimited) {
+                connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+            }
+            val transportFailure = e is java.io.IOException && e !is javax.net.ssl.SSLException
+            throw GatewayConnectAttemptException(
+                message = "ws-ticket mint failed: ${e.message}",
+                stage = if (authFailure) {
+                    GatewayConnectFailureStage.TicketAuth
+                } else {
+                    GatewayConnectFailureStage.Ticket
+                },
+                retryable = !authFailure && !rateLimited &&
+                    (statusCode in 500..599 || (statusCode == null && transportFailure)),
+                retryAfterCooldown = rateLimited ||
+                    (!authFailure && (statusCode in 500..599 ||
+                        (statusCode == null && transportFailure))),
+            )
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
         val url = dashboardClient.gatewayWebSocketUrl(
             ticket = ticket.ticket,
             profile = currentSessionProfile(),
         )
-            ?: throw GatewayConnectAttemptException("could not build /api/ws URL")
+            ?: throw GatewayConnectAttemptException(
+                "could not build /api/ws URL",
+                GatewayConnectFailureStage.Unsupported,
+                retryable = false,
+            )
 
         _connectionState.value = GatewayConnectionState.Connecting
         val ready = CompletableDeferred<Unit>()
@@ -2589,19 +2976,38 @@ class GatewayChatClient(
         webSocket = socket
 
         _connectionState.value = GatewayConnectionState.AwaitingReady
-        val readyOk = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-            runCatching { ready.await() }.isSuccess
-        } ?: false
-        if (!readyOk) {
+        val readyResult: Result<Unit>? = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+            runCatching { ready.await() }
+        }
+        val readyFailure = readyResult?.exceptionOrNull()
+            ?: if (readyResult == null) {
+                GatewayConnectAttemptException(
+                    "gateway.ready never arrived",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = true,
+                )
+            } else {
+                null
+            }
+        if (readyFailure != null) {
             socket.cancel()
             webSocket = null
-            throw GatewayConnectAttemptException("gateway.ready never arrived")
+            throw (readyFailure as? GatewayConnectAttemptException
+                ?: GatewayConnectAttemptException(
+                    "gateway connection failed: ${readyFailure.message}",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = true,
+                ))
         }
         // Split the cold-connect cost so a slow ticket mint (HTTP) is told
         // apart from a slow WS upgrade + gateway.ready (socket/TLS) on device.
         val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
         Log.i(TAG, "Gateway connected (/api/ws ready) — ticket=${ticketMs}ms ws=${wsMs}ms")
+        hasEverReachedReady = true
+        coldStartFailureEpisodes = 0
+        _reconnectDisposition.value = GatewayReconnectDisposition.None
         _connectionState.value = GatewayConnectionState.Ready
+        onGatewayReady()
     }
 
     /**
@@ -2629,6 +3035,14 @@ class GatewayChatClient(
                 put("session_id", storedId)
                 put("cols", DEFAULT_COLS)
                 put("source", sessionSource)
+                // Android already hydrates the visible transcript through the
+                // profile-scoped Dashboard REST owner. Match official Desktop's
+                // bounded resume contract: register the live runtime now and let
+                // Gateway hydrate model history off the RPC response path instead
+                // of synchronously reading and returning the same transcript.
+                // Older Gateways ignore these additive parameters.
+                put("defer_history", true)
+                put("omit_messages", true)
                 requestedProfile?.let { put("profile", it) }
             },
         )
@@ -2941,29 +3355,112 @@ class GatewayChatClient(
             // the connection as gone immediately: the server is going away.
             webSocket.close(code, null)
             if (this@GatewayChatClient.webSocket === webSocket) {
-                onSocketDown("closing: $code $reason")
+                val wasReady = _connectionState.value == GatewayConnectionState.Ready
+                val closeFailure = if (!wasReady) preReadyCloseFailure(code, reason) else null
+                if (!ready.isCompleted) {
+                    ready.completeExceptionally(closeFailure!!)
+                }
+                if (wasReady && code == 4401) onGatewaySignInRequired()
+                if (wasReady && code == 4403) onGatewayUnreachable()
+                onSocketDown(
+                    "closing: $code $reason",
+                    disposition = when {
+                        wasReady && code !in setOf(4401, 4403) ->
+                            GatewayReconnectDisposition.Retryable
+                        closeFailure?.retryAfterCooldown == true ->
+                            GatewayReconnectDisposition.Retryable
+                        else -> GatewayReconnectDisposition.Terminal
+                    },
+                )
             }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (this@GatewayChatClient.webSocket === webSocket) {
-                onSocketDown("closed: $code $reason")
+                val wasReady = _connectionState.value == GatewayConnectionState.Ready
+                val closeFailure = if (!wasReady) preReadyCloseFailure(code, reason) else null
+                if (!ready.isCompleted) {
+                    ready.completeExceptionally(closeFailure!!)
+                }
+                if (wasReady && code == 4401) onGatewaySignInRequired()
+                if (wasReady && code == 4403) onGatewayUnreachable()
+                onSocketDown(
+                    "closed: $code $reason",
+                    disposition = when {
+                        wasReady && code !in setOf(4401, 4403) ->
+                            GatewayReconnectDisposition.Retryable
+                        closeFailure?.retryAfterCooldown == true ->
+                            GatewayReconnectDisposition.Retryable
+                        else -> GatewayReconnectDisposition.Terminal
+                    },
+                )
             }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (this@GatewayChatClient.webSocket !== webSocket) return
-            when (response?.code) {
-                404, 403 -> {
+            val connectFailure = when (response?.code) {
+                404 -> {
                     // No /api/ws on this build (or embedded chat disabled) —
                     // sticky downgrade so auto-resolution stops picking gateway.
                     Log.w(TAG, "Gateway WS upgrade rejected (${response.code}) — marking unsupported")
                     onGatewayUnsupported()
+                    GatewayConnectAttemptException(
+                        "gateway websocket is unsupported",
+                        GatewayConnectFailureStage.Unsupported,
+                        retryable = false,
+                    )
                 }
-                429 -> connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                401, 403 -> GatewayConnectAttemptException(
+                    "gateway websocket authentication was rejected",
+                    GatewayConnectFailureStage.UpgradeAuth,
+                    retryable = false,
+                )
+                429 -> {
+                    connectCooldownUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                    GatewayConnectAttemptException(
+                        "gateway websocket rate limited",
+                        GatewayConnectFailureStage.Upgrade,
+                        retryable = false,
+                        retryAfterCooldown = true,
+                    )
+                }
+                else -> GatewayConnectAttemptException(
+                    "gateway websocket upgrade failed: ${t.message}",
+                    GatewayConnectFailureStage.Upgrade,
+                    retryable = true,
+                )
             }
-            if (!ready.isCompleted) ready.completeExceptionally(t)
-            onSocketDown("failure: ${t.message}")
+            if (!ready.isCompleted) ready.completeExceptionally(connectFailure)
+            onSocketDown(
+                "failure: ${t.message}",
+                disposition = if (connectFailure.retryAfterCooldown) {
+                    GatewayReconnectDisposition.Retryable
+                } else {
+                    GatewayReconnectDisposition.Terminal
+                },
+            )
+        }
+    }
+
+    private fun preReadyCloseFailure(code: Int, reason: String): GatewayConnectAttemptException {
+        val safeReason = reason.take(160).ifBlank { "closed before gateway.ready" }
+        return when (code) {
+            4401 -> GatewayConnectAttemptException(
+                "gateway authentication was rejected ($safeReason)",
+                GatewayConnectFailureStage.UpgradeAuth,
+                retryable = false,
+            )
+            4403 -> GatewayConnectAttemptException(
+                "gateway origin or access guard rejected the connection ($safeReason)",
+                GatewayConnectFailureStage.Upgrade,
+                retryable = false,
+            )
+            else -> GatewayConnectAttemptException(
+                "gateway closed before ready (code=$code, $safeReason)",
+                GatewayConnectFailureStage.Upgrade,
+                retryable = code in setOf(1001, 1011, 1012, 1013),
+            )
         }
     }
 
@@ -3013,6 +3510,11 @@ class GatewayChatClient(
             return
         }
 
+        if (type == "sessions.changed") {
+            callbackDispatcher { sessionDirectoryInvalidationListener?.invoke() }
+            return
+        }
+
         // Upstream emits session.reclaimed process-wide, so it is identified
         // by payload rather than params.session_id. Retire only an exact live
         // runtime we own; preserve the durable id so the next send resumes it.
@@ -3022,6 +3524,9 @@ class GatewayChatClient(
             val reason = payload?.stringField("reason")
             val supportedReason = reason in setOf("idle_timeout", "lru_evict", "ws_orphan_reap")
             if (!reclaimedLiveId.isNullOrBlank() && supportedReason) {
+                childWatches.remove(reclaimedLiveId)?.let { registration ->
+                    notifyChildWatchFailure(registration, "Gateway reclaimed the child watch")
+                }
                 val background = backgroundTurns.remove(reclaimedLiveId)
                 if (background != null) {
                     callbackDispatcher {
@@ -3072,6 +3577,23 @@ class GatewayChatClient(
             }
             return
         }
+
+        // A lazy child watcher is a second session on this shared socket. Route
+        // it before the main-session recovery/foreign-session gates and require
+        // the exact live id returned by its own session.resume acknowledgement.
+        val childWatch = eventSessionId?.let(childWatches::get)
+        if (childWatch != null) {
+            if (childWatches[eventSessionId] === childWatch) {
+                childWatch.mapper.onEvent(type, payload)
+            }
+            return
+        }
+
+        val capturedForPendingChildWatch = !eventSessionId.isNullOrBlank() &&
+            eventSessionId != liveSessionId &&
+            !backgroundTurns.containsKey(eventSessionId) &&
+            capturePendingChildWatchEvent(ChildWatchEvent(eventSessionId, type, payload))
+        if (capturedForPendingChildWatch) return
 
         // A cold session.resume may schedule auto-continue before its RPC
         // response reaches Android. The recovery buffer is an ownership gate,
@@ -3296,7 +3818,10 @@ class GatewayChatClient(
         callbackDispatcher { processEventListener?.invoke(event) }
     }
 
-    private fun onSocketDown(reason: String) {
+    private fun onSocketDown(
+        reason: String,
+        disposition: GatewayReconnectDisposition = GatewayReconnectDisposition.Retryable,
+    ) {
         Log.i(TAG, "Gateway socket down ($reason)")
         // Capture the in-flight session id BEFORE clearing it — the mid-turn
         // rejoin restores it so the running turn's tail (still tagged with this
@@ -3310,11 +3835,13 @@ class GatewayChatClient(
         _processCapability.value = GatewayProcessCapability.Unknown
         _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _reconnectDisposition.value = disposition
         _connectionState.value = GatewayConnectionState.Idle
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
+        failChildWatches("Child watch disconnected from the gateway")
         val turn = activeTurn
         if (turn == null) {
             if (backgroundTurns.isNotEmpty() && !backgroundRejoinInProgress) {
@@ -3496,7 +4023,9 @@ class GatewayChatClient(
         _processCapability.value = GatewayProcessCapability.Unknown
         _activeSessionCapability.value = GatewayActiveSessionCapability.Unknown
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
+        _reconnectDisposition.value = GatewayReconnectDisposition.None
         _connectionState.value = GatewayConnectionState.Idle
+        failChildWatches("Child watch closed with the gateway socket")
     }
 
     private fun scheduleBackgroundClose() {
@@ -3506,12 +4035,34 @@ class GatewayChatClient(
         backgroundCloseJob?.cancel()
         backgroundCloseJob = scope.launch {
             delay(BACKGROUND_CLOSE_GRACE_MS)
-            if (activeTurn == null && backgroundTurns.isEmpty() &&
+            if (activeTurn == null && backgroundTurns.isEmpty() && childWatches.isEmpty() &&
                 !AppForegroundTracker.isForeground.value
             ) {
                 closeSocket("app backgrounded")
             }
         }
+    }
+
+    private fun failChildWatches(message: String) {
+        if (childWatches.isEmpty()) return
+        val registrations = childWatches.values.toSet()
+        childWatches.clear()
+        registrations.forEach { notifyChildWatchFailure(it, message) }
+    }
+
+    private fun notifyChildWatchFailure(
+        registration: ChildWatchRegistration,
+        message: String,
+    ) {
+        callbackDispatcher { registration.callbacks.onResumeFailure(message) }
+    }
+
+    private fun capturePendingChildWatchEvent(event: ChildWatchEvent): Boolean {
+        var captured = false
+        pendingChildWatchOpens.values.forEach { pending ->
+            if (pending.capture(event)) captured = true
+        }
+        return captured
     }
 
     // ------------------------------------------------------------------
@@ -4062,44 +4613,55 @@ class GatewayChatClient(
     }
 
     /** Wrap callbacks so every invocation lands on the callback dispatcher (main thread). */
-    private fun dispatchOn(callbacks: GatewayTurnCallbacks) = GatewayTurnCallbacks(
-        onSessionId = { v -> callbackDispatcher { callbacks.onSessionId(v) } },
-        onStart = { callbackDispatcher { callbacks.onStart() } },
-        onTextDelta = { v -> callbackDispatcher { callbacks.onTextDelta(v) } },
+    private fun dispatchOn(
+        callbacks: GatewayTurnCallbacks,
+        stillCurrent: () -> Boolean = { true },
+    ) = GatewayTurnCallbacks(
+        onSessionId = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onSessionId(v) } },
+        onStart = { dispatchIfCurrent(stillCurrent) { callbacks.onStart() } },
+        onTextDelta = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onTextDelta(v) } },
         onInterimMessage = { text, alreadyStreamed ->
-            callbackDispatcher { callbacks.onInterimMessage(text, alreadyStreamed) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onInterimMessage(text, alreadyStreamed) }
         },
         onInterimReconciled = { text ->
-            callbackDispatcher { callbacks.onInterimReconciled(text) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onInterimReconciled(text) }
         },
-        onThinkingDelta = { v -> callbackDispatcher { callbacks.onThinkingDelta(v) } },
+        onThinkingDelta = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onThinkingDelta(v) } },
         onToolCallStart = { id, name, args ->
-            callbackDispatcher { callbacks.onToolCallStart(id, name, args) }
+            dispatchIfCurrent(stillCurrent) { callbacks.onToolCallStart(id, name, args) }
         },
-        onToolCallDone = { a, b -> callbackDispatcher { callbacks.onToolCallDone(a, b) } },
-        onToolCallFailed = { a, b -> callbackDispatcher { callbacks.onToolCallFailed(a, b) } },
-        onToolOutputRisk = { v -> callbackDispatcher { callbacks.onToolOutputRisk(v) } },
-        onTurnComplete = { callbackDispatcher { callbacks.onTurnComplete() } },
-        onReconcileRequired = { callbackDispatcher { callbacks.onReconcileRequired() } },
-        onComplete = { callbackDispatcher { callbacks.onComplete() } },
-        onUsage = { v -> callbackDispatcher { callbacks.onUsage(v) } },
-        onError = { v -> callbackDispatcher { callbacks.onError(v) } },
-        onToolGenerating = { v -> callbackDispatcher { callbacks.onToolGenerating(v) } },
-        onSubagentEvent = { v -> callbackDispatcher { callbacks.onSubagentEvent(v) } },
-        onMoaReference = { v -> callbackDispatcher { callbacks.onMoaReference(v) } },
-        onInteractionRequest = { v -> callbackDispatcher { callbacks.onInteractionRequest(v) } },
-        onInteractionExpired = { v -> callbackDispatcher { callbacks.onInteractionExpired(v) } },
-        onResumeFailure = { v -> callbackDispatcher { callbacks.onResumeFailure(v) } },
-        onFailure = { v -> callbackDispatcher { callbacks.onFailure(v) } },
+        onToolCallDone = { a, b -> dispatchIfCurrent(stillCurrent) { callbacks.onToolCallDone(a, b) } },
+        onToolCallFailed = { a, b -> dispatchIfCurrent(stillCurrent) { callbacks.onToolCallFailed(a, b) } },
+        onToolOutputRisk = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onToolOutputRisk(v) } },
+        onTurnComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onTurnComplete() } },
+        onReconcileRequired = { dispatchIfCurrent(stillCurrent) { callbacks.onReconcileRequired() } },
+        onComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onComplete() } },
+        onUsage = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onUsage(v) } },
+        onError = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onError(v) } },
+        onToolGenerating = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onToolGenerating(v) } },
+        onSubagentEvent = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onSubagentEvent(v) } },
+        onMoaReference = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onMoaReference(v) } },
+        onInteractionRequest = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onInteractionRequest(v) } },
+        onInteractionExpired = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onInteractionExpired(v) } },
+        onResumeFailure = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onResumeFailure(v) } },
+        onFailure = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onFailure(v) } },
         // MUST be wrapped like every other member: GatewayTurnCallbacks gives
         // onStatusUpdate a default no-op, so omitting it here silently swallows
         // EVERY gateway status line — the ❌ terminal-error lifecycle update
         // included. Without it markError never fires, the turn isn't badged
         // "Error", and onComplete's history reload wipes the error bubble (the
         // "reply appears then vanishes" bug).
-        onStatusUpdate = { kind, text -> callbackDispatcher { callbacks.onStatusUpdate(kind, text) } },
-        onStatusClear = { kind -> callbackDispatcher { callbacks.onStatusClear(kind) } },
+        onStatusUpdate = { kind, text ->
+            dispatchIfCurrent(stillCurrent) { callbacks.onStatusUpdate(kind, text) }
+        },
+        onStatusClear = { kind -> dispatchIfCurrent(stillCurrent) { callbacks.onStatusClear(kind) } },
     )
+
+    private fun dispatchIfCurrent(stillCurrent: () -> Boolean, callback: () -> Unit) {
+        callbackDispatcher {
+            if (stillCurrent()) callback()
+        }
+    }
 }
 
 internal fun parseGatewayPersonalityOptions(result: JsonObject): List<String> =
@@ -4151,8 +4713,21 @@ internal class GatewayPreflightException(message: String) : Exception(message)
 /** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */
 internal class GatewayAttachmentPreflightException(message: String) : Exception(message)
 
-/** One connect attempt failed; [GatewayChatClient] may retry with a fresh ticket. */
-internal class GatewayConnectAttemptException(message: String) : Exception(message)
+/** One connect attempt failed; only a transient WebSocket upgrade may retry immediately. */
+internal class GatewayConnectAttemptException(
+    message: String,
+    val stage: GatewayConnectFailureStage,
+    val retryable: Boolean,
+    val retryAfterCooldown: Boolean = retryable,
+) : Exception(message)
+
+internal enum class GatewayConnectFailureStage(val logName: String) {
+    TicketAuth("ticket_auth"),
+    Ticket("ticket"),
+    UpgradeAuth("upgrade_auth"),
+    Upgrade("upgrade"),
+    Unsupported("unsupported"),
+}
 
 /** Server intentionally refused a durable resume; never create/fallback into a context-free turn. */
 internal class GatewayAuthoritativeResumeException(message: String) : Exception(message)

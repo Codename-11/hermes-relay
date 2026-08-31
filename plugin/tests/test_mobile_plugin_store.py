@@ -46,14 +46,17 @@ class MobilePluginStoreTests(unittest.TestCase):
 
         manifest = self.store.manifest()
         self.assertEqual("hermes-relay", manifest["id"])
-        contribution = manifest["contributions"][0]
+        contribution = next(c for c in manifest["contributions"] if c["id"] == "daily-brief")
         self.assertEqual("Draft: Daily Brief", contribution["title"])
         self.assertEqual("mobile/pages/daily-brief", contribution["document"]["path"])
         self.assertEqual(_document(), self.store.get("daily-brief")["document"])
 
         published = self.store.publish("daily-brief")
         self.assertEqual("published", published["status"])
-        self.assertEqual("Daily Brief", self.store.manifest()["contributions"][0]["title"])
+        published_contribution = next(
+            c for c in self.store.manifest()["contributions"] if c["id"] == "daily-brief"
+        )
+        self.assertEqual("Daily Brief", published_contribution["title"])
 
         self.assertEqual({"ok": True, "id": "daily-brief"}, self.store.remove("daily-brief"))
         self.assertEqual([], self.store.list())
@@ -80,6 +83,11 @@ class MobilePluginStoreTests(unittest.TestCase):
                 description="",
                 document={"schemaVersion": 1, "pages": []},
             )
+
+    def test_rejects_reserved_git_id(self) -> None:
+        with self.assertRaisesRegex(MobilePluginStoreError, "reserved"):
+            self.store.draft("git", title="Shadow", description="", document=_document())
+        self.assertEqual(["git"], [item["id"] for item in self.store.manifest()["contributions"]])
 
     def test_listing_omits_document_payload(self) -> None:
         self.store.draft("compact", title="Compact", description="", document=_document())

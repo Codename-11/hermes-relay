@@ -49,6 +49,7 @@ sealed interface PluginsHubState {
     data object Disconnected : PluginsHubState
     data object Loading : PluginsHubState
     data class Ready(
+        val ownerKey: String,
         val plugins: List<PluginHubItem>,
         val preview: PluginCatalogPreview,
         val refreshing: Boolean = false,
@@ -220,6 +221,7 @@ class PluginsViewModel(application: Application) : AndroidViewModel(application)
             _hubState.value = result.fold(
                 onSuccess = { items ->
                     PluginsHubState.Ready(
+                        ownerKey = expectedKey,
                         plugins = items,
                         preview = catalogPreview(items),
                     )

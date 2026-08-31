@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.network.upstream
 
+import com.hermesandroid.relay.data.normalizeCredentialFreeAuthenticatedDashboardOrigin
+
 import android.content.Context
 import com.hermesandroid.relay.auth.SessionTokenStore
 import com.hermesandroid.relay.auth.SecureStoreCache
@@ -101,6 +103,7 @@ class NativeDashboardAuthorization internal constructor(
     internal val verifier: String,
     internal val state: String,
     internal val generation: Long,
+    internal val usesAlternateOrigin: Boolean,
 )
 
 class NativeDashboardAuthClient(
@@ -144,14 +147,9 @@ class NativeDashboardAuthClient(
             .addQueryParameter("code_challenge_method", "S256")
             .addQueryParameter("redirect_uri", redirectUri)
             .addQueryParameter("state", state)
-            // Match the official Desktop client for Nous-hosted gateways: the
-            // gateway selects its single native-eligible provider. The provider
-            // name advertised to UI clients is presentation/configuration data,
-            // not a stable native-broker identifier. Other providers retain the
-            // explicit selector for direct client use and tests.
             .apply {
                 provider
-                    ?.takeIf { it.isNotBlank() && !it.equals("nous", ignoreCase = true) }
+                    ?.takeIf { it.isNotBlank() }
                     ?.let { addQueryParameter("provider", it) }
             }
             .build()
@@ -159,29 +157,29 @@ class NativeDashboardAuthClient(
         val generation = NativeTokenRefreshCoordinator.beginAuthorization(
             tokenStore.coordinationKey,
         )
-        return NativeDashboardAuthorization(url, verifier, state, generation)
+        return NativeDashboardAuthorization(
+            authorizationUrl = url,
+            verifier = verifier,
+            state = state,
+            generation = generation,
+            usesAlternateOrigin = !sameDashboardBase(authorizationBaseUrl, baseUrl),
+        )
     }
 
     /**
-     * A private-route dashboard may be configured with a canonical HTTPS
-     * callback origin for its provider. Starting the browser on the private
-     * origin would scope Hermes' temporary PKCE cookie to the wrong host, so
-     * discover the provider's declared callback and start native auth there.
-     * Token exchange still uses [baseUrl], keeping the resulting bearer bound
-     * to the active connection route.
+     * Discover the callback-owning Dashboard origin for every interactive
+     * redirect provider. Provider names do not imply topology; upstream may
+     * advertise a canonical origin that differs from a LAN/Tailscale entry.
+     * Token exchange still uses [baseUrl], keeping the bearer scoped to this
+     * connection while the shared gateway process consumes its one-time code.
      */
     private fun resolveAuthorizationBaseUrl(provider: String?): String {
         val configured = baseUrl.toHttpUrlOrNull() ?: return baseUrl
-        if (
-            !provider.equals("nous", ignoreCase = true) ||
-            configured.scheme != "http" ||
-            !isPrivateNetworkLiteral(configured.host)
-        ) {
-            return baseUrl
-        }
+        val selectedProvider = provider?.takeIf { it.isNotBlank() } ?: return baseUrl
+        if (isLoopbackDashboardHost(configured.host)) return baseUrl
         val loginUrl = configured.newBuilder()
             .addPathSegments("auth/login")
-            .addQueryParameter("provider", provider)
+            .addQueryParameter("provider", selectedProvider)
             .addQueryParameter("next", "/")
             .build()
         val discoveryClient = client.newBuilder()
@@ -193,14 +191,14 @@ class NativeDashboardAuthClient(
         ).execute().use { response ->
             if (response.code !in 300..399) null else response.header("Location")
         }
-        return canonicalDashboardBaseFromNousRedirect(location)
-            ?: throw IOException("Dashboard did not advertise a secure Nous callback origin")
+        return canonicalDashboardBaseFromProviderRedirect(baseUrl, location)
     }
 
     fun exchangeCallback(
         authorization: NativeDashboardAuthorization,
         callbackTarget: String,
         commitAllowed: () -> Boolean = { true },
+        onValidated: () -> Unit = {},
     ): NativeDashboardTokens {
         val callback = callbackTarget.toHttpUrlOrNull()
             ?: "http://127.0.0.1$callbackTarget".toHttpUrlOrNull()
@@ -224,6 +222,7 @@ class NativeDashboardAuthClient(
             ?: throw NativeDashboardCallbackException(
                 "Native sign-in callback did not include an authorization code",
             )
+        runCatching(onValidated)
         val payload = NativeTokenExchange(code = code, codeVerifier = authorization.verifier)
         return postTokens(
             path = "/auth/native/token",
@@ -322,6 +321,10 @@ class NativeDashboardAuthClient(
                 throw NativeDashboardInactiveAuthorizationException()
             }
             tokenStore.save(tokens)
+            NativeTokenRefreshCoordinator.markBootstrapApproved(
+                tokenStore.coordinationKey,
+                tokens.accessToken,
+            )
         }
         return tokens
     }
@@ -412,6 +415,63 @@ private fun isPrivateNetworkLiteral(host: String): Boolean {
         (first == 100 && second in 64..127)
 }
 
+private fun isLoopbackDashboardHost(host: String): Boolean =
+    host.equals("localhost", ignoreCase = true) ||
+        host == "127.0.0.1" ||
+        host == "::1"
+
+/**
+ * Extract a callback-owning Dashboard base from an auth-provider redirect.
+ * Different HTTPS origins are accepted after an HTTPS provider hop. HTTP is
+ * retained for upstream-supported local/overlay callbacks only when both the
+ * selected and callback hosts are private literals/loopback and no HTTPS-to-
+ * HTTP downgrade occurs. Arbitrary public cleartext origins are rejected.
+ */
+internal fun canonicalDashboardBaseFromProviderRedirect(
+    configuredBase: String,
+    location: String?,
+): String {
+    val configured = configuredBase.trim().trimEnd('/').toHttpUrlOrNull()
+        ?: return configuredBase
+    val fallback = configured.toString().trimEnd('/')
+    val providerUrl = location?.toHttpUrlOrNull() ?: return fallback
+    val callback = providerUrl.queryParameter("redirect_uri")
+        ?.toHttpUrlOrNull()
+        ?: return fallback
+    if (
+        providerUrl.username.isNotEmpty() || providerUrl.password.isNotEmpty() ||
+        callback.username.isNotEmpty() || callback.password.isNotEmpty() ||
+        callback.query != null || callback.fragment != null
+    ) {
+        return fallback
+    }
+    val callbackSuffix = "/auth/callback"
+    if (!callback.encodedPath.endsWith(callbackSuffix)) return fallback
+    val callbackBase = callback.newBuilder()
+        .encodedPath(callback.encodedPath.removeSuffix(callbackSuffix).ifBlank { "/" })
+        .query(null)
+        .fragment(null)
+        .build()
+    if (
+        configured.scheme == callbackBase.scheme &&
+        configured.host.equals(callbackBase.host, ignoreCase = true) &&
+        configured.port == callbackBase.port &&
+        configured.encodedPath.trimEnd('/') == callbackBase.encodedPath.trimEnd('/')
+    ) {
+        return fallback
+    }
+    if (providerUrl.scheme != "https") return fallback
+    val trustedDifferentOrigin = callbackBase.scheme == "https" || (
+        configured.scheme == "http" &&
+            callbackBase.scheme == "http" &&
+            normalizeCredentialFreeAuthenticatedDashboardOrigin(fallback) != null &&
+            normalizeCredentialFreeAuthenticatedDashboardOrigin(
+                callbackBase.toString().trimEnd('/'),
+            ) != null
+        )
+    return if (trustedDifferentOrigin) callbackBase.toString().trimEnd('/') else fallback
+}
+
 internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? {
     val providerUrl = location?.toHttpUrlOrNull() ?: return null
     if (
@@ -420,28 +480,20 @@ internal fun canonicalDashboardBaseFromNousRedirect(location: String?): String? 
     ) {
         return null
     }
-    val callback = providerUrl.queryParameter("redirect_uri")
-        ?.toHttpUrlOrNull()
-        ?: return null
-    if (callback.scheme != "https") return null
-    val callbackSuffix = "/auth/callback"
-    if (!callback.encodedPath.endsWith(callbackSuffix)) return null
-    val basePath = callback.encodedPath
-        .removeSuffix(callbackSuffix)
-        .ifBlank { "/" }
-    return callback.newBuilder()
-        .encodedPath(basePath)
-        .query(null)
-        .fragment(null)
-        .build()
-        .toString()
-        .trimEnd('/')
+    val resolved = canonicalDashboardBaseFromProviderRedirect(
+        configuredBase = "http://192.168.0.1:9119",
+        location = location,
+    )
+    return resolved.takeUnless { it == "http://192.168.0.1:9119" }
 }
 
 /**
  * Adds the native bearer to dashboard REST calls and rotates it before expiry
- * or after one 401. Refresh requests use a separate bare client, so neither a
- * stale bearer nor the authenticator can recurse into token rotation.
+ * or after one 401. Ticket mint also gets one bounded refresh on 503 because a
+ * multi-provider Dashboard can report an expired token as provider-unreachable
+ * before the owning provider gets to reject it. Refresh requests use a separate
+ * bare client, so neither a stale bearer nor the authenticator can recurse into
+ * token rotation.
  */
 class DashboardBearerAuth(
     baseUrl: String,
@@ -449,20 +501,90 @@ class DashboardBearerAuth(
     private val clockSeconds: () -> Long = { System.currentTimeMillis() / 1000L },
 ) : Interceptor, Authenticator {
     private val authClient = NativeDashboardAuthClient(baseUrl, tokenStore)
+    @Volatile
+    private var cookieAuthAvailable: ((okhttp3.HttpUrl) -> Boolean)? = null
+    @Volatile
+    private var preferNativeBearerAfterCookieProviderFailure = false
+
+    internal fun preferCookiesWhen(predicate: (okhttp3.HttpUrl) -> Boolean) {
+        cookieAuthAvailable = predicate
+    }
+
+    private fun shouldPreferCookie(url: okhttp3.HttpUrl): Boolean =
+        !preferNativeBearerAfterCookieProviderFailure &&
+            runCatching { cookieAuthAvailable?.invoke(url) == true }.getOrDefault(false)
 
     override fun intercept(chain: Interceptor.Chain): Response {
+        if (shouldPreferCookie(chain.request().url)) {
+            val cookieResponse = chain.proceed(chain.request())
+            if (!cookieResponse.isAuthProviderUnavailable()) return cookieResponse
+            val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
+                ?: return cookieResponse
+            val accessToken = normalizeCredentialForHeader(
+                tokens.accessToken,
+                "Dashboard credential",
+            )
+            cookieResponse.close()
+            val bearerResponse = chain.proceed(
+                chain.request().newBuilder()
+                    .bearerAuthorization(accessToken, "Dashboard credential")
+                    .build(),
+            )
+            if (bearerResponse.isSuccessful) {
+                // Preserve the cookie on disk: upstream's 503 intentionally
+                // avoids logging browsers out during an IdP outage. This exact
+                // Dashboard client merely stops presenting the stranded cookie
+                // first after its connection-scoped bearer proves valid.
+                preferNativeBearerAfterCookieProviderFailure = true
+            }
+            return bearerResponse
+        }
         val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
         val request = tokens?.let {
             chain.request().newBuilder()
                 .bearerAuthorization(it.accessToken, "Dashboard credential")
                 .build()
         } ?: chain.request()
-        return chain.proceed(request)
+        val response = chain.proceed(request)
+        if (
+            response.code != 503 ||
+            !request.url.encodedPath.endsWith("/api/auth/ws-ticket")
+        ) {
+            return response
+        }
+        val previous = request.header("Authorization") ?: return response
+        val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
+            ?: return response
+        val refreshed = usableTokens(
+            forceRefresh = true,
+            failedAccessToken = failedAccessToken,
+        ) ?: return response
+        val accessToken = normalizeCredentialForHeader(
+            refreshed.accessToken,
+            "Dashboard credential",
+        )
+        if (accessToken == failedAccessToken) return response
+        response.close()
+        return chain.proceed(
+            request.newBuilder()
+                .bearerAuthorization(accessToken, "Dashboard credential")
+                .build(),
+        )
     }
 
     override fun authenticate(route: Route?, response: Response): Request? {
         if (responseCount(response) >= 2) return null
-        val previous = response.request.header("Authorization") ?: return null
+        val previous = response.request.header("Authorization")
+        if (previous == null) {
+            if (!shouldPreferCookie(response.request.url)) return null
+            val tokens = usableTokens(
+                forceRefresh = false,
+                failedAccessToken = null,
+            ) ?: return null
+            return response.request.newBuilder()
+                .bearerAuthorization(tokens.accessToken, "Dashboard credential")
+                .build()
+        }
         val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
         val tokens = usableTokens(
             forceRefresh = true,
@@ -487,10 +609,38 @@ class DashboardBearerAuth(
             if (failedAccessToken != null && current.accessToken != failedAccessToken) {
                 return@synchronized current
             }
+            val needsNousBootstrap = current.provider.equals("nous", ignoreCase = true) &&
+                current.refreshToken.isNotBlank() &&
+                !NativeTokenRefreshCoordinator.isBootstrapApproved(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            if (needsNousBootstrap &&
+                NativeTokenRefreshCoordinator.isBootstrapRejected(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            ) {
+                return@synchronized null
+            }
             val nearExpiry = current.expiresAt <= 0L || clockSeconds() >= current.expiresAt - 60L
-            if (!forceRefresh && !nearExpiry) return@synchronized current
-            runCatching { authClient.refresh(current) }.getOrNull()
+            if (!forceRefresh && !nearExpiry && !needsNousBootstrap) return@synchronized current
+            val refreshed = runCatching { authClient.refresh(current) }.getOrNull()
+            if (refreshed == null && needsNousBootstrap) {
+                NativeTokenRefreshCoordinator.markBootstrapRejected(
+                    tokenStore.coordinationKey,
+                    current.accessToken,
+                )
+            }
+            refreshed
         }
+
+    private fun Response.isAuthProviderUnavailable(): Boolean {
+        if (code != 503) return false
+        val detail = runCatching { peekBody(1_024L).string() }.getOrDefault("")
+        return detail.contains("Auth provider", ignoreCase = true) &&
+            detail.contains("unreachable", ignoreCase = true)
+    }
 
     private fun responseCount(response: Response): Int {
         var count = 1
@@ -564,6 +714,8 @@ private inline fun <reified T : Throwable> Throwable.firstCauseOfType(): T? {
 private object NativeTokenRefreshCoordinator {
     private val locks = ConcurrentHashMap<String, Any>()
     private val generations = ConcurrentHashMap<String, Long>()
+    private val bootstrapApproved = ConcurrentHashMap<String, String>()
+    private val bootstrapRejected = ConcurrentHashMap<String, String>()
 
     fun lockFor(key: String): Any = locks.computeIfAbsent(key) { Any() }
 
@@ -583,10 +735,28 @@ private object NativeTokenRefreshCoordinator {
         }
     }
 
+    fun isBootstrapApproved(key: String, accessToken: String): Boolean =
+        bootstrapApproved[key] == accessToken
+
+    fun isBootstrapRejected(key: String, accessToken: String): Boolean =
+        bootstrapRejected[key] == accessToken
+
+    fun markBootstrapApproved(key: String, accessToken: String) {
+        bootstrapApproved[key] = accessToken
+        bootstrapRejected.remove(key)
+    }
+
+    fun markBootstrapRejected(key: String, accessToken: String) {
+        bootstrapRejected[key] = accessToken
+        bootstrapApproved.remove(key)
+    }
+
     fun clear(store: NativeDashboardTokenStore) {
         synchronized(lockFor(store.coordinationKey)) {
             generations[store.coordinationKey] =
                 (generations[store.coordinationKey] ?: 0L) + 1L
+            bootstrapApproved.remove(store.coordinationKey)
+            bootstrapRejected.remove(store.coordinationKey)
             store.clear()
         }
     }

@@ -13,7 +13,10 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
@@ -147,6 +150,74 @@ class HermesApprovalCardInteractionTest {
         compose.runOnIdle { assertEquals(listOf("[\"prod\",\"dev\"]"), answers) }
     }
 
+    @Test
+    fun `custom clarify answer uses IME send and trims exactly once`() {
+        val answers = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                HermesCardBubble(
+                    card = clarifyCard(),
+                    cardKey = "clarify-custom",
+                    dispatches = emptyList(),
+                    onActionTap = { _, _ -> },
+                    onInputSubmit = { _, value -> answers += value },
+                )
+            }
+        }
+
+        val field = compose.onNodeWithContentDescription("Other (type your answer)…")
+        field.performTextInput("  use a hybrid rollout  ")
+        field.performImeAction()
+
+        compose.runOnIdle { assertEquals(listOf("use a hybrid rollout"), answers) }
+    }
+
+    @Test
+    fun `blank custom clarify answer cannot submit from icon or IME`() {
+        val answers = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                HermesCardBubble(
+                    card = clarifyCard(),
+                    cardKey = "clarify-blank",
+                    dispatches = emptyList(),
+                    onActionTap = { _, _ -> },
+                    onInputSubmit = { _, value -> answers += value },
+                )
+            }
+        }
+
+        val field = compose.onNodeWithContentDescription("Other (type your answer)…")
+        field.performTextInput("   ")
+        compose.onNodeWithContentDescription("Send answer").assertIsNotEnabled()
+        field.performImeAction()
+
+        compose.runOnIdle { assertEquals(emptyList<String>(), answers) }
+    }
+
+    @Test
+    fun `multi select IME submission combines choices and custom answer`() {
+        val answers = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                HermesCardBubble(
+                    card = clarifyCard(multiSelect = true),
+                    cardKey = "clarify-multi-custom",
+                    dispatches = emptyList(),
+                    onActionTap = { _, _ -> },
+                    onInputSubmit = { _, value -> answers += value },
+                )
+            }
+        }
+
+        compose.onNodeWithText("stage").performTouchInput { click() }
+        val field = compose.onNodeWithContentDescription("Other (type your answer)…")
+        field.performTextInput("canary first")
+        field.performImeAction()
+
+        compose.runOnIdle { assertEquals(listOf("[\"stage\",\"canary first\"]"), answers) }
+    }
+
     private fun approvalCard() = HermesCard(
         type = HermesCard.BuiltInTypes.ASK_APPROVAL,
         title = "Approval requested",
@@ -171,6 +242,17 @@ class HermesApprovalCardInteractionTest {
             ),
         ),
         id = CARD_KEY,
+    )
+
+    private fun clarifyCard(multiSelect: Boolean = false) = HermesCard(
+        type = HermesCard.BuiltInTypes.ASK_CLARIFY,
+        title = "Choose environments",
+        input = HermesCardInput(
+            kind = HermesCardInput.Kinds.CHOICE,
+            choices = listOf("dev", "stage", "prod"),
+            multiSelect = multiSelect,
+            allowFreeText = true,
+        ),
     )
 
     private companion object {

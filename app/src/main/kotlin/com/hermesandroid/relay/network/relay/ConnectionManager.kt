@@ -11,6 +11,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.CertPinStore
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.PairingPreferences
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
@@ -43,6 +44,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 enum class ConnectionState {
     Disconnected,
@@ -139,6 +141,12 @@ class ConnectionManager(
      */
     private val endpointCandidatesProvider: (suspend () -> List<EndpointCandidate>)? = null,
     /**
+     * Dynamic ownership fence for Relay-only resolution. Production uses it
+     * to keep Dashboard ingress on the exact origin that owns Dashboard auth,
+     * while direct Relay and proxy routes remain independently eligible.
+     */
+    private val relayCandidateEligibility: (EndpointCandidate) -> Boolean = { true },
+    /**
      * Suspending supplier for the active device id. Used to key into
      * [PairingPreferences.getDeviceEndpoints] during resolution. `null`
      * disables multi-endpoint resolution even when [endpointResolver] is
@@ -151,6 +159,14 @@ class ConnectionManager(
     private val proxyClientProvider: ((String) -> OkHttpClient?)? = null,
     /** Test seam for observing lifecycle teardown without opening a socket. */
     private val okHttpClientFactory: (() -> OkHttpClient)? = null,
+    /**
+     * Builds a Dashboard-authorized WebSocket request for plugin ingress.
+     * Implementations mint a fresh single-use Dashboard WS ticket on every
+     * invocation. Direct Relay listeners never call this provider.
+     */
+    private val dashboardRelayRequestProvider: (suspend (String) -> Request?)? = null,
+    /** Deterministic race seam immediately before an ingress failure may poison route state. */
+    private val beforeIngressFailureCommit: suspend () -> Unit = {},
 ) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
@@ -191,6 +207,9 @@ class ConnectionManager(
 
     @Volatile
     private var webSocket: WebSocket? = null
+    private val socketGeneration = AtomicLong(0L)
+    @Volatile
+    private var activeSocketGeneration: Long = 0L
 
     @Volatile
     private var serverUrl: String? = null
@@ -272,6 +291,11 @@ class ConnectionManager(
      */
     @Volatile
     private var networkResolveJob: kotlinx.coroutines.Job? = null
+
+    /** Optional API discovery is never part of Dashboard/Gateway readiness. */
+    @Volatile
+    private var apiResolveJob: Job? = null
+    private var apiResolveRevision: Long = 0L
 
     /** Deferred reaction to a network loss — cancelled if a network returns within the grace. */
     private var networkLossJob: kotlinx.coroutines.Job? = null
@@ -363,13 +387,12 @@ class ConnectionManager(
         // the synthesized list just collapses to the same URL anyway.
         scope.launch {
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
-            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+                ?: resolveLegacyStandardFallbackSafe()
+            scheduleApiResolution()
+            val relayResolved = resolveBestRelayEndpointSafe()
             val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
             _activeRelayEndpoint.value = relayResolved
-            _activeApiEndpoint.value = apiResolved
             if (resolved != null) {
                 _activeEndpoint.value = resolved
                 Log.i(TAG, "connect: standard resolver picked role=${resolved.role} " +
@@ -405,6 +428,18 @@ class ConnectionManager(
                 Log.d(TAG, "connect: selected route has no Relay surface; route published for HTTP/Gateway clients")
             }
         }
+    }
+
+    /**
+     * Open the exact QR-advertised socket for a fresh pair. Relay health probes
+     * require an established Relay session, so running the normal resolver
+     * before `auth.ok` is circular and can consume the entire pairing window.
+     * Post-pair reconnects continue to use [connect] and full route resolution.
+     */
+    fun connectPairing(url: String) {
+        ensureNetworkCallbackRegistered()
+        _activeRelayEndpoint.value = null
+        connectToUrlOnMainPath(url, replaceReason = "Fresh Relay pairing")
     }
 
     /**
@@ -577,10 +612,17 @@ class ConnectionManager(
      */
     suspend fun resolveBestEndpoint(): EndpointCandidate? =
         resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
+            ?: resolveLegacyStandardFallbackSafe()
+
+    private suspend fun resolveLegacyStandardFallbackSafe(): EndpointCandidate? =
+        resolveBestEndpointSafe(EndpointSurface.Standard) { candidate ->
+            candidate.dashboard?.url.isNullOrBlank() &&
+                candidate.pluginProxyRoutesOrNull()?.dashboardBaseUrl == null
+        }
 
     private suspend fun resolveBestEndpointSafe(
         surface: EndpointSurface,
+        candidateFilter: (EndpointCandidate) -> Boolean = { true },
     ): EndpointCandidate? {
         val resolver = endpointResolver ?: return null
         val ctx = context ?: return null
@@ -609,13 +651,14 @@ class ConnectionManager(
             } ?: emptyList()
         }
 
-        if (endpoints.isEmpty()) return null
+        val eligibleEndpoints = endpoints.filter(candidateFilter)
+        if (eligibleEndpoints.isEmpty()) return null
 
         // Manual override: if the user pinned a role in the Endpoints card,
         // try that one first; fall through to the strict-priority algorithm
         // if it isn't reachable.
         _manualRoleOverride.value?.let { preferredRole ->
-            val preferred = endpoints.firstOrNull {
+            val preferred = eligibleEndpoints.firstOrNull {
                 it.role.equals(preferredRole, ignoreCase = true)
             }
             if (preferred != null) {
@@ -627,7 +670,54 @@ class ConnectionManager(
             }
         }
 
-        return resolver.resolve(endpoints, surface)
+        return resolver.resolve(eligibleEndpoints, surface)
+    }
+
+    /** Every Relay selection path must apply the same live ownership fence. */
+    private suspend fun resolveBestRelayEndpointSafe(): EndpointCandidate? =
+        resolveBestEndpointSafe(
+            surface = EndpointSurface.Relay,
+            candidateFilter = relayCandidateEligibility,
+        )
+
+    /**
+     * Discover the optional API fallback without holding up the standard
+     * Dashboard/Gateway route. A single manager-level job coalesces lifecycle
+     * callers; [EndpointResolver] additionally shares an in-flight request per
+     * route/surface. The negative cache keeps ordinary profile changes cheap,
+     * while network callbacks and explicit probes still invalidate it.
+     */
+    private fun scheduleApiResolution() {
+        synchronized(this) {
+            apiResolveRevision += 1L
+            if (apiResolveJob?.isActive != true) {
+                startApiResolutionLocked(apiResolveRevision)
+            }
+        }
+    }
+
+    /** Caller must hold this manager's monitor. */
+    private fun startApiResolutionLocked(revision: Long) {
+        apiResolveJob = scope.launch {
+            try {
+                val resolved = resolveBestEndpointSafe(EndpointSurface.Api)
+                synchronized(this@ConnectionManager) {
+                    // A route/connection refresh may have arrived while this
+                    // optional probe was waiting. Never publish its stale
+                    // winner over the newer connection's API ownership.
+                    if (revision == apiResolveRevision) {
+                        _activeApiEndpoint.value = resolved
+                    }
+                }
+            } finally {
+                synchronized(this@ConnectionManager) {
+                    apiResolveJob = null
+                    if (revision != apiResolveRevision && supervisorJob.isActive) {
+                        startApiResolutionLocked(apiResolveRevision)
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -656,9 +746,9 @@ class ConnectionManager(
         endpointResolver?.clearCache()
         val current = serverUrl
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
-        val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            ?: resolveLegacyStandardFallbackSafe()
+        scheduleApiResolution()
+        val relayResolved = resolveBestRelayEndpointSafe()
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // — keep the live route published rather than downgrading every
@@ -666,7 +756,6 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        _activeApiEndpoint.value = apiResolved
         if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
         val targetUrl = relayResolved?.relayWebSocketUrl() ?: current ?: return resolved
         val normalizedTarget = normalizeRelayUrl(targetUrl)
@@ -706,8 +795,8 @@ class ConnectionManager(
     suspend fun refreshActiveEndpoint(clearProbeCache: Boolean = false): EndpointCandidate? {
         if (clearProbeCache) endpointResolver?.clearCache()
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-            ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-        val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+            ?: resolveLegacyStandardFallbackSafe()
+        scheduleApiResolution()
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // (slow resume, mid-handoff blip) — keep publishing the live
@@ -716,7 +805,6 @@ class ConnectionManager(
             return _activeEndpoint.value
         }
         _activeEndpoint.value = resolved
-        _activeApiEndpoint.value = apiResolved
         return resolved
     }
 
@@ -736,6 +824,46 @@ class ConnectionManager(
         val active = _activeRelayEndpoint.value ?: return
         endpointResolver?.markUnreachable(active, EndpointSurface.Relay)
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
+    }
+
+    /** Admission is stronger evidence than `/transport/health`: reject this ingress and retain direct fallback. */
+    private suspend fun fallbackFromBrokenDashboardIngress(
+        url: String,
+        reason: String,
+        failingSocket: WebSocket? = null,
+        failingGeneration: Long? = null,
+    ): Boolean {
+        if (!isDashboardRelayIngressUrl(url)) return false
+        if (failingGeneration != null) {
+            beforeIngressFailureCommit()
+            if (activeSocketGeneration != failingGeneration || webSocket !== failingSocket) {
+                Log.i(TAG, "Ignoring stale Dashboard ingress failure ($reason)")
+                return false
+            }
+        }
+        val failed = _activeRelayEndpoint.value ?: return false
+        val failedUrl = failed.relayWebSocketUrl()?.let(::normalizeRelayUrl)
+        if (failedUrl != normalizeRelayUrl(url)) return false
+        endpointResolver?.markUnreachable(failed, EndpointSurface.Relay) ?: return false
+        val replacement = resolveBestRelayEndpointSafe() ?: return false
+        val replacementUrl = replacement.relayWebSocketUrl()?.takeIf(String::isNotBlank) ?: return false
+        if (normalizeRelayUrl(replacementUrl) == normalizeRelayUrl(url)) return false
+        _activeRelayEndpoint.value = replacement
+        Log.i(TAG, "Dashboard Relay ingress rejected; switching to ${replacement.role} ($reason)")
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Relay,
+            severity = DiagnosticSeverity.Warning,
+            title = "Relay ingress unavailable",
+            detail = "Dashboard admission failed; using retained direct Relay route.",
+            operation = "Select Relay transport after admission failure",
+            endpointRole = failed.role,
+            requestUrl = url,
+        )
+        connectToUrlOnMainPath(
+            replacementUrl,
+            replaceReason = "Dashboard Relay ingress admission failed",
+        )
+        return true
     }
 
     /**
@@ -760,8 +888,8 @@ class ConnectionManager(
             if (wipeCache) endpointResolver.clearCache()
             val current = serverUrl
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
-                ?: resolveBestEndpointSafe(EndpointSurface.Standard)
-            val apiResolved = resolveBestEndpointSafe(EndpointSurface.Api)
+                ?: resolveLegacyStandardFallbackSafe()
+            scheduleApiResolution()
             if (resolved == null) {
                 // Hysteresis for the AUTOMATIC (network-callback) path. A
                 // transient cold-route probe miss must NOT null the published
@@ -798,7 +926,6 @@ class ConnectionManager(
             }
             sustainedLossDeclared = false
             _activeEndpoint.value = resolved
-            _activeApiEndpoint.value = apiResolved
             if (current == null) return@launch
             // After an explicit disconnect() the route still publishes above
             // (HTTP surfaces keep roaming), but no socket action: without
@@ -807,7 +934,7 @@ class ConnectionManager(
             // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
             // the swap path never re-checked it.)
             if (!shouldReconnect) return@launch
-            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            val relayResolved = resolveBestRelayEndpointSafe()
             if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
             val relayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
                 ?: return@launch
@@ -974,7 +1101,8 @@ class ConnectionManager(
         webSocket?.send(text)
     }
 
-    private fun isActiveSocket(socket: WebSocket): Boolean = webSocket === socket
+    private fun isActiveSocket(socket: WebSocket, generation: Long): Boolean =
+        webSocket === socket && activeSocketGeneration == generation
 
     private fun doConnect(
         url: String,
@@ -1010,7 +1138,7 @@ class ConnectionManager(
         scope.launch { doConnectInternal(url, previousSocketToClose, replaceReason) }
     }
 
-    private fun doConnectInternal(
+    private suspend fun doConnectInternal(
         url: String,
         previousSocketToClose: WebSocket? = null,
         replaceReason: String = "Relay socket replaced",
@@ -1035,22 +1163,49 @@ class ConnectionManager(
             buildClient(url)
         }
 
-        val request = buildRelayRequestOrNull(url)
+        val request = if (isDashboardRelayIngressUrl(url)) {
+            dashboardRelayRequestProvider?.invoke(url)
+        } else {
+            buildRelayRequestOrNull(url)
+        }
         if (request == null) {
             // A malformed relay URL (an invalid/empty host from a corrupt or
             // hand-edited pairing payload) can't be built into a request. This
             // runs on a background coroutine, so letting OkHttp's url() throw
             // would crash the app — the #131 "Invalid URL host" class, relay-
             // socket half. Route it through the same path onFailure uses.
-            Log.e(TAG, "doConnect: malformed relay URL '$url' — not connecting")
+            Log.e(
+                TAG,
+                if (isDashboardRelayIngressUrl(url)) {
+                    "doConnect: Dashboard Relay ticket/request unavailable for '$url'"
+                } else {
+                    "doConnect: malformed relay URL '$url' — not connecting"
+                },
+            )
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Invalid relay URL",
-                detail = "The relay address could not be parsed; re-pair to refresh it.",
-                operation = "Build Relay WebSocket request",
+                title = if (isDashboardRelayIngressUrl(url)) {
+                    "Dashboard Relay authorization unavailable"
+                } else {
+                    "Invalid relay URL"
+                },
+                detail = if (isDashboardRelayIngressUrl(url)) {
+                    "Dashboard authorization could not prepare the Relay WebSocket request."
+                } else {
+                    "The relay address could not be parsed; re-pair to refresh it."
+                },
+                operation = if (isDashboardRelayIngressUrl(url)) {
+                    "Mint Dashboard Relay WebSocket ticket"
+                } else {
+                    "Build Relay WebSocket request"
+                },
                 configuredUrl = url,
-                suggestion = "Edit or re-pair the Relay route to replace the invalid address.",
+                suggestion = if (isDashboardRelayIngressUrl(url)) {
+                    "Sign in to the matching Dashboard route, then recheck Relay routes."
+                } else {
+                    "Edit or re-pair the Relay route to replace the invalid address."
+                },
             )
             authenticated = false
             _connectionState.value = ConnectionState.Disconnected
@@ -1058,14 +1213,18 @@ class ConnectionManager(
                 runCatching { stale.close(1000, replaceReason) }
                 stale.cancel()
             }
-            scheduleReconnect()
+            if (!fallbackFromBrokenDashboardIngress(url, "request provider or ticket unavailable")) {
+                scheduleReconnect()
+            }
             return
         }
 
         Log.i(TAG, "doConnect: opening WSS to $url")
+        val generation = socketGeneration.incrementAndGet()
+        activeSocketGeneration = generation
         val newSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onOpen: stale WSS handshake ignored ($url)")
                     runCatching { webSocket.close(1000, "Stale relay socket") }
                     webSocket.cancel()
@@ -1108,7 +1267,7 @@ class ConnectionManager(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onMessage: stale WSS envelope ignored ($url)")
                     return
                 }
@@ -1135,7 +1294,7 @@ class ConnectionManager(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onClosed: stale WSS close ignored ($url code=$code reason=$reason)")
                     return
                 }
@@ -1149,13 +1308,28 @@ class ConnectionManager(
                     requestUrl = url,
                     suggestion = if (code == 1000) null else "Check the Relay server logs for the matching close code and reason.",
                 )
+                val admitted = authenticated
                 authenticated = false
                 _connectionState.value = ConnectionState.Disconnected
-                scheduleReconnect()
+                if (isDashboardRelayIngressUrl(url) && !admitted && code != 1000) {
+                    scope.launch {
+                        if (!fallbackFromBrokenDashboardIngress(
+                                url,
+                                "pre-auth close $code",
+                                webSocket,
+                                generation,
+                            ) && activeSocketGeneration == generation
+                        ) {
+                            scheduleReconnect()
+                        }
+                    }
+                } else {
+                    scheduleReconnect()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (!isActiveSocket(webSocket)) {
+                if (!isActiveSocket(webSocket, generation)) {
                     Log.i(TAG, "onFailure: stale WSS failure ignored ($url ${t.javaClass.simpleName}: ${t.message})")
                     return
                 }
@@ -1177,6 +1351,22 @@ class ConnectionManager(
                     } ?: NetworkDiagnosticGuidance.forThrowable(t, "Relay"),
                 )
                 lastUpgradeResponseCode = code
+                if (isDashboardRelayIngressUrl(url) && response != null) {
+                    authenticated = false
+                    _connectionState.value = ConnectionState.Disconnected
+                    scope.launch {
+                        if (!fallbackFromBrokenDashboardIngress(
+                                url,
+                                "HTTP admission ${response.code}",
+                                webSocket,
+                                generation,
+                            ) && activeSocketGeneration == generation
+                        ) {
+                            scheduleReconnect()
+                        }
+                    }
+                    return
+                }
                 if (response == null) {
                     // Transport-level failure (no HTTP upgrade response): on a
                     // remote (Tailscale) link the first handshake can fail cold.
@@ -1290,7 +1480,7 @@ class ConnectionManager(
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
-                val resolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+                val resolved = resolveBestRelayEndpointSafe()
                 val targetUrl = resolved?.relayWebSocketUrl()
                 if (resolved != null) {
                     // Mirror scheduleNetworkReResolve: clear the sustained-loss

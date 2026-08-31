@@ -47,8 +47,16 @@ Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat
 直接公開せず、リモートアクセスには Tailscale、VPN、HTTPS を使用します。
 :::
 
-ダッシュボードログインは Cookie と短時間の Gateway チケットを使用します。
-API キーは別の認証情報で、ダッシュボードへのログインには使いません。
+ダッシュボードログインは、現在の Gateway ではネイティブ bearer、互換 Gateway
+では厳密な origin の Cookie を使用し、どちらも短時間の Gateway チケットを
+組み合わせます。API キーは別の認証情報です。
+
+Android に保存するルートは LAN、Tailscale、公開アドレスのいずれでも構いません。
+OIDC には到達可能な HTTPS コールバック
+`<公開-dashboard-origin>/auth/callback` が必要です。Hermes は通常、信頼済み
+プロキシヘッダーからこの origin を復元します。それが確実でない場合だけ upstream の
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` を設定してください。
+Android は異なるサインイン origin を保存前に検証します。
 
 ## 3. 接続して会話する
 
@@ -59,8 +67,10 @@ API キーは別の認証情報で、ダッシュボードへのログインに�
 5. **セットアップを完了** で、バックグラウンドのチャット通知が必要なら Android の通知を有効にします。カメラ、マイク、その他の機能は引き続き任意で、個別に設定できます。すぐ進む場合は **今はしない** を選びます。
 6. 必要なら後から **Advanced** で API fallback、Relay、リモートルートを追加します。
 
-`http://100.x.y.z:9119` のような Tailscale Dashboard アドレスや、別途公開した
-`.ts.net` アドレスは、API サーバーや API キーなしで追加・テストできます。
+`hermes-relay-tailscale enable` は tailnet の専用 `:10443` に
+`https://host.ts.net:10443` を公開し、同一 origin の Relay パスとともにローカル
+Dashboard `:9119` へ転送します。意図的に直接公開した
+`http://100.x.y.z:9119` も使用できますが、アプリケーション TLS はありません。
 
 同じログインで Chat、セッション、Manage、Voice が有効になります。Relay が
 未ペアリングでも、API fallback が利用不可でも正常です。

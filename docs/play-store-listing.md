@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.13.2 - Supervised Mode and clearer activity
+v1.14.0 - Connections that follow you
 
-Supervised Mode adds a parent-configured, profile-pinned chat view with device-authenticated settings. Parents can limit attachments, Standard voice, generated media, history, actions, and technical details. Session rows stay neutral while live activity is unavailable, and returning from parent settings no longer blanks Supervised Chat.
+Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.
 ```
 ## Category
 

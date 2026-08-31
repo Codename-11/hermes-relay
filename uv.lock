@@ -387,7 +387,7 @@ wheels = [
 
 [[package]]
 name = "hermes-relay"
-version = "1.6.4"
+version = "1.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -414,16 +414,16 @@ voice-lab = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.1,<4" },
-    { name = "httpx", specifier = ">=0.25.0" },
+    { name = "httpx", specifier = ">=0.25.0,<1" },
     { name = "libtmux", marker = "extra == 'tmux'", specifier = ">=0.37.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-mock", marker = "extra == 'dev'" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", specifier = ">=2.28.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "requests", specifier = ">=2.28.0,<3" },
     { name = "responses", marker = "extra == 'dev'" },
-    { name = "segno", specifier = ">=1.6.0" },
+    { name = "segno", specifier = ">=1.6.0,<2" },
     { name = "textual", marker = "extra == 'voice-lab'", specifier = ">=8.2.0" },
-    { name = "websocket-client", specifier = ">=1.8.0" },
+    { name = "websocket-client", specifier = ">=1.8.0,<2" },
 ]
 provides-extras = ["dev", "tmux", "voice-lab"]
 

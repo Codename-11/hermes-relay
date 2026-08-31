@@ -1,6 +1,8 @@
-# Clean mode, Sphere background, and floating pets — design record
+# Sphere background and floating pets — design record
 
-**Status:** Implemented; interaction model revised 2026-08-01 for #267
+**Status:** Implemented; interaction model revised 2026-08-01 for #267. The
+separate Chat clean-focus presentation was removed 2026-08-27; the background
+visualization and floating-pet contracts remain current.
 **Owner surface:** Android app shell, Chat, Terminal, and Appearance settings
 
 ## Decision
@@ -51,7 +53,7 @@ Desktop and Codex while adapting it to a phone-sized viewport.
   landing squash. Idle variety cycles through hops, waves, and rests.
 - Roaming runs only while Hermes is idle and the app is foregrounded. Thinking,
   streaming, tool work, errors, transcript scrolling, dragging, the pet menu,
-  voice, clean/ambient mode, startup, and loss of a safe rail pause or dock it as
+  voice, startup, and loss of a safe rail pause or dock it as
   appropriate. The director's fixed priority is direct interaction, agent
   activity, response visit, roaming, then idle.
 - App animation-off, Android animator scale 0, and TalkBack touch exploration
@@ -114,8 +116,6 @@ identity data is unchanged.
   [`../sphere-spec.md`](../sphere-spec.md).
 - `MorphingSphereCore` and its web parity harness remain the source of truth for
   Sphere rendering.
-- Clean text-flow mode remains a presentation of the active conversation, not a
-  separate chat or profile state.
 
 ## Out of scope
 

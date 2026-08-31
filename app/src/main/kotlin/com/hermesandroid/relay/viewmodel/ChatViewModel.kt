@@ -37,6 +37,7 @@ import com.hermesandroid.relay.data.applyMessageReaction
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.data.prepareTextTransportAttachments
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.RealtimeConversationContextMessage
 import com.hermesandroid.relay.data.RealtimeTurnTrace
@@ -79,6 +80,8 @@ import com.hermesandroid.relay.network.upstream.GatewayBackgroundTurnCompletion
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayReconnectDisposition
+import com.hermesandroid.relay.network.upstream.isDashboardSignInRequiredFailure
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
@@ -163,11 +166,20 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.sse.EventSource
+import java.io.InterruptedIOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+internal const val SESSION_DIRECTORY_PAGE_SIZE = 50
+
+data class SessionDirectoryReadyEvent(
+    val contextKey: String?,
+    val profileName: String?,
+    val generation: Int,
+)
 
 internal fun modelInventoryFailureNotice(
     failure: Throwable,
@@ -408,6 +420,9 @@ class ChatViewModel : ViewModel() {
     private val sessionActivityGeneration = AtomicLong(0L)
     private val sessionActivityPollMutex = Mutex()
     private var sessionActivityPollJob: Job? = null
+    private var passiveGatewayHistoryRefreshJob: Job? = null
+    private var passivelyObservedGatewaySessionId: String? = null
+    private var passiveObservationCatchupPendingSessionId: String? = null
     private var sessionActivityDirectory: Set<SessionActivityOwner> = emptySet()
     private var lastProjectedProcessIds: Set<String> = emptySet()
     private var lastProjectedProcessOwner: SessionActivityOwner? = null
@@ -417,12 +432,19 @@ class ChatViewModel : ViewModel() {
     private val _sessionDirectoryRefreshRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val sessionDirectoryRefreshRequests: SharedFlow<Unit> =
         _sessionDirectoryRefreshRequests.asSharedFlow()
+    private val _sessionDirectoryReadyEvents =
+        MutableSharedFlow<SessionDirectoryReadyEvent>(extraBufferCapacity = 1)
+    val sessionDirectoryReadyEvents: SharedFlow<SessionDirectoryReadyEvent> =
+        _sessionDirectoryReadyEvents.asSharedFlow()
+
+    fun ownsSessionDirectoryReadyEvent(event: SessionDirectoryReadyEvent): Boolean =
+        sessionRefreshGeneration.get() == event.generation &&
+            activeProfileContextKey == event.contextKey &&
+            currentSessionProfileName() == event.profileName
 
     private fun activityScope(contextKey: String? = activeProfileContextKey): SessionActivityScope? {
-        val raw = contextKey?.trim().orEmpty()
-        val separator = raw.lastIndexOf("::")
-        if (separator <= 0 || separator >= raw.lastIndex) return null
-        return SessionActivityScope.of(raw.substring(0, separator), raw.substring(separator + 2))
+        val identity = AgentDisplay.parseProfileContextKey(contextKey) ?: return null
+        return SessionActivityScope.of(identity.connectionId, identity.profileKey)
     }
 
     private fun activityOwner(
@@ -534,7 +556,8 @@ class ChatViewModel : ViewModel() {
     private fun backgroundTurnKey(sessionId: String, profile: String?): TurnCheckpointKey? {
         val profileKey = AgentDisplay.profileSessionKey(profile)
         return backgroundTurnCheckpoints.keys.firstOrNull { key ->
-            key.sessionId == sessionId && key.contextKey.substringAfterLast("::") == profileKey
+            key.sessionId == sessionId &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey
         }
     }
     private var checkpointWriteJob: Job? = null
@@ -547,6 +570,7 @@ class ChatViewModel : ViewModel() {
 
     private data class ActiveTurnCheckpointSeed(
         var contextKey: String?,
+        val profileKey: String?,
         var sessionId: String,
         var liveSessionId: String?,
         var transport: String,
@@ -583,6 +607,26 @@ class ChatViewModel : ViewModel() {
     private var backgroundProcessSessionJob: Job? = null
     private var connectionSwitchJob: Job? = null
     private var sessionRefreshJob: Job? = null
+    private var sessionRefreshOwner: Pair<String?, String?>? = null
+    private var sessionRefreshPending = false
+    private var sessionRefreshRetryJob: Job? = null
+    private var sessionLoadMoreJob: Job? = null
+    private var sessionLoadMoreOwner: Any? = null
+    private var sessionNextPageOffset = SESSION_DIRECTORY_PAGE_SIZE
+    private var lastSessionRefreshSuccessOwner: Pair<String?, String?>? = null
+    private var lastSessionRefreshSuccessNanos = 0L
+    private var lastSessionRefreshSuccessGeneration = 0
+    private val profileSessionCache = linkedMapOf<Pair<String?, String?>, List<SessionItem>>()
+    private data class DeferredGatewayPrewarm(
+        val contextKey: String?,
+        val profileName: String?,
+        val sessionId: String,
+        val historyGeneration: Int,
+        val directoryGenerationFloor: Int,
+        val historyReady: Boolean,
+    )
+    private var deferredGatewayPrewarm: DeferredGatewayPrewarm? = null
+    private var automaticGatewayPrewarmBlocked = false
     private var imageActivityJob: Job? = null
     private val historyLoadGeneration = AtomicInteger(0)
     private val sessionRefreshGeneration = AtomicInteger(0)
@@ -635,6 +679,11 @@ class ChatViewModel : ViewModel() {
 
         private const val BACKGROUND_TASK_TITLE_LIMIT = 64
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
+        private const val SESSION_REFRESH_RETRY_DELAY_MS = 1_000L
+        private const val SESSION_REFRESH_MAX_READINESS_RETRIES = 2
+        private const val SESSION_DRAWER_FRESHNESS_WINDOW_MS = 5_000L
+        private const val PROFILE_SESSION_CACHE_CONTEXTS = 24
+        private const val PROFILE_SESSION_CACHE_ROWS = 50
         private const val MAX_CHECKPOINT_TEXT_CHARS = 200_000
         private const val MAX_CHECKPOINT_TOOL_RESULT_CHARS = 20_000
         private const val MAX_CHECKPOINT_MOA_REFERENCES = 32
@@ -660,6 +709,7 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+    var onFreshDraftSelected: ((String?, SessionTransport) -> Unit)? = null
 
     /**
      * Send a user message into an agent **Thread** (a `source=phone` session)
@@ -678,6 +728,7 @@ class ChatViewModel : ViewModel() {
      */
     private data class PendingThread(val chatId: String, val name: String)
     private var pendingThread: PendingThread? = null
+    private val threadNavigationGeneration = AtomicLong(0L)
 
     /**
      * A "+ New Thread" whose first message has been sent — we're now polling for
@@ -692,6 +743,17 @@ class ChatViewModel : ViewModel() {
         val knownIds: Set<String>,
     )
     private var creatingThread: CreatingThread? = null
+
+    /**
+     * Provisional phone Threads are route-owned drafts, not transferable chat
+     * drafts. Leaving that surface retires only the pending local route; durable
+     * inbox/session rows and learned session-to-chat-id mappings stay intact.
+     */
+    private fun exitProvisionalThread() {
+        threadNavigationGeneration.incrementAndGet()
+        pendingThread = null
+        creatingThread = null
+    }
 
     /**
      * `sessionId` → phone-platform `chat_id`, learned for threads this app
@@ -729,6 +791,7 @@ class ChatViewModel : ViewModel() {
      * including one this app didn't create, or any Thread after a restart.
      */
     fun seedThreadChatIds(map: Map<String, String>) {
+        threadChatIds.clear()
         threadChatIds.putAll(map)
     }
 
@@ -1921,10 +1984,18 @@ class ChatViewModel : ViewModel() {
      * new profile's agent. SSE turns already carry the profile per-request as
      * `profileName`. [profile] = the new pick; null = the default profile.
      */
-    fun activateGatewayProfile(profile: Profile?, refreshModelOptions: Boolean = true) {
+    fun activateGatewayProfile(profile: Profile?, refreshModelOptions: Boolean = false) {
         clearOpenedSessionOwner()
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
+        // Profile selection is synchronous, while the runtime binder coalesces
+        // the matching context/directory switch. Fence that gap immediately:
+        // an old-owner reconnect must not resume/build the prior agent before
+        // the destination's Dashboard directory gets its first chance to load.
+        gatewayVisibleReconnectRetryJob?.cancel()
+        gatewayVisibleReconnectRetryJob = null
+        deferredGatewayPrewarm = null
+        automaticGatewayPrewarmBlocked = true
         // A profile switch is a UI/context detach, not a Stop action. Preserve
         // an in-flight upstream turn and reconcile it into its original durable
         // session when it finishes, while freeing this client to bind the newly
@@ -1980,13 +2051,19 @@ class ChatViewModel : ViewModel() {
         _selectedProviderOverride.value = null
         // Optimistically seed the picker "current" from the profile's own model
         // so the header/status strip switch instantly instead of showing the
-        // previous profile's model until the modelOptions round-trip lands; the
-        // round-trip below confirms/corrects it with server truth.
+        // previous profile's model. Do not fetch model.options during an ordinary
+        // profile switch: upstream treats profile/session selection as directory
+        // state and initializes the profile agent lazily. Eager model discovery
+        // can start provider/tool/MCP initialization ahead of the independent
+        // session-directory read. The model picker explicitly refreshes its
+        // catalog on open, while session.info confirms the active session model.
         profile?.model?.takeIf { it.isNotBlank() }?.let {
             _gatewayCurrentModel.value = it
             _gatewayCurrentProvider.value = ""
         }
-        // The profile brings its own model — refresh the picker's "current".
+        // Explicit callers may request an immediate catalog refresh (for example,
+        // a model-management surface), but navigation and profile selection do
+        // not opt in.
         // Reasoning effort is intentionally NOT fetched here: a sessionless
         // config.get would read the launch/global profile's effort (wrong
         // scope). It's left unknown above and confirmed by session.info on the
@@ -2074,10 +2151,15 @@ class ChatViewModel : ViewModel() {
     private var gatewayClient: GatewayChatClient? = null
     private var gatewayHistoryReconcileJob: Job? = null
     private var gatewayVisibleReattachJob: Job? = null
+    private var gatewayVisibleReconnectRetryJob: Job? = null
     @Volatile
     private var chatVisible = false
     private var gatewayProcessSource: GatewayProcessSource? = null
     private val gatewayProcessController = GatewayProcessController(viewModelScope)
+    private val subagentActivityController = SubagentActivityController()
+    private val subagentChildPreviewController = SubagentChildPreviewController(viewModelScope)
+    internal val subagentChildPreview: StateFlow<SubagentChildPreview?> =
+        subagentChildPreviewController.state
 
     /** Session-scoped upstream shell processes shown beside the composer. */
     val backgroundProcesses: StateFlow<List<GatewayProcess>> = gatewayProcessController.processes
@@ -2088,6 +2170,33 @@ class ChatViewModel : ViewModel() {
 
     val backgroundProcessesLoading: StateFlow<Boolean> = gatewayProcessController.loading
     val stoppingProcessIds: StateFlow<Set<String>> = gatewayProcessController.stoppingProcessIds
+
+    /** Bounded parent-session lifecycle previews for the active chat's delegated work. */
+    internal val subagentActivities: StateFlow<List<SubagentActivity>> =
+        subagentActivityController.activities
+
+    fun openSubagentChildPreview(activityKey: String) {
+        val activity = subagentActivities.value.firstOrNull { it.stableKey == activityKey } ?: return
+        val parentSessionId = chatHandler?.currentSessionId?.value ?: return
+        val parentScopeKey = activeProfileContextKey
+        val client = gatewayClient
+        subagentChildPreviewController.open(
+            activity = activity,
+            client = client,
+            parentSessionId = parentSessionId,
+            parentScopeKey = parentScopeKey,
+            gatewayRouteActive = streamingEndpoint == "gateway",
+            stillOwnsParent = {
+                gatewayClient === client &&
+                    chatHandler?.currentSessionId?.value == parentSessionId &&
+                    activeProfileContextKey == parentScopeKey
+            },
+        )
+    }
+
+    fun closeSubagentChildPreview() {
+        subagentChildPreviewController.close()
+    }
 
     private val _messageReactionsSupported = MutableStateFlow(true)
     val messageReactionsSupported: StateFlow<Boolean> = _messageReactionsSupported.asStateFlow()
@@ -2245,6 +2354,16 @@ class ChatViewModel : ViewModel() {
     fun requestSessionActivityRefresh() {
         val client = gatewayClient ?: return
         if (streamingEndpoint != "gateway" || !chatVisible) return
+        // Directory admission prevents activity polling from opening the cold
+        // socket early. Once this exact client is already Ready, active-list is
+        // passive observation and must remain available without re-activating a
+        // session or weakening the pending resume barrier.
+        if (
+            client.connectionState.value != GatewayConnectionState.Ready &&
+            automaticGatewayWorkDeferred(chatHandler?.currentSessionId?.value)
+        ) {
+            return
+        }
         sessionActivityPollJob?.cancel()
         sessionActivityPollJob = viewModelScope.launch {
             pollSessionActivity(client)
@@ -2252,6 +2371,8 @@ class ChatViewModel : ViewModel() {
     }
 
     private suspend fun pollSessionActivity(client: GatewayChatClient) {
+        var hasPassiveCurrentLiveWork = false
+        var hasPassiveCatchupPending = false
         sessionActivityPollMutex.withLock {
             if (gatewayClient !== client || !chatVisible || streamingEndpoint != "gateway") return
             val generation = sessionActivityGeneration.get()
@@ -2272,6 +2393,43 @@ class ChatViewModel : ViewModel() {
             when (val result = client.listActiveSessions()) {
                 is GatewayActiveSessionsResult.Success -> {
                     if (gatewayClient !== client || generation != sessionActivityGeneration.get()) return
+                    val currentStoredId = currentOwner?.storedSessionId
+                    val passiveCurrentRows = if (currentStoredId == null) {
+                        emptyList()
+                    } else {
+                        result.sessions.filter { row ->
+                            row.storedSessionId == currentStoredId &&
+                                client.knownSessionOwner(row.runtimeSessionId) == null
+                        }
+                    }
+                    hasPassiveCurrentLiveWork = passiveCurrentRows.any { row ->
+                        row.status != GatewayActiveSessionStatus.Idle
+                    }
+                    val initialCatchupPending =
+                        passiveObservationCatchupPendingSessionId == currentStoredId
+                    val needsFinalPassiveRefresh =
+                        passivelyObservedGatewaySessionId == currentStoredId &&
+                            !hasPassiveCurrentLiveWork
+                    if (hasPassiveCurrentLiveWork) {
+                        currentStoredId?.let(::refreshPassivelyObservedGatewayHistory)
+                        if (initialCatchupPending) {
+                            passiveObservationCatchupPendingSessionId = null
+                        }
+                    } else if (needsFinalPassiveRefresh || initialCatchupPending) {
+                        val scheduled = currentStoredId?.let { storedId ->
+                            refreshPassivelyObservedGatewayHistory(
+                                storedSessionId = storedId,
+                                retryUntilChanged = true,
+                            )
+                        } == true
+                        if (scheduled && initialCatchupPending) {
+                            passiveObservationCatchupPendingSessionId = null
+                        }
+                    }
+                    passivelyObservedGatewaySessionId =
+                        currentStoredId?.takeIf { hasPassiveCurrentLiveWork }
+                    hasPassiveCatchupPending =
+                        passiveObservationCatchupPendingSessionId == currentStoredId
                     val resolved = resolveGatewayActiveSessions(
                         sessions = result.sessions,
                         directory = directory,
@@ -2333,6 +2491,18 @@ class ChatViewModel : ViewModel() {
                 GatewayActiveSessionsResult.Unsupported,
                 is GatewayActiveSessionsResult.TransientFailure -> {
                     if (gatewayClient !== client || generation != sessionActivityGeneration.get()) return
+                    val currentStoredId = currentOwner?.storedSessionId
+                    if (passiveObservationCatchupPendingSessionId == currentStoredId) {
+                        val scheduled = currentStoredId?.let { storedId ->
+                            refreshPassivelyObservedGatewayHistory(
+                                storedSessionId = storedId,
+                                retryUntilChanged = true,
+                            )
+                        } == true
+                        if (scheduled) passiveObservationCatchupPendingSessionId = null
+                    }
+                    hasPassiveCatchupPending =
+                        passiveObservationCatchupPendingSessionId == currentStoredId
                     val scopes = directory.mapTo(mutableSetOf()) {
                         SessionActivityScope.of(it.connectionId, it.profile)
                     }.apply { add(currentScope) }
@@ -2351,7 +2521,9 @@ class ChatViewModel : ViewModel() {
             record.freshness == SessionActivityFreshness.Confirmed &&
                 record.phase(System.currentTimeMillis()) != SessionActivityPhase.Idle
         }
-        val delayMs = if (hasConfirmedLiveWork) 1_500L else 30_000L
+        val delayMs = if (
+            hasConfirmedLiveWork || hasPassiveCurrentLiveWork || hasPassiveCatchupPending
+        ) 1_500L else 30_000L
         sessionActivityPollJob = viewModelScope.launch {
             delay(delayMs)
             if (gatewayClient === client && chatVisible) pollSessionActivity(client)
@@ -2424,6 +2596,10 @@ class ChatViewModel : ViewModel() {
             clearProjectedBackgroundProcesses()
             sessionActivityPollJob?.cancel()
             sessionActivityPollJob = null
+            passiveGatewayHistoryRefreshJob?.cancel()
+            passiveGatewayHistoryRefreshJob = null
+            passivelyObservedGatewaySessionId = null
+            passiveObservationCatchupPendingSessionId = null
             sessionActivityGeneration.incrementAndGet()
             sessionActivityDirectory = emptySet()
             lastLocalActivityOwner = null
@@ -2431,10 +2607,13 @@ class ChatViewModel : ViewModel() {
             lastSessionActivityScope = null
             gatewayVisibleReattachJob?.cancel()
             gatewayVisibleReattachJob = null
+            gatewayVisibleReconnectRetryJob?.cancel()
+            gatewayVisibleReconnectRetryJob = null
             previousClient?.setUnsolicitedTurnProvider(null)
             previousClient?.setColdPrewarmSessionReadyListener(null)
             previousClient?.setUnmatchedTurnCompleteListener(null)
             previousClient?.setBackgroundInteractionListener(null)
+            previousClient?.setSessionDirectoryInvalidationListener(null)
         }
         gatewayClient = client
         if (changed) {
@@ -2442,6 +2621,8 @@ class ChatViewModel : ViewModel() {
             resetApprovalModeState()
             _messageReactionsSupported.value = true
             gatewayProcessSource = client?.let(::GatewayChatProcessSource)
+            closeSubagentChildPreview()
+            subagentActivityController.resetConnection()
             gatewayProcessController.bind(
                 newSource = gatewayProcessSource,
                 sessionId = chatHandler?.currentSessionId?.value,
@@ -2478,6 +2659,18 @@ class ChatViewModel : ViewModel() {
         client?.setUnsolicitedTurnProvider { storedSessionId ->
             createGatewayInboundTurnRegistration(client, storedSessionId)
         }
+        client?.setSessionDirectoryInvalidationListener {
+            // Gateway emits this only after durable session state changes. It
+            // is also a useful liveness edge after a Dashboard timeout: retry
+            // only an unavailable, idle directory instead of running a timer
+            // loop that can compound a stalled server.
+            if (
+                _sessionListUnavailable.value &&
+                sessionRefreshJob?.isActive != true
+            ) {
+                refreshSessions()
+            }
+        }
         client?.setColdPrewarmSessionReadyListener { storedSessionId ->
             scheduleGatewayHistoryReconcile(storedSessionId)
             if (
@@ -2509,6 +2702,30 @@ class ChatViewModel : ViewModel() {
                 }
                 is GatewayBackgroundInteractionEvent.Expired -> {
                     if (key != null) {
+                        val checkpoint = backgroundTurnCheckpoints[key]
+                        val checkpointAsk = checkpoint?.pendingAsk
+                        if (checkpoint != null && checkpointAsk != null &&
+                            checkpointAsk.kind == event.ask.kind.name &&
+                            (event.ask.kind == GatewayAsk.Kind.APPROVAL ||
+                                checkpointAsk.requestId == event.ask.requestId)
+                        ) {
+                            val updated = checkpoint.copy(
+                                pendingAsk = null,
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                            // Recovery consults memory before disk, so retire the
+                            // stale card synchronously before a navigation can
+                            // reclaim this turn. Persist the same exact owner so
+                            // process restart cannot resurrect it either.
+                            backgroundTurnCheckpoints[key] = updated
+                            chatTurnCheckpointStore?.let { store ->
+                                viewModelScope.launch {
+                                    checkpointMutex.withLock {
+                                        runCatching { store.write(updated) }
+                                    }
+                                }
+                            }
+                        }
                         backgroundNeedsInputKeys -= key
                         backgroundPendingInteractions.computeIfPresent(key) { _, current ->
                             if (current.ask.kind == event.ask.kind &&
@@ -2537,15 +2754,48 @@ class ChatViewModel : ViewModel() {
                     client.connectionState.collect { state ->
                         if (
                             state == GatewayConnectionState.Idle &&
+                            client.reconnectDisposition.value ==
+                                GatewayReconnectDisposition.Retryable &&
                             chatVisible &&
                             gatewayClient === client
                         ) {
                             // Foreground can race OkHttp's delayed close callback:
                             // the first prewarm sees the old socket as Ready, then
                             // the callback moves it to Idle. Re-run from this exact
-                            // client transition so the visible durable session is
-                            // resumed and its authoritative history reconciled.
-                            prewarmGateway()
+                            // client transition so the observation socket is
+                            // restored after the failure cooldown. prewarmGateway
+                            // retains the passive/no-claim boundary unless an
+                            // exact Android checkpoint owns recovery.
+                            gatewayVisibleReconnectRetryJob?.cancel()
+                            val reconnectContextKey = activeProfileContextKey
+                            val reconnectProfile = currentSessionProfileName()
+                            val reconnectSessionId = chatHandler?.currentSessionId?.value
+                            gatewayVisibleReconnectRetryJob = viewModelScope.launch {
+                                // The client enters Idle after applying its
+                                // short failure cooldown. Retrying inline only
+                                // hits that cooldown and emits no later state,
+                                // so a visible chat would otherwise strand.
+                                val cooldownMs = client.remainingConnectCooldownMillis()
+                                if (cooldownMs > 0L) delay(cooldownMs + 50L)
+                                if (
+                                    chatVisible &&
+                                    gatewayClient === client &&
+                                    activeProfileContextKey == reconnectContextKey &&
+                                    currentSessionProfileName() == reconnectProfile &&
+                                    chatHandler?.currentSessionId?.value == reconnectSessionId &&
+                                    client.reconnectDisposition.value ==
+                                        GatewayReconnectDisposition.Retryable &&
+                                    client.connectionState.value == GatewayConnectionState.Idle
+                                ) {
+                                    prewarmGateway()
+                                }
+                            }
+                        } else if (state != GatewayConnectionState.Idle ||
+                            client.reconnectDisposition.value !=
+                            GatewayReconnectDisposition.Retryable
+                        ) {
+                            gatewayVisibleReconnectRetryJob?.cancel()
+                            gatewayVisibleReconnectRetryJob = null
                         }
                     }
                 }
@@ -2563,19 +2813,6 @@ class ChatViewModel : ViewModel() {
                 reasoningEffortRevision.incrementAndGet()
                 selectedReasoningEffortConfirmedIdentity = null
                 _reasoningDisplay.value = null
-            }
-            // Catalog fetch must never cold-open /api/ws — only fetch over an
-            // already-ready socket. Otherwise the first completed gateway
-            // turn populates it (see onCompleteCb in startStream).
-            client.connectionState.value == GatewayConnectionState.Ready &&
-                (changed || _serverCommands.value.isEmpty()) -> {
-                fetchServerCommands(client)
-                refreshModelOptions()
-                refreshReasoningSettings()
-                refreshApprovalMode()
-                // Seed the active personality over the already-ready socket so the
-                // picker reflects server truth without waiting for the first turn.
-                seedServerPersonality(client)
             }
             changed -> {
                 _serverCommands.value = emptyList()
@@ -2604,7 +2841,7 @@ class ChatViewModel : ViewModel() {
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
             val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
-                key.contextKey.substringAfterLast("::") == profileKey &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey &&
                 checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
@@ -2653,11 +2890,14 @@ class ChatViewModel : ViewModel() {
         queuedRecovery: QueuedRecoveryHandoff? = null,
     ): GatewayInboundTurnRegistration? {
         val handler = chatHandler ?: return null
+        val eventScopeKey = activeProfileContextKey
+        val eventProfile = currentSessionProfileName()
         fun matchesAdmissionContext(): Boolean =
             gatewayClient === client &&
                 streamingEndpoint == "gateway" &&
                 chatHandler === handler &&
-                handler.currentSessionId.value == storedSessionId
+                handler.currentSessionId.value == storedSessionId &&
+                activeProfileContextKey == eventScopeKey
 
         val messageId = "gateway-inbound-${UUID.randomUUID()}"
         val queuedUserMessageId = "gateway-queued-user-${UUID.randomUUID()}"
@@ -2692,6 +2932,11 @@ class ChatViewModel : ViewModel() {
             onStart = {
                 if (!started && ownsBoundTurn()) {
                     started = true
+                    subagentActivityController.beginTurn(
+                        storedSessionId,
+                        eventScopeKey,
+                        messageId,
+                    )
                     cancelAnswerRecovery()
                     intentionallyCancelled = false
                     firstTokenNotified = false
@@ -2750,6 +2995,7 @@ class ChatViewModel : ViewModel() {
                     ?.content
                     ?.takeIf { it.isNotBlank() }
                 if (canWriteTranscript) {
+                    subagentActivityController.endTurn(messageId)
                     val failed = handler.messages.value
                         .lastOrNull { it.id == messageId }
                         ?.badges
@@ -2785,6 +3031,7 @@ class ChatViewModel : ViewModel() {
             onError = { message ->
                 val canWriteTranscript = acceptsEvent()
                 if (canWriteTranscript) {
+                    subagentActivityController.endTurn(messageId)
                     AppAnalytics.onStreamError()
                     handler.onStreamError(message)
                     emitError(Exception(message), context = "send_message")
@@ -2802,7 +3049,16 @@ class ChatViewModel : ViewModel() {
                 if (acceptsEvent()) handler.onToolGenerating(messageId, name)
             },
             onSubagentEvent = { event ->
-                if (acceptsEvent()) handler.onSubagentEvent(messageId, event)
+                if (acceptsEvent()) {
+                    subagentActivityController.onEvent(
+                        sessionId = storedSessionId,
+                        eventScopeKey = eventScopeKey,
+                        turnId = messageId,
+                        event = event,
+                        profile = eventProfile,
+                    )
+                    handler.onSubagentEvent(messageId, event)
+                }
             },
             onMoaReference = { event ->
                 if (acceptsEvent()) handler.onMoaReference(messageId, event)
@@ -2999,6 +3255,103 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Refresh a Desktop/TUI-owned turn through the profile-scoped history
+     * surface without attaching its live runtime. `session.active_list` drives
+     * the bounded cadence; one final read follows Working/Waiting -> Idle.
+     */
+    private fun refreshPassivelyObservedGatewayHistory(
+        storedSessionId: String,
+        retryUntilChanged: Boolean = false,
+    ): Boolean {
+        if (passiveGatewayHistoryRefreshJob?.isActive == true) return false
+        if (_isLoadingHistory.value) return false
+        val handler = chatHandler ?: return false
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
+        val refreshJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                repeat(if (retryUntilChanged) 8 else 1) { attempt ->
+                    val serverMessages = runCatching {
+                        loadGatewaySessionHistory(
+                            sessionId = storedSessionId,
+                            requireProfileScope = true,
+                            profileName = profileName,
+                        )
+                    }.getOrNull() ?: return@launch
+                    if (
+                        chatHandler !== handler ||
+                        activeProfileContextKey != contextKey ||
+                        currentSessionProfileName() != profileName ||
+                        handler.currentSessionId.value != storedSessionId ||
+                        _isLoadingHistory.value ||
+                        activeStream != null ||
+                        handler.isStreaming.value
+                    ) return@launch
+
+                    val visibleSignature = handler.messages.value
+                        .filterNot { it.clientOnly }
+                        .map { message ->
+                            Triple(
+                                message.role.name.lowercase(),
+                                message.content,
+                                message.thinkingContent,
+                            )
+                        }
+                    val serverSignature = serverMessages.map { message ->
+                        Triple(
+                            message.role.lowercase(),
+                            message.contentText.orEmpty(),
+                            message.resolvedReasoning.orEmpty(),
+                        )
+                    }
+                    if (visibleSignature != serverSignature) {
+                        handler.loadMessageHistory(serverMessages)
+                        refreshSessions()
+                        scheduleTitleReconcile(storedSessionId)
+                        return@launch
+                    }
+                    if (attempt < 7 && retryUntilChanged) delay(250L)
+                }
+            } finally {
+                if (passiveGatewayHistoryRefreshJob === coroutineContext[Job]) {
+                    passiveGatewayHistoryRefreshJob = null
+                }
+            }
+        }
+        passiveGatewayHistoryRefreshJob = refreshJob
+        refreshJob.start()
+        return true
+    }
+
+    /** Open the read-only socket off Main, then publish observation ownership on Main. */
+    private fun observeGatewaySession(
+        client: GatewayChatClient?,
+        handler: ChatHandler,
+        storedSessionId: String,
+    ) {
+        val observer = client ?: return
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
+        observer.observe {
+            if (
+                chatVisible &&
+                gatewayClient === observer &&
+                chatHandler === handler &&
+                activeProfileContextKey == contextKey &&
+                currentSessionProfileName() == profileName &&
+                handler.currentSessionId.value == storedSessionId
+            ) {
+                passiveObservationCatchupPendingSessionId = storedSessionId
+                refreshPassivelyObservedGatewayHistory(
+                    storedSessionId = storedSessionId,
+                    retryUntilChanged = true,
+                )
+                requestSessionActivityRefresh()
+            }
+        }
+    }
+
     /** One-shot `config.get personality` over a ready socket → drives the collector. */
     private fun seedServerPersonality(client: GatewayChatClient) {
         viewModelScope.launch {
@@ -3009,29 +3362,35 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Warm the gateway socket (and resume the current session) when the chat
-     * surface is visible and the gateway is the resolved transport, so the
-     * first send is warm instead of paying the cold connect + `session.resume`
-     * on the send path. No-op without a gateway client; idempotent when warm.
-     * Driven by a foreground/visibility effect in ChatScreen.
+     * Warm the Gateway socket when Chat is visible without claiming a runtime
+     * that may belong to Desktop/TUI. Exact Android-owned checkpoints recover
+     * through `session.activate`/`session.resume`; an ordinary open observes
+     * through REST history and `session.active_list` until the user performs
+     * an explicit action that needs session ownership.
      */
     fun prewarmGateway() {
         val client = gatewayClient
         val handler = chatHandler ?: return
         val sessionId = handler.currentSessionId.value
+        // Visibility and client-binding effects can run before the runtime
+        // binder has established the first profile context. Do not let that
+        // early edge open /api/ws ahead of the exact-owner Dashboard directory
+        // (including the fresh-draft/null-session case). Explicit row opens and
+        // sends use their own direct Gateway paths and are not gated here.
+        if (automaticGatewayWorkDeferred(sessionId)) return
         selectBackgroundProcessSession(sessionId)
         if (sessionId == null) {
-            client?.prewarm(null)
+            client?.observe()
         } else {
             // Preserve the original warm-up path before persistence wiring is
             // available (early composition and JVM tests). Production installs
             // the store from initializeMedia before Chat becomes ready.
             if (chatTurnCheckpointStore == null) {
+                if (automaticGatewayWorkDeferred(sessionId)) return
                 val gateway = client ?: return
-                // GatewayChatClient owns an IO scope, so this can progress even
-                // while a paused/blocked UI dispatcher is being recreated.
-                // Its cold-ready listener performs history/process refresh.
-                gateway.prewarm(sessionId)
+                // GatewayChatClient owns the socket IO scope, so the dial can
+                // progress while a paused UI dispatcher is being recreated.
+                observeGatewaySession(gateway, handler, sessionId)
                 return
             }
             if (activeStream == null && (streamRecovery == null || client != null)) {
@@ -3041,28 +3400,32 @@ class ChatViewModel : ViewModel() {
                     if (!claimed &&
                         gatewayClient === client &&
                         chatHandler === handler &&
-                        handler.currentSessionId.value == sessionId
+                        handler.currentSessionId.value == sessionId &&
+                        !automaticGatewayWorkDeferred(sessionId)
                     ) {
-                        if (client?.prewarmAwait(sessionId) == true) {
-                            gatewayProcessController.sessionReady(sessionId)
-                        }
+                        observeGatewaySession(client, handler, sessionId)
                     }
                     checkpointRecoveryJob = null
                 }
                 return
             }
-            // prewarm() only emits the existing "cold ready" callback when it
-            // had to resume. An already-live session still needs its initial
-            // process snapshot when Chat opens, so confirm it explicitly.
-            viewModelScope.launch {
-                if (
-                    client?.prewarmAwait(sessionId) == true &&
-                    gatewayClient === client &&
-                    chatHandler === handler &&
-                    handler.currentSessionId.value == sessionId
-                ) {
-                    gatewayProcessController.sessionReady(sessionId)
+            // A locally-owned live mapper may revalidate its existing binding.
+            // A passive transcript must remain socket-only: resuming it here
+            // can replace another client's transport and turn Android teardown
+            // into a later session.interrupt.
+            if (client?.hasActiveTurnForSession(sessionId) == true) {
+                viewModelScope.launch {
+                    if (client.prewarmAwait(sessionId) &&
+                        gatewayClient === client &&
+                        chatHandler === handler &&
+                        handler.currentSessionId.value == sessionId
+                    ) {
+                        gatewayProcessController.sessionReady(sessionId)
+                        requestSessionActivityRefresh()
+                    }
                 }
+            } else {
+                observeGatewaySession(client, handler, sessionId)
             }
         }
     }
@@ -3072,16 +3435,27 @@ class ChatViewModel : ViewModel() {
      * Gateway chat owns automatic idle-socket reattachment; other tabs and a
      * backgrounded app retain the normal no-reconnect behavior.
      */
-    fun setChatVisible(visible: Boolean) {
+    fun setChatVisible(visible: Boolean): Boolean {
         val changed = chatVisible != visible
         chatVisible = visible
         if (visible && changed) {
-            prewarmGateway()
+            if (gatewayClient?.reconnectDisposition?.value !=
+                GatewayReconnectDisposition.Terminal
+            ) {
+                prewarmGateway()
+            }
             requestSessionActivityRefresh()
         } else if (!visible) {
+            gatewayVisibleReconnectRetryJob?.cancel()
+            gatewayVisibleReconnectRetryJob = null
             sessionActivityPollJob?.cancel()
             sessionActivityPollJob = null
+            passiveGatewayHistoryRefreshJob?.cancel()
+            passiveGatewayHistoryRefreshJob = null
+            passivelyObservedGatewaySessionId = null
+            passiveObservationCatchupPendingSessionId = null
         }
+        return changed
     }
 
     // === Gateway desktop-parity state ===
@@ -3372,7 +3746,13 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         scopeKey: String? = activeProfileContextKey,
     ) {
+        subagentChildPreview.value?.let { preview ->
+            if (preview.parentSessionId != sessionId || preview.parentScopeKey != scopeKey) {
+                closeSubagentChildPreview()
+            }
+        }
         gatewayProcessController.selectSession(sessionId, scopeKey)
+        subagentActivityController.selectSession(sessionId, scopeKey)
     }
 
     /**
@@ -3453,11 +3833,19 @@ class ChatViewModel : ViewModel() {
      */
     private var profileSessionLister:
         (suspend (String?) -> Result<List<SessionItem>>?)? = null
+    private var profileSessionPageLister:
+        (suspend (String?, Int, Int) -> Result<List<SessionItem>>?)? = null
 
     fun setProfileSessionLister(
         lister: suspend (String?) -> Result<List<SessionItem>>?,
     ) {
         profileSessionLister = lister
+    }
+
+    fun setProfileSessionPageLister(
+        lister: suspend (String?, Int, Int) -> Result<List<SessionItem>>?,
+    ) {
+        profileSessionPageLister = lister
     }
 
     /**
@@ -3512,10 +3900,11 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * Transcript for [sessionId], preferring the profile-scoped dashboard path on
-     * gateway connections (so non-default-profile sessions resolve against their
-     * own DB). The shared api_server transcript is used only when no scoped
-     * dashboard surface exists; a failed scoped read is never cross-profile truth.
+     * Transcript for [sessionId], preferring the profile-scoped Dashboard path
+     * whenever it exists. Dashboard history is authenticated HTTP state and does
+     * not depend on the Gateway WebSocket being connected; a ticket/upgrade
+     * failure must not hide an otherwise readable conversation. The shared
+     * api_server transcript is used only when no scoped Dashboard surface exists.
      */
     private suspend fun loadSessionHistory(
         sessionId: String,
@@ -3523,8 +3912,16 @@ class ChatViewModel : ViewModel() {
         mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
         profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
-        if (streamingEndpoint == "gateway") {
-            return loadGatewaySessionHistory(sessionId, requireProfileScope, mode, profileName)
+        if (profileMessageLoader != null) {
+            return loadGatewaySessionHistory(
+                sessionId,
+                requireProfileScope = true,
+                mode = mode,
+                profileName = profileName,
+            )
+        }
+        if (streamingEndpoint == "gateway" && requireProfileScope) {
+            return loadGatewaySessionHistory(sessionId, true, mode, profileName)
         }
         return apiClient?.getMessages(sessionId, mode) ?: emptyList()
     }
@@ -3637,6 +4034,14 @@ class ChatViewModel : ViewModel() {
                         now = System.currentTimeMillis(),
                     )
                     requestSessionActivityRefresh()
+                }
+            }
+            launch {
+                client.connectionState.collect { state ->
+                    if (gatewayClient !== client) return@collect
+                    subagentActivityController.onConnectionReady(
+                        state == com.hermesandroid.relay.network.upstream.GatewayConnectionState.Ready,
+                    )
                 }
             }
             launch {
@@ -3831,6 +4236,7 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun publishHistoryLoadFailure(sessionId: String, error: Throwable) {
+        if (error.isDashboardSignInRequiredFailure()) return
         val rawError = error.message?.takeIf { it.isNotBlank() }
             ?: "The active profile's conversation history could not be reached."
         _chatFailure.value = ChatFailureNotice(
@@ -3849,6 +4255,14 @@ class ChatViewModel : ViewModel() {
             endpointRole = "gateway",
             suggestion = "Reconnect the active profile and retry opening this conversation.",
         )
+    }
+
+    private fun clearMatchingHistoryLoadFailure(sessionId: String) {
+        _chatFailure.update { failure ->
+            failure?.takeUnless {
+                it.sessionId == sessionId && it.turnId == "history-$sessionId"
+            }
+        }
     }
 
     /**
@@ -4202,12 +4616,28 @@ class ChatViewModel : ViewModel() {
                 clearTurnCheckpoint()
                 historyLoadGeneration.incrementAndGet()
                 sessionRefreshGeneration.incrementAndGet()
+                gatewayVisibleReconnectRetryJob?.cancel()
+                gatewayVisibleReconnectRetryJob = null
                 activeStreamDeltas?.discard()
                 activeStreamDeltas = null
                 cancelAnswerRecovery(settleUi = false)
                 sessionRefreshJob?.cancel()
+                sessionRefreshRetryJob?.cancel()
+                sessionLoadMoreJob?.cancel()
+                sessionLoadMoreJob = null
+                sessionLoadMoreOwner = null
+                sessionRefreshOwner = null
+                sessionRefreshPending = false
                 _isLoadingSessions.value = false
+                _isLoadingMoreSessions.value = false
+                _hasMoreSessions.value = false
+                _sessionPageLoadFailed.value = false
+                sessionNextPageOffset = SESSION_DIRECTORY_PAGE_SIZE
+                lastSessionRefreshSuccessOwner = null
+                lastSessionRefreshSuccessNanos = 0L
+                _sessionListUnavailable.value = false
                 conversationBindingController.reset()
+                exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
                 _reasoningCapabilityRevision.value += 1L
@@ -4255,6 +4685,7 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
         // Detach the old live gateway session without reading launch/global
         // model options: session.info for the resumed owner is authoritative.
         activateGatewayProfile(profile, refreshModelOptions = false)
@@ -4264,6 +4695,7 @@ class ChatViewModel : ViewModel() {
             sessionId = sessionId,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
         return true
     }
@@ -4274,11 +4706,15 @@ class ChatViewModel : ViewModel() {
      * `default` profile wins over the server's sticky active profile everywhere.
      */
     fun createProfileChat(
-        profileName: String,
+        profileName: String?,
         profile: Profile?,
         contextKey: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        // A provisional phone Thread belongs to its original connection/chat_id
+        // and cannot transfer to another profile. Exit it before binding or
+        // persisting the destination draft so the next send uses session.create.
+        exitProvisionalThread()
         activateGatewayProfile(profile, refreshModelOptions = false)
         refreshActiveAgentName(profile, relabelGenericMessages = true)
         switchProfileContextInternal(
@@ -4286,9 +4722,47 @@ class ChatViewModel : ViewModel() {
             sessionId = null,
             explicitProfileName = profileName,
             explicitDisplayProfile = profile,
+            explicitBinding = true,
         )
+        // Selection has already moved persistence to the target profile, so
+        // clear that profile/transport's stored last-session slot as part of
+        // the same draft transfer. A restart must reopen the draft, not the
+        // target profile's previous conversation.
+        persistFreshDraft(profileName)
         AppAnalytics.onSessionCreated()
         return true
+    }
+
+    /**
+     * Atomic owner switch for the Chat header.
+     *
+     * Empty ordinary drafts and provisional phone Threads both become a fresh
+     * destination-profile draft, but only after provisional routing is retired.
+     * Durable sessions keep the established profile-selection lifecycle, whose
+     * binder may restore the destination profile's compatible last session.
+     */
+    fun selectProfileFromHeader(
+        profileName: String?,
+        profile: Profile?,
+        contextKey: String,
+    ): Boolean {
+        val handler = chatHandler ?: return false
+        val currentSessionId = handler.currentSessionId.value
+        val activeSession = handler.sessions.value.firstOrNull {
+            it.sessionId == currentSessionId
+        }
+        if (currentSessionId == null || activeSession?.source == "phone") {
+            return createProfileChat(profileName, profile, contextKey)
+        }
+        if (!selectConversationProfile(profileName, profile)) return false
+        exitProvisionalThread()
+        activateGatewayProfile(profile)
+        return true
+    }
+
+    private fun persistFreshDraft(profileName: String?) {
+        val transport = SessionTransport.forEndpoint(streamingEndpoint)
+        onFreshDraftSelected?.invoke(profileName, transport) ?: onSessionChanged?.invoke(null)
     }
 
     fun switchProfileContext(contextKey: String, sessionId: String?) {
@@ -4313,14 +4787,19 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         explicitProfileName: String? = null,
         explicitDisplayProfile: Profile? = null,
+        explicitBinding: Boolean = false,
         reconciliation: Boolean = false,
     ) {
         val handler = chatHandler ?: return
         dismissChatFailure()
         val previousBinding = conversationBinding.value
         val isInitialContextBinding = !previousBinding.isBound
-        val targetProfileName = explicitProfileName ?: sessionProfileNameProvider()
-        if (explicitProfileName != null) {
+        val targetProfileName = if (explicitBinding) {
+            explicitProfileName
+        } else {
+            sessionProfileNameProvider()
+        }
+        if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
                 profileName = explicitProfileName,
@@ -4352,6 +4831,25 @@ class ChatViewModel : ViewModel() {
             previousBinding.contextKey == contextKey &&
             handler.currentSessionId.value == sessionId
         ) {
+            if (automaticGatewayPrewarmBlocked) {
+                if (
+                    sessionId != null &&
+                    explicitProfileName == null &&
+                    streamingEndpoint == "gateway"
+                ) {
+                    deferredGatewayPrewarm = DeferredGatewayPrewarm(
+                        contextKey = contextKey,
+                        profileName = targetProfileName,
+                        sessionId = sessionId,
+                        historyGeneration = historyLoadGeneration.get(),
+                        directoryGenerationFloor = sessionRefreshGeneration.get(),
+                        historyReady = true,
+                    )
+                } else {
+                    deferredGatewayPrewarm = null
+                    automaticGatewayPrewarmBlocked = false
+                }
+            }
             publishQueuedMessages()
             _initialChatSettled.value = true
             return
@@ -4361,6 +4859,20 @@ class ChatViewModel : ViewModel() {
             sessionId != null &&
             handler.currentSessionId.value == sessionId
         ) {
+            if (explicitProfileName == null && streamingEndpoint == "gateway") {
+                automaticGatewayPrewarmBlocked = true
+                deferredGatewayPrewarm = DeferredGatewayPrewarm(
+                    contextKey = contextKey,
+                    profileName = targetProfileName,
+                    sessionId = sessionId,
+                    historyGeneration = historyLoadGeneration.get(),
+                    directoryGenerationFloor = sessionRefreshGeneration.get(),
+                    historyReady = true,
+                )
+            } else {
+                deferredGatewayPrewarm = null
+                automaticGatewayPrewarmBlocked = false
+            }
             activateModelOptionsProfile(contextKey)
             refreshRelayReasoningCapabilities()
             publishBackgroundSessionActivity()
@@ -4374,13 +4886,48 @@ class ChatViewModel : ViewModel() {
 
         // Initial cold-start binding is not a user switch. Its persisted
         // session may own the in-flight checkpoint we are about to recover.
+        gatewayVisibleReconnectRetryJob?.cancel()
+        gatewayVisibleReconnectRetryJob = null
         if (!isInitialContextBinding) releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
         val sessionProfileName = targetProfileName
-        sessionRefreshGeneration.incrementAndGet()
+        val directoryGenerationFloor = sessionRefreshGeneration.incrementAndGet()
+        deferredGatewayPrewarm = if (
+            sessionId != null &&
+            explicitProfileName == null &&
+            streamingEndpoint == "gateway"
+        ) {
+            DeferredGatewayPrewarm(
+                contextKey = contextKey,
+                profileName = sessionProfileName,
+                sessionId = sessionId,
+                historyGeneration = loadGeneration,
+                directoryGenerationFloor = directoryGenerationFloor,
+                historyReady = false,
+            )
+        } else {
+            null
+        }
+        automaticGatewayPrewarmBlocked = deferredGatewayPrewarm != null
         sessionRefreshJob?.cancel()
-        _isLoadingSessions.value = false
+        sessionRefreshRetryJob?.cancel()
+        sessionLoadMoreJob?.cancel()
+        sessionLoadMoreJob = null
+        sessionLoadMoreOwner = null
+        sessionRefreshOwner = null
+        sessionRefreshPending = false
+        sessionNextPageOffset = SESSION_DIRECTORY_PAGE_SIZE
+        _isLoadingMoreSessions.value = false
+        _hasMoreSessions.value = false
+        _sessionPageLoadFailed.value = false
+        // Restore this exact connection/profile's last confirmed recent rows
+        // immediately; an uncached profile remains loading until the
+        // authoritative replacement fetch settles.
+        val sessionOwner = contextKey to targetProfileName
+        val cachedSessions = profileSessionCache[sessionOwner]
+        _isLoadingSessions.value = cachedSessions == null
+        _sessionListUnavailable.value = false
         activateModelOptionsProfile(contextKey)
         refreshRelayReasoningCapabilities()
         publishBackgroundSessionActivity()
@@ -4422,6 +4969,7 @@ class ChatViewModel : ViewModel() {
         handler.activeAgentName = currentAgentDisplayName()
         pendingGatewayTruncation = null
         handler.clearSessions()
+        cachedSessions?.let(handler::updateSessions)
         handler.setSessionId(sessionId)
         publishQueuedMessages()
         selectBackgroundProcessSession(sessionId, contextKey)
@@ -4457,7 +5005,15 @@ class ChatViewModel : ViewModel() {
                 } else {
                     false
                 }
-                if (!recovered) {
+                if (recovered) {
+                    if (stillCurrent()) {
+                        // Exact checkpoint recovery already reattached the live
+                        // runtime. It supersedes cold prewarm, so do not leave a
+                        // directory barrier blocking later reconnect ownership.
+                        deferredGatewayPrewarm = null
+                        automaticGatewayPrewarmBlocked = false
+                    }
+                } else {
                     val messages = loadSessionHistory(
                         sessionId,
                         requireProfileScope = streamingEndpoint == "gateway",
@@ -4465,7 +5021,31 @@ class ChatViewModel : ViewModel() {
                     )
                     if (stillCurrent()) {
                         handler.loadMessageHistory(messages)
-                        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                        clearMatchingHistoryLoadFailure(sessionId)
+                        if (streamingEndpoint == "gateway") {
+                            if (explicitProfileName != null) {
+                                // A concrete row selection is explicit display
+                                // intent, not permission to claim a Desktop/TUI
+                                // runtime. Warm only the observation socket after
+                                // its REST transcript has painted.
+                                observeGatewaySession(gatewayClient, handler, sessionId)
+                            } else {
+                                // Automatic cold/profile restoration must not let
+                                // agent construction starve the independent
+                                // Dashboard session directory. Arm the resume and
+                                // consume it only after this exact owner publishes
+                                // a fresh, successful directory result.
+                                deferredGatewayPrewarm
+                                    ?.takeIf {
+                                        it.contextKey == contextKey &&
+                                            it.profileName == sessionProfileName &&
+                                            it.sessionId == sessionId &&
+                                            it.historyGeneration == loadGeneration
+                                    }
+                                    ?.let { deferredGatewayPrewarm = it.copy(historyReady = true) }
+                                startDeferredGatewayPrewarmIfDirectoryReady()
+                            }
+                        }
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -4576,71 +5156,387 @@ class ChatViewModel : ViewModel() {
     // --- Session management ---
 
     private val _isLoadingSessions = MutableStateFlow(false)
+    private val _isLoadingMoreSessions = MutableStateFlow(false)
+    private val _hasMoreSessions = MutableStateFlow(false)
+    private val _sessionPageLoadFailed = MutableStateFlow(false)
+    private val _sessionListUnavailable = MutableStateFlow(false)
 
     /** True while the drawer's session list is being fetched (drives the spinner). */
     val isLoadingSessions: StateFlow<Boolean> = _isLoadingSessions.asStateFlow()
+    val isLoadingMoreSessions: StateFlow<Boolean> = _isLoadingMoreSessions.asStateFlow()
+    val hasMoreSessions: StateFlow<Boolean> = _hasMoreSessions.asStateFlow()
+    val sessionPageLoadFailed: StateFlow<Boolean> = _sessionPageLoadFailed.asStateFlow()
+    val sessionListUnavailable: StateFlow<Boolean> = _sessionListUnavailable.asStateFlow()
 
-    fun refreshSessions() {
+    fun refreshSessions() = refreshSessions(
+        allowReadinessRetry = true,
+        preserveFailurePresentation = false,
+        readinessRetryAttempt = 0,
+    )
+
+    /**
+     * Drawer-open freshness gate. Process-owned startup binding may already be
+     * loading (or have just loaded) this exact connection/profile; opening or
+     * recreating the Activity must not queue the same expensive list read.
+     * Explicit refreshes and session mutations continue to use refreshSessions().
+     */
+    fun refreshSessionsIfStale() {
         val handler = chatHandler ?: return
-        val generation = sessionRefreshGeneration.incrementAndGet()
+        val owner = activeProfileContextKey to currentSessionProfileName()
+        if (sessionRefreshJob?.isActive == true && sessionRefreshOwner == owner) return
+        val fresh = lastSessionRefreshSuccessOwner == owner &&
+            System.nanoTime() - lastSessionRefreshSuccessNanos <
+            SESSION_DRAWER_FRESHNESS_WINDOW_MS * 1_000_000L
+        if (fresh && handler.sessions.value.isNotEmpty()) return
+        refreshSessions()
+    }
+
+    private fun startDeferredGatewayPrewarmIfDirectoryReady() {
+        val pending = deferredGatewayPrewarm ?: return
+        val owner = pending.contextKey to pending.profileName
+        if (
+            !pending.historyReady ||
+            lastSessionRefreshSuccessOwner != owner ||
+            lastSessionRefreshSuccessGeneration <= pending.directoryGenerationFloor ||
+            historyLoadGeneration.get() != pending.historyGeneration ||
+            activeProfileContextKey != pending.contextKey ||
+            currentSessionProfileName() != pending.profileName ||
+            chatHandler?.currentSessionId?.value != pending.sessionId ||
+            streamingEndpoint != "gateway"
+        ) {
+            return
+        }
+        deferredGatewayPrewarm = null
+        automaticGatewayPrewarmBlocked = false
+        val client = gatewayClient ?: return
+        val handler = chatHandler ?: return
+        viewModelScope.launch {
+            if (
+                historyLoadGeneration.get() == pending.historyGeneration &&
+                activeProfileContextKey == pending.contextKey &&
+                currentSessionProfileName() == pending.profileName &&
+                chatHandler?.currentSessionId?.value == pending.sessionId &&
+                gatewayClient === client &&
+                streamingEndpoint == "gateway"
+            ) {
+                // The Dashboard directory is the authoritative readiness
+                // barrier, but clearing it must not claim a runtime that may
+                // still belong to Desktop/TUI. Observe the exact stored
+                // session; an explicit Android action or owned checkpoint is
+                // responsible for session.activate/session.resume.
+                observeGatewaySession(client, handler, pending.sessionId)
+            }
+        }
+        requestSessionActivityRefresh()
+    }
+
+    private fun automaticGatewayWorkDeferred(sessionId: String?): Boolean {
+        // The directory barrier exists only when this connection exposes a
+        // Dashboard-backed, profile-scoped session directory. Legacy/test
+        // Gateway bindings without that surface must retain socket readiness
+        // rather than waiting on a directory that can never report success.
+        if (streamingEndpoint != "gateway" || profileSessionLister == null) return false
+        if (automaticGatewayPrewarmBlocked) return true
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        if (!conversationBinding.value.isBound) return true
+        if (lastSessionRefreshSuccessOwner != (contextKey to profileName)) return true
+        if (sessionId == null) return false
+        val pending = deferredGatewayPrewarm
+        if (
+            pending?.sessionId == sessionId &&
+            pending.contextKey == contextKey &&
+            pending.profileName == profileName &&
+            pending.historyGeneration == historyLoadGeneration.get()
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun refreshSessions(
+        allowReadinessRetry: Boolean,
+        preserveFailurePresentation: Boolean,
+        readinessRetryAttempt: Int,
+    ) {
+        val handler = chatHandler ?: return
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
+        val owner = contextKey to profileName
+        if (sessionRefreshJob?.isActive == true && sessionRefreshOwner == owner) {
+            // Preserve one trailing refresh. A sessions.changed event or drawer
+            // reopen can arrive after the in-flight request took its snapshot.
+            sessionRefreshPending = true
+            return
+        }
+        val generation = sessionRefreshGeneration.incrementAndGet()
+        // Set this before dispatching the fetch coroutine. Otherwise Compose can
+        // render the newly-cleared list as "No sessions" for a frame (or longer
+        // while profile selection settles) before the coroutine marks it busy.
+        if (!preserveFailurePresentation) {
+            if (handler.sessions.value.isEmpty()) _isLoadingSessions.value = true
+            _sessionListUnavailable.value = false
+        }
         sessionRefreshJob?.cancel()
+        if (allowReadinessRetry) sessionRefreshRetryJob?.cancel()
+        sessionLoadMoreJob?.cancel()
+        sessionLoadMoreJob = null
+        sessionLoadMoreOwner = null
+        _isLoadingMoreSessions.value = false
+        _sessionPageLoadFailed.value = false
+        sessionRefreshPending = false
+        sessionRefreshOwner = owner
         sessionRefreshJob = viewModelScope.launch {
             // Treat refreshes over an existing list as quiet background syncs.
             // The drawer keeps rendering the current rows instead of flashing
             // through a loading state whenever it opens or a turn completes.
-            _isLoadingSessions.value = handler.sessions.value.isEmpty()
+            fun isCurrentRefresh(): Boolean =
+                sessionRefreshGeneration.get() == generation &&
+                    activeProfileContextKey == contextKey &&
+                    currentSessionProfileName() == profileName
+
+            var retryUnavailable = false
+            var retryReadiness = false
             try {
-                // On the gateway, scope the drawer to the ACTIVE PROFILE via the
-                // dashboard `/api/sessions?profile=` surface (it opens that
-                // profile's own state.db, exactly like the desktop sidebar). The
-                // gateway `session.list` RPC can't scope — it always reads the
-                // launch profile's DB — so it's deliberately not used here. The
-                // api_server `/api/sessions` (one shared DB, no profile concept)
-                // is the fallback for connections without a Manage/dashboard
-                // session.
-                val scoped = if (streamingEndpoint == "gateway") {
-                    profileSessionLister?.invoke(profileName)
-                } else {
-                    null
-                }
-                val result = scoped ?: apiClient?.listSessionsResult()
-                result?.fold(
-                    onSuccess = { sessions ->
-                        if (
-                            sessionRefreshGeneration.get() == generation &&
-                            activeProfileContextKey == contextKey &&
-                            currentSessionProfileName() == profileName
-                        ) {
-                            handler.updateSessions(sessions)
-                            updateCurrentProfileActivityDirectory(handler.sessions.value)
-                            requestSessionActivityRefresh()
+                do {
+                    sessionRefreshPending = false
+                    // A queued trailing refresh owns a new outcome. Never let
+                    // an earlier timeout overwrite a later successful list.
+                    retryUnavailable = false
+                    retryReadiness = false
+                    val refreshStartedNanos = System.nanoTime()
+                    // On the gateway, scope the drawer to the ACTIVE PROFILE via the
+                    // dashboard `/api/sessions?profile=` surface (it opens that
+                    // profile's own state.db, exactly like the desktop sidebar). The
+                    // gateway `session.list` RPC can't scope — it always reads the
+                    // launch profile's DB — so it's deliberately not used here. The
+                    // api_server `/api/sessions` (one shared DB, no profile concept)
+                    // is the fallback for connections without a Manage/dashboard
+                    // session.
+                    // Dashboard sessions are authenticated HTTP state. Prefer them
+                    // whenever configured, even while the independent Gateway
+                    // ticket/socket path is reconnecting or unavailable.
+                    try {
+                        val scoped = profileSessionLister?.invoke(profileName)
+                        val result = scoped ?: apiClient?.listSessionsResult()
+                        if (result == null && isCurrentRefresh()) {
+                            retryUnavailable = true
+                            retryReadiness = true
                         }
-                    },
-                    onFailure = { error ->
-                        if (
-                            sessionRefreshGeneration.get() != generation ||
-                            activeProfileContextKey != contextKey ||
-                            currentSessionProfileName() != profileName
-                        ) return@fold
-                        if (scoped != null) {
-                            // The shared API list belongs to the launch/default
-                            // database. Preserve the current profile's rows and
-                            // surface the scoped failure instead of leaking a
-                            // different profile into the drawer.
-                            emitError(error, context = "load_profile_sessions")
-                        } else {
-                            emitError(error, context = "load_sessions")
+                        result?.fold(
+                            onSuccess = { sessions ->
+                                if (isCurrentRefresh()) {
+                                    android.util.Log.i(
+                                        "ChatViewModel",
+                                        "sessions.refresh success rows=${sessions.size} " +
+                                            "elapsedMs=${(System.nanoTime() - refreshStartedNanos) / 1_000_000}",
+                                    )
+                                    _sessionListUnavailable.value = false
+                                    lastSessionRefreshSuccessOwner = owner
+                                    lastSessionRefreshSuccessNanos = System.nanoTime()
+                                    lastSessionRefreshSuccessGeneration = generation
+                                    if (scoped != null || profileName.isNullOrBlank()) {
+                                        cacheProfileSessions(owner, sessions)
+                                    }
+                                    sessionNextPageOffset = SESSION_DIRECTORY_PAGE_SIZE
+                                    _hasMoreSessions.value = scoped != null &&
+                                        sessions.size >= SESSION_DIRECTORY_PAGE_SIZE
+                                    handler.updateSessions(sessions)
+                                    updateCurrentProfileActivityDirectory(handler.sessions.value)
+                                    requestSessionActivityRefresh()
+                                    if (scoped != null) {
+                                        _sessionDirectoryReadyEvents.tryEmit(
+                                            SessionDirectoryReadyEvent(
+                                                contextKey = contextKey,
+                                                profileName = profileName,
+                                                generation = generation,
+                                            ),
+                                        )
+                                    }
+                                    val hadDeferredGatewayPrewarm = deferredGatewayPrewarm != null
+                                    startDeferredGatewayPrewarmIfDirectoryReady()
+                                    // A fresh draft has no stored session to arm
+                                    // in deferredGatewayPrewarm. Release the
+                                    // earlier visibility/client-binding edge only
+                                    // after this exact directory owner publishes.
+                                    if (
+                                        !hadDeferredGatewayPrewarm &&
+                                        deferredGatewayPrewarm == null &&
+                                        chatVisible
+                                    ) {
+                                        prewarmGateway()
+                                    }
+                                }
+                            },
+                            onFailure = { error ->
+                                if (!isCurrentRefresh()) return@fold
+                                android.util.Log.w(
+                                    "ChatViewModel",
+                                    "sessions.refresh failed type=${error.javaClass.simpleName} " +
+                                        "elapsedMs=${(System.nanoTime() - refreshStartedNanos) / 1_000_000}",
+                                )
+                                retryUnavailable = true
+                                retryReadiness = retryReadiness || !error.isSessionReadTimeout()
+                                if (error.isDashboardSignInRequiredFailure()) {
+                                    // The persistent Chat sign-in card owns this
+                                    // recovery state. Preserve cached history and
+                                    // mark the directory unavailable without also
+                                    // emitting a generic turn/error toast.
+                                } else if (scoped != null) {
+                                    // The shared API list belongs to the launch/default
+                                    // database. Preserve the current profile's rows and
+                                    // surface the scoped failure instead of leaking a
+                                    // different profile into the drawer.
+                                    emitError(error, context = "load_profile_sessions")
+                                } else {
+                                    emitError(error, context = "load_sessions")
+                                }
+                            },
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (isCurrentRefresh()) {
+                            android.util.Log.w(
+                                "ChatViewModel",
+                                "sessions.refresh threw type=${e.javaClass.simpleName} " +
+                                    "elapsedMs=${(System.nanoTime() - refreshStartedNanos) / 1_000_000}",
+                            )
+                            retryUnavailable = true
+                            retryReadiness = retryReadiness || !e.isSessionReadTimeout()
+                            if (!e.isDashboardSignInRequiredFailure()) {
+                                emitError(
+                                    e,
+                                    context = if (profileSessionLister != null) {
+                                        "load_profile_sessions"
+                                    } else {
+                                        "load_sessions"
+                                    },
+                                )
+                            }
                         }
-                    },
-                )
+                    }
+                } while (sessionRefreshPending && isCurrentRefresh())
             } finally {
+                val shouldRetry = allowReadinessRetry &&
+                    retryReadiness &&
+                    readinessRetryAttempt < SESSION_REFRESH_MAX_READINESS_RETRIES &&
+                    isCurrentRefresh()
                 if (sessionRefreshGeneration.get() == generation) {
-                    _isLoadingSessions.value = false
+                    _isLoadingSessions.value = shouldRetry && handler.sessions.value.isEmpty()
+                    _sessionListUnavailable.value = retryUnavailable && !shouldRetry
+                    sessionRefreshOwner = null
+                    sessionRefreshPending = false
+                }
+                if (shouldRetry) {
+                    sessionRefreshRetryJob?.cancel()
+                    sessionRefreshRetryJob = viewModelScope.launch {
+                        delay(SESSION_REFRESH_RETRY_DELAY_MS shl readinessRetryAttempt)
+                        sessionRefreshRetryJob = null
+                        if (isCurrentRefresh()) {
+                            refreshSessions(
+                                allowReadinessRetry = true,
+                                preserveFailurePresentation = true,
+                                readinessRetryAttempt = readinessRetryAttempt + 1,
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    fun loadMoreSessions() {
+        val handler = chatHandler ?: return
+        val lister = profileSessionPageLister ?: return
+        if (_sessionPageLoadFailed.value) return
+        if (!_hasMoreSessions.value || sessionLoadMoreJob?.isActive == true) return
+        if (sessionRefreshJob?.isActive == true) return
+
+        val generation = sessionRefreshGeneration.get()
+        val contextKey = activeProfileContextKey
+        val profileName = currentSessionProfileName()
+        val offset = sessionNextPageOffset
+        _isLoadingMoreSessions.value = true
+        val pageOwner = Any()
+        sessionLoadMoreOwner = pageOwner
+        val pageJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val startedNanos = System.nanoTime()
+            try {
+                val result = lister(profileName, offset, SESSION_DIRECTORY_PAGE_SIZE)
+                val stillOwnsPage = sessionRefreshGeneration.get() == generation &&
+                    activeProfileContextKey == contextKey &&
+                    currentSessionProfileName() == profileName
+                if (!stillOwnsPage) return@launch
+                result?.fold(
+                    onSuccess = { page ->
+                        _sessionPageLoadFailed.value = false
+                        android.util.Log.i(
+                            "ChatViewModel",
+                            "sessions.page success offset=$offset rows=${page.size} " +
+                                "elapsedMs=${(System.nanoTime() - startedNanos) / 1_000_000}",
+                        )
+                        handler.appendSessions(page)
+                        sessionNextPageOffset = offset + SESSION_DIRECTORY_PAGE_SIZE
+                        _hasMoreSessions.value = page.size >= SESSION_DIRECTORY_PAGE_SIZE
+                        updateCurrentProfileActivityDirectory(handler.sessions.value)
+                    },
+                    onFailure = { error ->
+                        _sessionPageLoadFailed.value = true
+                        android.util.Log.w(
+                            "ChatViewModel",
+                            "sessions.page failed offset=$offset type=${error.javaClass.simpleName} " +
+                                "elapsedMs=${(System.nanoTime() - startedNanos) / 1_000_000}",
+                        )
+                    },
+                ) ?: run { _hasMoreSessions.value = false }
+            } finally {
+                if (sessionRefreshGeneration.get() == generation) {
+                    _isLoadingMoreSessions.value = false
+                }
+                if (sessionLoadMoreOwner === pageOwner) {
+                    sessionLoadMoreOwner = null
+                    sessionLoadMoreJob = null
+                }
+            }
+        }
+        sessionLoadMoreJob = pageJob
+        pageJob.start()
+    }
+
+    fun retryLoadMoreSessions() {
+        _sessionPageLoadFailed.value = false
+        loadMoreSessions()
+    }
+
+    private fun cacheProfileSessions(
+        owner: Pair<String?, String?>,
+        sessions: List<SessionItem>,
+    ) {
+        profileSessionCache.remove(owner)
+        profileSessionCache[owner] = sessions.take(PROFILE_SESSION_CACHE_ROWS)
+        while (profileSessionCache.size > PROFILE_SESSION_CACHE_CONTEXTS) {
+            profileSessionCache.remove(profileSessionCache.keys.first())
+        }
+    }
+
+    private fun invalidateCurrentProfileSessionCache() {
+        sessionRefreshGeneration.incrementAndGet()
+        sessionRefreshJob?.cancel()
+        sessionRefreshRetryJob?.cancel()
+        sessionLoadMoreJob?.cancel()
+        sessionLoadMoreJob = null
+        sessionLoadMoreOwner = null
+        sessionRefreshOwner = null
+        sessionRefreshPending = false
+        _isLoadingSessions.value = false
+        _isLoadingMoreSessions.value = false
+        _hasMoreSessions.value = false
+        _sessionPageLoadFailed.value = false
+        sessionNextPageOffset = SESSION_DIRECTORY_PAGE_SIZE
+        profileSessionCache.remove(activeProfileContextKey to currentSessionProfileName())
+        lastSessionRefreshSuccessOwner = null
+        lastSessionRefreshSuccessNanos = 0L
     }
 
     private var titleReconcileJob: Job? = null
@@ -4671,6 +5567,9 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun Throwable.isSessionReadTimeout(): Boolean =
+        generateSequence(this) { it.cause }.any { it is InterruptedIOException }
+
     fun createNewChat(
         onReady: ((String?) -> Unit)? = null,
         onFailure: (() -> Unit)? = null,
@@ -4678,14 +5577,19 @@ class ChatViewModel : ViewModel() {
         if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.newChat) return
         val handler = chatHandler ?: return
         recordPreResetEvidence(handler, "new_chat")
-        clearOpenedSessionOwner()
-        pendingThread = null
-        creatingThread = null
+        // A new chat clears only the durable session identity. Keep the bound
+        // profile/context so an All Profiles conversation becomes a fresh
+        // draft for that same owner instead of falling back to the globally
+        // restored default profile.
+        conversationBindingController.startFreshDraft()
+        exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        deferredGatewayPrewarm = null
+        automaticGatewayPrewarmBlocked = false
         selectBackgroundProcessSession(null)
 
         // Gateway transport: a new chat is a fresh draft with no session id.
@@ -4710,7 +5614,7 @@ class ChatViewModel : ViewModel() {
             _fastEnabled.value = null
             approvalModeRevision.incrementAndGet()
             pendingYolo = null
-            onSessionChanged?.invoke(null)
+            persistFreshDraft(currentSessionProfileName())
             AppAnalytics.onSessionCreated()
             onReady?.invoke(null)
             return
@@ -4780,6 +5684,7 @@ class ChatViewModel : ViewModel() {
      */
     fun startNewThread(name: String) {
         val handler = chatHandler ?: return
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "new_thread")
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
@@ -4816,6 +5721,7 @@ class ChatViewModel : ViewModel() {
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
 
+        exitProvisionalThread()
         recordPreResetEvidence(handler, "open_proactive_thread")
 
         releaseTurnForNavigation(handler)
@@ -4825,7 +5731,6 @@ class ChatViewModel : ViewModel() {
             chatId = normalizedChatId,
             name = ordered.last().title.ifBlank { "Hermes" },
         )
-        creatingThread = null
         gatewayClient?.clearSession()
         handler.setSessionId(null)
         selectBackgroundProcessSession(null)
@@ -4878,11 +5783,20 @@ class ChatViewModel : ViewModel() {
      */
     private fun switchToCreatedThread() {
         val creating = creatingThread ?: return
+        val generation = threadNavigationGeneration.get()
         viewModelScope.launch {
             for (delayMs in longArrayOf(900L, 1300L, 1800L, 2500L, 3500L, 4500L)) {
                 delay(delayMs)
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 refreshSessions()
                 delay(400L) // let the refresh job land in the sessions flow
+                if (
+                    threadNavigationGeneration.get() != generation ||
+                    creatingThread != creating
+                ) return@launch
                 val match = chatHandler?.sessions?.value?.firstOrNull {
                     it.source == "phone" && it.sessionId !in creating.knownIds
                 }
@@ -4912,14 +5826,17 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return
         dismissChatFailure()
         if (streamingEndpoint != "gateway" && apiClient == null) return
-        pendingThread = null
-        creatingThread = null
+        exitProvisionalThread()
 
         // Keep a Gateway sibling alive and detach its callbacks. SSE remains a
         // single exclusive stream and is interrupted on navigation.
         releaseTurnForNavigation(handler)
         cancelAnswerRecovery(settleUi = false)
         val loadGeneration = historyLoadGeneration.incrementAndGet()
+        // Selecting a concrete row is explicit user intent and supersedes an
+        // automatic profile-restore barrier for the prior remembered session.
+        deferredGatewayPrewarm = null
+        automaticGatewayPrewarmBlocked = false
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
         conversationBindingController.switchSession(sessionId)
@@ -4976,7 +5893,10 @@ class ChatViewModel : ViewModel() {
                         handler.currentSessionId.value == sessionId
                     ) {
                         handler.loadMessageHistory(messages)
-                        if (streamingEndpoint == "gateway") gatewayClient?.prewarm(sessionId)
+                        clearMatchingHistoryLoadFailure(sessionId)
+                        if (streamingEndpoint == "gateway") {
+                            observeGatewaySession(gatewayClient, handler, sessionId)
+                        }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -5014,6 +5934,7 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint != "gateway" && client == null) return
         val profileName = currentSessionProfileName()
         val contextKey = activeProfileContextKey
+        invalidateCurrentProfileSessionCache()
 
         // Save reference before removing (for rollback on failure)
         val removedSession = handler.sessions.value.find { it.sessionId == sessionId }
@@ -5079,6 +6000,7 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint != "gateway" && client == null) return
         val profileName = currentSessionProfileName()
         val contextKey = activeProfileContextKey
+        invalidateCurrentProfileSessionCache()
 
         val previousTitle = handler.sessions.value.find { it.sessionId == sessionId }?.title
         // Optimistic rename
@@ -5110,9 +6032,13 @@ class ChatViewModel : ViewModel() {
                         IllegalStateException("Profile-scoped session rename failed"),
                         context = "rename_profile_session",
                     )
+                } else {
+                    refreshSessions()
                 }
             } else {
-                client?.renameSession(sessionId, newTitle)
+                if (client?.renameSession(sessionId, newTitle) == true) {
+                    refreshSessions()
+                }
             }
         }
     }
@@ -5121,6 +6047,7 @@ class ChatViewModel : ViewModel() {
         if (!supervisedModePolicy.allowsSessionAction(SupervisedSessionAction.Pin)) return
         val expectedContextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        invalidateCurrentProfileSessionCache()
         mutateSessionFlag(
             sessionId = sessionId,
             target = pinned,
@@ -5147,6 +6074,7 @@ class ChatViewModel : ViewModel() {
         }
         val expectedContextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
+        invalidateCurrentProfileSessionCache()
         mutateSessionFlag(
             sessionId = sessionId,
             target = archived,
@@ -6263,6 +7191,16 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = activeProfileContextKey,
+            // Persist the explicit UI selection, not the effective sticky
+            // server profile used to bind the current live session. Server
+            // Default must survive restart as the sentinel even when Hermes
+            // currently resolves it to a named profile such as `victor`.
+            profileKey = AgentDisplay.profileSessionKey(
+                conversationBinding.value.let { binding ->
+                    if (binding.hasExplicitOwner) binding.profileName
+                    else selectedProfileProvider()?.name
+                },
+            ),
             sessionId = sessionId,
             liveSessionId = null,
             transport = transport,
@@ -6303,6 +7241,7 @@ class ChatViewModel : ViewModel() {
         checkpointWriteJob?.cancel()
         activeTurnCheckpointSeed = ActiveTurnCheckpointSeed(
             contextKey = checkpoint.contextKey,
+            profileKey = checkpoint.profileKey,
             sessionId = checkpoint.sessionId,
             liveSessionId = checkpoint.liveSessionId,
             transport = checkpoint.transport,
@@ -6363,6 +7302,7 @@ class ChatViewModel : ViewModel() {
         val now = System.currentTimeMillis()
         return ChatTurnCheckpoint(
             contextKey = contextKey,
+            profileKey = seed.profileKey,
             sessionId = sessionId,
             liveSessionId = gatewayClient?.currentLiveSessionId(sessionId) ?: seed.liveSessionId,
             transport = seed.transport,
@@ -6566,6 +7506,10 @@ class ChatViewModel : ViewModel() {
      * SSE cannot, so it retains the existing interrupt/cancel behavior.
      */
     private fun releaseTurnForNavigation(handler: ChatHandler) {
+        passiveGatewayHistoryRefreshJob?.cancel()
+        passiveGatewayHistoryRefreshJob = null
+        passivelyObservedGatewaySessionId = null
+        passiveObservationCatchupPendingSessionId = null
         val gateway = gatewayClient
         val canBackground = streamingEndpoint == "gateway" &&
             activeStreamIsGateway && activeStream != null && gateway != null
@@ -6810,6 +7754,11 @@ class ChatViewModel : ViewModel() {
         queuedSuccessorPending: AtomicBoolean,
     ): GatewayTurnCallbacks {
         val messageId = checkpoint.assistant.id
+        subagentActivityController.beginTurn(
+            checkpoint.sessionId,
+            checkpoint.contextKey,
+            messageId,
+        )
         fun owns(): Boolean = ownsTurnCheckpoint(checkpoint, handler)
         return GatewayTurnCallbacks(
             onSessionId = { },
@@ -6860,6 +7809,7 @@ class ChatViewModel : ViewModel() {
             onReconcileRequired = { },
             onComplete = {
                 if (owns()) {
+                    subagentActivityController.endTurn(messageId)
                     cancelAnswerRecovery(settleUi = false)
                     val failed = handler.messages.value
                         .lastOrNull { it.id == messageId }
@@ -6897,6 +7847,7 @@ class ChatViewModel : ViewModel() {
             },
             onError = { error ->
                 if (owns()) {
+                    subagentActivityController.endTurn(messageId)
                     if (queuedSuccessorPending.get()) {
                         AppAnalytics.onStreamError()
                         handler.onStreamError(error)
@@ -6921,6 +7872,18 @@ class ChatViewModel : ViewModel() {
             },
             onSubagentEvent = { event ->
                 if (owns()) {
+                    subagentActivityController.onEvent(
+                        sessionId = checkpoint.sessionId,
+                        eventScopeKey = checkpoint.contextKey,
+                        turnId = messageId,
+                        event = event,
+                        profile = if (checkpoint.profileKey != null) {
+                            AgentDisplay.profileRequestName(checkpoint.profileKey)
+                        } else {
+                            AgentDisplay.parseProfileContextKey(checkpoint.contextKey)
+                                ?.requestProfileName
+                        },
+                    )
                     handler.onSubagentEvent(messageId, event)
                     scheduleCheckpointWrite(immediate = true)
                 }
@@ -8693,6 +9656,7 @@ class ChatViewModel : ViewModel() {
             // wins — stop the poller before finalizing so the turn can't
             // finish twice.
             cancelAnswerRecovery(settleUi = false)
+            subagentActivityController.endTurn(currentMessageId)
             val completedTransport = dispatchedSseEndpoint
                 ?: if (activeStreamIsGateway) "gateway" else streamingEndpoint
             val turnErrored = handler.messages.value
@@ -8820,6 +9784,7 @@ class ChatViewModel : ViewModel() {
         }
         val onErrorCb = { errorMsg: String ->
             markTransportFailed(errorMsg)
+            subagentActivityController.endTurn(currentMessageId)
             stopImageActivityBridge()
             flushAndReleaseStreamDeltas()
             val errorSessionId = handler.currentSessionId.value
@@ -9220,6 +10185,13 @@ class ChatViewModel : ViewModel() {
                 // context rides the SSE systemMessage (invisible) + the on-demand
                 // android_phone_status tool instead. See PhoneStatusPromptBuilder.
                 _steerableTurn.value = true
+                handler.currentSessionId.value?.let { existingSessionId ->
+                    subagentActivityController.beginTurn(
+                        existingSessionId,
+                        activeProfileContextKey,
+                        currentMessageId,
+                    )
+                }
                 gateway.sendTurn(
                     sessionId = handler.currentSessionId.value,
                     text = message,
@@ -9241,6 +10213,11 @@ class ChatViewModel : ViewModel() {
                             markSessionActivityStarting(sid)
                             updateTurnCheckpointSession(sid)
                             selectBackgroundProcessSession(sid)
+                            subagentActivityController.beginTurn(
+                                sid,
+                                activeProfileContextKey,
+                                currentMessageId,
+                            )
                             gatewayProcessController.sessionReady(sid)
                             onSessionChanged?.invoke(sid)
                             // The brand-new chat now has a session — apply any
@@ -9285,6 +10262,13 @@ class ChatViewModel : ViewModel() {
                         onSubagentEvent = { event ->
                             ensurePostInterimMessage()
                             streamDeltas.flushNow()
+                            subagentActivityController.onEvent(
+                                sessionId = handler.currentSessionId.value,
+                                eventScopeKey = activeProfileContextKey,
+                                turnId = currentMessageId,
+                                event = event,
+                                profile = currentSessionProfileName(),
+                            )
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },
@@ -10117,6 +11101,8 @@ class ChatViewModel : ViewModel() {
         gatewayHistoryReconcileJob = null
         gatewayVisibleReattachJob?.cancel()
         gatewayVisibleReattachJob = null
+        gatewayVisibleReconnectRetryJob?.cancel()
+        gatewayVisibleReconnectRetryJob = null
         backgroundProcessSessionJob?.cancel()
         backgroundProcessSessionJob = null
         gatewayProcessController.close()

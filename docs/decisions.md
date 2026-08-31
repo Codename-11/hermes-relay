@@ -1099,6 +1099,11 @@ endpoint candidates**. The phone picks the highest-priority reachable
 candidate at connect time and re-evaluates on network change. Old
 single-endpoint QRs remain valid — the phone synthesizes a single
 priority-0 candidate from the top-level fields when `endpoints` is absent.
+Supported candidates probe speculatively in parallel, but results are consumed
+in strict priority order: a lower-priority route can never displace a reachable
+higher-priority route, while dead priorities add one bounded probe window total
+instead of one full timeout each. Experimental transports start only after all
+supported candidates fail.
 
 **Wire format (v3 — additive):**
 
@@ -1146,13 +1151,25 @@ priority-0 candidate from the top-level fields when `endpoints` is absent.
   over a higher one. Reachability is only the tiebreaker for candidates
   that share the same priority. This is the DNS SRV priority/weight
   contract — known-good semantics, nothing new to debate.
-- **Reachability probes are per surface.** Standard routing probes Dashboard
-  `/api/status` when present, otherwise an explicitly configured API `/health`,
+- **Reachability probes are per surface.** Standard routing probes the current
+  Dashboard's lightweight `/api/health`, falling back to heavyweight
+  `/api/status` only for confirmed legacy missing-route responses; otherwise it
+  probes an explicitly configured API `/health`,
   with Relay `/health` used only for Relay-only records. Relay socket selection probes the
   candidate's own Relay `/health`; a healthy Dashboard or API listener never
   vouches for Relay on another port. Results are cached independently by
   candidate and surface, so a Relay outage cannot poison healthy standard chat,
   Manage, sessions, or Vanilla Hermes voice.
+- **Status is not readiness.** Dashboard `/api/status` remains the source for
+  auth-flow, topology, resource-pressure, and component diagnostics after route
+  selection. It never gates route reachability or Gateway wake. Timeouts, 5xx,
+  429, and ordinary 401 responses from `/api/health` stay on the lightweight
+  path; only a real 404 or anonymous legacy `no_cookie` shape may fall back.
+- **Standard routing never waits for Relay secrets.** Cold route selection uses
+  the active connection's already-persisted Dashboard candidates immediately.
+  Compatibility recovery of legacy Relay-only endpoint metadata may hydrate the
+  hardware-backed paired-device store only after Gateway availability settles;
+  it cannot hold route probes, Dashboard auth, or ticket mint behind Keystore.
 - **Relay endpoint normalization is path-aware and idempotent (amended
   2026-08-20).** A Relay candidate may name its base, its terminal `/ws`
   socket route, or its terminal `/health` route using HTTP(S) or WS(S).
@@ -2302,58 +2319,100 @@ socket.
 
 ## ADR 40 — Android dashboard redirect auth is provider-compatible
 
-**Status:** Amended (2026-07-28).
+**Status:** Amended (2026-08-26).
 
-**Context.** Upstream advertises `native_pkce` in `/api/status.auth_flows` for
-its desktop client. The corresponding `/auth/native/*` broker is explicitly a
-desktop system-browser flow: it redirects to a loopback listener owned by the
-desktop process and returns bearer tokens rather than dashboard cookies.
-Android incorrectly treated that server-wide capability as a platform-neutral
-mode selector, so redirect providers such as self-hosted OIDC were sent through
-the desktop loopback contract.
+**Context.** Upstream exposes the supported client authentication contract in
+public `/api/status.auth_flows`. Current upstream specifies `native_pkce` as the
+preferred system-browser flow whenever advertised, regardless of the redirect
+provider's display/configuration name, and retains embedded cookie sign-in for
+older gateways or client-local native failures. Android instead restricted
+native PKCE to a literal `nous` provider name, so capable self-hosted redirect
+providers were incorrectly forced into WebView.
 
-**Decision.** Android redirect-provider sign-in uses the upstream dashboard
-cookie flow by default:
+**Decision.** Android selects redirect authentication only from advertised
+capability. When `auth_flows` contains `native_pkce`, every interactive
+provider, including password-capable providers, uses the `/auth/native/*`
+broker in a system Custom Tab with an
+ephemeral loopback callback, S256 verifier, state validation, encrypted bearer
+storage, and exact-origin attachment. Android passes a provider selector when
+the gateway requires one; hosted Nous retains upstream's compatibility behavior
+where the gateway chooses its single native-eligible provider.
+
+Missing `native_pkce` uses the dashboard cookie flow. A client-local native
+failure (transport/listener, secure storage, or unsupported native response)
+automatically continues through that same compatibility flow. Explicit
+provider denial, server rejection, and rate limiting remain visible and do not
+start a second authorization attempt. The cookie flow will:
 
 - open `/auth/login?provider=...&next=...` in a full-screen embedded sign-in
   destination with a normal app bar rather than a modal WebView;
+- preflight that route without cookies or redirect-following and, when the
+  provider authorization URL declares a different canonical Dashboard
+  `/auth/callback`, begin the real browser transaction on that canonical base;
 - allow the provider to return through the dashboard's public
-  `/auth/callback`;
+  `/auth/callback` when that is the provider's configured callback;
 - import only cookies observed on the configured dashboard origin;
 - verify the imported session through `/api/auth/me`;
+- persist the successfully authenticated canonical base as a Dashboard-only
+  preferred route only after explicit review and same-installation validation
+  through non-empty `/api/status.install_id` values; mismatches are rejected,
+  while an older gateway missing either ID requires explicit confirmation;
 - reject a foreign `http://127.0.0.1`, `localhost`, or `[::1]` `/callback`
   navigation instead of following or importing it.
 
-Android does not select `/auth/native/authorize` merely because it appears in
-`auth_flows`. Self-hosted OIDC remains on the cookie contract above. Nous Portal
-is the narrow exception: its Cloudflare Turnstile challenge rejects embedded
-Android WebViews, so Android uses the gateway-brokered native PKCE route for
-that provider when advertised and opens it in a system Custom Tab. As in the
-official Desktop client, Android does not hardcode the UI provider identifier
-into the hosted native authorization request; the gateway selects its single
-native-eligible provider. The callback retains upstream's five-minute window,
-and failures are classified without recording codes, state, tokens, provider
-responses, or other authentication material. The
-ephemeral loopback listener, S256 verifier, state validation, encrypted bearer
-store, and exact-origin attachment remain app-owned. Public cleartext
-dashboards are rejected; explicitly configured RFC 1918 and Tailscale-IP
-dashboard routes retain the same HTTP allowance as their existing cookie
-sessions. If the provider redirect from a private route declares a canonical
-HTTPS dashboard callback, Android begins browser authorization on that
-canonical origin so the temporary PKCE cookie and callback remain same-origin;
-the one-time code exchange and resulting exact-origin bearer stay bound to the
-active private route.
+Failures are classified without recording codes, state, tokens, provider
+responses, or other authentication material. Public cleartext dashboards are
+rejected; explicitly configured RFC 1918 and Tailscale-IP dashboard routes
+retain the same HTTP allowance as their existing cookie sessions. If the
+provider redirect from a private route declares a canonical HTTPS dashboard
+callback, Android begins cookie fallback on that canonical origin so the
+temporary PKCE cookie and callback remain same-origin.
+After the cookie session verifies, that HTTPS base becomes the connection's
+authenticated Dashboard/Gateway origin, stored separately from network-route
+candidates. Android never downgrades its Secure cookies to
+the private HTTP route, and the connection's API and Relay routes retain their
+existing ownership. The auth WebView permits third-party cookies only for its
+short lifetime so compatible federated provider pages can preserve their own
+browser state.
+Dashboard cookies retain browser-origin ownership. Android never mirrors basic,
+OAuth, `__Host-`, or other session cookies between saved/derived LAN,
+Tailscale, or public Dashboard hosts, even when they belong to one Connection.
+A single HTTPS origin may legitimately move between bare, `__Host-`, and
+`__Secure-` cookie names when its trusted-proxy/prefix shape changes. Android
+treats those variants of the access token, refresh token, and provider hint as
+one logical family: the newest same-origin variant replaces and prunes older
+variants so a stale provider cannot outrank the latest verified sign-in.
+A legacy cookie-only host change requires sign-in at the new exact host.
+Different callback origins over HTTP are accepted only when both selected and
+callback hosts are literal loopback/private-overlay addresses, both remain
+HTTP, and the identity-provider hop is HTTPS. Same-origin HTTP callbacks retain
+upstream's local/VPN behavior. A second public sign-in URL is never a universal
+onboarding field: Android starts from one Dashboard address and discovers this
+topology from upstream only when redirect authentication requires it.
 
 **Consequences.**
 
-- Self-hosted OIDC uses the same public callback registered for the dashboard.
+- Provider names no longer override the upstream `auth_flows` capability.
+- Self-hosted OIDC uses native PKCE when advertised and otherwise uses its
+  registered dashboard callback through the cookie compatibility flow.
+- If a provider establishes a browser session without resuming the original
+  authorization, Continue sign-in cancels that native attempt before opening a
+  fresh one; callback listeners and authorization generations never overlap.
+- A private discovery route cannot strand a successful public cookie session
+  by returning subsequent Dashboard traffic to a different origin.
+- Routes presents the authenticated Dashboard/Gateway origin independently from
+  LAN, Tailscale, API, Relay, and other network paths; internal auth roles are
+  not user-visible route types.
 - Android Manage, Chat, Voice, and onboarding continue to share one verified
   dashboard cookie session.
-- A server-wide desktop capability can no longer switch Android into a
-  loopback callback flow.
-- Android retains a full-screen embedded WebView for compatible dashboard
-  cookie providers, while providers that prohibit embedding use the explicit
-  brokered native route.
+- Android retains a full-screen embedded WebView only as an advertised or
+  client-local compatibility fallback.
+- LAN and Tailscale may remain the configured app route while OIDC returns to a
+  public HTTPS Dashboard origin. Operators register
+  `<public-dashboard-origin>/auth/callback` and set upstream
+  `dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when trusted proxy
+  headers cannot reconstruct that origin; Android does not require a second
+  onboarding field.
 
 ---
 
@@ -2495,6 +2554,8 @@ boundary.
 - Activation heartbeats let the main runtime clean up after assistant-process loss.
   Finish and show-failure paths clear pending/watchdog state, while Full Voice
   explicitly transfers ownership before the session overlay stops heartbeats.
+  A recreated session process requests the current activation-fenced voice
+  snapshot rather than treating its empty local state as authoritative.
 - Connection, chat, and voice runtime ownership is application-lifetime in the
   main process rather than Activity-owned. The assistant service may initialize
   that graph and start a turn while no Activity exists; the app UI later binds
@@ -2508,6 +2569,9 @@ boundary.
 
 - Background and locked-screen invocation is mediated by Android's selected
   assistant UI/session rather than an ordinary background Activity launch.
+- Locked assistant UI exposes only generic phase and retry status. Transcript,
+  response, route-specific errors, diagnostics, and screen context remain hidden
+  until the device is unlocked; no-speech retry copy is deliberately content-free.
 - Users can leave Hermes selected for gesture/power-button invocation while
   turning continuous KWS off, or remove Hermes through Android's Assistant
   settings.
@@ -2835,6 +2899,20 @@ destination restores only its connection/profile/transport-compatible last
 session or starts a draft, never hot-swaps a live session. Model/provider,
 personality, reasoning, approval, Fast, and YOLO state reset at the ViewModel
 context boundary before destination session truth can repopulate them.
+
+New Chat retains the current concrete conversation owner even when the drawer is
+browsing All Profiles. A profile choice made from that empty draft transfers an
+explicit fresh-draft intent rather than restoring the destination's previous
+session. Android persists and generation-fences that intent by exact
+connection/profile/transport; it clears only the resumable pointer, leaving the
+stored conversation, transcript, and per-owner composer drafts intact.
+
+Phone Threads keep their connection/chat-id ownership when leaving that surface.
+They are never transferred into a different profile binding: the atomic header
+switch retires provisional or in-progress promotion state before creating the
+destination profile draft, while durable inbox rows, promoted sessions,
+notification ownership, and session-to-chat-id indexes remain untouched. A
+generation fence prevents a delayed promotion from replacing the new draft.
 
 **Consequences.** The hamburger remains exclusively the Session Drawer. Agent
 Passport stays focused on inspection and configuration. The drawer may widen
@@ -3977,3 +4055,140 @@ disappearance, client-side profile isolation, and method-not-found; physical
 and current-host certification remains tracked in `TODO.md`. An upstream
 profile field/filter or explicitly owned aggregate activity route would remove
 the remaining ambiguity for multi-profile clients.
+
+---
+
+## ADR 69 — Passive Android observation never attaches another client's Gateway turn
+
+**Status:** Accepted (2026-08-28).
+
+**Context.** `session.resume` and `session.activate` are live-runtime attachment
+operations, not read-only subscriptions. Android previously called
+`session.resume` while opening or foregrounding Chat and after loading a saved
+session's history. When Desktop/TUI already owned a running turn, that passive
+prewarm could rebind the runtime transport to Android. A later Android socket,
+route, or client teardown could then strand the producer or promote the foreign
+turn into an Android `GatewayTurn` whose cancellation sends `session.interrupt`.
+The issue was distinct from the earlier stale-view and missing-terminal recovery
+paths, which concern exact Android-owned checkpoints.
+
+**Decision.** Ordinary visibility, foreground restoration, Idle-socket recovery,
+and saved-session selection establish only the shared Gateway socket. They use
+profile-scoped REST history plus process-wide `session.active_list`; while an
+unowned row with the selected durable id is live, Android performs bounded
+history refreshes and one final read after settlement. These observer paths send
+no `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`.
+Exact Android-owned checkpoints retain `session.activate` with durable-resume
+fallback, and explicit send or session-config actions may resume because the user
+is intentionally taking control of that destination.
+
+**Consequences.** Opening Android cannot replace, stop, or later cancel a turn
+already running in Desktop/TUI. Live token frames remain with the producing
+client; Android observes durable progress and final history without inventing a
+multi-subscriber Gateway contract. The first explicit Android mutation may pay
+the resume latency that passive prewarm previously hid. Cross-client fixtures
+and Android lifecycle coverage enforce the no-control-RPC observation boundary.
+
+---
+
+## ADR 70 — Android session browsing is Dashboard-owned and latency-bounded
+
+**Status:** Accepted (2026-08-29).
+
+**Context.** Android had coupled the drawer's initial refresh to Gateway chat
+readiness and expanded the request to a 200-row, multi-page read under an
+eight-second deadline. On a large profile database, that read could time out
+before returning any row. A fixed retry then repeated the same long operation,
+so the drawer cycled through loading and a misleading empty or unavailable
+presentation even though the authenticated Dashboard was reachable.
+
+Upstream separates these concerns. Dashboard `/api/sessions/*` owns persisted,
+profile-scoped directory and transcript state; `/api/ws` owns live chat and
+Gateway runtime activity. The official Desktop session client starts from a
+small recent window, gives list reads a dedicated budget, retains populated
+rows during refresh, and rejects results whose request/profile activation is no
+longer current.
+
+**Decision.** On the standard Android path:
+
+- The authenticated Dashboard REST route owns profile-scoped session browsing
+  and stored transcript reads. Gateway socket readiness does not gate either
+  operation. API-server session routes remain the compatibility fallback for
+  API-only connections.
+- A profile switch starts its session-directory read without first requesting
+  `model.options`, profile configuration, or other agent-dependent Gateway
+  state. The selected profile's declared model may seed presentation
+  optimistically; `session.info` confirms an opened session and the model
+  picker refreshes its catalog when the user opens it.
+- A persisted named-profile token is sufficient to scope session REST and
+  restore its Gateway last-session slot before profile metadata arrives. Cold
+  start fetches only the lightweight server-default scope ahead of sessions;
+  heavyweight `/api/profiles`, Gateway roster/avatar, pet, skills, and model
+  metadata hydrate after the first exact-owner Dashboard directory success or
+  when their explicit UI opens.
+- When Android reattaches a stored session, Dashboard REST remains the display
+  transcript owner. Its Gateway `session.resume` therefore requests
+  `defer_history` and `omit_messages`, matching official Desktop: the runtime is
+  registered promptly while Gateway hydrates model history off the RPC response
+  path, without returning a duplicate transcript.
+- Automatic cold-start or profile restoration does not begin that Gateway
+  prewarm until a fresh session-directory result for the exact
+  connection/profile owner has published. A failed or timed-out directory read
+  leaves prewarm armed but inactive; a later successful retry may release it.
+  Explicitly opening a session row remains immediate user intent and resumes
+  after its REST transcript paints.
+- Attaching an already-ready Gateway does not eagerly request command,
+  reasoning, approval, personality, or model catalogs. Session browsing stays
+  the cold-start critical path; `session.info`, completed-turn reconciliation,
+  and the explicit settings/picker surfaces hydrate those control states.
+- Optional Relay features do not join the cold-start critical path. Git
+  repository discovery is off by default per saved connection, starts only
+  while its workspace is open, and its blocking filesystem/Git work is
+  dispatched away from the Dashboard event loop.
+- A session-directory timeout remains bounded and does not start a timer retry
+  loop. If Gateway later emits process-wide `sessions.changed`, that event is
+  treated as a liveness edge and retries only an unavailable, idle directory
+  request for the current exact owner.
+- The full-screen startup sphere owns local-state restoration and route
+  selection only. Once a route is selected, the mounted Chat shell shows the
+  exact agent identity and animates inline Gateway/session progress; server wake
+  cannot hide cached session rows or hold the whole app behind route narration.
+- The initial drawer request asks for 50 recent rows after applying the user's
+  hidden-source exclusions server-side. Near-end scrolling appends subsequent
+  50-row `offset` pages under the same owner/generation; older rows never block
+  the first-open critical path.
+- A refresh over existing rows is quiet. The exact connection/profile cache
+  remains visible until authoritative replacement rows arrive. An uncached
+  profile may show loading, but a failed read never means "no sessions."
+- A session-read timeout ends the attempt and becomes retryable
+  **Unavailable** without automatically starting another long read. A
+  non-timeout route-readiness failure may retry only within a short bounded
+  backoff before reaching the same state. This directory/history budget never
+  applies to Gateway control calls: WebSocket ticket mint keeps its own shorter
+  bound and may retry one transient transport failure with a fresh ticket.
+- Every result is fenced by stable connection/profile ownership and a refresh
+  generation. Profile switches cancel prior work, restore only the destination
+  owner's cache, and reject late results from an old owner or generation.
+- Dashboard status/auth and Gateway socket readiness remain separate. Dashboard
+  success permits persisted REST surfaces; Gateway Chat becomes Ready only on
+  `gateway.ready` from the current connection and route. Retryable cold-start
+  transport failures use a bounded jittered budget, while terminal auth,
+  unsupported, malformed-protocol, and access-policy failures stop reconnect.
+- A failed progressive page stops automatic near-end loading and exposes an
+  explicit retry; connection/profile changes reset offset, loading, and failure
+  state before a new owner may request another page.
+
+**Consequences.** Dashboard availability and Gateway chat availability can be
+reported independently without split ownership of persisted session state.
+Large stores no longer force a multi-page scan before the first row can render,
+known rows do not disappear during background refresh, and genuine read
+failures remain visible and manually retryable. Unit tests can prove request,
+cache, and stale-publication invariants; physical-device timing against a real
+large profile database remains a separate certification gate.
+
+**References.** Official upstream behavior is recorded in
+`hermes_cli/web_routers/sessions.py`, `apps/desktop/src/api/sessions.ts`,
+`apps/desktop/src/store/layout.ts`, and
+`apps/desktop/src/app/session/hooks/use-session-list-actions.ts`. Android wiring
+lives in `DashboardApiClient`, `HermesRuntimeBinder`, `ChatScreen`, and
+`ChatViewModel`.

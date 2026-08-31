@@ -37,10 +37,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -171,6 +169,7 @@ import com.hermesandroid.relay.util.AttachmentTooLargeException
 import com.hermesandroid.relay.util.readBase64Bounded
 import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.ChatQuoteReference
+import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.LARGE_PASTE_THRESHOLD_CHARS
 import com.hermesandroid.relay.data.buildChatQuotedPrompt
 import com.hermesandroid.relay.data.largePasteAttachment
@@ -193,13 +192,15 @@ import com.hermesandroid.relay.ui.components.BackgroundTaskCard
 import com.hermesandroid.relay.ui.components.LocalRelayServerImageResolver
 import com.hermesandroid.relay.ui.components.RelayServerImageResolver
 import com.hermesandroid.relay.ui.components.ChatInputBar
+import com.hermesandroid.relay.ui.components.ChatGitContextButton
+import com.hermesandroid.relay.ui.components.ChatGitWorkspaceRail
+import com.hermesandroid.relay.ui.components.ChatGitWorkspaceSummary
 import com.hermesandroid.relay.ui.components.ChatFailureDetailsDialog
 import com.hermesandroid.relay.ui.components.ChatFailurePanel
 import com.hermesandroid.relay.viewmodel.ChatFailureRoute
 import com.hermesandroid.relay.viewmodel.ChatFailureNotice
 import com.hermesandroid.relay.viewmodel.scopedChatFailure
 import com.hermesandroid.relay.ui.components.ConversationVoiceDock
-import com.hermesandroid.relay.ui.components.CleanChatMode
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -216,6 +217,7 @@ import com.hermesandroid.relay.ui.components.CHAT_PET_STEP_MESSAGE_MARKER
 import com.hermesandroid.relay.ui.components.CHAT_PET_USER_MESSAGE_PERCH_PREFIX
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessSheet
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
+import com.hermesandroid.relay.ui.components.SubagentPreviewVisibility
 import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
@@ -435,6 +437,29 @@ internal fun ownedBottomFollowScroll(
     // new-message auto-follow when smooth auto-scroll is disabled.
     if (!sameTranscript && !current.followTailGrowth) return 0
     return requiredBottomFollowScroll(previous, current)
+}
+
+internal fun shouldShowRetainedHistoryDashboardSignIn(
+    hasMessages: Boolean,
+    gatewayAvailability: GatewayAvailability,
+    apiReachable: Boolean,
+    supervised: Boolean,
+): Boolean = hasMessages &&
+    !supervised &&
+    gatewayAvailability == GatewayAvailability.SignInRequired &&
+    !apiReachable
+
+internal fun shouldPresentChatFailureDuringDashboardSignIn(
+    failure: ChatFailureNotice,
+    dashboardSignInRequired: Boolean,
+): Boolean {
+    if (!dashboardSignInRequired || failure.route != ChatFailureRoute.GATEWAY) return true
+    val authFailure = failure.rawError.contains("no_cookie", ignoreCase = true) ||
+        (
+            failure.rawError.contains("Auth provider", ignoreCase = true) &&
+                failure.rawError.contains("unreachable", ignoreCase = true)
+            )
+    return !authFailure && !failure.turnId.startsWith("history-")
 }
 
 /**
@@ -708,7 +733,7 @@ fun ChatScreen(
     // Offline demo entry, surfaced on the empty-chat "needs connection" card so a
     // skipped / never-connected first run can explore without a server. null hides it.
     onTryDemo: (() -> Unit)? = null,
-    onNavigateToManage: () -> Unit = {},
+    onNavigateToDashboardSignIn: () -> Unit = {},
     onNavigateToBridge: () -> Unit = {},
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
@@ -719,6 +744,9 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
     supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
     onNavigateToBotMode: () -> Unit = {},
+    gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
+    gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
+    onNavigateToGitWorkspace: () -> Unit = {},
 ) {
     val supervised = supervisedPolicy.enabled
     val supervisedVisibility = supervisedPolicy.visibility.resolved()
@@ -925,8 +953,14 @@ fun ChatScreen(
     val backgroundProcesses by chatViewModel.backgroundProcesses.collectAsState()
     val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
+    val subagentActivities by chatViewModel.subagentActivities.collectAsState()
+    val subagentChildPreview by chatViewModel.subagentChildPreview.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
+    val isLoadingMoreSessions by chatViewModel.isLoadingMoreSessions.collectAsState()
+    val hasMoreSessions by chatViewModel.hasMoreSessions.collectAsState()
+    val sessionPageLoadFailed by chatViewModel.sessionPageLoadFailed.collectAsState()
+    val sessionListUnavailable by chatViewModel.sessionListUnavailable.collectAsState()
     val selectedPersonality by chatViewModel.selectedPersonality.collectAsState()
     val personalityNames by chatViewModel.personalityNames.collectAsState()
     val defaultPersonality by chatViewModel.defaultPersonality.collectAsState()
@@ -945,53 +979,69 @@ fun ChatScreen(
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
+    var allProfileSessionsUnavailable by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     suspend fun refreshAllProfileSessions(showError: Boolean) {
         if (isProfileLocked || allProfileSessionsLoading) return
         allProfileSessionsLoading = true
-        val result = connectionViewModel.listAllProfileSessions()
-        result?.fold(
-            onSuccess = { items ->
-                allProfileSessions = items.mapNotNull { item ->
-                    val owner = item.profile?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    ProfileSessionRow(
-                        profile = owner,
-                        session = com.hermesandroid.relay.data.ChatSession(
-                            sessionId = item.id,
-                            title = item.title ?: item.preview,
-                            model = item.model,
-                            messageCount = item.messageCount ?: 0,
-                            inputTokens = item.inputTokens ?: 0,
-                            outputTokens = item.outputTokens ?: 0,
-                            actualCostUsd = item.actualCostUsd,
-                            estimatedCostUsd = item.estimatedCostUsd,
-                            recentlyActive = item.isActive,
-                            startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
-                            lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
-                            source = item.source,
-                            pinned = item.pinned,
-                            archived = item.archived,
-                            workingDirectory = item.cwd,
-                            gitBranch = item.gitBranch,
-                            gitRepoRoot = item.gitRepoRoot,
-                            pullRequestNumber = item.pullRequest?.number,
-                            pullRequestUrl = item.pullRequest?.url,
-                            pullRequestState = item.pullRequest?.state,
-                            pullRequestDraft = item.pullRequest?.draft == true,
-                        ),
+        allProfileSessionsUnavailable = false
+        try {
+            val result = connectionViewModel.listAllProfileSessions()
+            if (result == null) allProfileSessionsUnavailable = true
+            result?.fold(
+                onSuccess = { items ->
+                    allProfileSessionsUnavailable = false
+                    allProfileSessions = items.mapNotNull { item ->
+                        val owner = item.profile?.takeIf { it.isNotBlank() }
+                            ?: return@mapNotNull null
+                        ProfileSessionRow(
+                            profile = owner,
+                            session = com.hermesandroid.relay.data.ChatSession(
+                                sessionId = item.id,
+                                title = item.title ?: item.preview,
+                                model = item.model,
+                                messageCount = item.messageCount ?: 0,
+                                inputTokens = item.inputTokens ?: 0,
+                                outputTokens = item.outputTokens ?: 0,
+                                actualCostUsd = item.actualCostUsd,
+                                estimatedCostUsd = item.estimatedCostUsd,
+                                recentlyActive = item.isActive,
+                                startedAt = ((item.startedAt ?: 0.0) * 1000).toLong(),
+                                lastActivityAt = ((item.resolvedLastActivity ?: 0.0) * 1000).toLong(),
+                                source = item.source,
+                                pinned = item.pinned,
+                                archived = item.archived,
+                                workingDirectory = item.cwd,
+                                gitBranch = item.gitBranch,
+                                gitRepoRoot = item.gitRepoRoot,
+                                pullRequestNumber = item.pullRequest?.number,
+                                pullRequestUrl = item.pullRequest?.url,
+                                pullRequestState = item.pullRequest?.state,
+                                pullRequestDraft = item.pullRequest?.draft == true,
+                            ),
+                        )
+                    }
+                    chatViewModel.updateSessionActivityDirectory(
+                        rows = allProfileSessions.map { it.profile to it.session.sessionId },
                     )
-                }
-                chatViewModel.updateSessionActivityDirectory(
-                    rows = allProfileSessions.map { it.profile to it.session.sessionId },
-                )
-            },
-            onFailure = { error ->
-                if (showError) snackbarHostState.showSnackbar(
-                    "Couldn't load all profiles: ${error.message ?: "unsupported"}",
-                )
-            },
-        )
-        allProfileSessionsLoading = false
+                },
+                onFailure = { error ->
+                    allProfileSessionsUnavailable = true
+                    if (showError) snackbarHostState.showSnackbar(
+                        "Couldn't load all profiles: ${error.message ?: "unsupported"}",
+                    )
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            allProfileSessionsUnavailable = true
+            if (showError) snackbarHostState.showSnackbar(
+                "Couldn't load all profiles: ${e.message ?: "unsupported"}",
+            )
+        } finally {
+            allProfileSessionsLoading = false
+        }
     }
     val conversationBinding by chatViewModel.conversationBinding.collectAsState()
     val explicitBindingProfileName = conversationBinding.profileName
@@ -1059,6 +1109,13 @@ fun ChatScreen(
         supervisedVisibility.showToolNames -> "compact"
         else -> "off"
     }
+    val subagentPreviewVisibility = SubagentPreviewVisibility(
+        showLifecycle = !supervised || supervisedVisibility.showWorkingStatus,
+        showReasoning = showThinking,
+        showToolNames = toolDisplay == "compact" || toolDisplay == "detailed",
+        showToolDetails = toolDisplay == "detailed",
+        showChildHistory = !supervised,
+    )
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
@@ -1067,6 +1124,13 @@ fun ChatScreen(
         connectionViewModel.physicalKeyboardEnterBehavior.collectAsState()
     val convertLargePastesToAttachments by
         connectionViewModel.convertLargePastesToAttachments.collectAsState()
+    val showGitWorkspaceInChat by
+        connectionViewModel.showGitWorkspaceInChat.collectAsState()
+    val visibleGitWorkspaceSummary = gitWorkspaceSummary?.takeIf {
+        !supervised && showGitWorkspaceInChat && it.branch.isNotBlank()
+    }
+    val showGitWorkspaceContextEntry =
+        !supervised && showGitWorkspaceInChat && gitWorkspaceAvailable
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
@@ -1102,6 +1166,8 @@ fun ChatScreen(
     val streamingEndpointPref by connectionViewModel.streamingEndpoint.collectAsState()
     val chatServerCapabilities by connectionViewModel.serverCapabilities.collectAsState()
     val chatGatewayAvailability by connectionViewModel.gatewayAvailability.collectAsState()
+    val dashboardSignInRequired =
+        chatGatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
     val isGatewayTransport = remember(
         streamingEndpointPref, chatServerCapabilities, chatGatewayAvailability,
     ) {
@@ -1109,18 +1175,15 @@ fun ChatScreen(
     }
 
     // Recover any durable in-flight chat checkpoint whenever Chat returns to
-    // the foreground. On Gateway this also pre-warms/re-attaches the socket;
-    // sessions-SSE falls back to bounded persisted-history reconciliation.
+    // the foreground. setChatVisible owns that edge; an ordinary Gateway open
+    // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
     LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        chatViewModel.setChatVisible(appForeground && chatReady)
-        if (appForeground && chatReady) {
-            chatViewModel.prewarmGateway()
-        }
-        if (isGatewayTransport && appForeground && chatReady) {
-            chatViewModel.refreshModelOptions()
-            chatViewModel.refreshReasoningSettings()
-        }
+        val visibleGatewayOwner = appForeground && chatReady && isGatewayTransport
+        chatViewModel.setChatVisible(visibleGatewayOwner)
+        // updateGatewayClient owns the one-time catalog/reasoning bootstrap for
+        // a newly-ready socket. Repeating it here created a duplicate cold-open
+        // RPC burst while the session directory was also trying to hydrate.
     }
     DisposableEffect(chatViewModel) {
         onDispose { chatViewModel.setChatVisible(false) }
@@ -1174,12 +1237,6 @@ fun ChatScreen(
             }
         }
     }
-    var ambientMode by remember { mutableStateOf(false) } // clean text-flow mode, hides chat
-    // Clean-mode discoverability hint: a persistent pill shown ONLY on the
-    // empty / new-chat view (no messages) — it teaches the long-press entry
-    // without nagging mid-conversation. Derived directly from the message list
-    // at the pill below; no one-shot timer, no auto-dismiss.
-
     // Sphere state with debounced Thinking→Streaming (min 1.5s in Thinking)
     val rawSphereState by remember {
         derivedStateOf {
@@ -1358,6 +1415,7 @@ fun ChatScreen(
     // A process inventory is scoped to one gateway session. Never leave a
     // sheet opened onto a different chat after a drawer/profile switch.
     LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {
+        chatViewModel.closeSubagentChildPreview()
         showBackgroundProcesses = false
     }
 
@@ -1415,7 +1473,6 @@ fun ChatScreen(
     PetInteractionLayer(
         owner = "chat-interaction-layer",
         active = shouldHideChatPet(
-            ambientMode = ambientMode,
             voiceMode = voiceUiState.voiceMode,
             drawerOpenOrMoving =
                 drawerState.currentValue != DrawerValue.Closed ||
@@ -1556,8 +1613,11 @@ fun ChatScreen(
         voiceOutputConfig?.enabled
     }
 
+    val voiceSystemOverlayAvailable = BuildFlavor.isSideload
     val showVoiceSystemOverlay: () -> Unit = {
-        if (assistantSessionActive) {
+        if (!voiceSystemOverlayAvailable) {
+            pendingVoiceOverlayPermission = false
+        } else if (assistantSessionActive) {
             voiceOverlayHost.hide()
         } else if (!voiceOverlayHost.hasOverlayPermission()) {
             pendingVoiceOverlayPermission = true
@@ -2099,13 +2159,6 @@ fun ChatScreen(
         }
     }
 
-    // Refresh sessions when screen appears and API is ready
-    LaunchedEffect(chatReady) {
-        if (chatReady) {
-            chatViewModel.refreshSessions()
-        }
-    }
-
     // The drawer and composer share this screen's focus owner. Clear the
     // composer's input focus as soon as an open transition is committed so
     // menu activation, accessibility activation, and edge swipes all dismiss
@@ -2128,8 +2181,11 @@ fun ChatScreen(
     // row for the active session is preserved by ChatHandler.updateSessions.
     LaunchedEffect(drawerState.isOpen) {
         chatViewModel.setSessionActivityDrawerOpen(drawerState.isOpen)
-        if (drawerState.isOpen && chatReady) {
-            chatViewModel.refreshSessions()
+        // Session history is Dashboard HTTP state and remains usable while the
+        // independent Gateway socket is reconnecting. Never gate drawer-open
+        // refresh on chatReady; owner/generation fencing lives in ChatViewModel.
+        if (drawerState.isOpen) {
+            chatViewModel.refreshSessionsIfStale()
         }
     }
 
@@ -2382,8 +2438,15 @@ fun ChatScreen(
     }
     val selectProfileFromShelf: (com.hermesandroid.relay.data.Profile?) -> Unit = { profile ->
         if (AgentDisplay.profileSessionKey(profile?.name) != selectedProfileKey) {
-            connectionViewModel.selectProfile(profile)
-            chatViewModel.activateGatewayProfile(profile)
+            val profileName = profile?.name
+            chatViewModel.selectProfileFromHeader(
+                profileName = profileName,
+                profile = profile,
+                contextKey = AgentDisplay.profileContextKey(
+                    connectionId = activeConnection?.id,
+                    profileName = profileName,
+                ),
+            )
         }
     }
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
@@ -2428,6 +2491,26 @@ fun ChatScreen(
                 activeConnectionId = activeConnection?.id,
                 realThreadChatIds = phoneThreadChatIds.values,
             )
+            val realPhoneSessionIds = remember(sessions) {
+                sessions.asSequence()
+                    .filter { it.source.equals("phone", ignoreCase = true) }
+                    .map { it.sessionId }
+                    .toSet()
+            }
+            val provisionalThreadChatIds = provisionalThreadEntries.keys
+            LaunchedEffect(
+                activeConnection?.id,
+                realPhoneSessionIds,
+                provisionalThreadChatIds,
+            ) {
+                // A reply promotes the local provisional row to a real Gateway
+                // source=phone session. Refresh the relay-owned chat_id index at
+                // that boundary so the local duplicate disappears immediately,
+                // without guessing a chat_id from the opaque session id.
+                if (realPhoneSessionIds.isNotEmpty() && provisionalThreadChatIds.isNotEmpty()) {
+                    connectionViewModel.refreshPhoneThreadChatIds()
+                }
+            }
             val provisionalThreads = provisionalThreadEntries.map { (chatId, entries) ->
                 val latest = entries.maxBy { it.receivedAt }
                 ProvisionalThreadRow(
@@ -2447,6 +2530,10 @@ fun ChatScreen(
                 scopeSubtitle = drawerSubtitle,
                 activeProfileName = drawerProfileName ?: "default",
                 isLoading = isLoadingSessions,
+                loadFailed = sessionListUnavailable,
+                isLoadingMore = isLoadingMoreSessions,
+                hasMore = hasMoreSessions,
+                loadMoreFailed = sessionPageLoadFailed,
                 isOpen = drawerState.isOpen,
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
@@ -2456,6 +2543,8 @@ fun ChatScreen(
                     .takeIf { supervised },
                 newChatEnabled = !supervised || supervisedPolicy.capabilities.newChat,
                 onRefresh = { chatViewModel.refreshSessions() },
+                onLoadMore = { chatViewModel.loadMoreSessions() },
+                onRetryLoadMore = { chatViewModel.retryLoadMoreSessions() },
                 onOpenBotMode = {
                     scope.launch { drawerState.close() }
                     onNavigateToBotMode()
@@ -2465,25 +2554,6 @@ fun ChatScreen(
                         chatViewModel.createNewChat()
                         scope.launch { drawerState.close() }
                     }
-                },
-                onNewDefaultChat = {
-                    if (isProfileLocked) return@SessionDrawerContent
-                    val defaultProfile = agentProfiles.firstOrNull {
-                        it.name.equals("default", ignoreCase = true)
-                    } ?: com.hermesandroid.relay.data.Profile(
-                        name = "default",
-                        model = "",
-                        description = "Default",
-                    )
-                    val opened = chatViewModel.createProfileChat(
-                        profileName = "default",
-                        profile = defaultProfile,
-                        contextKey = AgentDisplay.profileContextKey(
-                            connectionId = activeConnection?.id,
-                            profileName = "default",
-                        ),
-                    )
-                    if (opened) scope.launch { drawerState.close() }
                 },
                 onSelectSession = { sessionId ->
                     chatViewModel.switchSession(sessionId)
@@ -2546,6 +2616,11 @@ fun ChatScreen(
                     )
                     scope.launch { drawerState.close() }
                 },
+                onDeleteProvisionalThread = { chatId ->
+                    activeConnection?.id?.let { connectionId ->
+                        connectionViewModel.removeProvisionalThread(chatId, connectionId)
+                    }
+                },
                 hiddenSources = hiddenSources,
                 onToggleSourceHidden = { source, hidden ->
                     connectionViewModel.setSourceHidden(source, hidden)
@@ -2554,6 +2629,7 @@ fun ChatScreen(
                     !activeConnection?.resolvedDashboardUrl.isNullOrBlank(),
                 allProfileSessions = allProfileSessions,
                 allProfileSessionsLoading = allProfileSessionsLoading,
+                allProfileSessionsLoadFailed = allProfileSessionsUnavailable,
                 profileColors = profilePresentation.colors,
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
@@ -2880,90 +2956,45 @@ fun ChatScreen(
                             modifier = Modifier.animateContentSize(
                                 animationSpec = tween(durationMillis = 220),
                             ),
-                            verticalArrangement = if (isChatConnecting) {
-                                Arrangement.spacedBy(6.dp)
-                            } else {
-                                Arrangement.Top
-                            },
+                            verticalArrangement = Arrangement.Top,
                         ) {
-                            AnimatedContent(
-                                targetState = isChatConnecting,
-                                transitionSpec = {
-                                    (
-                                        fadeIn(tween(180)) +
-                                            slideInVertically(tween(220)) { it / 6 }
-                                        ) togetherWith (
-                                        fadeOut(tween(140)) +
-                                            slideOutVertically(tween(180)) { -it / 8 }
-                                        )
-                                },
-                                label = "chatHeaderIdentityTransition",
-                            ) { connecting ->
-                                if (connecting) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        ChatSkeletonLine(
-                                            modifier = Modifier.width(112.dp),
-                                            height = 15.dp,
-                                        )
-                                        ChatSkeletonLine(
-                                            modifier = Modifier.width(156.dp),
-                                            height = 11.dp,
-                                        )
-                                    }
+                            Text(
+                                text = if (supervised && !supervisedVisibility.showAgentIdentity) {
+                                    stringResource(R.string.screen_chat_label)
+                                } else if (agentDisplayName.isNotBlank()) {
+                                    agentDisplayName
                                 } else {
-                                    Column {
-                                        Text(
-                                            text = if (supervised && !supervisedVisibility.showAgentIdentity) {
-                                                stringResource(R.string.screen_chat_label)
-                                            } else if (agentDisplayName.isNotBlank()) {
-                                                agentDisplayName
-                                            } else {
-                                                stringResource(R.string.chat_agent_default)
-                                            },
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    stringResource(R.string.chat_agent_default)
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            // Keep the exact persisted identity visible while the
+                            // Gateway wakes. The existing loaded-content motion
+                            // animates status → confirmed model/personality without
+                            // replacing the whole header with anonymous skeletons.
+                            AnimatedContent(
+                                targetState = subtitleText,
+                                transitionSpec = { loadedContentTransform() },
+                                label = "chatHeaderSubtitle",
+                            ) { line ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = subtitleColor,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                    if (showStreamingState && animationEnabled) {
+                                        StreamingDots(
+                                            color = subtitleColor,
+                                            modifier = Modifier.clearAndSetSemantics { },
                                         )
-                                        // Context % lives in the per-session
-                                        // ContextMeterBar, and the approval-bypass
-                                        // marker now rides a compact ⚡ icon in the
-                                        // app bar actions (full detail in the agent
-                                        // sheet) instead of being appended here —
-                                        // so the subtitle stays a clean single line
-                                        // (`personality · model`) and no longer gets
-                                        // squeezed out by the trailing action icons.
-                                        // Fade the subtitle whenever it changes
-                                        // — most importantly the honest
-                                        // "Connected" → confirmed-model reveal
-                                        // once /api/config lands (the model
-                                        // arrives later than the identity, and
-                                        // used to pop in). AnimatedContent doesn't
-                                        // animate its initial state, so this only
-                                        // smooths real changes, not first paint.
-                                        AnimatedContent(
-                                            targetState = subtitleText,
-                                            transitionSpec = { loadedContentTransform() },
-                                            label = "chatHeaderSubtitle",
-                                        ) { line ->
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            Text(
-                                                text = line,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = subtitleColor,
-                                                maxLines = 1,
-                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                            )
-                                            if (showStreamingState && animationEnabled) {
-                                                StreamingDots(
-                                                    color = subtitleColor,
-                                                    modifier = Modifier.clearAndSetSemantics { },
-                                                )
-                                            }
-                                        }
-                                        }
                                     }
                                 }
                             }
@@ -2996,6 +3027,12 @@ fun ChatScreen(
                     // info. Dropping it here declutters the actions row and frees
                     // width for the title subtitle.)
                     if (!supervised) {
+                        if (showGitWorkspaceContextEntry) {
+                            ChatGitContextButton(
+                                onClick = onNavigateToGitWorkspace,
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
                         RelayChromeIconButton(
                             icon = Icons.Filled.Code,
                             contentDescription = stringResource(R.string.cd_terminal),
@@ -3101,11 +3138,6 @@ fun ChatScreen(
                             }
                         }
                     }
-                    // Clean text-flow mode has no top-bar toggle — it's a quiet
-                    // gesture: long-press the conversation background to enter.
-                    // Exit is the in-mode dismiss control or system back (not
-                    // any-tap, since the mode carries its own composer). A
-                    // first-run hint teaches the entry.
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = RelayRefresh.Background.copy(alpha = 0.96f)
@@ -3146,6 +3178,22 @@ fun ChatScreen(
                     onClick = if (supervised) null else ({ showContextSheet = true }),
                 )
             }
+            if (
+                shouldShowRetainedHistoryDashboardSignIn(
+                    hasMessages = messages.isNotEmpty(),
+                    gatewayAvailability = chatGatewayAvailability,
+                    apiReachable = apiReachable,
+                    supervised = supervised,
+                )
+            ) {
+                ChatDashboardSignInCard(
+                    dashboardRouteMovedHint = dashboardRouteMovedHint,
+                    onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             if (!supervised && showContextSheet) {
                 // Live audit of the exact extra context the agent will be
                 // injected with on the next turn (transparency / auditability).
@@ -3183,11 +3231,6 @@ fun ChatScreen(
                     )
                 }
             }
-
-            // Clean text-flow mode is rendered as a full-screen overlay (a
-            // sibling of this Column, below) so it can own its own minimal
-            // composer and explicit-dismiss control. The Column always renders
-            // the normal chat underneath; the overlay covers it when active.
 
             // Message list or empty state
             if (messages.isEmpty() && !isStreaming && (!isLoadingHistory || isChatConnecting)) {
@@ -3242,6 +3285,7 @@ fun ChatScreen(
                             ?: activeConnection
                                 ?.apiServerUrl
                                 ?.let(Connection::extractDefaultLabel),
+                        agentDisplayName = agentDisplayName,
                         chatMode = chatMode,
                         apiReachable = apiReachable,
                         chatReady = chatReady,
@@ -3249,7 +3293,7 @@ fun ChatScreen(
                         isLoadingSessions = isLoadingSessions,
                         gatewayAvailability = chatGatewayAvailability,
                         dashboardRouteMovedHint = dashboardRouteMovedHint,
-                        onNavigateToManage = onNavigateToManage,
+                        onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
                         onNavigateToConnections = onNavigateToConnections,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -3311,6 +3355,7 @@ fun ChatScreen(
                                             stringResource(R.string.chat_start_conversation)
                                         }
                                     ChatConnectState.Connecting -> stringResource(R.string.chat_connect_to_hermes_dots)
+                                    ChatConnectState.Unavailable -> stringResource(R.string.chat_disconnected_label)
                                     ChatConnectState.NeedsConnection -> stringResource(R.string.chat_needs_connection)
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -3379,6 +3424,31 @@ fun ChatScreen(
 
                                 ChatConnectState.Connecting -> Unit
 
+                                ChatConnectState.Unavailable -> {
+                                    if (dashboardSignInRequired) {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        ChatDashboardSignInCard(
+                                            dashboardRouteMovedHint = dashboardRouteMovedHint,
+                                            onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    } else {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Button(
+                                            onClick = connectionViewModel::probeNow,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(stringResource(R.string.chat_retry))
+                                        }
+                                        TextButton(
+                                            onClick = onNavigateToConnections,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(stringResource(R.string.settings_connections))
+                                        }
+                                    }
+                                }
+
                                 ChatConnectState.Ready -> {
                                     Spacer(modifier = Modifier.height(20.dp))
 
@@ -3425,28 +3495,12 @@ fun ChatScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        // Quiet entry to clean mode: long-press the
-                        // conversation background. Bubbles keep their own
-                        // long-press (copy) — they consume the gesture first,
-                        // so only presses on empty space land here. Enters
-                        // regardless of animationEnabled — clean mode degrades
-                        // to static text when motion is suppressed, so the
-                        // conversation is never gated on animation.
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onLongPress = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    ambientMode = true
-                                },
-                            )
-                        }
                 ) {
                     // Ambient avatar behind messages
                     if (
                         LocalBackgroundVisualizationEnabled.current &&
                         (!supervised || supervisedVisibility.showAgentIdentity) &&
-                        animationBehindChat &&
-                        !ambientMode
+                        animationBehindChat
                     ) {
                         LocalAgentAvatar.current.Render(
                             state = AvatarRenderState(
@@ -3971,6 +4025,8 @@ fun ChatScreen(
             if (isGatewayTransport) {
                 GatewayBackgroundProcessStrip(
                     processes = backgroundProcesses,
+                    subagentActivities = subagentActivities,
+                    subagentPreviewVisibility = subagentPreviewVisibility,
                     loading = backgroundProcessesLoading,
                     onClick = { showBackgroundProcesses = true },
                 )
@@ -4404,7 +4460,14 @@ fun ChatScreen(
                 null
             }
 
-            visibleChatFailure?.let { failure ->
+            visibleChatFailure
+                ?.takeIf { failure ->
+                    shouldPresentChatFailureDuringDashboardSignIn(
+                        failure = failure,
+                        dashboardSignInRequired = dashboardSignInRequired,
+                    )
+                }
+                ?.let { failure ->
                 val displayFailure = if (!supervised) failure else failure.copy(
                     model = failure.model.takeIf { supervisedVisibility.showModelName },
                     provider = failure.provider.takeIf { supervisedVisibility.showTechnicalRoute },
@@ -4455,6 +4518,14 @@ fun ChatScreen(
                         onDismiss = { showChatFailureDetails = false },
                     )
                 }
+            }
+
+            visibleGitWorkspaceSummary?.let { summary ->
+                ChatGitWorkspaceRail(
+                    summary = summary,
+                    onClick = onNavigateToGitWorkspace,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
             }
 
             ChatInputBar(
@@ -4665,6 +4736,7 @@ fun ChatScreen(
                             setVoicePresentationMode(VoicePresentationMode.Focus)
                         },
                         onOverlayRequest = showVoiceSystemOverlay,
+                        systemOverlayAvailable = voiceSystemOverlayAvailable,
                         onOpenSettings = onNavigateToVoiceSettings,
                         onExit = { voiceViewModel.exitVoiceMode() },
                     )
@@ -4783,62 +4855,6 @@ fun ChatScreen(
             }
         }
 
-        // Clean-mode discoverability hint — a quiet, persistent pill teaching
-        // the long-press entry. Shown ONLY on the empty / new-chat view; it
-        // yields the bottom area whenever clean or voice mode owns it.
-        AnimatedVisibility(
-            visible = shouldShowCleanViewHint(
-                hasMessages = messages.isNotEmpty(),
-                ambientMode = ambientMode,
-                voiceMode = voiceUiState.voiceMode,
-            ),
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 96.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.chat_clean_view_hint),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-
-        // Clean text-flow mode — full-screen overlay covering the whole Box.
-        // Owns its own minimal composer + explicit dismiss; exit is never
-        // any-tap. Renders static text when motion is suppressed.
-        AnimatedVisibility(
-            visible = ambientMode,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            CleanChatMode(
-                messages = messages,
-                isStreaming = isStreaming,
-                sphereState = sphereState,
-                streamingIntensity = streamingIntensity,
-                toolCallBurst = toolCallBurst,
-                animationEnabled = animationEnabled,
-                enabled = chatReady,
-                onSend = { text ->
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    userScrolledAwayState.value = reduceUserScrolledAway(
-                        current = userScrolledAwayState.value,
-                        event = ChatFollowEvent.UserSend,
-                    )
-                    chatViewModel.sendMessage(text)
-                },
-                onExit = { ambientMode = false },
-            )
-        }
-
         // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
@@ -4877,6 +4893,7 @@ fun ChatScreen(
                 presentationMode = effectiveVoicePresentationMode,
                 onPresentationModeChange = setVoicePresentationMode,
                 onOverlayRequest = showVoiceSystemOverlay,
+                systemOverlayAvailable = voiceSystemOverlayAvailable,
                 // Gear button in the overlay's expanded controls. The overlay
                 // exits voice mode before invoking this, so navigation lands
                 // on Voice Settings with no overlay left on top.
@@ -4928,12 +4945,19 @@ fun ChatScreen(
     if (showBackgroundProcesses) {
         GatewayBackgroundProcessSheet(
             processes = backgroundProcesses,
+            subagentActivities = subagentActivities,
+            subagentChildPreview = subagentChildPreview,
+            subagentPreviewVisibility = subagentPreviewVisibility,
             loading = backgroundProcessesLoading,
             stoppingProcessIds = stoppingProcessIds,
             onRefresh = chatViewModel::refreshBackgroundProcesses,
             onStop = chatViewModel::stopBackgroundProcess,
             onDismissProcess = chatViewModel::dismissBackgroundProcess,
-            onDismiss = { showBackgroundProcesses = false },
+            onOpenSubagentChild = chatViewModel::openSubagentChildPreview,
+            onDismiss = {
+                chatViewModel.closeSubagentChildPreview()
+                showBackgroundProcesses = false
+            },
         )
     }
 
@@ -5043,6 +5067,7 @@ private fun ChatColdStartLoadingState(
     streamingIntensity: Float,
     toolCallBurst: Float,
     connectionLabel: String?,
+    agentDisplayName: String,
     chatMode: ChatMode,
     apiReachable: Boolean,
     chatReady: Boolean,
@@ -5050,13 +5075,14 @@ private fun ChatColdStartLoadingState(
     isLoadingSessions: Boolean,
     gatewayAvailability: GatewayAvailability,
     dashboardRouteMovedHint: String?,
-    onNavigateToManage: () -> Unit,
+    onNavigateToDashboardSignIn: () -> Unit,
     onNavigateToConnections: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val commands = remember(
         connectionLabel,
+        agentDisplayName,
         chatMode,
         apiReachable,
         chatReady,
@@ -5066,6 +5092,7 @@ private fun ChatColdStartLoadingState(
         buildChatLoadingCommands(
             context = context,
             connectionLabel = connectionLabel,
+            agentDisplayName = agentDisplayName,
             chatMode = chatMode,
             apiReachable = apiReachable,
             chatReady = chatReady,
@@ -5119,38 +5146,14 @@ private fun ChatColdStartLoadingState(
         val dashboardSignInRequired =
             gatewayAvailability == GatewayAvailability.SignInRequired && !apiReachable
         if (dashboardSignInRequired) {
-            ElevatedCard(
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                ),
+            ChatDashboardSignInCard(
+                dashboardRouteMovedHint = dashboardRouteMovedHint,
+                onNavigateToDashboardSignIn = onNavigateToDashboardSignIn,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 16.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.dashboard_signin_required_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = dashboardRouteMovedHint?.let { route ->
-                            stringResource(R.string.dashboard_signin_route_hint, route)
-                        } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = onNavigateToManage,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.voice_settings_sign_in_via_manage))
-                    }
-                }
-            }
+            )
         } else {
             ChatLoadingCommandPanel(
                 commands = commands,
@@ -5164,9 +5167,47 @@ private fun ChatColdStartLoadingState(
     }
 }
 
+@Composable
+private fun ChatDashboardSignInCard(
+    dashboardRouteMovedHint: String?,
+    onNavigateToDashboardSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        ),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.dashboard_signin_required_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = dashboardRouteMovedHint?.let { route ->
+                    stringResource(R.string.dashboard_signin_route_hint, route)
+                } ?: stringResource(R.string.chat_settings_gateway_needs_signin_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onNavigateToDashboardSignIn,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.cw_sign_in_to_hermes))
+            }
+        }
+    }
+}
+
 private fun buildChatLoadingCommands(
     context: android.content.Context,
     connectionLabel: String?,
+    agentDisplayName: String,
     chatMode: ChatMode,
     apiReachable: Boolean,
     chatReady: Boolean,
@@ -5195,12 +5236,16 @@ private fun buildChatLoadingCommands(
         ),
         ChatLoadingCommand(
             state = when {
-                apiReachable -> ChatLoadingCommandState.Done
+                chatReady -> ChatLoadingCommandState.Done
                 hasConnection -> ChatLoadingCommandState.Active
                 else -> ChatLoadingCommandState.Pending
             },
-            command = "/hermes ping",
-            detail = if (apiReachable) "online" else context.getString(R.string.chat_contacting_server),
+            command = "/gateway wake",
+            detail = if (chatReady) {
+                "${agentDisplayName.ifBlank { "Hermes" }} online"
+            } else {
+                "waking ${agentDisplayName.ifBlank { "Hermes" }}"
+            },
         ),
         ChatLoadingCommand(
             state = when {
@@ -5208,8 +5253,13 @@ private fun buildChatLoadingCommands(
                 apiReachable || isLoadingHistory || isLoadingSessions -> ChatLoadingCommandState.Active
                 else -> ChatLoadingCommandState.Pending
             },
-            command = "/chat hydrate",
-            detail = if (chatReady) "ready via $chatModeDetail" else "loading conversation",
+            command = "/sessions load",
+            detail = when {
+                isLoadingSessions -> context.getString(R.string.drawer_loading_sessions)
+                isLoadingHistory -> context.getString(R.string.chat_loading_messages)
+                chatReady -> "ready via $chatModeDetail"
+                else -> "waiting for gateway"
+            },
         ),
     )
 }
@@ -5547,15 +5597,8 @@ private fun createCameraCaptureUri(context: android.content.Context): Uri {
     )
 }
 
-internal fun shouldShowCleanViewHint(
-    hasMessages: Boolean,
-    ambientMode: Boolean,
-    voiceMode: Boolean,
-): Boolean = !hasMessages && !ambientMode && !voiceMode
-
 /** Chat overlays that temporarily own input and must not compete with the root pet host. */
 internal fun shouldHideChatPet(
-    ambientMode: Boolean = false,
     voiceMode: Boolean = false,
     drawerOpenOrMoving: Boolean = false,
     commandPaletteVisible: Boolean = false,
@@ -5564,8 +5607,7 @@ internal fun shouldHideChatPet(
     contextSheetVisible: Boolean = false,
     backgroundProcessesVisible: Boolean = false,
     agentInfoVisible: Boolean = false,
-): Boolean = ambientMode ||
-    voiceMode ||
+): Boolean = voiceMode ||
     drawerOpenOrMoving ||
     commandPaletteVisible ||
     modelSheetVisible ||

@@ -5,6 +5,7 @@ import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -27,6 +28,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+
+internal const val RELAY_SESSION_HEADER: String = "X-Hermes-Relay-Session"
+
+/** Keep Dashboard outer auth and Relay capability auth in separate headers. */
+internal fun Request.Builder.relaySessionCredential(
+    token: String,
+    dashboardIngress: Boolean,
+): Request.Builder = if (dashboardIngress) {
+    header(RELAY_SESSION_HEADER, token)
+} else {
+    header("Authorization", "Bearer $token")
+}
 
 /**
  * HTTP client for the Hermes relay media endpoint.
@@ -59,10 +72,19 @@ class RelayHttpClient(
     /** Application context for localized string resources. Nullable for
      *  backwards-compat with call sites that don't need localization. */
     private val context: Context? = null,
+    /** Dashboard-authenticated client for same-origin plugin ingress calls. */
+    private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
 ) {
 
     private fun relayHttpBaseOrNull(url: String): String? =
         RelayEndpointContract.parseOrNull(url)?.httpBaseUrl
+
+    private fun callClient(relayUrl: String): OkHttpClient =
+        if (isDashboardRelayIngressUrl(relayUrl)) {
+            dashboardHttpClientProvider?.invoke(relayUrl) ?: okHttpClient
+        } else {
+            okHttpClient
+        }
 
     companion object {
         private const val TAG = "RelayHttpClient"
@@ -199,10 +221,10 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
-        val activityClient = okHttpClient.newBuilder()
+        val activityClient = callClient(relayUrl).newBuilder()
             .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
 
@@ -261,12 +283,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "*/*")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
                         401, 403 -> "Unauthorized — re-pair with the relay"
@@ -369,12 +391,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "*/*")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
                         401 -> "Unauthorized — re-pair with the relay"
@@ -456,12 +478,12 @@ class RelayHttpClient(
             val request = Request.Builder()
                 .url(url)
                 .get()
-                .header("Authorization", "Bearer $sessionToken")
+                .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
                 .header("Accept", "image/*")
                 .build()
 
             try {
-                okHttpClient.newCall(request).execute().use { response ->
+                callClient(relayUrl).newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val errorCode = runCatching {
                             sessionsJson.parseToJsonElement(response.body.string())
@@ -554,11 +576,11 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
-        val auditClient = okHttpClient.newBuilder()
+        val auditClient = callClient(relayUrl).newBuilder()
             .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
 
@@ -640,10 +662,10 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
-        val client = okHttpClient.newBuilder()
+        val client = callClient(relayUrl).newBuilder()
             .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         try {
@@ -753,10 +775,10 @@ class RelayHttpClient(
             return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
         }
         val request = Request.Builder().url(url).get()
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json").build()
         try {
-            okHttpClient.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+            callClient(relayUrl).newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
                 .newCall(request).execute().use { response ->
                     if (response.code == 404) return@withContext Result.success(null)
                     if (!response.isSuccessful) return@withContext Result.failure(IOException("HTTP ${response.code}"))
@@ -807,11 +829,11 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .post(sessionsJson.encodeToString(payload).toRequestBody("application/json".toMediaType()))
-            .header("Authorization", "Bearer $token")
+            .relaySessionCredential(token, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
         try {
-            okHttpClient.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+            callClient(relayUrl).newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
                 .newCall(request).execute().use { response ->
                     if (response.code == 404) return@withContext Result.success(null)
                     if (!response.isSuccessful) return@withContext Result.failure(IOException("HTTP ${response.code}"))
@@ -857,12 +879,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
         // Slightly longer than the other reads — a cache-miss on the relay does a
         // GitHub round-trip in an executor before responding.
-        val client = okHttpClient.newBuilder()
+        val client = callClient(relayUrl).newBuilder()
             .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         try {
@@ -941,12 +963,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (response.code == 404) {
                     // Server hasn't shipped the endpoint yet — degrade to
                     // empty list so the UI can render "No paired devices"
@@ -1028,12 +1050,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .delete()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (response.code == 404) {
                     // Already gone — treat as success so the UI can just
                     // drop the row on the next refresh.
@@ -1145,12 +1167,12 @@ class RelayHttpClient(
         val request = Request.Builder()
             .url(url)
             .patch(bodyJson.toRequestBody("application/json".toMediaType()))
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
                         400 -> "Invalid extend request (check TTL/grants)"
@@ -1242,7 +1264,7 @@ class RelayHttpClient(
 
         // Fast-timeout client — we don't want Save & Test to hang the UI
         // for 10 seconds on a dead URL.
-        val fastClient = okHttpClient.newBuilder()
+        val fastClient = callClient(relayUrl).newBuilder()
             .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
@@ -1484,12 +1506,12 @@ class RelayHttpClient(
             val request = Request.Builder()
                 .url(url)
                 .get()
-                .header("Authorization", "Bearer $sessionToken")
+                .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
                 .header("Accept", "application/json")
                 .build()
 
             try {
-                okHttpClient.newCall(request).execute().use { response ->
+                callClient(relayUrl).newCall(request).execute().use { response ->
                     if (response.code == 404) {
                         // Older or operator-disabled hosts simply do not expose
                         // account usage. This is capability absence, not an error.

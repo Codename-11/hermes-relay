@@ -5,7 +5,7 @@ Registers the following top-level `hermes` sub-commands:
     hermes pair [--png] [--no-qr] [--host HOST] [--port PORT]
                 [--dashboard-url URL] [--register-code CODE]
                 [--mode auto|lan|tailscale|public] [--public-url URL]
-                [--prefer ROLE]
+                [--prefer ROLE] [--legacy-direct-relay]
     hermes relay start [--port PORT] [--no-ssl] [--log-level LEVEL]
     hermes relay doctor [--json]
     hermes relay compat [status|install|remove]
@@ -112,12 +112,24 @@ def register_cli(subparser) -> None:
     subparser.add_argument(
         "--public-url",
         metavar="URL",
-        help="Public API or relay-proxy URL to include in the QR endpoint list",
+        help=(
+            "Public Dashboard origin to include in the QR endpoint list; "
+            "Relay uses its same-origin plugin transport path"
+        ),
     )
     subparser.add_argument(
         "--prefer",
         metavar="ROLE",
         help="Promote a QR endpoint role such as tailscale or public to priority 0",
+    )
+    subparser.add_argument(
+        "--legacy-direct-relay",
+        action="store_true",
+        dest="legacy_direct_relay",
+        help=(
+            "Also advertise the direct Relay port for older Desktop clients "
+            "that cannot authenticate through Dashboard ingress"
+        ),
     )
     subparser.set_defaults(func=pair_command)
 

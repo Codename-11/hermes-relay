@@ -3,6 +3,7 @@ package com.hermesandroid.relay.network.upstream
 import com.hermesandroid.relay.BuildConfig
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -24,6 +25,9 @@ private const val MAX_HEADER_BYTES = 16 * 1024
 private const val ACCEPT_POLL_MILLIS = 500
 internal const val DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS = 5 * 60 * 1000L
 internal val NATIVE_SIGN_IN_RETURN_URI = "${BuildConfig.APPLICATION_ID}://return"
+
+internal class NativeDashboardSignInTimeoutException :
+    InterruptedIOException("Dashboard sign-in timed out")
 
 private enum class CallbackPage(
     val modifier: String,
@@ -109,23 +113,24 @@ internal fun dashboardRedirectAuthMode(authFlows: List<String>): DashboardRedire
         DashboardRedirectAuthMode.WebView
     }
 
-/**
- * Nous Portal uses Cloudflare Turnstile and does not support embedded Android
- * WebViews. Keep self-hosted OIDC on the dashboard cookie flow, but use the
- * gateway's brokered system-browser flow for Nous when it is advertised.
- */
+/** Match upstream Desktop's capability-driven redirect policy. */
 internal fun androidDashboardRedirectAuthMode(
-    providerName: String,
+    @Suppress("UNUSED_PARAMETER") providerName: String,
     authFlows: List<String>,
-): DashboardRedirectAuthMode =
-    if (
-        providerName.equals("nous", ignoreCase = true) &&
-        dashboardRedirectAuthMode(authFlows) == DashboardRedirectAuthMode.NativePkce
-    ) {
-        DashboardRedirectAuthMode.NativePkce
-    } else {
-        DashboardRedirectAuthMode.WebView
-    }
+    @Suppress("UNUSED_PARAMETER") competingRedirectProviders: Int = 1,
+): DashboardRedirectAuthMode = dashboardRedirectAuthMode(authFlows)
+
+/**
+ * Hosted gateways commonly expose Nous as their single native provider and
+ * require the selector to be omitted. Multi-provider self-hosted gateways need
+ * the explicit selector so upstream can disambiguate the requested provider.
+ */
+internal fun nativeDashboardAuthorizationProvider(
+    providerName: String,
+    competingRedirectProviders: Int,
+): String? = providerName.takeUnless {
+    it.equals("nous", ignoreCase = true) && competingRedirectProviders <= 1
+}
 
 /**
  * Owns one native dashboard sign-in attempt.
@@ -141,6 +146,8 @@ class NativeDashboardSignInCoordinator(
 ) {
     suspend fun signIn(
         provider: String?,
+        onAuthorizationPrepared: (usesAlternateOrigin: Boolean) -> Unit = {},
+        onCallbackValidated: () -> Unit = {},
         launchAuthorization: suspend (String) -> Unit,
     ): NativeDashboardTokens =
         try {
@@ -165,11 +172,15 @@ class NativeDashboardSignInCoordinator(
                         val attemptContext = currentCoroutineContext()
                         var completed = false
                         try {
+                            runCatching {
+                                onAuthorizationPrepared(authorization.usesAlternateOrigin)
+                            }
                             launchAuthorization(authorization.authorizationUrl)
                             awaitValidCallback(
                                 server = server,
                                 authorization = authorization,
                                 commitAllowed = { attemptContext.isActive },
+                                onCallbackValidated = onCallbackValidated,
                             ).also { completed = true }
                         } finally {
                             if (!completed) {
@@ -180,13 +191,14 @@ class NativeDashboardSignInCoordinator(
                 }
             }
         } catch (_: TimeoutCancellationException) {
-            throw IOException("Dashboard sign-in timed out")
+            throw NativeDashboardSignInTimeoutException()
         }
 
     private suspend fun awaitValidCallback(
         server: ServerSocket,
         authorization: NativeDashboardAuthorization,
         commitAllowed: () -> Boolean,
+        onCallbackValidated: () -> Unit,
     ): NativeDashboardTokens {
         while (true) {
             val callback = acceptCallback(server)
@@ -217,6 +229,7 @@ class NativeDashboardSignInCoordinator(
                         authorization,
                         target,
                         commitAllowed = commitAllowed,
+                        onValidated = onCallbackValidated,
                     ).also {
                         writeResponse(
                             socket,
