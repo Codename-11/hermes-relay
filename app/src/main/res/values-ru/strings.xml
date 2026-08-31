@@ -599,6 +599,11 @@
     <string name="changelog_state_collapsed">Свернуто</string>
     <string name="changelog_installed">Установлено</string>
     <string name="changelog_also_improved">Также улучшено</string>
+    <string name="changelog_highlights">Основное</string>
+    <string name="changelog_added">Добавлено</string>
+    <string name="changelog_improved">Улучшено</string>
+    <string name="changelog_fixed">Исправлено</string>
+    <string name="changelog_compatibility">Совместимость</string>
     <string name="changelog_toast_also">Также: %1$s</string>
     <string name="changelog_view_all">Показать все</string>
     <plurals name="changelog_additional_feature_count">
@@ -612,6 +617,12 @@
         <item quantity="few">%1$d исправления</item>
         <item quantity="many">%1$d исправлений</item>
         <item quantity="other">%1$d исправления</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d улучшение</item>
+        <item quantity="few">%1$d улучшения</item>
+        <item quantity="many">%1$d улучшений</item>
+        <item quantity="other">%1$d улучшения</item>
     </plurals>
     <string name="diag_title">Диагностика</string>
     <string name="diag_back">Назад</string>
@@ -3275,7 +3286,7 @@
     <string name="whats_new_full_history">Просмотреть полную историю</string>
     <string name="whats_new_no_notes">Примечания к выпуску недоступны</string>
     <string name="whats_new_title">Что нового</string>
-    <string name="whats_new_subtitle">Последние обновления</string>
+    <string name="whats_new_subtitle">Основное и полный список изменений</string>
     <string name="bridge_notification_auto_disabled_title">Временный доступ к экрану истек</string>
     <string name="bridge_notification_auto_disabled_body">Просмотр и управление экраном отключены после бездействия. Другие разрешения не изменены.</string>
     <string name="bridge_notification_control_title">Агент Гермес имеет управление устройством</string>

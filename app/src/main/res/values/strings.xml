@@ -666,6 +666,11 @@
     <string name="changelog_state_collapsed">Collapsed</string>
     <string name="changelog_installed">Installed</string>
     <string name="changelog_also_improved">Also improved</string>
+    <string name="changelog_highlights">Highlights</string>
+    <string name="changelog_added">Added</string>
+    <string name="changelog_improved">Improved</string>
+    <string name="changelog_fixed">Fixed</string>
+    <string name="changelog_compatibility">Compatibility</string>
     <string name="changelog_toast_also">Also: %1$s</string>
     <string name="changelog_view_all">View all</string>
     <plurals name="changelog_additional_feature_count">
@@ -675,6 +680,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d fix</item>
         <item quantity="other">%1$d fixes</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d improvement</item>
+        <item quantity="other">%1$d improvements</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -3781,7 +3790,7 @@
     <string name="whats_new_full_history">View full history</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
-    <string name="whats_new_subtitle">Latest release highlights</string>
+    <string name="whats_new_subtitle">Highlights and complete release details</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Timed screen access expired</string>
     <string name="bridge_notification_auto_disabled_body">Screen inspection and control are off after being idle. Other grants are unchanged.</string>

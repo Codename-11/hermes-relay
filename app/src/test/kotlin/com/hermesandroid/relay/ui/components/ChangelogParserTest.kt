@@ -37,26 +37,25 @@ class ChangelogParserTest {
     }
 
     @Test
-    fun parsesCuratedHighlightAndImprovements() {
+    fun parsesCompleteReleaseAndDerivesToastDigest() {
         val raw = """
             {
-              "schema": 2,
+              "schema": 3,
               "versions": [
                 {
                   "version": "1.2.0",
                   "title": "A useful release",
                   "date": "2026-06-20",
-                  "highlight": {
-                    "title": "The main reason to care",
-                    "summary": "A plain-language explanation.",
-                    "bullets": ["a", "b", "c"]
-                  },
-                  "improvements": ["d", "e"],
-                  "toastDigest": {
-                    "additionalFeatureCount": 1,
-                    "fixCount": 2,
-                    "preview": ["Secondary feature", "Important fix"]
-                  },
+                  "summary": "A plain-language explanation.",
+                  "changes": [
+                    {"id": "new-one", "kind": "added", "title": "New one",
+                     "summary": "Use the new thing.", "highlight": true},
+                    {"id": "better-one", "kind": "improved", "title": "Better one",
+                     "summary": "The old thing is easier."},
+                    {"id": "fixed-one", "kind": "fixed", "title": "Fixed one",
+                     "summary": "The broken thing works."}
+                  ],
+                  "compatibility": ["Existing connections keep working."],
                   "playNotes": "Concise Play copy."
                 }
               ]
@@ -64,17 +63,41 @@ class ChangelogParserTest {
         """.trimIndent()
 
         val entry = ChangelogStore.parse(raw).versions.single()
+        val digest = entry.resolvedToastDigest()
 
-        assertEquals("The main reason to care", entry.highlight?.title)
-        assertEquals("A plain-language explanation.", entry.highlight?.summary)
-        assertEquals(listOf("a", "b", "c"), entry.highlight?.bullets)
-        assertEquals(listOf("d", "e"), entry.improvements)
-        assertEquals(1, entry.toastDigest?.additionalFeatureCount)
-        assertEquals(2, entry.toastDigest?.fixCount)
-        assertEquals(listOf("Secondary feature", "Important fix"), entry.toastDigest?.preview)
+        assertEquals("A plain-language explanation.", entry.summary)
+        assertEquals(listOf("New one"), entry.highlightedChanges().map { it.title })
+        assertEquals(0, digest?.additionalFeatureCount)
+        assertEquals(1, digest?.improvementCount)
+        assertEquals(1, digest?.fixCount)
+        assertEquals(listOf("Better one", "Fixed one"), digest?.preview)
+        assertEquals(listOf("Existing connections keep working."), entry.compatibility)
         assertEquals("Concise Play copy.", entry.playNotes)
         assertEquals("v1.2.0 · 2026-06-20", entry.versionLine())
-        assertEquals(listOf("The main reason to care", "Also improved"), entry.toGroups().map { it.header })
+        assertEquals(
+            listOf("Highlights", "Improved", "Fixed", "Compatibility"),
+            entry.toGroups().map { it.header },
+        )
+        assertEquals(3, entry.toGroups().sumOf { it.bullets.size } - entry.compatibility.size)
+    }
+
+    @Test
+    fun completeReleaseRendersEveryChangeOnce() {
+        val entry = ChangelogVersion(
+            version = "1.2.0",
+            title = "Complete notes",
+            summary = "Everything users need to know.",
+            changes = listOf(
+                ChangelogChange("a", CHANGE_KIND_ADDED, "First", "First detail", highlight = true),
+                ChangelogChange("b", CHANGE_KIND_FIXED, "Second", "Second detail"),
+            ),
+        )
+
+        val rendered = entry.toGroups().flatMap { it.bullets }
+
+        assertEquals(2, rendered.size)
+        assertEquals(1, rendered.count { it.startsWith("First") })
+        assertEquals(1, rendered.count { it.startsWith("Second") })
     }
 
     @Test

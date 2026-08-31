@@ -621,6 +621,11 @@
     <string name="changelog_state_collapsed">Eingeklappt</string>
     <string name="changelog_installed">Installiert</string>
     <string name="changelog_also_improved">Außerdem verbessert</string>
+    <string name="changelog_highlights">Highlights</string>
+    <string name="changelog_added">Hinzugefügt</string>
+    <string name="changelog_improved">Verbessert</string>
+    <string name="changelog_fixed">Behoben</string>
+    <string name="changelog_compatibility">Kompatibilität</string>
     <string name="changelog_toast_also">Außerdem: %1$s</string>
     <string name="changelog_view_all">Alle anzeigen</string>
     <plurals name="changelog_additional_feature_count">
@@ -630,6 +635,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d Fehlerbehebung</item>
         <item quantity="other">%1$d Fehlerbehebungen</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d Verbesserung</item>
+        <item quantity="other">%1$d Verbesserungen</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -3407,7 +3416,7 @@
     <string name="whats_new_full_history">Vollständigen Verlauf anzeigen</string>
     <string name="whats_new_no_notes">Keine Versionshinweise verfügbar</string>
     <string name="whats_new_title">Neuigkeiten</string>
-    <string name="whats_new_subtitle">Highlights der neuesten Version</string>
+    <string name="whats_new_subtitle">Highlights und vollständige Versionsdetails</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Zeitgesteuerter Bildschirmzugriff abgelaufen</string>
     <string name="bridge_notification_auto_disabled_body">Bildschirmprüfung und -steuerung sind nach Inaktivität aus. Andere Berechtigungen bleiben unverändert.</string>

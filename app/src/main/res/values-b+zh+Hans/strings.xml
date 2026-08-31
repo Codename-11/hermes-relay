@@ -621,6 +621,11 @@
     <string name="changelog_state_collapsed">已收起</string>
     <string name="changelog_installed">已安装</string>
     <string name="changelog_also_improved">其他改进</string>
+    <string name="changelog_highlights">亮点</string>
+    <string name="changelog_added">新增</string>
+    <string name="changelog_improved">改进</string>
+    <string name="changelog_fixed">修复</string>
+    <string name="changelog_compatibility">兼容性</string>
     <string name="changelog_toast_also">另外：%1$s</string>
     <string name="changelog_view_all">查看全部</string>
     <plurals name="changelog_additional_feature_count">
@@ -628,6 +633,9 @@
     </plurals>
     <plurals name="changelog_fix_count">
         <item quantity="other">%1$d 项修复</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="other">%1$d 项改进</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -3339,7 +3347,7 @@
     <string name="whats_new_full_history">查看完整历史记录</string>
     <string name="whats_new_no_notes">无可用的发布说明</string>
     <string name="whats_new_title">更新内容</string>
-    <string name="whats_new_subtitle">最新版本亮点</string>
+    <string name="whats_new_subtitle">亮点和完整版本详情</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">限时屏幕访问已到期</string>
     <string name="bridge_notification_auto_disabled_body">空闲后，屏幕检查和控制已关闭。其他授权保持不变。</string>
