@@ -977,7 +977,7 @@ async def mint_pairing(body: dict[str, Any] = Body(default_factory=dict)) -> Any
 # other routes in this file — the dashboard is loopback-only and we
 # never accept callers from elsewhere.
 
-_TAILSCALE_MANAGED_PORTS = frozenset((9119, 8642, 8767))
+_TAILSCALE_MANAGED_PORTS = frozenset((443, 10443, 9119, 8642, 8767))
 
 
 def _managed_tailscale_port(body: dict[str, Any]) -> int:
@@ -998,8 +998,9 @@ def _managed_tailscale_port(body: dict[str, Any]) -> int:
         raise HTTPException(
             status_code=400,
             detail=(
-                "dashboard may manage only Dashboard 9119, optional API 8642, "
-                f"or legacy Relay 8767: {supported}"
+                "dashboard may manage only recommended Tailscale HTTPS 10443, "
+                "explicit or migration HTTPS 443, Dashboard 9119, optional API "
+                f"8642, or legacy Relay 8767: {supported}"
             ),
         )
     return port

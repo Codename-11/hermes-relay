@@ -1059,11 +1059,11 @@ class RemoteAccessTailscaleActionTests(PluginApiTestCase):
         self.assertTrue(resp.json()["ok"])
         enable_stack.assert_called_once_with()
 
-    def test_enable_allows_only_supported_relay_and_api_ports(self) -> None:
+    def test_enable_allows_only_supported_tailscale_ports(self) -> None:
         from plugin.relay import tailscale as ts_mod
 
         with patch.object(ts_mod, "enable", side_effect=lambda port: {"ok": True, "port": port}):
-            for port in (9119, 8767, 8642):
+            for port in (443, 10443, 9119, 8767, 8642):
                 with self.subTest(port=port):
                     resp = self.client.post(
                         "/remote-access/tailscale/enable", json={"port": port}
@@ -1081,6 +1081,19 @@ class RemoteAccessTailscaleActionTests(PluginApiTestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("8767", resp.json()["detail"])
         mock_enable.assert_not_called()
+
+    def test_disable_allows_explicit_migration_listener_cleanup(self) -> None:
+        from plugin.relay import tailscale as ts_mod
+
+        with patch.object(
+            ts_mod, "disable", side_effect=lambda port: {"ok": True, "port": port}
+        ) as mock_disable:
+            resp = self.client.post(
+                "/remote-access/tailscale/disable", json={"port": 443}
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["port"], 443)
+        mock_disable.assert_called_once_with(port=443)
 
     def test_disable_rejects_arbitrary_or_boolean_port(self) -> None:
         from plugin.relay import tailscale as ts_mod
