@@ -313,6 +313,15 @@ class GitStateFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             git_state.read_file(self.repo, "untracked.txt")
 
+    def test_read_tracking_check_treats_pathspec_magic_as_literal(self) -> None:
+        (self.repo / "name1.txt").write_text("tracked", encoding="utf-8")
+        _git(self.repo, "add", "name1.txt")
+        _git(self.repo, "commit", "-q", "-m", "add tracked pathspec sibling")
+        (self.repo / "name[1].txt").write_text("untracked", encoding="utf-8")
+
+        with self.assertRaisesRegex(git_state.GitStateError, "file is not tracked"):
+            git_state.read_file(self.repo, "name[1].txt")
+
     def test_read_missing_file_raises(self) -> None:
         with self.assertRaises(ValueError):
             git_state.read_file(self.repo, "nope.txt")
@@ -357,6 +366,57 @@ class GitStateFileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(git_state.GitStateError, "escapes repository"):
             git_state.read_file(self.repo, tracked_path)
+
+    def test_read_rejects_parent_swapped_after_validation(self) -> None:
+        nested = self.repo / "nested"
+        nested.mkdir()
+        tracked = nested / "tracked.txt"
+        tracked.write_text("safe", encoding="utf-8")
+        _git(self.repo, "add", "nested/tracked.txt")
+        _git(self.repo, "commit", "-q", "-m", "add nested file")
+
+        parked = self.repo / "nested-original"
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "tracked.txt").write_text("secret", encoding="utf-8")
+        original_open = Path.open
+        swapped = False
+
+        def swap_before_open(path: Path, *args: object, **kwargs: object):
+            nonlocal swapped
+            if not swapped and path == tracked:
+                swapped = True
+                nested.rename(parked)
+                _link_directory(nested, outside)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", new=swap_before_open):
+            with self.assertRaisesRegex(git_state.GitStateError, "escapes repository"):
+                git_state.read_file(self.repo, "nested/tracked.txt")
+
+        self.assertTrue((parked / "tracked.txt").exists())
+        self.assertEqual("secret", (outside / "tracked.txt").read_text(encoding="utf-8"))
+
+    def test_read_rejects_repo_root_swapped_after_validation(self) -> None:
+        parked = self.base / "file-repo-original"
+        outside = _init_repo(self.base, "outside-repo")
+        (outside / "README.md").write_text("# Secret\n", encoding="utf-8")
+        original_open = Path.open
+        swapped = False
+
+        def swap_before_open(path: Path, *args: object, **kwargs: object):
+            nonlocal swapped
+            if not swapped and path == self.repo / "README.md":
+                swapped = True
+                self.repo.rename(parked)
+                _link_directory(self.repo, outside)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", new=swap_before_open):
+            with self.assertRaisesRegex(git_state.GitStateError, "repository root changed"):
+                git_state.read_file(self.repo, "README.md")
+
+        self.assertEqual("# Secret\n", (outside / "README.md").read_text(encoding="utf-8"))
 
     def test_read_tracked_file_is_bounded_during_read(self) -> None:
         (self.repo / "large.txt").write_text("x" * (git_state.MAX_FILE_BYTES + 100), encoding="utf-8")

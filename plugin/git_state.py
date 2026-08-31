@@ -20,9 +20,12 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 import subprocess
 import tempfile
+from functools import wraps
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Any
 
 from .config import raw_config_value
@@ -47,6 +50,12 @@ _USERINFO_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@]+)@")
 _SSH_USERINFO_RE = re.compile(r"^([^/@:]+)@([^:]+):")
 _ERROR_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/@]+)@")
 _ERROR_SSH_USERINFO_RE = re.compile(r"(?<![\w@])([^\s/@:]+)@([^\s:]+):")
+
+# FastAPI executes synchronous routes concurrently. These locks serialize Git
+# operations per repository without creating worker threads, so one API call
+# cannot replace a validated working-tree path underneath another.
+_REPO_LOCKS_GUARD = Lock()
+_REPO_LOCKS: dict[str, RLock] = {}
 
 
 class GitStateError(ValueError):
@@ -91,13 +100,18 @@ def _run_git_bounded(
     args: list[str],
     *,
     mutation: bool,
+    literal_pathspecs: bool = False,
 ) -> tuple[int, str, str]:
     """Run Git without materializing unbounded stdout or stderr in memory."""
     error_type = GitError if mutation else GitStateError
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         try:
+            command = ["git", "-C", str(repo)]
+            if literal_pathspecs:
+                command.append("--literal-pathspecs")
+            command.extend(args)
             result = subprocess.run(
-                ["git", "-C", str(repo), *args],
+                command,
                 stdout=stdout_file,
                 stderr=stderr_file,
                 timeout=GIT_TIMEOUT_SECONDS,
@@ -139,9 +153,14 @@ def _safe_git_error(text: str) -> str:
     return scrubbed[:MAX_GIT_ERROR_BYTES].strip()
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, literal_pathspecs: bool = False) -> str:
     """Run ``git -C <repo> <args>`` and return bounded stdout."""
-    returncode, stdout, stderr = _run_git_bounded(repo, list(args), mutation=False)
+    returncode, stdout, stderr = _run_git_bounded(
+        repo,
+        list(args),
+        mutation=False,
+        literal_pathspecs=literal_pathspecs,
+    )
     if returncode != 0:
         raise GitStateError(
             f"git {args[0] if args else 'command'} failed for {repo.name}: "
@@ -157,11 +176,77 @@ def _is_git_repo(path: Path) -> bool:
 
 def _is_link_or_junction(path: Path) -> bool:
     is_junction = getattr(path, "is_junction", None)
-    return path.is_symlink() or bool(is_junction and is_junction())
+    if path.is_symlink() or bool(is_junction and is_junction()):
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        attributes = os.lstat(path).st_file_attributes
+    except (AttributeError, FileNotFoundError, OSError):
+        return False
+    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & reparse_point)
 
 
 def _is_within(root: Path, candidate: Path) -> bool:
     return candidate == root or root in candidate.parents
+
+
+def _canonical_repo_root(repo: Path) -> Path:
+    """Return an unlinked absolute repository root or fail closed."""
+    lexical = Path(os.path.abspath(repo))
+    try:
+        if _is_link_or_junction(lexical):
+            raise GitStateError("repository root changed during operation")
+        canonical = lexical.resolve(strict=True)
+    except GitStateError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise GitStateError("repository root changed during operation") from exc
+    if os.path.normcase(str(canonical)) != os.path.normcase(str(lexical)):
+        raise GitStateError("repository root changed during operation")
+    return canonical
+
+
+def _serialized_repo_operation(function: Any) -> Any:
+    """Serialize a Git operation against other operations on the same repo."""
+
+    @wraps(function)
+    def wrapped(repo: Path, *args: Any, **kwargs: Any) -> Any:
+        key = os.path.normcase(os.path.abspath(repo))
+        with _REPO_LOCKS_GUARD:
+            lock = _REPO_LOCKS.setdefault(key, RLock())
+        with lock:
+            return function(repo, *args, **kwargs)
+
+    return wrapped
+
+
+def _resolve_repo_disk_path(
+    repo: Path,
+    path: str,
+    *,
+    strict: bool,
+) -> Path:
+    """Resolve a validated relative path and prove canonical repo containment.
+
+    ``Path.resolve`` follows symlinks and junctions before ``commonpath``
+    compares the canonical filesystem paths. Different-drive paths fail
+    closed on Windows. Callers that open the result must revalidate the opened
+    handle before using it as defense in depth against an unexpected path
+    replacement. Concurrent external same-user filesystem mutation is outside
+    the plugin trust boundary.
+    """
+    safe_path = resolve_repo_path(repo, path)
+    root = _canonical_repo_root(repo)
+    candidate = (root / safe_path).resolve(strict=strict)
+    try:
+        common = Path(os.path.commonpath((str(root), str(candidate))))
+    except ValueError as exc:
+        raise GitStateError(f"path escapes repository: {safe_path}") from exc
+    if os.path.normcase(str(common)) != os.path.normcase(str(root)):
+        raise GitStateError(f"path escapes repository: {safe_path}")
+    return candidate
 
 
 def _has_link_component(base: Path, path: Path) -> bool:
@@ -175,6 +260,19 @@ def _has_link_component(base: Path, path: Path) -> bool:
         if _is_link_or_junction(current):
             return True
     return False
+
+
+def _validate_untracked_delete_path(repo: Path, path: str) -> str:
+    """Validate one exact untracked file before delegating deletion to Git."""
+    safe_path = resolve_repo_path(repo, path)
+    root = _canonical_repo_root(repo)
+    lexical = root / safe_path
+    if _has_link_component(root, lexical):
+        raise GitStateError(f"path contains a link or junction: {safe_path}")
+    candidate = _resolve_repo_disk_path(repo, safe_path, strict=False)
+    if candidate.exists() and candidate.is_dir():
+        raise GitStateError(f"path is not a file: {safe_path}")
+    return safe_path
 
 
 def repo_id(repo: Path, base: Path | None = None) -> str:
@@ -433,19 +531,27 @@ def repo_diff(repo: Path, path: str, kind: str) -> dict[str, Any]:
     args = ["diff", "--no-color", "--"]
     if kind == "staged":
         args = ["diff", "--cached", "--no-color", "--"]
-    output = _git(repo, *args, safe_path)
+    output = _git(repo, *args, safe_path, literal_pathspecs=True)
     truncated = len(output) > MAX_DIFF_BYTES
     if truncated:
         output = output[:MAX_DIFF_BYTES]
     return {"path": safe_path, "kind": kind, "diff": output, "truncated": truncated}
 
 
+@_serialized_repo_operation
 def read_file(repo: Path, path: str) -> dict[str, Any]:
     """Read a tracked file's working-tree content. Untracked/binary/missing → error."""
     safe_path = resolve_repo_path(repo, path)
     # Confirm the file is tracked before reading.
     try:
-        _git(repo, "ls-files", "--error-unmatch", "--", safe_path)
+        _git(
+            repo,
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            safe_path,
+            literal_pathspecs=True,
+        )
     except GitStateError as exc:
         raise GitStateError(f"file is not tracked: {safe_path}") from exc
 
@@ -453,12 +559,16 @@ def read_file(repo: Path, path: str) -> dict[str, Any]:
     # modified-but-uncommitted file returns what is on disk. Read bytes first:
     # binary content dies on the NUL check (before any decode), and non-UTF-8
     # text raises a clear GitStateError instead of an unhandled 500.
-    root = repo.resolve()
     try:
-        disk_path = (repo / safe_path).resolve(strict=True)
-        if not _is_within(root, disk_path):
-            raise GitStateError(f"path escapes repository: {safe_path}")
+        disk_path = _resolve_repo_disk_path(repo, safe_path, strict=True)
         with disk_path.open("rb") as handle:
+            # Re-resolve after opening, then prove the open handle still names
+            # that in-repo file. This fails closed if a parent, junction, repo
+            # root, or leaf is replaced between validation and open; reads use
+            # the already-verified handle after this point.
+            revalidated = _resolve_repo_disk_path(repo, safe_path, strict=True)
+            if not os.path.samestat(os.fstat(handle.fileno()), revalidated.stat()):
+                raise GitStateError(f"path changed during read: {safe_path}")
             raw = handle.read(MAX_FILE_BYTES + 1)
     except OSError as exc:
         raise GitStateError(f"could not read file: {safe_path}") from exc
@@ -573,12 +683,22 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
-def _run_mutation(repo: Path, args: list[str]) -> str:
+def _run_mutation(
+    repo: Path,
+    args: list[str],
+    *,
+    literal_pathspecs: bool = False,
+) -> str:
     """Run a mutating ``git -C <repo> <args>``; raise a classified GitError.
 
     Arg lists only (never shell interpolation); bounded by a timeout.
     """
-    returncode, stdout, stderr_output = _run_git_bounded(repo, args, mutation=True)
+    returncode, stdout, stderr_output = _run_git_bounded(
+        repo,
+        args,
+        mutation=True,
+        literal_pathspecs=literal_pathspecs,
+    )
     if returncode != 0:
         stderr = _safe_git_error(stderr_output or stdout)
         raise GitError(
@@ -588,11 +708,33 @@ def _run_mutation(repo: Path, args: list[str]) -> str:
     return stdout
 
 
-def _mutate(repo: Path, args: list[str]) -> str:
+def _mutate(
+    repo: Path,
+    args: list[str],
+    *,
+    literal_pathspecs: bool = False,
+) -> str:
     """Validate ``repo`` is a real git work tree, then run the mutation."""
     if not _is_git_repo(repo):
         raise GitError(f"not a git repository: {repo.name}", code="non-repo")
-    return _run_mutation(repo, args)
+    return _run_mutation(repo, args, literal_pathspecs=literal_pathspecs)
+
+
+def _is_tracked_path(repo: Path, path: str) -> bool:
+    """Classify one literal path without treating Git failures as untracked."""
+    returncode, stdout, stderr = _run_git_bounded(
+        repo,
+        ["ls-files", "--error-unmatch", "--", path],
+        mutation=False,
+        literal_pathspecs=True,
+    )
+    if returncode == 0:
+        return True
+    if returncode == 1:
+        return False
+    raise GitStateError(
+        f"git ls-files failed for {repo.name}: {_safe_git_error(stderr or stdout)}"
+    )
 
 
 def _is_dirty(repo: Path) -> bool:
@@ -712,20 +854,23 @@ def _fresh_mutation_result(
     return result
 
 
+@_serialized_repo_operation
 def stage(repo: Path, paths: list[str]) -> dict[str, Any]:
     """Stage ``paths`` (repo-relative) and return fresh status."""
     safe = _validate_paths(paths)
-    _mutate(repo, ["add", "--"] + safe)
+    _mutate(repo, ["add", "--"] + safe, literal_pathspecs=True)
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def unstage(repo: Path, paths: list[str]) -> dict[str, Any]:
     """Unstage ``paths`` and return fresh status."""
     safe = _validate_paths(paths)
-    _mutate(repo, ["restore", "--staged", "--"] + safe)
+    _mutate(repo, ["restore", "--staged", "--"] + safe, literal_pathspecs=True)
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def discard(
     repo: Path,
     paths: list[str],
@@ -740,26 +885,25 @@ def discard(
     _require_confirmation(confirmation, CONFIRM_DISCARD)
     safe = _validate_paths(paths)
     tracked: list[str] = []
+    untracked: list[str] = []
     for path in safe:
-        try:
-            _git(repo, "ls-files", "--error-unmatch", "--", path)
+        if _is_tracked_path(repo, path):
             tracked.append(path)
-        except GitStateError:
-            # Untracked path — only touched when delete_untracked is set.
-            if not delete_untracked:
-                continue
-            root = repo.resolve()
-            candidate = (repo / path).resolve()
-            if candidate != root and root not in candidate.parents:
-                raise GitStateError(f"path escapes repository: {path}")
-            if candidate.is_file():
-                candidate.unlink()
+        elif delete_untracked:
+            untracked.append(path)
+    # Reject links and directories before asking Git to remove only the exact
+    # literal file names. Concurrent same-user filesystem mutation is outside
+    # the plugin trust boundary; stationary redirections fail closed here.
+    deletable = [_validate_untracked_delete_path(repo, path) for path in untracked]
+    if deletable:
+        _mutate(repo, ["clean", "-f", "--"] + deletable, literal_pathspecs=True)
     # Revert tracked modifications for the given paths.
     if tracked:
-        _mutate(repo, ["checkout", "--"] + tracked)
+        _mutate(repo, ["checkout", "--"] + tracked, literal_pathspecs=True)
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def commit(repo: Path, message: str) -> dict[str, Any]:
     """Create a commit from the staged index. Empty message is rejected."""
     message = _validate_commit_message(message)
@@ -767,14 +911,16 @@ def commit(repo: Path, message: str) -> dict[str, Any]:
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def commit_selected(repo: Path, message: str, paths: list[str]) -> dict[str, Any]:
     """Commit only the given ``paths`` (staged + modified) under ``message``."""
     message = _validate_commit_message(message)
     safe = _validate_paths(paths)
-    _mutate(repo, ["commit", "-m", message, "--"] + safe)
+    _mutate(repo, ["commit", "-m", message, "--"] + safe, literal_pathspecs=True)
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def fetch(repo: Path, remote: str = "origin") -> dict[str, Any]:
     """Fetch from ``remote`` (default origin) and return fresh status/branches."""
     remote = _validate_remote(repo, remote)
@@ -782,6 +928,7 @@ def fetch(repo: Path, remote: str = "origin") -> dict[str, Any]:
     return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
 
+@_serialized_repo_operation
 def pull(repo: Path, remote: str = "origin", branch: str = "") -> dict[str, Any]:
     """Pull from ``remote``/``branch`` (defaults: origin + current branch).
 
@@ -805,6 +952,7 @@ def pull(repo: Path, remote: str = "origin", branch: str = "") -> dict[str, Any]
     return _fresh_mutation_result(repo)
 
 
+@_serialized_repo_operation
 def push(
     repo: Path,
     remote: str = "origin",
@@ -826,6 +974,7 @@ def push(
     return _fresh_mutation_result(repo, {"branches": repo_branches(repo)})
 
 
+@_serialized_repo_operation
 def checkout(
     repo: Path,
     ref: str,
@@ -857,7 +1006,7 @@ def _staged_diff(repo: Path, paths: list[str] | None) -> tuple[str, bool]:
     if paths:
         args.append("--")
         args.extend(paths)
-    output = _git(repo, *args)
+    output = _git(repo, *args, literal_pathspecs=bool(paths))
     truncated = len(output) > MAX_DIFF_BYTES
     if truncated:
         output = output[:MAX_DIFF_BYTES]
@@ -945,6 +1094,7 @@ async def commit_message_selected(
     return await _generate_message(diff)
 
 
+@_serialized_repo_operation
 def stash_checkout(
     repo: Path,
     ref: str,
