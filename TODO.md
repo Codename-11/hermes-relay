@@ -6,6 +6,18 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Restore the plugin manifest v2 declaration after the Hermes installer fix ships
+
+Hermes installers in affected stable releases reject `manifest_version: 2`
+before the v2-capable runtime loader can inspect the plugin. Track upstream
+[PR #85893](https://github.com/NousResearch/hermes-agent/pull/85893). Restore
+`plugin/plugin.yaml` to `manifest_version: 2` only after that fix ships in a
+stable Hermes release that Hermes-Relay can treat as its minimum supported
+version. Until then, keep the v1 compatibility declaration and the additive
+metadata consumed by newer hosts.
+
+---
+
 ## Consider hosted Android emulator execution
 
 The local API 36 Gradle Managed Device lanes are intentionally on demand and
