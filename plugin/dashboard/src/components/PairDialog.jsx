@@ -5,9 +5,11 @@ const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 import QRCode from "qrcode";
 import { mintPairingWithMode, probeEndpoints } from "../lib/api.js";
 import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
+import { pairingQrRenderOptions } from "../lib/pairing-qr.mjs";
 import {
   pairingEndpointReceipt,
   pairingProbeKey,
+  pairingProbeStatus,
   pairingSurfaceProbes,
 } from "../lib/pairing-receipt.mjs";
 import { Button, Badge } from "../lib/ui-shims.jsx";
@@ -204,9 +206,11 @@ export default function PairDialog({ open, onClose }) {
 
   useEffect(() => {
     if (state.status !== "ok" || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, state.data.qr_payload, {
-      width: 280, margin: 2, errorCorrectionLevel: "M",
-    }).catch(() => { /* canvas failure non-fatal */ });
+    QRCode.toCanvas(
+      canvasRef.current,
+      state.data.qr_payload,
+      pairingQrRenderOptions(),
+    ).catch(() => { /* canvas failure non-fatal */ });
   }, [state.status, state.data]);
 
   useEffect(() => {
@@ -320,7 +324,7 @@ export default function PairDialog({ open, onClose }) {
               </div>
             ) : state.status === "ok" ? (
               <>
-                <div className="hr-qr-frame">
+                <div className="hr-qr-frame hr-pairing-qr">
                   <canvas ref={canvasRef} className="block" aria-label="Hermes-Relay pairing QR code" />
                 </div>
                 <div className="hr-pair-code-row">
@@ -397,15 +401,9 @@ export default function PairDialog({ open, onClose }) {
                             surface: surface.surface,
                             url: surface.url,
                           }));
-                          const probeText = probe
-                            ? probe.reachable
-                              ? `Ready${probe.latency_ms != null ? ` · ${probe.latency_ms}ms` : ""}`
-                              : probe.status != null
-                                ? `HTTP ${probe.status}`
-                                : "Unreachable"
-                            : probeState.status === "loading"
-                              ? "Checking…"
-                              : "Not checked";
+                          const probeText = probeState.status === "loading" && !probe
+                            ? "Checking…"
+                            : pairingProbeStatus(probe).label;
                           return (
                             <div key={`${surface.surface}-${surface.url}`} className="hr-endpoint-surface">
                               <span className="text-xs font-medium">{surface.label}</span>

@@ -30,6 +30,8 @@ test("pairing uses the host dialog and keeps advanced connection options seconda
   assert.match(source, /Advanced connection options/);
   assert.match(source, /dashboard_url: dashboardUrl/);
   assert.match(source, /Unsafe pairing route blocked/);
+  assert.match(source, /pairingQrRenderOptions\(\)/);
+  assert.match(source, /hr-pairing-qr/);
   assert.match(source, /route\.protection/);
   assert.match(source, /surface\.label/);
   assert.doesNotMatch(source, /hr-modal-backdrop/);
@@ -54,6 +56,15 @@ test("remote access presents Dashboard ingress and keeps direct Relay explicitly
   assert.match(source, /Public Dashboard origin/);
   assert.match(source, /Legacy Relay proxy path/);
   assert.match(source, /probeEndpoints\(previewEndpoints\)/);
+  assert.match(source, /pairingProbeStatus\(r\)/);
+});
+
+test("pairing QR CSS preserves intrinsic module pixels", () => {
+  const source = read("../src/styles.css");
+
+  assert.match(source, /\.hr-pairing-qr canvas[\s\S]*width: auto !important/);
+  assert.match(source, /\.hr-pairing-qr canvas[\s\S]*max-width: none/);
+  assert.match(source, /\.hr-pairing-qr canvas[\s\S]*image-rendering: pixelated/);
 });
 
 test("media is labeled as a bounded token diagnostic", () => {

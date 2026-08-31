@@ -1,12 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { pairingQrRenderOptions } from "../src/lib/pairing-qr.mjs";
+
 import {
   classifyPublicRouteInput,
   dashboardServeState,
   pairingEndpointReceipt,
+  pairingProbeStatus,
   pairingSurfaceProbes,
 } from "../src/lib/pairing-receipt.mjs";
+
+test("pairing QR keeps integer modules and a four-module quiet zone", () => {
+  assert.deepEqual(pairingQrRenderOptions(), {
+    scale: 4,
+    margin: 4,
+    errorCorrectionLevel: "M",
+  });
+  assert.equal(Object.hasOwn(pairingQrRenderOptions(), "width"), false);
+});
+
+test("Relay auth challenge is healthy while API failures stay failures", () => {
+  assert.deepEqual(
+    pairingProbeStatus({ surface: "relay", status: 401, reachable: false }),
+    { healthy: true, label: "Auth required" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({ surface: "api", status: 401, reachable: false }),
+    { healthy: false, label: "HTTP 401" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({ surface: "relay", status: 200, reachable: true, latency_ms: 12 }),
+    { healthy: true, label: "Ready · 12ms" },
+  );
+});
 
 test("Dashboard Serve migration requires the dedicated recommended listener", () => {
   assert.deepEqual(

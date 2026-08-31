@@ -14,11 +14,13 @@ import {
 } from "../lib/api.js";
 import { relativeTime } from "../lib/formatters.js";
 import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
+import { pairingQrRenderOptions } from "../lib/pairing-qr.mjs";
 import {
   classifyPublicRouteInput,
   dashboardServeState,
   pairingEndpointReceipt,
   pairingProbeKey,
+  pairingProbeStatus,
   pairingSurfaceProbes,
 } from "../lib/pairing-receipt.mjs";
 import {
@@ -503,11 +505,11 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
 
   useEffect(() => {
     if (!qrPayload || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, qrPayload, {
-      width: 260,
-      margin: 2,
-      errorCorrectionLevel: "M",
-    }).catch(() => { /* non-fatal */ });
+    QRCode.toCanvas(
+      canvasRef.current,
+      qrPayload,
+      pairingQrRenderOptions(),
+    ).catch(() => { /* non-fatal */ });
   }, [qrPayload]);
 
   const reachabilityByUrl = useMemo(() => {
@@ -565,6 +567,7 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
             <TableBody>
               {endpoints.map((ep) => {
                 const r = reachabilityByUrl.get(pairingProbeKey(ep));
+                const probe = pairingProbeStatus(r);
                 return (
                   <TableRow key={pairingProbeKey(ep)}>
                     <TableCell>
@@ -577,13 +580,9 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
                     <TableCell className="text-xs">{ep.priority ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Dot tone={toneForReachable(r ? r.reachable : null)} />
+                        <Dot tone={toneForReachable(probe.healthy)} />
                         <span className="text-xs">
-                          {r && r.reachable === true
-                            ? `${r.status} · ${r.latency_ms}ms`
-                            : r && r.reachable === false
-                            ? r.error || `HTTP ${r.status ?? "?"}`
-                            : "—"}
+                          {r ? probe.label : "—"}
                         </span>
                       </div>
                     </TableCell>
@@ -625,7 +624,7 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
         </div>
 
         {qrPayload && (!blockingIssues || blockingIssues.length === 0) ? (
-          <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-white p-3">
+          <div className="hr-qr-frame hr-pairing-qr flex flex-col items-center gap-2">
             <canvas ref={canvasRef} className="block" />
             <p className="text-xs text-muted-foreground">
               Scan from the Hermes-Relay Android app. Fresh payload, signed with the

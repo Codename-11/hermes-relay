@@ -137,6 +137,24 @@ export function pairingProbeKey(entry) {
   return [entry.role, entry.priority, entry.surface, entry.url].join("|");
 }
 
+/** Convert a surface probe into honest, product-facing reachability. */
+export function pairingProbeStatus(result) {
+  if (!result) return { healthy: null, label: "Not checked" };
+  if (result.surface === "relay" && result.status === 401) {
+    return { healthy: true, label: "Auth required" };
+  }
+  if (result.reachable === true) {
+    return {
+      healthy: true,
+      label: `Ready${result.latency_ms != null ? ` · ${result.latency_ms}ms` : ""}`,
+    };
+  }
+  if (result.status != null) {
+    return { healthy: false, label: `HTTP ${result.status}` };
+  }
+  return { healthy: false, label: result.error || "Unreachable" };
+}
+
 /** Classify the recommended and old Dashboard Serve listeners independently. */
 export function dashboardServeState(service, recommendedListenerPort = 10443) {
   const active = !!(service && service.active === true);
