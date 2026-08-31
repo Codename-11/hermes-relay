@@ -81,6 +81,24 @@ class SupervisedModeStore private constructor(
         dataStore.edit { preferences -> preferences.remove(KEY_POLICIES) }
     }
 
+    /** Disable every policy while preserving its configured controls and remove the parent credential atomically. */
+    internal suspend fun disableAllAndRemoveCredential(
+        parentCredentialKey: Preferences.Key<String>,
+    ) {
+        dataStore.edit { preferences ->
+            val decoded = decode(preferences[KEY_POLICIES])
+            if (decoded.corrupt || decoded.policies.isEmpty()) {
+                preferences.remove(KEY_POLICIES)
+            } else {
+                val disabled = decoded.policies.mapValues { (_, policy) ->
+                    policy.copy(enabled = false).normalized()
+                }
+                preferences[KEY_POLICIES] = json.encodeToString(serializer, disabled)
+            }
+            preferences.remove(parentCredentialKey)
+        }
+    }
+
     private fun decode(raw: String?): DecodeResult {
         if (raw.isNullOrBlank()) return DecodeResult(emptyMap(), corrupt = false)
         return try {

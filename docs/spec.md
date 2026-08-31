@@ -7,7 +7,7 @@ Android's declarative plugin surface is specified in
 
 **Status:** v1.0.0 stable. The default path supports chat, Manage, and voice on vanilla upstream Hermes without installing the Relay plugin. Relay is additive: terminal, bridge/device control, notification companion, remote access, extra/provider-native voice, desktop tooling, and dashboard Relay management. Historical phase notes remain in this file for context; the current route ownership source of truth is [`docs/upstream-surface-matrix.md`](upstream-surface-matrix.md).
 **Repo:** [Codename-11/hermes-relay](https://github.com/Codename-11/hermes-relay)  
-**Updated:** 2026-08-29
+**Updated:** 2026-08-31
 
 ---
 
@@ -50,6 +50,27 @@ token, terminal/bridge grants, and optional network candidates.
    profile-pinned restricted interface, but it does not claim to make the
    selected Hermes profile, server, or agent child-safe. See ADR 66 and the
    [Supervised Mode guide](../user-docs/guide/supervised-mode.md).
+
+Supervised Mode parent authority is an app-global PIN or password, not Android's
+screen lock, device credential, or biometric prompt. The app stores only
+independently salted PBKDF2-HMAC-SHA256 verifiers (310,000 iterations) for the
+parent credential and a one-time six-word recovery phrase in app-private DataStore.
+The phrase uses six distinct words from a 128-word app vocabulary (about 42 bits)
+to favor accurate reading, typing, and parent-to-parent handoff for this client policy.
+Verification uses constant-time byte comparison and a persisted, capped backoff.
+Missing, malformed, unsupported, or weakened records fail closed. Enrollment is
+allowed only when the record is missing; changing it requires the current
+credential, and recovery reset requires the current recovery phrase. Both
+successful rotation paths issue a new recovery phrase and invalidate the old one.
+An authenticated parent may remove the app-global credential without the
+recovery phrase; the same atomic write sets every supervised policy to disabled
+while preserving its pinned profile, capability toggles, appearance, visibility,
+session controls, and relock settings.
+If both the credential and recovery phrase are lost, the supported local escape
+hatch is Android Settings → Apps → Hermes-Relay → Storage → Clear data.
+An existing enabled policy from before this credential scheme has no safe parent
+identity to migrate, so it remains restricted and requires local app-data reset
+and supervised reconfiguration rather than silently trusting a device user.
 
 ---
 
