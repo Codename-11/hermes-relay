@@ -556,6 +556,11 @@
     <string name="changelog_state_collapsed">Contraído</string>
     <string name="changelog_installed">Instalada</string>
     <string name="changelog_also_improved">También mejorado</string>
+    <string name="changelog_highlights">Destacados</string>
+    <string name="changelog_added">Añadido</string>
+    <string name="changelog_improved">Mejorado</string>
+    <string name="changelog_fixed">Corregido</string>
+    <string name="changelog_compatibility">Compatibilidad</string>
     <string name="changelog_toast_also">También: %1$s</string>
     <string name="changelog_view_all">Ver todo</string>
     <plurals name="changelog_additional_feature_count">
@@ -565,6 +570,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d corrección</item>
         <item quantity="other">%1$d correcciones</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d mejora</item>
+        <item quantity="other">%1$d mejoras</item>
     </plurals>
     <string name="diag_title">Diagnóstico</string>
     <string name="diag_back">Atrás</string>
@@ -3071,7 +3080,7 @@
     <string name="whats_new_full_history">Ver historial completo</string>
     <string name="whats_new_no_notes">No hay notas de versión disponibles</string>
     <string name="whats_new_title">¿Qué hay de nuevo?</string>
-    <string name="whats_new_subtitle">Novedades de la última versión</string>
+    <string name="whats_new_subtitle">Destacados y detalles completos de la versión</string>
     <string name="bridge_notification_auto_disabled_title">Acceso de pantalla temporizado vencido</string>
     <string name="bridge_notification_auto_disabled_body">La inspección y el control de pantalla están desactivados tras la inactividad. Los demás permisos no cambian.</string>
     <string name="bridge_notification_control_title">El agente Hermes tiene control del dispositivo.</string>

@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Android What's New now provides a readable, complete release record.** One overall title and summary lead into selected highlights, every remaining user-visible addition, improvement, and fix, and relevant compatibility boundaries. Toast counts and previews are derived from that same inventory, so View all no longer promises details the expanded dialog and history cannot show.
+
 ### Fixed
 
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)
+- **Supervised Gateway setup stays parent-owned.** Add Gateway is single-flight and checks live parent authority before allocating a draft, relock/back cancels the exact pending setup, and the locked Chat footer no longer attempts protected navigation.
 
 ## [Android 1.14.0] - 2026-08-30
 

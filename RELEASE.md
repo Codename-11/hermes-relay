@@ -531,13 +531,14 @@ the new app version and a higher `appVersionCode`.
   `retrace <mapping.txt> <obfuscated-trace.txt>`. Play reports can additionally
   use the mapping bundled into the uploaded AAB through Play Console.
 - `app/src/main/assets/changelog.json` — curated source for the in-app
-  **What's New** dialog and Android release history. Prepend the newest entry
-  with one explicit `highlight` (`title`, plain-language `summary`, and 1–3
-  user-benefit bullets), up to two quieter `improvements`, Android-only
-  `playNotes`, a `toastDigest` with counts and 0–2 short previews for noteworthy
-  items beyond the hero, and the existing technical `sections` used by older clients.
-  Do not derive the highlight mechanically from `CHANGELOG.md`; choosing the
-  release's main reason to care is an editorial release-prep decision.
+  **What's New** dialog and Android release history. Prepend one schema-3 entry
+  with a single descriptive release `title`, a plain-language `summary`, and a
+  complete `changes` inventory. Every user-visible change has a stable `id`, a
+  `kind` (`added`, `improved`, or `fixed`), a short title, a useful explanation,
+  and an optional `highlight: true`; select 1–4 highlights. Add `compatibility`
+  bullets only when users need an availability, migration, flavor, or Plugin
+  boundary, plus Android-only `playNotes`. The app derives toast counts and
+  previews from the same inventory and renders every change exactly once.
 - `app/src/main/assets/whats_new.txt` — legacy in-app fallback generated from
   the newest structured entry. Do not edit it independently.
 - `app/src/googlePlay/play/release-notes/en-US/default.txt` — the Play
@@ -551,8 +552,8 @@ the new app version and a higher `appVersionCode`.
   block and the Gradle Play Publisher note are generated from `playNotes`.
   After editing the newest structured entry, run
   `python scripts/check-android-release-notes.py --write`, then run it again
-  without `--write` to validate the 1–3 / 0–2 editorial limits, current Android
-  version, GitHub-release/changelog headings, derived files, and Play's
+  without `--write` to validate complete unique change records, 1–4 highlights,
+  the current Android version, GitHub-release/changelog headings, derived files, and Play's
   **500-character** limit. Frame Play copy around the release's themes, not a
   feature dump. Compare its **Foreground service
   permissions** section with the merged `googlePlayRelease` manifest and
@@ -570,28 +571,30 @@ authoring contract; do not maintain a separate prompt file.
    boundary that users must understand. Do not generate from commit titles or
    a mixed-surface changelog block alone.
 2. Before editing release files, show a temporary coverage ledger in the task
-   output. Map every selected source change to exactly one placement:
-   `hero`, `secondary`, or `full-only`. Include the change kind (`feature`,
-   `change`, or `fix`) and a short reason. The ledger is review evidence, not a
-   committed public artifact; no selected source item may disappear silently.
-3. Choose exactly one `hero`: the strongest user-facing reason to care about
-   the release. Its summary is one plain-language outcome, and its 1–3 bullets
-   are distinct user benefits rather than implementation steps or filler.
-4. Use `secondary` for other important user-visible features and fixes. The
-   `toastDigest` counts only these items, excluding the hero. Preview the
-   strongest 1–2 secondary items in short phrases. If there are no legitimate
-   secondary items, set both counts to `0` and `preview` to `[]`; the app hides
-   the footer. Never invent an item to satisfy the layout.
-5. Use `full-only` for technically relevant details that belong in
-   `RELEASE_NOTES.md` or `CHANGELOG.md` but would make the collapsed update card
-   noisy. Preserve user-relevant trust and compatibility limits; omit branches,
-   worktrees, CI mechanics, debugging history, and private/operator context.
+   output. Map every selected Android source change to one stable change id and
+   one kind (`added`, `improved`, or `fixed`), and mark whether it is a
+   highlight. The ledger is review evidence, not a committed public artifact;
+   no selected user-visible change may disappear silently or be counted twice.
+3. Write one release title that describes the release as a whole. Do not let a
+   narrow feature name, internal project label, or poetic codename replace the
+   title users see in the toast and history. Follow it with a one- or two-sentence
+   summary that gives the release's overall outcome without becoming a feature dump.
+4. Select 1–4 highlights from the complete change inventory. A highlight is a
+   strong reason to care, not a second copy of the change: the app presents it
+   once in the highlight section and derives the remaining counts and previews
+   from non-highlighted changes.
+5. Include every meaningful user-visible addition, improvement, and fix in
+   `changes`, using plain titles and enough explanation for someone to recognize
+   the affected behavior. Internal refactors, tests, CI mechanics, branch work,
+   and debugging history stay in `RELEASE_NOTES.md`, `CHANGELOG.md`, or engineering
+   records unless they materially change reliability, security, or compatibility.
 6. Write each surface for its audience:
    - `RELEASE_NOTES.md`: concise Summary plus Added/Changed/Fixed; keep the
      deterministic Download and Install/Verify scaffolding intact.
    - `CHANGELOG.md`: complete, crisp public history for the released surface.
-   - `changelog.json`: curated hero, optional improvements, digest, Play copy,
-     and compatibility `sections` for older clients.
+   - `changelog.json`: overall title/summary, complete typed changes, selected
+     highlights, compatibility boundaries, and Play copy. Counts and previews
+     are derived; never author a parallel digest.
    - `playNotes`: Android-only themes within the rendered 500-character limit.
 7. Before presenting the draft, check that wording begins with user outcomes,
    avoids unexplained implementation terminology, uses exact public product
