@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+## 2026-08-31 — Android Gateway compaction watchdog lease
+
+Gateway turns now recognize the upstream `status.update` payload kind
+`compacting` and arm a ten-minute idle lease instead of the ordinary
+three-minute watchdog. A single current-Gateway status protects silent
+compaction, while repeated status heartbeats from newer gateways refresh the
+same lease. Other status payloads retain the ordinary watchdog.
+
+Focused Gateway client coverage uses shortened timeout seams to prove the
+single-status, repeated-heartbeat, ordinary-silence, and payload-fencing paths
+without waiting production minutes. The declarative vanilla-Gateway fixture
+also models repeated compaction status before terminal completion.
+
 ## 2026-08-27 — Fixed issue ownership and bounded PR intake
 
 The automated issue first-response lane now assigns only `Codename-11` when the

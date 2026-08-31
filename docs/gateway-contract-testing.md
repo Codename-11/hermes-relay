@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `compaction_status` | Compaction status is client-visible before terminal completion and may repeat as a heartbeat |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
 | `scope_rejection_inputs` | Exact, foreign, and unscoped event inputs |

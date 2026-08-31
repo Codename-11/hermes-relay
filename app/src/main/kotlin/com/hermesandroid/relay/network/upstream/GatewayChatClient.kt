@@ -119,6 +119,8 @@ class GatewayChatClient(
     private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
+    /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
+    private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
@@ -4244,7 +4246,7 @@ class GatewayChatClient(
         eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
         eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
         eventType == "status.update" &&
-            payload?.stringField("kind") == "compacting" -> COMPACTING_TIMEOUT_MS
+            payload?.stringField("kind") == "compacting" -> compactingTimeoutMs
         else -> turnIdleTimeoutMs
     }
 
