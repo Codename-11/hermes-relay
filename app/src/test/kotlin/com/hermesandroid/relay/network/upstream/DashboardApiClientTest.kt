@@ -562,10 +562,15 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun signInRequiredClassifierAcceptsNoCookieButRejectsForbidden() {
+    fun signInRequiredClassifierAcceptsEveryUnauthorizedShapeButRejectsForbidden() {
         val noCookie = DashboardHttpException(
             401,
             "Session failed - HTTP 401: {\"reason\":\"no_cookie\",\"detail\":\"Unauthorized\"}",
+        )
+        val generic = DashboardHttpException(401, "Session failed - HTTP 401: Unauthorized")
+        val expired = DashboardHttpException(
+            401,
+            "Session failed - HTTP 401: {\"reason\":\"session_expired\"}",
         )
         val forbidden = DashboardHttpException(
             403,
@@ -573,6 +578,8 @@ class DashboardApiClientTest {
         )
 
         assertTrue(noCookie.isDashboardSignInRequiredFailure())
+        assertTrue(generic.isDashboardSignInRequiredFailure())
+        assertTrue(expired.isDashboardSignInRequiredFailure())
         assertFalse(forbidden.isDashboardSignInRequiredFailure())
     }
 

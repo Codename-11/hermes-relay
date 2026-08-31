@@ -390,6 +390,11 @@ class UpstreamTransportController(
         _gatewayAvailability.value = GatewayAvailability.Unsupported
     }
 
+    /** Dashboard REST rejected the active session even if the old socket is still open. */
+    fun markGatewaySignInRequired() {
+        _gatewayAvailability.value = GatewayAvailability.SignInRequired
+    }
+
     /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
     fun updateGatewayAvailability(probed: GatewayAvailability) {
         val current = _gatewayAvailability.value

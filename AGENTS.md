@@ -13,6 +13,7 @@ not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Gateway/session/reconnect testing → **[docs/gateway-contract-testing.md](docs/gateway-contract-testing.md)**
+- Android emulator lanes → **[docs/android-emulator-testing.md](docs/android-emulator-testing.md)** — suggest the smallest relevant API 36 lanes; never run the full matrix automatically
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
 - Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
