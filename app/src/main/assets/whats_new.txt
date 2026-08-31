@@ -1,10 +1,31 @@
-v1.14.0 - Connections that follow you
+v1.14.0 - Connections, delegated work, Git, and voice
 
-Reliable routes
-* Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.
-* Preview delegated agent work and use the optional native Git workspace.
-* Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls.
+Summary
+* Connections now recover cleanly across networks. You can also follow delegated agents, work with Git repositories, and rely on steadier voice, sessions, Threads, profiles, Assistant, and Clarify controls.
 
-Also improved
-* Wake-word detection now packages a compatible native runtime for every supported ABI.
-* Protected Relay health checks no longer appear as broken routes.
+Highlights
+* Connections recover independently — Move between LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication.
+* Follow delegated-agent activity — See lifecycle, progress, tool previews, and available read-only child history from the parent chat.
+* Work with repositories from Android — Review status, diffs, branches, staging, commits, and remotes from Chat or Settings.
+* Steer voice at any time — Stop or redirect Hermes while it is Thinking, Transcribing, or Speaking, including with accessibility controls.
+
+Improved
+* Release notes stay out of your way — A dismissible post-update notice keeps startup usable and leaves the complete history available from Settings.
+* Chat uses one consistent presentation — The overlapping clean-focus mode was removed while the separate Voice Focus experience remains available.
+
+Fixed
+* Wake-word detection starts reliably — Compatible native voice components are now packaged for every supported phone architecture.
+* The visible Sphere keeps moving smoothly — Foreground animation no longer falls back to a stepped ambient pulse.
+* Continuous voice keeps the microphone — The next listening turn waits for barge-in recording to release cleanly.
+* New chats keep the selected profile — Fresh drafts no longer reopen an older session or carry a Thread route into another profile.
+* Provisional Threads can be removed safely — Local removal and later session promotion no longer risk duplicate rows or server history.
+* Clarify keeps custom answers reachable — Other answers, keyboard Send, and expired prompts now behave consistently.
+* Browsing no longer interrupts another client — Passive Android observation does not claim a turn owned by Desktop, TUI, or another client.
+* Assistant sessions recover more clearly — No-speech feedback, recreated session state, and keyguard privacy now remain intact.
+* Protected Relay routes report the right problem — Authentication challenges are no longer presented as outages, while unsafe routes still fail closed.
+* Connections and sessions become ready sooner — Unavailable optional API and Relay routes no longer delay a healthy Dashboard or authenticated session history.
+
+Compatibility
+* Standard Chat, sessions, profiles, Manage, and standard voice continue to work without the optional Hermes-Relay Plugin.
+* The Git workspace and same-origin Relay extensions require Hermes-Relay Plugin 1.11.0.
+* Granular Device Control and the system Voice Focus overlay remain available only in the sideload build.

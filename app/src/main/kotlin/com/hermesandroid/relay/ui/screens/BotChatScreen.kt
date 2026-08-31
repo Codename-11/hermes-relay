@@ -56,11 +56,21 @@ import com.hermesandroid.relay.data.BotRosterEntry
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
+import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
+import kotlinx.coroutines.flow.Flow
+
+internal typealias BotChatHistoryLoader = suspend (
+    profileName: String,
+    sessionId: String,
+    mode: SessionMessageLoadMode,
+) -> Result<List<MessageItem>>
+internal typealias BotChatProfileIconFlow = (connectionId: String, profileName: String) -> Flow<String?>
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,14 +84,52 @@ fun BotChatScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
-    val handler = remember(route.key) { ChatHandler() }
+    BotChatScreen(
+        route = route,
+        bot = bot,
+        sessionId = sessionId,
+        gatewayClient = gatewayClient,
+        dashboardClient = dashboardClient,
+        chatViewModel = chatViewModel,
+        onBack = onBack,
+        handlerFactory = ::ChatHandler,
+        historyLoader = { profileName, storedSessionId, mode ->
+            dashboardClient.getSessionMessages(
+                sessionId = storedSessionId,
+                profile = profileName,
+                mode = mode,
+            )
+        },
+        profileIconFlow = connectionViewModel::profileIconFlow,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun BotChatScreen(
+    route: BotGatewayRoute,
+    bot: BotRosterEntry,
+    sessionId: String,
+    gatewayClient: GatewayChatClient,
+    dashboardClient: DashboardApiClient,
+    chatViewModel: ChatViewModel,
+    onBack: () -> Unit,
+    handlerFactory: () -> ChatHandler,
+    historyLoader: BotChatHistoryLoader,
+    profileIconFlow: BotChatProfileIconFlow,
+) {
+    val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
-    val messages by chatViewModel.messages.collectAsState()
-    val isStreaming by chatViewModel.isStreaming.collectAsState()
+    // This route owns the handler but binds it to the ViewModel only after the
+    // first composition. Collecting delegated ViewModel getters here can pin
+    // Compose to their empty pre-bind fallback when history settles before the
+    // next frame. Observe the route-owned source directly so StateFlow replay
+    // covers fast history, live streaming, completion, and errors.
+    val messages by handler.messages.collectAsState()
+    val isStreaming by handler.isStreaming.collectAsState()
     val isLoading by chatViewModel.isLoadingHistory.collectAsState()
-    val error by chatViewModel.error.collectAsState()
-    val iconPath by connectionViewModel
-        .profileIconFlow(route.connectionId, route.profileName)
+    val error by handler.error.collectAsState()
+    val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
     var composer by remember(route.key, sessionId) { mutableStateOf("") }
@@ -101,11 +149,7 @@ fun BotChatScreen(
             selected?.name == route.profileName
         }
         chatViewModel.setProfileMessageLoaderWithMode { _, storedSessionId, mode ->
-            dashboardClient.getSessionMessages(
-                sessionId = storedSessionId,
-                profile = route.profileName,
-                mode = mode,
-            )
+            historyLoader(route.profileName, storedSessionId, mode)
         }
         chatViewModel.updateApiClient(null)
         chatViewModel.updateGatewayClient(gatewayClient)

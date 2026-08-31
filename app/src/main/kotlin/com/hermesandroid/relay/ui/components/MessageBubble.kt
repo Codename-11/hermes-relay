@@ -83,6 +83,7 @@ import com.hermesandroid.relay.data.HermesCardAction
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.data.MessageDeliveryStatus
 import com.hermesandroid.relay.data.MessageRole
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.data.parseChatQuotedPrompt
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
@@ -292,9 +293,7 @@ fun MessageBubble(
         append(streamingStatusLabel ?: visibleMessageContent.take(100))
     }
     val hasImageGenerationCall = remember(message.toolCalls) {
-        message.toolCalls.any {
-            it.name.trim().lowercase() == "image_generate"
-        }
+        message.toolCalls.any { isImageGenerationToolName(it.name) }
     }
     val imageGenerationStartMillis = remember(message.toolCalls) {
         imageGenerationStartedAt(message.toolCalls)

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Run fast Android checks before pushing a PR update.
+"""Run the optional full local Android pre-push gate.
 
-The command checks the primary Play debug variant and focused CI unit tests in
-one Gradle invocation. Hosted CI remains the exhaustive all-variant gate.
+By default the command checks the primary Play debug variant and focused CI
+unit tests in one Gradle invocation. `--both-flavors` expands that to full lint
+and both focused flavor shards. Agents should prefer Android On-Demand after an
+exact commit is already pushed; this remains available when full local proof is
+explicitly wanted or cloud execution is unavailable.
 """
 
 from __future__ import annotations
@@ -71,6 +74,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-lint", action="store_true", help="Skip Android lint")
     parser.add_argument("--skip-tests", action="store_true", help="Skip the focused unit-test shard")
+    parser.add_argument(
+        "--both-flavors",
+        action="store_true",
+        help="Run full lint and focused tests for sideload and Google Play",
+    )
     args = parser.parse_args()
 
     env = android_environment()
@@ -79,24 +87,41 @@ def main() -> int:
 
     tasks: list[str] = []
     if not args.skip_lint:
-        tasks.append(":app:lintGooglePlayDebug")
+        tasks.append("lint" if args.both_flavors else ":app:lintGooglePlayDebug")
     if not args.skip_tests:
         tasks.append(":app:testSideloadDebugUnitTest")
+        if args.both_flavors:
+            tasks.append(":app:testGooglePlayDebugUnitTest")
     if not tasks:
         print("\nAndroid repository checks passed.")
         return 0
 
-    wrapper = REPO_ROOT / ("gradlew.bat" if sys.platform == "win32" else "gradlew")
-    gradle = [
-        str(wrapper),
+    if sys.platform == "win32":
+        gradle = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "android-lane.ps1"),
+            "gradle",
+        ]
+    else:
+        gradle = [str(REPO_ROOT / "gradlew")]
+    gradle.extend([
         "--console=plain",
         "--configuration-cache",
         *tasks,
-    ]
+    ])
     if not args.skip_tests:
         for test_name in FOCUSED_TESTS:
             gradle.extend(("--tests", test_name))
-    run("Google Play lint and focused tests", gradle, env)
+    label = (
+        "Full local Android lint and focused tests"
+        if args.both_flavors
+        else "Google Play lint and focused tests"
+    )
+    run(label, gradle, env)
     print("\nAndroid pre-push checks passed.")
     return 0
 

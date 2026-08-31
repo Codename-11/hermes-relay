@@ -7,12 +7,14 @@ coding agent (Claude Code, Codex, Cursor, etc.).
 
 This file is the provider-neutral canonical agent context. Read it before
 touching code, then `docs/spec.md` and `docs/decisions.md`. Provider adapters
-such as **[CLAUDE.md](CLAUDE.md)** may add tool-specific guidance, but they do
-not redefine the branch, release, or hotfix policy here and in `RELEASE.md`.
+such as **[CLAUDE.md](CLAUDE.md)** import this file instead of duplicating
+policy. They do not redefine the branch, release, hotfix, or verification
+contract here and in `RELEASE.md`.
 
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Gateway/session/reconnect testing → **[docs/gateway-contract-testing.md](docs/gateway-contract-testing.md)**
+- Android local/cloud verification → **[docs/android-build-lane.md](docs/android-build-lane.md)**
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
 - Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
@@ -83,16 +85,21 @@ PR; never resolve those cases by choosing a side automatically.
   Version bumps happen only on a release-prep branch targeting `dev`, and
   production tags are cut only from `main`.
 - **Android:** Jetpack Compose only (no XML), kotlinx.serialization (no Gson),
-  OkHttp (no Ktor), `wss://` only. Run `./gradlew lint` before pushing Kotlin.
-  For interactive device-review loops, run focused tests plus the affected
-  assemble/install task; run the full affected-variant lint once when the
-  combined candidate is final, or earlier only for lint-sensitive resource,
-  manifest, dependency, or build-configuration changes. Do not repeat full
-  variant lint after every small Kotlin iteration.
+  OkHttp (no Ktor), `wss://` only. While editing, use only the narrow local
+  compile or focused test needed for feedback, through `scripts/android-lane.ps1`
+  on Windows. Once an exact commit is already pushed, prefer the `Android
+  On-Demand` workflow for lint, the focused shards, both-flavor assemblies, and
+  release smoke; isolated cloud jobs may run concurrently. Do not push solely
+  to obtain cloud compute without push authorization, and do not duplicate a
+  preset already running for the same SHA. Full local verification remains
+  available through `scripts/dev.bat prepush` (or `./scripts/dev.sh prepush`)
+  when explicitly wanted or when cloud execution is unavailable.
+  Physical-device checks and APK installation remain separately owned local
+  evidence.
 - **Plugin (Python 3.11+):** aiohttp + asyncio (no threading), type hints
   everywhere, structured `logging` (no `print`). **Desktop CLI (Node ≥21):**
-  zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Full
-  per-language style and the dev loop live in CLAUDE.md → "Code Style".
+  zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Contributor
+  commands and the development loop live in `CONTRIBUTING.md`.
 
 ## Review guidelines
 

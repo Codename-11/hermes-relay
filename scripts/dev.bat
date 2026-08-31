@@ -4,6 +4,11 @@ REM Usage: scripts\dev.bat <command>
 
 cd /d "%~dp0\.."
 
+REM Secondary worktrees normally do not carry local.properties. Reuse the
+REM standard per-user SDK location when the caller has not selected one.
+if not defined ANDROID_HOME if exist "%LOCALAPPDATA%\Android\Sdk" set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+if not defined ANDROID_SDK_ROOT if defined ANDROID_HOME set "ANDROID_SDK_ROOT=%ANDROID_HOME%"
+
 if "%1"=="" goto help
 if "%1"=="build" goto build
 if "%1"=="release" goto release
@@ -27,14 +32,15 @@ goto help
 
 :build
 echo Building sideload debug APK...
-call gradlew.bat :app:assembleSideloadDebug --console=plain
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:assembleSideloadDebug --console=plain
+if errorlevel 1 exit /b %errorlevel%
 echo APK: app\build\outputs\apk\sideload\debug\
 goto end
 
 :release
 echo Building release APK...
-call gradlew.bat assembleRelease
-if errorlevel 1 goto end
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle assembleRelease
+if errorlevel 1 exit /b %errorlevel%
 echo.
 echo Release APK:
 dir /b app\build\outputs\apk\release\*.apk 2>nul
@@ -43,8 +49,8 @@ goto end
 
 :bundle
 echo Building release AAB (for Google Play upload)...
-call gradlew.bat bundleRelease
-if errorlevel 1 goto end
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle bundleRelease
+if errorlevel 1 exit /b %errorlevel%
 echo.
 echo Release AAB:
 dir /b app\build\outputs\bundle\release\*.aab 2>nul
@@ -53,8 +59,8 @@ goto end
 
 :install
 echo Building and installing sideload debug to connected device...
-call gradlew.bat :app:installSideloadDebug --console=plain
-if errorlevel 1 goto end
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:installSideloadDebug --console=plain
+if errorlevel 1 exit /b %errorlevel%
 echo Launching app...
 REM Explicit FQCN: the sideload applicationId includes the flavor suffix but the
 REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
@@ -64,8 +70,8 @@ goto end
 
 :run
 echo Building, installing, and launching sideload debug...
-call gradlew.bat :app:installSideloadDebug --console=plain
-if errorlevel 1 goto end
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:installSideloadDebug --console=plain
+if errorlevel 1 exit /b %errorlevel%
 REM Explicit FQCN: the sideload applicationId includes the flavor suffix but the
 REM namespace (and thus the real class FQCN) is still com.hermesandroid.relay,
 REM so the `.MainActivity` shorthand no longer resolves correctly.
@@ -75,7 +81,8 @@ goto end
 
 :compile
 echo Compiling sideload debug Kotlin...
-call gradlew.bat :app:compileSideloadDebugKotlin --console=plain
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:compileSideloadDebugKotlin --console=plain
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :testone
@@ -84,35 +91,40 @@ if "%~2"=="" (
     exit /b 2
 )
 echo Running focused sideload test: %~2
-call gradlew.bat :app:testSideloadDebugUnitTest --tests "%~2" --console=plain
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:testSideloadDebugUnitTest --tests "%~2" --console=plain
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :installfast
 echo Building arm64 sideload debug and installing to connected phone...
-call gradlew.bat :app:installSideloadDebug -Phermes.devAbi=arm64-v8a --console=plain
-if errorlevel 1 goto end
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:installSideloadDebug -Phermes.devAbi=arm64-v8a --console=plain
+if errorlevel 1 exit /b %errorlevel%
 echo Launching app...
 adb shell am start -n com.axiomlabs.hermesrelay.sideload/com.hermesandroid.relay.MainActivity
 goto end
 
 :test
 echo Running sideload debug unit tests...
-call gradlew.bat :app:testSideloadDebugUnitTest --console=plain
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:testSideloadDebugUnitTest --console=plain
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :lint
 echo Running sideload debug lint...
-call gradlew.bat :app:lintSideloadDebug --console=plain
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle :app:lintSideloadDebug --console=plain
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :prepush
 echo Running Android pre-push checks...
-python scripts\android-prepush.py
+python scripts\android-prepush.py --both-flavors
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :clean
 echo Cleaning build...
-call gradlew.bat clean
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\android-lane.ps1 gradle clean
+if errorlevel 1 exit /b %errorlevel%
 goto end
 
 :devices
@@ -162,7 +174,7 @@ echo   test-one   Run one test class or wildcard pattern
 echo   install-fast  Build arm64 only + install + launch
 echo   test       Run sideload debug unit tests
 echo   lint       Run lint checks
-echo   prepush    Run Android repository checks, lint, and focused CI tests
+echo   prepush    Run the optional full local Android verification gate
 echo   clean      Clean build outputs
 echo   devices    List connected devices
 echo   version    Show current version from libs.versions.toml

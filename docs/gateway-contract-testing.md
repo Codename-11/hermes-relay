@@ -66,6 +66,7 @@ the upstream contract identifiers it depends on.
 
 | Scenario | Contract exercised |
 |---|---|
+| `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
@@ -110,8 +111,8 @@ turn is live. The external lane consumes the shared Python fixture and reads
 its authoritative history over HTTP.
 
 ```powershell
-.\gradlew.bat :app:compileSideloadDebugAndroidTestKotlin
-.\gradlew.bat :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
+.\scripts\android-lane.ps1 gradle :app:compileSideloadDebugAndroidTestKotlin
+.\scripts\android-lane.ps1 gradle :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
 ```
 
 The external test is opt-in through the instrumentation argument
@@ -125,7 +126,7 @@ transport ID, targets only `com.axiomlabs.hermesrelay.sideload`, and performs no
 installation unless its corresponding install flag is supplied.
 
 ```powershell
-python scripts/android-gateway-certify.py `
+.\scripts\android-lane.ps1 exec python scripts/android-gateway-certify.py `
   --transport-id <adb-transport-id> `
   --apk app/build/outputs/apk/sideload/debug/<sideload-apk> `
   --test-apk app/build/outputs/apk/androidTest/sideload/debug/<test-apk> `

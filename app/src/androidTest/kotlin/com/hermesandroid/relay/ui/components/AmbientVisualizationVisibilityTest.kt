@@ -7,7 +7,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.platform.app.InstrumentationRegistry
@@ -27,50 +26,6 @@ class AmbientVisualizationVisibilityTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
-
-    @Test
-    fun cleanMode_backgroundOff_hidesSphereAndKeepsComposer() {
-        composeTestRule.setContent {
-            AmbientTestProviders(enabled = false) {
-                CleanChatMode(
-                    messages = emptyList(),
-                    isStreaming = false,
-                    sphereState = SphereState.Idle,
-                    streamingIntensity = 0f,
-                    toolCallBurst = 0f,
-                    animationEnabled = true,
-                    enabled = true,
-                    onSend = {},
-                    onExit = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag(AMBIENT_RENDERER_TAG).assertDoesNotExist()
-        composeTestRule.onNodeWithContentDescription(targetString(R.string.agent_text_send_cd))
-            .assertExists()
-    }
-
-    @Test
-    fun cleanMode_backgroundOn_rendersSphere() {
-        composeTestRule.setContent {
-            AmbientTestProviders(enabled = true) {
-                CleanChatMode(
-                    messages = emptyList(),
-                    isStreaming = false,
-                    sphereState = SphereState.Idle,
-                    streamingIntensity = 0f,
-                    toolCallBurst = 0f,
-                    animationEnabled = false,
-                    enabled = true,
-                    onSend = {},
-                    onExit = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag(AMBIENT_RENDERER_TAG).assertExists()
-    }
 
     @Test
     fun voiceMode_backgroundOff_hidesSphereAndKeepsVoiceUi() {

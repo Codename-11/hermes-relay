@@ -61,9 +61,11 @@ class WhatsNewToastScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText("Supervised Mode").assertExists()
-        compose.onNodeWithText("Also: 2 fixes").assertExists()
-        compose.onNodeWithText("Accurate activity, safer return…").assertExists()
+        compose.onNodeWithText("Connections, delegated work, Git, and voice").assertExists()
+        compose.onNodeWithText("Also: 2 improvements · 10 fixes").assertExists()
+        compose.onNodeWithText(
+            "Release notes stay out of your way, Chat uses one consistent presentation…",
+        ).assertExists()
         compose.onNodeWithText("View all").assertExists()
         compose.onNodeWithContentDescription("Close").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/whats-new-toast-large-text.png")
@@ -84,7 +86,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Supervised Mode").performClick()
+        compose.onNodeWithText("Connections, delegated work, Git, and voice").performClick()
         expanded = false
         compose.onNodeWithText("View all").performClick()
         compose.onNodeWithContentDescription("Close").performClick()
@@ -106,7 +108,8 @@ class WhatsNewToastScreenshotTest {
             }
         }
         compose.mainClock.advanceTimeBy(300L)
-        compose.onNodeWithText("Supervised Mode").performTouchInput { swipeLeft(durationMillis = 300L) }
+        compose.onNodeWithText("Connections, delegated work, Git, and voice")
+            .performTouchInput { swipeLeft(durationMillis = 300L) }
         compose.mainClock.advanceTimeBy(300L)
 
         assertTrue(dismissed)
