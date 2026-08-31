@@ -262,6 +262,11 @@ internal class HermesRuntimeBinder(
             chat.isStreaming.collect(connection::setChatStreaming)
         }
         jobs += runtime.coroutineScope.launch {
+            chat.conversationBinding.collect { binding ->
+                connection.setActiveConversationTransport(binding.transport)
+            }
+        }
+        jobs += runtime.coroutineScope.launch {
             combine(
                 connection.activeConnectionId,
                 connection.selectedProfile,

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android Chat keeps one transport owner through sign-out and outages.** Dashboard/Gateway conversations now preserve their transcript, draft, profile, and session for sign-in or retry instead of silently sending the next turn to a reachable Direct API database. Legacy API-only connections and explicitly selected Direct API chats remain supported.
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)
 
 ## [Android 1.14.0] - 2026-08-30

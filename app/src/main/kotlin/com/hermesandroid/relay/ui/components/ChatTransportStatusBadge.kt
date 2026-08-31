@@ -20,10 +20,10 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 
 enum class ChatTransportTier(val endpointId: String, val label: String) {
-    Gateway("gateway", "⚡ Gateway"),
-    Sessions("sessions", "📡 Sessions"),
-    Completions("completions", "Completions"),
-    Runs("runs", "Runs"),
+    Gateway("gateway", "⚡ Chat"),
+    Sessions("sessions", "Direct API"),
+    Completions("completions", "Direct API"),
+    Runs("runs", "Direct API"),
     Offline("offline", "offline"),
 }
 
@@ -67,18 +67,6 @@ fun resolveChatTransportStatus(
             detail = "No reachable Hermes chat transport is available.",
         )
 
-    fun sseFallback(gatewayReason: String): ChatTransportStatus {
-        if (!serverCapabilities.healthy) return offline(gatewayReason)
-        val tier = preferredAvailableSseTier(serverCapabilities)
-            ?: return offline(gatewayReason)
-        return ChatTransportStatus(
-            tier = tier,
-            tone = ChatTransportTone.Fallback,
-            reason = "$gatewayReason → ${tier.plainName()}",
-            detail = "${tier.detailText()} Using this as the fallback while Gateway is unavailable.",
-        )
-    }
-
     fun manualSse(tier: ChatTransportTier, supported: Boolean): ChatTransportStatus {
         if (!serverCapabilities.healthy) return offline()
         return if (supported) {
@@ -94,23 +82,17 @@ fun resolveChatTransportStatus(
     }
 
     return when (preference) {
-        "auto" -> when {
+        "auto", "gateway" -> when {
             gatewayReady -> ChatTransportStatus(
                 tier = ChatTransportTier.Gateway,
                 tone = ChatTransportTone.Active,
-                reason = "auto → Gateway (best)",
+                reason = "Hermes Chat connected",
                 detail = ChatTransportTier.Gateway.detailText(),
             )
-            else -> sseFallback(gatewayFallbackReason(gatewayAvailability))
-        }
-        "gateway" -> when {
-            gatewayReady -> ChatTransportStatus(
-                tier = ChatTransportTier.Gateway,
-                tone = ChatTransportTone.Active,
-                reason = "Gateway selected",
-                detail = ChatTransportTier.Gateway.detailText(),
+            else -> unavailable(
+                ChatTransportTier.Gateway,
+                gatewayFallbackReason(gatewayAvailability),
             )
-            else -> sseFallback(gatewayFallbackReason(gatewayAvailability))
         }
         "sessions" -> manualSse(ChatTransportTier.Sessions, serverCapabilities.sessionsChatStream)
         "completions" -> manualSse(ChatTransportTier.Completions, serverCapabilities.portable)
@@ -119,42 +101,34 @@ fun resolveChatTransportStatus(
     }
 }
 
-private fun preferredAvailableSseTier(capabilities: ServerCapabilities): ChatTransportTier? =
-    when {
-        capabilities.sessionsChatStream -> ChatTransportTier.Sessions
-        capabilities.portable -> ChatTransportTier.Completions
-        capabilities.runs -> ChatTransportTier.Runs
-        else -> null
-    }
-
 private fun gatewayFallbackReason(availability: GatewayAvailability): String =
     when (availability) {
-        GatewayAvailability.SignInRequired -> "gateway sign-in required"
-        GatewayAvailability.Unreachable -> "gateway unavailable"
-        GatewayAvailability.Unsupported -> "gateway unsupported"
-        GatewayAvailability.Unknown -> "checking gateway"
-        GatewayAvailability.Ready -> "gateway ready"
+        GatewayAvailability.SignInRequired -> "Dashboard sign-in required"
+        GatewayAvailability.Unreachable -> "Hermes Chat unavailable"
+        GatewayAvailability.Unsupported -> "Hermes Chat unsupported"
+        GatewayAvailability.Unknown -> "Checking Hermes Chat"
+        GatewayAvailability.Ready -> "Hermes Chat ready"
     }
 
 private fun ChatTransportTier.plainName(): String =
     when (this) {
         ChatTransportTier.Gateway -> "Gateway"
-        ChatTransportTier.Sessions -> "Sessions"
-        ChatTransportTier.Completions -> "Completions"
-        ChatTransportTier.Runs -> "Runs"
+        ChatTransportTier.Sessions -> "Direct API"
+        ChatTransportTier.Completions -> "Direct API"
+        ChatTransportTier.Runs -> "Direct API"
         ChatTransportTier.Offline -> "offline"
     }
 
 private fun ChatTransportTier.detailText(): String =
     when (this) {
         ChatTransportTier.Gateway ->
-            "Gateway uses the dashboard WebSocket /api/ws for live thinking and rich tool events."
+            "Hermes Chat uses the signed-in Dashboard connection."
         ChatTransportTier.Sessions ->
-            "Sessions uses /api/sessions/{id}/chat/stream with server-side session history."
+            "Direct API compatibility chat with server-side session history."
         ChatTransportTier.Completions ->
-            "Completions uses OpenAI-compatible SSE at /v1/chat/completions."
+            "Direct API compatibility chat."
         ChatTransportTier.Runs ->
-            "Runs uses /v1/runs plus streamed run events."
+            "Direct API compatibility chat with streamed run events."
         ChatTransportTier.Offline ->
             "No chat transport is reachable."
     }

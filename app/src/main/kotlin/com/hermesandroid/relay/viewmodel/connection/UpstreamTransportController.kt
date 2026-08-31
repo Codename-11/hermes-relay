@@ -667,11 +667,15 @@ class UpstreamTransportController(
      * - "sessions" / "completions" / "runs" pass through unchanged (manual override wins).
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
-    fun resolveStreamingEndpoint(preference: String): String =
+    fun resolveStreamingEndpoint(
+        preference: String,
+        gatewayOwned: Boolean,
+    ): String =
         resolveStreamingEndpointPreference(
             preference = preference,
             gateway = _gatewayAvailability.value,
             capabilities = _serverCapabilities.value,
+            gatewayOwned = gatewayOwned,
         )
 
     /**

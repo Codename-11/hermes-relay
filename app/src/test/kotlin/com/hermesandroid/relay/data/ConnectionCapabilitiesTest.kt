@@ -38,6 +38,7 @@ class ConnectionCapabilitiesTest {
         assertTrue(connection.capabilities.dashboardGatewayConfigured)
         assertTrue(connection.capabilities.apiServerConfigured)
         assertTrue(connection.capabilities.relayConfigured)
+        assertEquals(SessionTransport.SSE, connection.automaticChatTransport)
     }
 
     @Test
@@ -53,6 +54,20 @@ class ConnectionCapabilitiesTest {
         assertTrue(connection.capabilities.dashboardGatewayConfigured)
         assertTrue(connection.capabilities.apiChatFallbackAvailable)
         assertFalse(connection.capabilities.relayFeaturesAvailable)
+        assertEquals(SessionTransport.SSE, connection.automaticChatTransport)
+    }
+
+    @Test
+    fun persistedDashboardOwnsAutoChatEvenWhenApiIsAlsoConfigured() {
+        val connection = connection(
+            dashboardUrl = "https://hermes.example.com",
+            apiServerUrl = "https://api.example.com",
+            relayUrl = "",
+        )
+
+        assertEquals(SessionTransport.GATEWAY, connection.automaticChatTransport)
+        assertEquals(SessionTransport.GATEWAY, connection.chatTransportForPreference("auto"))
+        assertEquals(SessionTransport.SSE, connection.chatTransportForPreference("sessions"))
     }
 
     @Test

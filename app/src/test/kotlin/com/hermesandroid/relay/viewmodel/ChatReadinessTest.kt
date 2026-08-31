@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,12 +39,25 @@ class ChatReadinessTest {
     }
 
     @Test
-    fun `ready with reachable API when Gateway is unavailable`() {
+    fun `ready with reachable API for API-only owner`() {
         assertTrue(
             isChatTransportReady(
                 apiClientPresent = true,
                 apiReachable = true,
                 gatewayAvailability = GatewayAvailability.Unreachable,
+                chatOwner = SessionTransport.SSE,
+            ),
+        )
+    }
+
+    @Test
+    fun `reachable API cannot make a Gateway-owned chat ready`() {
+        assertFalse(
+            isChatTransportReady(
+                apiClientPresent = true,
+                apiReachable = true,
+                gatewayAvailability = GatewayAvailability.SignInRequired,
+                chatOwner = SessionTransport.GATEWAY,
             ),
         )
     }

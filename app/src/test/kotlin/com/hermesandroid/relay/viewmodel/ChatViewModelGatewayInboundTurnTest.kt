@@ -195,7 +195,7 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(STORED_SESSION_ID, failure?.sessionId)
         assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
         assertTrue(failure?.recoverable == true)
-        assertTrue(failure?.rawError.orEmpty().contains("no API fallback"))
+        assertTrue(failure?.rawError.orEmpty().contains("belongs to the Hermes Dashboard"))
         assertEquals("Retry this after reconnect", handler.lastSentMessage.value)
         assertTrue(handler.messages.value.isEmpty())
         val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
@@ -1591,6 +1591,39 @@ class ChatViewModelGatewayInboundTurnTest {
         gatewayHarness.awaitRpc("prompt.submit")
         assertTrue(handler.messages.value.any { it.content == "Dashboard-only gateway turn" })
         assertTrue(gatewayClient.hasActiveTurn())
+    }
+
+    @Test
+    fun gatewayOwnedConversationDoesNotDispatchToReachableApiWhenGatewayIsMissing() {
+        viewModel.streamingEndpoint = "gateway"
+        viewModel.updateGatewayClient(null)
+        val apiRequestsBefore = apiCompletionsRequestCount.get()
+
+        viewModel.sendMessage("Keep this turn on Victor")
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(apiRequestsBefore, apiCompletionsRequestCount.get())
+        assertTrue(handler.messages.value.none { it.role == MessageRole.ASSISTANT })
+        assertEquals(
+            ChatFailureRoute.GATEWAY,
+            viewModel.chatFailure.value?.route,
+        )
+        assertEquals(STORED_SESSION_ID, handler.currentSessionId.value)
+    }
+
+    @Test
+    fun boundGatewaySessionRejectsAResolverTransportFlipUntilExplicitNewChat() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.streamingEndpoint = "sessions"
+
+        assertEquals("gateway", viewModel.streamingEndpoint)
+        assertEquals(SessionTransport.GATEWAY, viewModel.conversationBinding.value.transport)
+
+        viewModel.createNewChat()
+
+        assertEquals("sessions", viewModel.streamingEndpoint)
+        assertEquals(SessionTransport.SSE, viewModel.conversationBinding.value.transport)
     }
 
     @Test

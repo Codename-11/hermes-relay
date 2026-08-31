@@ -24,7 +24,7 @@ A plain Hermes install is enough. Chat, management, and voice all work with no p
 
 HOW IT WORKS
 
-Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. A headless API server remains an automatic compatibility fallback. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
+Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. Existing API-only and headless connections remain supported as an explicit compatibility mode. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
 GOOGLE PLAY BUILD
 

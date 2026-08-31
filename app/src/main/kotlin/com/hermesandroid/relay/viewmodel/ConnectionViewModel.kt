@@ -55,6 +55,8 @@ import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.capabilities
+import com.hermesandroid.relay.data.automaticChatTransport
+import com.hermesandroid.relay.data.chatTransportForPreference
 import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionStore
 import com.hermesandroid.relay.data.LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE
@@ -348,16 +350,16 @@ internal fun resolveChatConnectState(
     ready: Boolean,
     gatewayAvailability: GatewayAvailability,
     apiHealth: ConnectionViewModel.HealthStatus,
+    chatOwner: SessionTransport = connection?.automaticChatTransport ?: SessionTransport.GATEWAY,
 ): ChatConnectState {
     if (ready) return ChatConnectState.Ready
     if (!hydrated) return ChatConnectState.Connecting
-    val active = connection ?: return ChatConnectState.NeedsConnection
-    val gatewayStillSettling = active.capabilities.dashboardGatewayConfigured &&
+    if (connection == null) return ChatConnectState.NeedsConnection
+    val gatewayStillSettling = chatOwner == SessionTransport.GATEWAY &&
         gatewayAvailability in setOf(
             GatewayAvailability.Unknown,
-            GatewayAvailability.SignInRequired,
         )
-    val apiStillSettling = active.capabilities.apiServerConfigured &&
+    val apiStillSettling = chatOwner == SessionTransport.SSE &&
         apiHealth in setOf(
             ConnectionViewModel.HealthStatus.Unknown,
             ConnectionViewModel.HealthStatus.Probing,
@@ -374,9 +376,12 @@ internal fun isChatTransportReady(
     apiClientPresent: Boolean,
     apiReachable: Boolean,
     gatewayAvailability: GatewayAvailability,
+    chatOwner: SessionTransport = SessionTransport.GATEWAY,
 ): Boolean =
-    gatewayAvailability == GatewayAvailability.Ready ||
-        (apiClientPresent && apiReachable)
+    when (chatOwner) {
+        SessionTransport.GATEWAY -> gatewayAvailability == GatewayAvailability.Ready
+        SessionTransport.SSE -> apiClientPresent && apiReachable
+    }
 
 /** Startup transport timeouts are retryable evidence, not an offline verdict. */
 internal fun isTransientDashboardTransportFailure(error: Throwable?): Boolean =
@@ -1325,7 +1330,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             upstreamTransport.dashboardSessionClientFor(cid, url)
         },
         streamingEndpointProvider = { streamingEndpoint.value },
-        gatewayAvailabilityProvider = { upstreamTransport.gatewayAvailability.value },
+        automaticTransportProvider = {
+            activeConnection.value?.automaticChatTransport ?: SessionTransport.GATEWAY
+        },
         setLastSessionId = { _lastSessionId.value = it },
         legacyDefaultSessionId = {
             getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ID]
@@ -1667,9 +1674,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _chatApiClient = MutableStateFlow<HermesApiClient?>(null)
     val chatApiClient: StateFlow<HermesApiClient?> = _chatApiClient.asStateFlow()
+    private val _activeConversationTransport = MutableStateFlow<SessionTransport?>(null)
+    val activeConversationTransport: StateFlow<SessionTransport?> =
+        _activeConversationTransport.asStateFlow()
     private var profileChatApiClient: HermesApiClient? = null
     private var profileChatApiClientUrl: String? = null
     private var profileChatApiClientKey: String? = null
+
+    fun setActiveConversationTransport(transport: SessionTransport?) {
+        _activeConversationTransport.value = transport
+    }
 
     // Chat mode + per-endpoint capability snapshot — owned by
     // [upstreamTransport]; getters delegate. `rebuildApiClient()` pushes the
@@ -1863,16 +1877,25 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         return upstreamTransport.dashboardClientFor(connectionId, dashboardUrl).getConfig()
     }
 
-    // Gateway/Dashboard is the standard path; API remains an optional fallback.
+    private val streamingEndpointPreference: StateFlow<String> =
+        application.relayDataStore.data
+            .map { it[KEY_STREAMING_ENDPOINT] ?: "auto" }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    // Readiness follows the active conversation owner, not any reachable sibling route.
     val chatReady: StateFlow<Boolean> = combine(
-        _chatApiClient,
-        _apiServerReachable,
+        combine(_chatApiClient, _apiServerReachable) { client, reachable -> client to reachable },
         upstreamTransport.gatewayAvailability,
-    ) { client, apiReachable, gateway ->
+        activeConnection,
+        streamingEndpointPreference,
+        activeConversationTransport,
+    ) { (client, apiReachable), gateway, connection, preference, boundOwner ->
         isChatTransportReady(
             apiClientPresent = client != null,
             apiReachable = apiReachable,
             gatewayAvailability = gateway,
+            chatOwner = boundOwner ?: connection?.chatTransportForPreference(preference)
+                ?: SessionTransport.GATEWAY,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -1892,13 +1915,23 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * before any flow emits — is the neutral state, not the CTA.
      */
     val chatConnectState: StateFlow<ChatConnectState> = combine(
-        connectionStore.isHydrated,
-        activeConnection,
-        chatReady,
+        combine(connectionStore.isHydrated, activeConnection, chatReady) { hydrated, active, ready ->
+            Triple(hydrated, active, ready)
+        },
         upstreamTransport.gatewayAvailability,
         _apiServerHealth,
-    ) { hydrated, active, ready, gateway, apiHealth ->
-        resolveChatConnectState(hydrated, active, ready, gateway, apiHealth)
+        streamingEndpointPreference,
+        activeConversationTransport,
+    ) { (hydrated, active, ready), gateway, apiHealth, preference, boundOwner ->
+        resolveChatConnectState(
+            hydrated,
+            active,
+            ready,
+            gateway,
+            apiHealth,
+            boundOwner ?: active?.chatTransportForPreference(preference)
+                ?: SessionTransport.GATEWAY,
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ChatConnectState.Connecting)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
     // MutableStateFlow,
@@ -2749,9 +2782,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     //
     // Existing users keep whatever they previously chose. Only fresh installs
     // (no value persisted yet) get the new "auto" default.
-    val streamingEndpoint: StateFlow<String> = application.relayDataStore.data
-        .map { it[KEY_STREAMING_ENDPOINT] ?: "auto" }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+    val streamingEndpoint: StateFlow<String> = streamingEndpointPreference
 
     fun setStreamingEndpoint(endpoint: String) {
         viewModelScope.launch {
@@ -2833,13 +2864,27 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
     fun resolveStreamingEndpoint(preference: String): String =
-        upstreamTransport.resolveStreamingEndpoint(preference)
+        upstreamTransport.resolveStreamingEndpoint(
+            preference = preference,
+            gatewayOwned = activeConnection.value
+                ?.chatTransportForPreference(preference) == SessionTransport.GATEWAY,
+        )
 
     /**
      * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
-     * [ChatViewModel.sseFallbackEndpoint] for per-turn gateway fallbacks.
+     * [ChatViewModel.sseFallbackEndpoint] only for an API-owned compatibility
+     * binding.
      */
     fun resolveSseStreamingEndpoint(): String = upstreamTransport.resolveSseStreamingEndpoint()
+
+    fun resolveActiveStreamingEndpoint(preference: String): String =
+        when (activeConversationTransport.value) {
+            SessionTransport.GATEWAY -> "gateway"
+            SessionTransport.SSE -> resolveStreamingEndpoint(preference)
+                .takeUnless { it == "gateway" }
+                ?: resolveSseStreamingEndpoint()
+            null -> resolveStreamingEndpoint(preference)
+        }
 
     // Parse tool annotations from text markers toggle
     val parseToolAnnotations: StateFlow<Boolean> = application.relayDataStore.data
@@ -3674,11 +3719,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         val dashboardConfigured = activeConnection?.capabilities?.dashboardGatewayConfigured == true
         val apiConfigured = activeConnection?.capabilities?.apiServerConfigured == true
+        val chatOwner = activeConversationTransport.value
+            ?: activeConnection?.chatTransportForPreference(streamingEndpoint.value)
+            ?: SessionTransport.GATEWAY
 
         if (
             dashboardConfigured &&
-            gatewayAvailability == GatewayAvailability.SignInRequired &&
-            (!apiConfigured || apiHealth != HealthStatus.Reachable)
+            chatOwner == SessionTransport.GATEWAY &&
+            gatewayAvailability == GatewayAvailability.SignInRequired
         ) {
             return ConnectionStatusSnapshot(
                 title = ctx.getString(R.string.cw_dashboard_sign_in_required),
@@ -3695,8 +3743,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         if (
             dashboardConfigured &&
-            gatewayAvailability == GatewayAvailability.Unreachable &&
-            (!apiConfigured || apiHealth != HealthStatus.Reachable)
+            chatOwner == SessionTransport.GATEWAY &&
+            gatewayAvailability == GatewayAvailability.Unreachable
         ) {
             return ConnectionStatusSnapshot(
                 title = ctx.getString(R.string.cw_dashboard_not_reachable),
@@ -3712,7 +3760,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         return when {
-            apiConfigured &&
+            chatOwner == SessionTransport.SSE &&
+                apiConfigured &&
                 apiHealth == HealthStatus.Unreachable &&
                 gatewayAvailability != GatewayAvailability.Ready -> {
                 // Diagnose, don't just report: for a single-route connection
