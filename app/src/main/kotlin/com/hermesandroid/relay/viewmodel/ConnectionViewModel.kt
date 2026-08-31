@@ -383,6 +383,14 @@ internal fun isChatTransportReady(
         SessionTransport.SSE -> apiClientPresent && apiReachable
     }
 
+internal fun resolveActiveChatTransport(
+    boundOwner: SessionTransport?,
+    connection: Connection?,
+    preference: String,
+): SessionTransport = boundOwner
+    ?: connection?.chatTransportForPreference(preference)
+    ?: SessionTransport.GATEWAY
+
 /** Startup transport timeouts are retryable evidence, not an offline verdict. */
 internal fun isTransientDashboardTransportFailure(error: Throwable?): Boolean =
     generateSequence(error) { it.cause }
@@ -1894,8 +1902,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             apiClientPresent = client != null,
             apiReachable = apiReachable,
             gatewayAvailability = gateway,
-            chatOwner = boundOwner ?: connection?.chatTransportForPreference(preference)
-                ?: SessionTransport.GATEWAY,
+            chatOwner = resolveActiveChatTransport(boundOwner, connection, preference),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -1929,8 +1936,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ready,
             gateway,
             apiHealth,
-            boundOwner ?: active?.chatTransportForPreference(preference)
-                ?: SessionTransport.GATEWAY,
+            resolveActiveChatTransport(boundOwner, active, preference),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ChatConnectState.Connecting)
     // NOTE: [relayReady] / [voiceReady] are declared below the [_relayUrl]
@@ -3719,9 +3725,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         val dashboardConfigured = activeConnection?.capabilities?.dashboardGatewayConfigured == true
         val apiConfigured = activeConnection?.capabilities?.apiServerConfigured == true
-        val chatOwner = activeConversationTransport.value
-            ?: activeConnection?.chatTransportForPreference(streamingEndpoint.value)
-            ?: SessionTransport.GATEWAY
+        // This helper runs from an eager StateFlow during construction. Read
+        // the earlier-declared backing preference, not its later public alias.
+        val chatOwner = resolveActiveChatTransport(
+            boundOwner = activeConversationTransport.value,
+            connection = activeConnection,
+            preference = streamingEndpointPreference.value,
+        )
 
         if (
             dashboardConfigured &&

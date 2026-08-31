@@ -3,6 +3,7 @@ package com.hermesandroid.relay.viewmodel
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,6 +59,35 @@ class ChatReadinessTest {
                 apiReachable = true,
                 gatewayAvailability = GatewayAvailability.SignInRequired,
                 chatOwner = SessionTransport.GATEWAY,
+            ),
+        )
+    }
+
+    @Test
+    fun `eager status owner resolves from backing preference before public alias`() {
+        val connection = Connection(
+            id = "dashboard-owner",
+            label = "Dashboard",
+            apiServerUrl = "https://hermes.example.com:8642",
+            relayUrl = "",
+            tokenStoreKey = "test-key",
+            dashboardUrl = "https://hermes.example.com:9119",
+        )
+
+        assertEquals(
+            SessionTransport.GATEWAY,
+            resolveActiveChatTransport(
+                boundOwner = null,
+                connection = connection,
+                preference = "auto",
+            ),
+        )
+        assertEquals(
+            SessionTransport.SSE,
+            resolveActiveChatTransport(
+                boundOwner = SessionTransport.SSE,
+                connection = connection,
+                preference = "auto",
             ),
         )
     }
