@@ -26,17 +26,23 @@ Check recent runs before dispatching so another task does not duplicate the
 same SHA and preset:
 
 ```powershell
-gh run list --workflow android-on-demand.yml --event workflow_dispatch --limit 20
+$base = git merge-base origin/dev HEAD
 $sha = git rev-parse HEAD
-gh workflow run android-on-demand.yml --ref dev -f head_sha=$sha -f preset=focused
-gh run list --workflow android-on-demand.yml --event workflow_dispatch --limit 5
+gh run list --workflow ci-required.yml --event workflow_dispatch --limit 20
+gh workflow run ci-required.yml --ref dev `
+  -f base_sha=$base `
+  -f head_sha=$sha `
+  -f android_preset=focused
+gh run list --workflow ci-required.yml --event workflow_dispatch --limit 5
 ```
 
 The SHA must already exist on GitHub. Do not push solely to obtain cloud compute
 without push authorization. On-demand jobs read shared Gradle cache state but
 do not write it, so task commits cannot replace the cache populated by trusted
 `dev`/`main` CI. The on-demand result supplements rather than replaces required
-PR checks.
+PR checks. `Required checks` is the registered dispatcher because GitHub only
+registers manual workflow entry points from the default branch; it calls the
+Android workflow from the selected `dev` ref.
 
 ## Local use
 
