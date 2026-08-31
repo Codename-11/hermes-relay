@@ -20,18 +20,69 @@ test("pairing QR keeps integer modules and a four-module quiet zone", () => {
   assert.equal(Object.hasOwn(pairingQrRenderOptions(), "width"), false);
 });
 
-test("Relay auth challenge is healthy while API failures stay failures", () => {
+test("only Dashboard ingress Relay auth challenges are healthy", () => {
   assert.deepEqual(
-    pairingProbeStatus({ surface: "relay", status: 401, reachable: false }),
+    pairingProbeStatus({
+      surface: "relay",
+      url: "wss://dashboard.example/api/plugins/hermes-relay/transport",
+      status: 401,
+      reachable: false,
+    }),
     { healthy: true, label: "Auth required" },
   );
   assert.deepEqual(
-    pairingProbeStatus({ surface: "api", status: 401, reachable: false }),
+    pairingProbeStatus({
+      surface: "relay",
+      url: "https://dashboard.example/base/api/plugins/hermes-relay/transport/health",
+      status: 403,
+      reachable: false,
+    }),
+    { healthy: true, label: "Auth required" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({
+      surface: "relay",
+      url: "ws://relay.example:8767",
+      status: 401,
+      reachable: false,
+    }),
     { healthy: false, label: "HTTP 401" },
   );
   assert.deepEqual(
-    pairingProbeStatus({ surface: "relay", status: 200, reachable: true, latency_ms: 12 }),
-    { healthy: true, label: "Ready · 12ms" },
+    pairingProbeStatus({
+      surface: "relay",
+      url: "ws://relay.example:8767/ws",
+      status: 403,
+      reachable: false,
+    }),
+    { healthy: false, label: "HTTP 403" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({
+      surface: "relay",
+      url: "wss://relay.example:8767/health",
+      status: 404,
+      reachable: false,
+    }),
+    { healthy: false, label: "HTTP 404" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({
+      surface: "relay",
+      url: "wss://dashboard.example/api/plugins/hermes-relay/transportish",
+      status: 401,
+      reachable: false,
+    }),
+    { healthy: false, label: "HTTP 401" },
+  );
+  assert.deepEqual(
+    pairingProbeStatus({
+      surface: "api",
+      url: "https://api.example:8642",
+      status: 401,
+      reachable: false,
+    }),
+    { healthy: false, label: "HTTP 401" },
   );
 });
 

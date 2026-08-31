@@ -140,7 +140,11 @@ export function pairingProbeKey(entry) {
 /** Convert a surface probe into honest, product-facing reachability. */
 export function pairingProbeStatus(result) {
   if (!result) return { healthy: null, label: "Not checked" };
-  if (result.surface === "relay" && result.status === 401) {
+  if (
+    result.surface === "relay" &&
+    (result.status === 401 || result.status === 403) &&
+    isDashboardRelayIngressUrl(result.url)
+  ) {
     return { healthy: true, label: "Auth required" };
   }
   if (result.reachable === true) {
@@ -153,6 +157,23 @@ export function pairingProbeStatus(result) {
     return { healthy: false, label: `HTTP ${result.status}` };
   }
   return { healthy: false, label: result.error || "Unreachable" };
+}
+
+function isDashboardRelayIngressUrl(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return false;
+  try {
+    const url = new URL(raw.trim());
+    if (!HTTP_SCHEMES.has(url.protocol) && !RELAY_SCHEMES.has(url.protocol)) return false;
+    if (url.username || url.password || url.search || url.hash) return false;
+    const marker = "/api/plugins/hermes-relay/transport";
+    const path = url.pathname.replace(/\/+$/, "");
+    const markerIndex = path.lastIndexOf(marker);
+    if (markerIndex < 0) return false;
+    const suffix = path.slice(markerIndex + marker.length);
+    return suffix === "" || suffix === "/ws" || suffix === "/health";
+  } catch (_err) {
+    return false;
+  }
 }
 
 /** Classify the recommended and old Dashboard Serve listeners independently. */
