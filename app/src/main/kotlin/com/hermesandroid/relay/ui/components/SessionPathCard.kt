@@ -401,7 +401,7 @@ internal fun SessionPathDetails(
  * Vertical "transport path" ladder, basic → best:
  * Completions → Runs → Sessions → Gateway. The active tier is filled +
  * highlighted; tiers the server doesn't expose render muted; the resolver's
- * reason ("auto → Gateway (best)" / "gateway unavailable → Sessions") is shown
+ * owner/readiness reason ("Gateway connected" / "Gateway unavailable") is shown
  * beneath. Uses the same [resolveChatTransportStatus] the status badge does, so
  * the drawer and the badge can never disagree.
  */

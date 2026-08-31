@@ -368,7 +368,7 @@ internal fun resolveFooterRouteCandidate(
  *
  * Endpoint roles are operator and wire metadata, so an internal role such as
  * `authenticated_dashboard` must never leak into this constrained surface.
- * Gateway labels describe how the Dashboard is reached; API fallback keeps
+ * Gateway labels describe how the Dashboard is reached; Direct API keeps
  * the route's ordinary transport label.
  */
 internal fun resolveFooterRouteLabel(

@@ -56,9 +56,10 @@ v0.2 ran the bridge as a standalone service on port 8766 (`plugin/tools/android_
 
 ## ADR-4: Chat via Upstream Gateway/API, Not Relay Proxy
 
-**Decision:** Chat uses upstream Hermes surfaces from the Android app. It
-prefers the dashboard `/api/ws` gateway when Manage auth is ready, then falls
-back to Hermes API Server HTTP/SSE. The relay server is only used for bridge,
+**Decision:** Chat uses upstream Hermes surfaces from the Android app. Standard
+connections use the Dashboard `/api/ws` Gateway; explicitly configured API-only
+connections use Hermes API Server HTTP/SSE. A conversation stays bound to its
+owner instead of moving when readiness changes. The relay server is only used for bridge,
 terminal, media, notifications, and relay-backed voice channels.
 
 ### Original Approach
@@ -70,8 +71,8 @@ Chat was originally proxied through the relay server, which converted SSE respon
 - The relay was an unnecessary middleman — it just converted upstream events to
   another WebSocket.
 - Other Hermes frontends use upstream API or dashboard surfaces without Relay.
-- The dashboard gateway provides live thinking/reasoning events, while the
-  Sessions API (`/api/sessions/{id}/chat/stream`) provides SSE fallback with rich
+- The dashboard Gateway provides live thinking/reasoning events, while the
+  Direct API Sessions route (`/api/sessions/{id}/chat/stream`) provides SSE with rich
   event types.
 - Simpler, lower latency, removes relay as single point of failure for chat.
 
@@ -79,12 +80,12 @@ Chat was originally proxied through the relay server, which converted SSE respon
 
 ```
 Phone (WS)       → Hermes dashboard (:9119)    [gateway chat]
-Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat fallback]
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [Direct API chat]
 Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Vanilla Hermes voice]
 Phone (HTTP/WSS) → Relay Server   (:8767)      [relay voice, terminal, bridge, notifications]
 ```
 
-API-server fallback auth uses Bearer token (`API_SERVER_KEY`) when the optional
+Direct API auth uses a Bearer token (`API_SERVER_KEY`) when the optional
 API server is enabled. Dashboard gateway auth uses dashboard cookies plus
 `/api/auth/ws-ticket`.
 

@@ -681,7 +681,7 @@ class UpstreamTransportController(
     /**
      * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
      * [com.hermesandroid.relay.viewmodel.ChatViewModel.sseFallbackEndpoint] for
-     * per-turn gateway fallbacks.
+     * explicit API-owned compatibility conversations.
      */
     fun resolveSseStreamingEndpoint(): String =
         _serverCapabilities.value.preferredChatEndpoint()

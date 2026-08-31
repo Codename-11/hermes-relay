@@ -66,7 +66,7 @@ Desktop-Werkzeuge, erweiterte Voice und Device Control empfohlen.
 - **Chat · Ready** bedeutet, dass du Nachrichten senden kannst.
 - **Manage** kann noch eine Dashboard-Anmeldung verlangen.
 - **Voice** wird mit derselben Dashboard-Anmeldung freigeschaltet.
-- **API fallback** darf als nicht verfügbar angezeigt werden, ohne Chat zu blockieren.
+- **Direct API** darf als nicht verfügbar angezeigt werden, ohne Chat zu blockieren.
 - **Relay · Paired** bestätigt die empfohlenen Zusatzfunktionen; ein Relay-Ausfall
   darf den Upstream-Standardweg nicht blockieren.
 

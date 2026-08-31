@@ -20,7 +20,7 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 
 enum class ChatTransportTier(val endpointId: String, val label: String) {
-    Gateway("gateway", "⚡ Chat"),
+    Gateway("gateway", "⚡ Gateway"),
     Sessions("sessions", "Direct API"),
     Completions("completions", "Direct API"),
     Runs("runs", "Direct API"),
@@ -86,7 +86,7 @@ fun resolveChatTransportStatus(
             gatewayReady -> ChatTransportStatus(
                 tier = ChatTransportTier.Gateway,
                 tone = ChatTransportTone.Active,
-                reason = "Hermes Chat connected",
+                reason = "Gateway connected",
                 detail = ChatTransportTier.Gateway.detailText(),
             )
             else -> unavailable(
@@ -103,11 +103,11 @@ fun resolveChatTransportStatus(
 
 private fun gatewayFallbackReason(availability: GatewayAvailability): String =
     when (availability) {
-        GatewayAvailability.SignInRequired -> "Dashboard sign-in required"
-        GatewayAvailability.Unreachable -> "Hermes Chat unavailable"
-        GatewayAvailability.Unsupported -> "Hermes Chat unsupported"
-        GatewayAvailability.Unknown -> "Checking Hermes Chat"
-        GatewayAvailability.Ready -> "Hermes Chat ready"
+        GatewayAvailability.SignInRequired -> "Gateway sign-in required"
+        GatewayAvailability.Unreachable -> "Gateway unavailable"
+        GatewayAvailability.Unsupported -> "Gateway unsupported"
+        GatewayAvailability.Unknown -> "Checking Gateway"
+        GatewayAvailability.Ready -> "Gateway ready"
     }
 
 private fun ChatTransportTier.plainName(): String =
