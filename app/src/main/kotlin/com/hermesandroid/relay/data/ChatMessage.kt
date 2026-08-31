@@ -11,6 +11,16 @@ package com.hermesandroid.relay.data
 enum class AttachmentState { LOADING, LOADED, FAILED }
 
 /**
+ * Gateway tool events do not yet expose an output kind before completion.
+ * Recognize the upstream built-in plus the profile-tool naming convention used
+ * for image generators without guessing from generic prompt arguments.
+ */
+internal fun isImageGenerationToolName(name: String): Boolean {
+    val normalized = name.trim().lowercase()
+    return normalized == "image_generate" || normalized.endsWith("_create_image")
+}
+
+/**
  * How the UI should render a loaded attachment. Derived from the MIME type.
  * - [IMAGE]  inline image (decode bytes / load URI).
  * - [VIDEO]  file card with play icon, tap opens ACTION_VIEW.

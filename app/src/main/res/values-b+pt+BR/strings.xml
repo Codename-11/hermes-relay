@@ -584,6 +584,11 @@
     <string name="changelog_state_collapsed">Recolhido</string>
     <string name="changelog_installed">Instalado</string>
     <string name="changelog_also_improved">Também melhorado</string>
+    <string name="changelog_highlights">Destaques</string>
+    <string name="changelog_added">Adicionado</string>
+    <string name="changelog_improved">Melhorado</string>
+    <string name="changelog_fixed">Corrigido</string>
+    <string name="changelog_compatibility">Compatibilidade</string>
     <string name="changelog_toast_also">Também: %1$s</string>
     <string name="changelog_view_all">Ver tudo</string>
     <plurals name="changelog_additional_feature_count">
@@ -593,6 +598,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d correção</item>
         <item quantity="other">%1$d correções</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d melhoria</item>
+        <item quantity="other">%1$d melhorias</item>
     </plurals>
     <!-- DiagnosticsScreen -->
     <string name="diag_title">Diagnóstico</string>
@@ -3239,7 +3248,7 @@
     <string name="whats_new_full_history">Ver histórico completo</string>
     <string name="whats_new_no_notes">Nenhuma nota de versão disponível</string>
     <string name="whats_new_title">Novidades</string>
-    <string name="whats_new_subtitle">Destaques da versão mais recente</string>
+    <string name="whats_new_subtitle">Destaques e detalhes completos da versão</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Acesso temporário à tela expirou</string>
     <string name="bridge_notification_auto_disabled_body">Inspeção e controle da tela foram desativados após ociosidade. As outras permissões não mudaram.</string>

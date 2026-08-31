@@ -13,6 +13,7 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
@@ -1499,11 +1500,13 @@ class ChatHandler {
 
             // Run the media marker parser on assistant content; strip matched
             // lines and queue hits for post-assignment dispatch.
+            val messageMediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
             val afterMedia = if (role == MessageRole.ASSISTANT && persistedImages.cleanedText.isNotEmpty()) {
-                extractMediaMarkersFromContent(messageId, persistedImages.cleanedText, pendingMediaHits)
+                extractMediaMarkersFromContent(messageId, persistedImages.cleanedText, messageMediaHits)
             } else {
                 persistedImages.cleanedText
             }
+            pendingMediaHits += messageMediaHits
 
             // Cards are synchronous (no async fetch) so we attach them
             // straight onto the reconstructed ChatMessage and strip their
@@ -1537,15 +1540,25 @@ class ChatHandler {
             val prior = priorById[messageId]
             // Outbound attachments: prefer an id-match (covers any future
             // user-message id reconciliation), else fall back to the
-            // content-keyed queue. Inbound attachments are intentionally
-            // excluded — they come back via the marker re-dispatch.
+            // content-keyed queue. Inbound attachments normally come back via
+            // marker re-dispatch. One narrow exception retains a completed
+            // image_generate result when the immediate post-turn history read
+            // still lacks its MEDIA marker; otherwise the rendered image
+            // disappears during the persistence-lag window.
             val carriedAttachments = run {
                 val persistedImagePaths = persistedImages.paths.toHashSet()
+                val priorGeneratedImage = prior?.toolCalls.orEmpty().any { tool ->
+                    isImageGenerationToolName(tool.name) &&
+                        tool.isComplete && tool.success != false
+                }
                 val byId = prior?.attachments.orEmpty().filter { attachment ->
                     attachment.relayToken == null ||
+                        (role == MessageRole.USER && attachment.relayToken in persistedImagePaths) ||
                         (
-                            role == MessageRole.USER &&
-                                attachment.relayToken in persistedImagePaths
+                            role == MessageRole.ASSISTANT &&
+                                priorGeneratedImage &&
+                                attachment.isImage &&
+                                messageMediaHits.isEmpty()
                             )
                 }
                 when {

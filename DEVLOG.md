@@ -13,6 +13,28 @@ single-status, repeated-heartbeat, ordinary-silence, and payload-fencing paths
 without waiting production minutes. The declarative vanilla-Gateway fixture
 also models repeated compaction status before terminal completion.
 
+## 2026-08-31 — Complete, readable Android release notes
+
+Android release metadata now keeps one overall title and summary plus a complete
+typed inventory of user-visible additions, improvements, and fixes. Stable
+change ids prevent duplicate records, selected highlights lead the expanded
+view, and compatibility boundaries remain visible without turning the compact
+notice into technical release documentation. Toast counts and previews are
+derived from the same non-highlighted changes the dialog and history render, so
+View all reaches every counted item. Older bundled changelog entries retain
+their existing rendering path.
+
+The Android 1.14.0 record was migrated to the complete schema and reconciled
+against its released Android changelog: four highlights, two additional
+improvements, ten fixes, and three compatibility notes. The dialog, full
+history, large-text toast, seven Android resource catalogs, legacy text
+fallback, Play note, listing copy, release-prep instructions, and validation
+tests were updated together.
+
+Structured release-note tests, focused Kotlin tests, Android locale and
+collection-API gates, rendered 360×640 dark-theme screenshots including 135%
+text, sideload APK assembly, Android lint, and diff checks passed.
+
 ## 2026-08-27 — Fixed issue ownership and bounded PR intake
 
 The automated issue first-response lane now assigns only `Codename-11` when the
