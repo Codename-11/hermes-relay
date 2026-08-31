@@ -58,7 +58,7 @@ The `area:*` label decides whether a fix can be proven by CI or needs a human.
 |--------------------|-------|--------|--------------|
 | `area:plugin` | `plugin/` | `python -m unittest plugin.tests.test_<name>` | ✅ ci-plugin.yml |
 | `area:cli` | `desktop/` | `cd desktop && npm run build && npm run smoke` + unit | ✅ ci-desktop.yml |
-| `area:android` (logic) | `app/` VM/mapper/pure Kotlin | `./gradlew :app:testGooglePlayDebugUnitTest` + `:app:lint` | ✅ ci-android.yml |
+| `area:android` (logic) | `app/` VM/mapper/pure Kotlin | focused local test, then exact-SHA `Android On-Demand`/PR CI | ✅ ci-android.yml |
 | `area:android` (UI/behavior) | `app/` Compose / device behavior | Android Studio ▶ on a real device | ❌ **human gate** |
 | `area:dashboard` | `plugin/dashboard/` | dashboard bundle build | ✅ ci-dashboard.yml |
 | `area:docs` | `docs/`, `user-docs/` | docs build | ✅ docs.yml |
