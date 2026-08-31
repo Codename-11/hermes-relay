@@ -3,23 +3,14 @@ name: Android On-Demand
 run-name: Android ${{ inputs.preset }} · ${{ inputs.head_sha }}
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       head_sha:
-        description: Exact pushed commit SHA to verify
         required: true
         type: string
       preset:
-        description: Android verification lane
         required: true
-        default: focused
-        type: choice
-        options:
-          - focused
-          - lint
-          - assemble-debug
-          - release-smoke
-          - all-final
+        type: string
 
 permissions:
   contents: read
@@ -38,11 +29,19 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.head_sha }}
+          REQUESTED_PRESET: ${{ inputs.preset }}
         run: |
           if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "head_sha must be a full lowercase 40-character commit SHA" >&2
             exit 2
           fi
+          case "$REQUESTED_PRESET" in
+            focused|lint|assemble-debug|release-smoke|all-final) ;;
+            *)
+              echo "unsupported Android preset: $REQUESTED_PRESET" >&2
+              exit 2
+              ;;
+          esac
 
       - name: Checkout exact commit
         uses: actions/checkout@v7

@@ -270,9 +270,10 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
 
 ## Testing
 
-- **Android cloud verification (preferred for pushed work):** dispatch
-  `.github/workflows/android-on-demand.yml` against the exact pushed SHA with
-  `focused`, `lint`, `assemble-debug`, `release-smoke`, or `all-final`. Check for
+- **Android cloud verification (preferred for pushed work):** dispatch the
+  registered `Required checks` workflow with an exact base/head SHA pair and
+  `android_preset` set to `focused`, `lint`, `assemble-debug`, `release-smoke`,
+  or `all-final`. It calls the reusable Android workflow from `dev`. Check for
   an existing run before dispatching the same SHA/preset again. The four
   `all-final` compute jobs use isolated runners and may execute concurrently.
 - **Full local Android gate (optional):** `scripts\dev.bat prepush` on Windows
@@ -287,7 +288,7 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
   device lane is scheduled automatically.
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
-CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched. `android-on-demand.yml` is the trusted manual compute lane for an exact pushed commit; it does not replace required PR checks.
+CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched. The registered `ci-required.yml` dispatcher calls `android-on-demand.yml` as the trusted manual compute lane for an exact pushed commit; it does not replace required PR checks.
 Superseded Android runs on `dev` and PR refs are canceled automatically; `main`
 runs are never canceled because each release-branch commit must complete its
 independent validation.
