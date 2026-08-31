@@ -111,8 +111,8 @@ turn is live. The external lane consumes the shared Python fixture and reads
 its authoritative history over HTTP.
 
 ```powershell
-.\gradlew.bat :app:compileSideloadDebugAndroidTestKotlin
-.\gradlew.bat :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
+.\scripts\android-lane.ps1 gradle :app:compileSideloadDebugAndroidTestKotlin
+.\scripts\android-lane.ps1 gradle :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
 ```
 
 The external test is opt-in through the instrumentation argument
@@ -126,7 +126,7 @@ transport ID, targets only `com.axiomlabs.hermesrelay.sideload`, and performs no
 installation unless its corresponding install flag is supplied.
 
 ```powershell
-python scripts/android-gateway-certify.py `
+.\scripts\android-lane.ps1 exec python scripts/android-gateway-certify.py `
   --transport-id <adb-transport-id> `
   --apk app/build/outputs/apk/sideload/debug/<sideload-apk> `
   --test-apk app/build/outputs/apk/androidTest/sideload/debug/<test-apk> `

@@ -61,6 +61,13 @@ configuration between invocations and do not add `--no-daemon` to normal dev
 commands; a different heap or Java home starts a separate daemon and discards
 the warm-process benefit.
 
+On Windows, all repository dev helpers serialize Android build and device work
+through one machine-wide lane shared by every Hermes-Relay worktree. Use
+`scripts/android-lane.ps1` for ad hoc Gradle, connected-test, and APK-install
+commands, and keep Android Studio idle while another owner holds the lane. See
+[Windows Android build lane](docs/android-build-lane.md) for the coordinator
+gate, status command, and exceptional recovery modes.
+
 Use the narrowest command that proves the change:
 
 1. `scripts/dev.bat compile` for a Kotlin compile check.
