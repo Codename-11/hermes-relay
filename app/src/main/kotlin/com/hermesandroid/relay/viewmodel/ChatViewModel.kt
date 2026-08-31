@@ -3184,6 +3184,7 @@ class ChatViewModel : ViewModel() {
     ) {
         val handler = chatHandler ?: return
         if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) return
+        val contextKey = activeProfileContextKey
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = viewModelScope.launch {
             val expected = expectedAssistantText?.trim()?.takeIf { it.isNotEmpty() }
@@ -3216,7 +3217,28 @@ class ChatViewModel : ViewModel() {
                 }
 
                 val transcriptSnapshot = handler.messages.value
-                val serverMessages = loadGatewaySessionHistory(storedSessionId)
+                val serverMessages = try {
+                    loadGatewaySessionHistory(
+                        sessionId = storedSessionId,
+                        requireProfileScope = true,
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A live completion is already visible and settled locally.
+                    // History auth loss must retain that transcript and promote
+                    // the existing sign-in recovery instead of escaping this
+                    // Main-scope coroutine and crashing the app.
+                    if (
+                        chatHandler === handler &&
+                        activeProfileContextKey == contextKey &&
+                        handler.currentSessionId.value == storedSessionId
+                    ) {
+                        publishHistoryLoadFailure(storedSessionId, e)
+                    }
+                    gatewayHistoryReconcileJob = null
+                    return@launch
+                }
                 if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
                     return@launch
                 }
@@ -5401,6 +5423,7 @@ class ChatViewModel : ViewModel() {
                                     // recovery state. Preserve cached history and
                                     // mark the directory unavailable without also
                                     // emitting a generic turn/error toast.
+                                    dashboardSignInRequiredHandler?.invoke()
                                 } else if (scoped != null) {
                                     // The shared API list belongs to the launch/default
                                     // database. Preserve the current profile's rows and
@@ -5423,7 +5446,9 @@ class ChatViewModel : ViewModel() {
                             )
                             retryUnavailable = true
                             retryReadiness = retryReadiness || !e.isSessionReadTimeout()
-                            if (!e.isDashboardSignInRequiredFailure()) {
+                            if (e.isDashboardSignInRequiredFailure()) {
+                                dashboardSignInRequiredHandler?.invoke()
+                            } else {
                                 emitError(
                                     e,
                                     context = if (profileSessionLister != null) {
@@ -7854,11 +7879,22 @@ class ChatViewModel : ViewModel() {
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                if (handler.currentSessionId.value == expectedSessionId) {
+                                // Recovery completion has already settled the
+                                // local turn. Keep it visible and route an
+                                // expired Dashboard session to sign-in.
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
                                     publishHistoryLoadFailure(expectedSessionId, e)
                                 }
                             } finally {
-                                if (handler.currentSessionId.value == expectedSessionId) {
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
                                     refreshSessions()
                                     scheduleTitleReconcile(expectedSessionId)
                                 }
@@ -9727,6 +9763,7 @@ class ChatViewModel : ViewModel() {
             // tool.complete. The structured reload recovers those calls without ever
             // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
+            val historyContextKey = activeProfileContextKey
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
             // server transcript would WIPE the just-shown error bubble (the user
@@ -9769,7 +9806,11 @@ class ChatViewModel : ViewModel() {
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        if (handler.currentSessionId.value == sid) {
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
                             publishHistoryLoadFailure(sid, e)
                         }
                     } finally {
@@ -9779,8 +9820,14 @@ class ChatViewModel : ViewModel() {
                         // is persisted, so a brand-new chat would otherwise stay missing
                         // from the drawer (carried only by the optimistic row) until a
                         // manual reload. By message.complete the dashboard list includes it.
-                        refreshSessions()
-                        scheduleTitleReconcile(sid)
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
+                            refreshSessions()
+                            scheduleTitleReconcile(sid)
+                        }
                         drainQueue()
                     }
                 }
