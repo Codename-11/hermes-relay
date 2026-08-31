@@ -81,7 +81,7 @@ Do NOT use this skill to start or install the relay server itself — that is a 
 
 ## Prerequisites
 
-1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.status --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
+1. **Hermes-Relay plugin installed and enabled.** Verify with `hermes plugins show hermes-relay`. If it is missing, run `hermes plugins install Codename-11/hermes-relay/plugin --enable`. The standalone `python -m plugin.status` fallback additionally requires the full `install.sh` editable-package path.
 2. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`). Without a live relay, this skill exits with code `1` and a "relay unreachable" error.
 3. **Phone has connected at least once** since the last relay restart. The relay tracks live phone-*connection* state in memory, so a restart clears that presence — the phone **reconnects** automatically (its paired session persists across restart, so no re-pair is needed). Until then, status returns "no phone connected" with exit code `2`.
 
@@ -119,7 +119,7 @@ Do NOT use this skill to start or install the relay server itself — that is a 
 ## Pitfalls
 
 - **Relay not running.** `status` prints `[error] Cannot reach hermes-relay on 127.0.0.1:8767` to stderr and exits `1`. Fix: start the relay first (`systemctl --user start hermes-relay` or `python -m plugin.relay --no-ssl`) and re-run.
-- **Plugin not installed.** `ModuleNotFoundError: No module named 'plugin'`. Fix: `pip install -e <hermes-relay-repo>` into the same Python environment Hermes uses. Use `which python` / `where python` to confirm you're targeting the Hermes venv.
+- **Plugin not installed.** If `hermes plugins show hermes-relay` fails, run `hermes plugins install Codename-11/hermes-relay/plugin --enable`. Use `install.sh` when the host also needs the relay service, editable package, and shell shims.
 - **Wrong venv.** If `hermes` CLI is global but plugin is in the Hermes venv, `python -m plugin.status` may resolve to the wrong Python. Call the venv Python explicitly: `~/.hermes/hermes-agent/venv/bin/python -m plugin.status`.
 - **Phone shows as disconnected immediately after a relay restart.** Expected — the relay holds phone state in memory and wipes it on restart. The phone reconnects automatically on its next ping cycle (within ~30s). If it doesn't, check the phone side: the session token may need re-pairing via `/hermes-relay-pair`.
 - **`bridge.accessibility_granted = false` but everything else looks fine.** The user has opened the Android app but not yet granted the Hermes-Relay accessibility service. Tell them: "Open Hermes-Relay → Bridge screen → the permission checklist will have Accessibility as the top row. Tap it to open Android Settings → Installed services → Hermes-Relay and flip the switch."
