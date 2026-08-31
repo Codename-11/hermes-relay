@@ -2,6 +2,56 @@
  "schema": 2,
  "versions": [
   {
+   "version": "1.14.0",
+   "title": "Connections that follow you",
+   "date": "2026-08-30",
+   "highlight": {
+    "title": "Reliable routes",
+    "summary": "Move between LAN, Tailscale, and public HTTPS without mixing Dashboard or Relay authentication.",
+    "bullets": [
+     "Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.",
+     "Preview delegated agent work and use the optional native Git workspace.",
+     "Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls."
+    ]
+   },
+   "improvements": [
+    "Wake-word detection now packages a compatible native runtime for every supported ABI.",
+    "Protected Relay health checks no longer appear as broken routes."
+   ],
+   "toastDigest": {
+    "additionalFeatureCount": 2,
+    "fixCount": 10,
+    "preview": [
+     "delegated-agent previews",
+     "safer voice and sessions"
+    ]
+   },
+   "playNotes": "Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.",
+   "sections": [
+    {
+     "header": "Use the best available route",
+     "bullets": [
+      "Resolve Dashboard, Relay, and optional API health independently across LAN, Tailscale, and public HTTPS.",
+      "Keep same-origin Relay ingress on the exact Dashboard origin that owns authentication."
+     ]
+    },
+    {
+     "header": "Follow active work",
+     "bullets": [
+      "Preview delegated-agent lifecycle, progress, tools, and available read-only child history from the parent chat.",
+      "Review Git status, diffs, branches, staging, commits, and remotes through the optional Relay plugin."
+     ]
+    },
+    {
+     "header": "Keep voice and conversations owned correctly",
+     "bullets": [
+      "Serialize microphone handoff and keep Voice Focus Stop and steering accessible across active phases.",
+      "Preserve fresh profile drafts, provisional Thread ownership, Clarify answers, passive observation, and Assistant privacy through reconnects."
+     ]
+    }
+   ]
+  },
+  {
    "version": "1.13.2",
    "title": "Supervised Mode and clearer activity",
    "date": "2026-08-25",

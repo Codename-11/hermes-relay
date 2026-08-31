@@ -1,9 +1,10 @@
-v1.13.2 - Supervised Mode and clearer activity
+v1.14.0 - Connections that follow you
 
-Supervised Mode
-* Protect parent settings with your phone's device authentication.
-* Choose access to attachments, Standard voice, generated media, history, actions, and technical details.
-* Keep Supervised Chat open when returning from parent settings.
+Reliable routes
+* Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.
+* Preview delegated agent work and use the optional native Git workspace.
+* Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls.
 
 Also improved
-* Activity indicators now appear only while Hermes is genuinely working.
+* Wake-word detection now packages a compatible native runtime for every supported ABI.
+* Protected Relay health checks no longer appear as broken routes.

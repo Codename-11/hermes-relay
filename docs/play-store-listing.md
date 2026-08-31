@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.13.2 - Supervised Mode and clearer activity
+v1.14.0 - Connections that follow you
 
-Supervised Mode creates a simpler, profile-focused chat with device-protected parent settings and control over attachments, Standard voice, generated media, history, actions, and technical details. Activity indicators now appear only while Hermes is genuinely working, and returning from parent settings keeps Supervised Chat open.
+Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.
 ```
 ## Category
 
