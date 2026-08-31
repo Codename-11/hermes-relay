@@ -2980,7 +2980,12 @@ fun RelayApp() {
                 }
                 composable(Screen.AdvancedSettings.route) {
                     if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
-                        LaunchedEffect(Unit) { navController.popBackStack() }
+                        LaunchedEffect(Unit) {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
                     } else {
                         AdvancedSettingsScreen(
                             supervisedPolicy = supervisedPolicy,
@@ -3011,7 +3016,12 @@ fun RelayApp() {
                 }
                 composable(Screen.SupervisedControls.route) {
                     if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
-                        LaunchedEffect(Unit) { navController.popBackStack() }
+                        LaunchedEffect(Unit) {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
                     } else {
                         SupervisedControlsScreen(
                             connectionViewModel = connectionViewModel,

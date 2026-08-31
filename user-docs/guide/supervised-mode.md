@@ -41,11 +41,16 @@ From full Android Settings, the parent:
 
 1. Open **Settings → Advanced → Supervised Mode** for the active Hermes
    Connection.
-2. Choose one existing named profile. Android requires a secure device screen
-   lock before the mode can be enabled.
-3. Select the allowed features and any stricter attachment or history limits.
-4. Choose a visibility preset or customize what appears in Chat.
-5. Review the summary, then enable the mode.
+2. Choose one existing named profile.
+3. Choose either an app-specific six-digit parent PIN or a parent password of
+   at least eight characters. The PIN uses the app keypad; passwords use the
+   normal keyboard and password-manager flow. This is separate from the phone's screen lock.
+4. Save the one-time six-word recovery phrase somewhere the supervised user
+   cannot access. You may share it to a parent-only destination; delete the
+   message or saved copy from this phone afterward.
+5. Select the allowed features and any stricter attachment or history limits.
+6. Choose a visibility preset or customize what appears in Chat.
+7. Review the summary, then verify the parent credential to enable the mode.
 
 The app returns to the pinned profile's Chat screen. If the Connection or
 profile is unavailable, the restricted client shows a recovery state
@@ -58,8 +63,9 @@ Supervised Mode banner consuming conversation space. The agent name and avatar
 remain the primary identity, with a small connection state when permitted.
 
 The existing Settings button opens **Restricted Settings**, which contains only
-approved preferences. A clearly labelled **Parent access** row starts device
-authentication before any parent controls or full application settings appear.
+approved preferences. A clearly labelled **Parent access** row asks for the
+app-specific parent PIN or password before any parent controls or full
+application settings appear.
 
 Restricted Settings may include:
 
@@ -166,14 +172,38 @@ and avatar provide the normal identity in the Simple preset.
 
 ## Parent access and relocking
 
-Enabling, changing, or ending Supervised Mode requires Android device
-authentication. Parent access should relock when its authenticated task closes,
-after the configured inactivity period, when the app backgrounds, or after
-process recreation.
+Enabling, changing, or ending Supervised Mode requires the app-specific parent
+PIN or password. Parent access relocks when its authenticated task closes, after
+the configured inactivity period, when the app backgrounds, or after process
+recreation. Failure delays persist across app restart.
 
-Android's device-credential prompt authenticates any user enrolled for that
-device; it does not establish a separate parent identity. Use a device lock the
-supervised user does not know, or keep the device under direct supervision.
+The credential is global to this Android app installation, not scoped to one
+Connection. Changing it or resetting it with the current recovery phrase rotates
+the phrase, which is shown only once. If the credential record is missing
+or damaged, Supervised Mode fails closed. A legacy installation that was already
+enabled before app-specific parent credentials existed must reset local app
+data, reconnect, and configure the mode again; it does not silently trust the
+current Android user. That reset does not delete server-owned Hermes history.
+
+While parent access is unlocked, **Remove parent credential** is available in
+the parent controls even if the recovery phrase has been lost. Confirming it
+disables Supervised Mode for every Connection and removes the app-wide PIN or
+password and recovery verifier. Pinned profiles, capability toggles, appearance,
+visibility, session controls, and relock settings are preserved. Server sessions
+and history are preserved.
+
+If both the parent credential and recovery phrase are lost, use Android
+**Settings → Apps → Hermes-Relay → Storage → Clear data**. This also removes
+local Connections, sign-ins, preferences, and caches, but does not delete
+server-owned Hermes sessions. Uninstall/reinstall is not the documented escape
+hatch because Android may restore backed-up local app state.
+
+The app stores salted PBKDF2 verifiers, not the parent password or recovery phrase,
+and applies persisted attempt delays. Prefer a strong password: a six-digit PIN
+still has limited resistance if a privileged attacker copies the app-private
+data and guesses offline. Stock Android cannot create parent-only biometric
+enrollment for one app or tell the app which enrolled fingerprint or face was
+used, so device biometrics are not accepted as parent identity.
 
 The restricted root is restored before the first interactive screen. Deep
 links, notification actions, shortcuts, saved back stacks, and share intents
@@ -208,6 +238,10 @@ Supervised Mode cannot control:
 - server-side session retention or provider data handling;
 - the developmental suitability or factual accuracy of model output;
 - Android behavior outside the Hermes-Relay app.
+
+The experimental Supervised Mode and parent-authentication screens currently use
+canonical English in every app locale pending fluent review of the complete
+security and recovery wording. Do not assume those screens are localized.
 
 Use it alongside a restrictive Hermes profile, parental supervision, Android
 parental or enterprise controls where appropriate, and regular review of the
