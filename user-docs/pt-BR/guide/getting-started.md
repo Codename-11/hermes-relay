@@ -38,8 +38,8 @@ O Android usa normalmente o Dashboard/Gateway do Hermes em `:9119`. Ele fornece
 Chat, sessões, login, Manage e voz padrão. Inicie-o com `hermes dashboard` e
 deixe esse endereço acessível pelo celular.
 
-O servidor de API em `:8642` é opcional: funciona como fallback automático do
-Chat ou para compatibilidade headless avançada. Uma chave de API só é necessária
+O servidor de API em `:8642` é opcional: funciona como conexão explícita pela
+Direct API ou para compatibilidade headless avançada. Uma chave de API só é necessária
 quando esse endpoint opcional é configurado. O operador do servidor cria
 `API_SERVER_KEY`; o Dashboard não fornece essa chave.
 
@@ -66,14 +66,14 @@ não for confiável; o Android verifica uma origem de login diferente antes de s
 3. Entre no dashboard quando solicitado.
 4. Toque em **Connect** e confirme **Chat · Ready**.
 5. Em **Concluir configuração**, ative as notificações do Android se quiser alertas do chat em segundo plano. Câmera, microfone e os demais recursos continuam opcionais e são configurados individualmente; toque em **Agora não** para seguir direto.
-6. Adicione API fallback, Relay ou rotas remotas depois em **Advanced**, se necessário.
+6. Adicione Direct API, Relay ou rotas remotas depois em **Advanced**, se necessário.
 
 `hermes-relay-tailscale enable` publica `https://host.ts.net:10443` em uma porta
 dedicada do tailnet e encaminha para o Dashboard local `:9119`, junto com a rota Relay
 da mesma origem. Uma rota deliberadamente direta como
 `http://100.x.y.z:9119` também funciona, mas não tem TLS de aplicação.
 
-A mesma sessão libera Chat, sessões, Manage e Voice. Relay sem pareamento e API
+A mesma sessão libera Chat, sessões, Manage e Voice. Relay sem pareamento e Direct API
 fallback indisponível são estados normais.
 
 ## Recomendado: complete a configuração com Relay {#relay-server-optional}

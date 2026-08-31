@@ -184,7 +184,7 @@ class ConnectionSecurityTest {
 
         assertEquals(ConnectionSecurityLevel.Tls, result.level)
         assertEquals(SurfaceUseState.InUse, result.surfaces.single { it.label == "Dashboard & Gateway" }.useState)
-        assertEquals(SurfaceUseState.Available, result.surfaces.single { it.label == "API fallback" }.useState)
+        assertEquals(SurfaceUseState.Available, result.surfaces.single { it.label == "Direct API" }.useState)
     }
 
     @Test
@@ -203,7 +203,7 @@ class ConnectionSecurityTest {
 
         assertEquals(ConnectionSecurityLevel.Plain, result.level)
         assertEquals(SurfaceUseState.Unavailable, result.surfaces.single { it.label == "Dashboard & Gateway" }.useState)
-        assertEquals(SurfaceUseState.InUse, result.surfaces.single { it.label == "API fallback" }.useState)
+        assertEquals(SurfaceUseState.InUse, result.surfaces.single { it.label == "Direct API" }.useState)
     }
 
     @Test

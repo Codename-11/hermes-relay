@@ -91,26 +91,19 @@ enum class GatewayApprovalModeCapability {
  * is unit-testable without an AndroidViewModel. ConnectionViewModel
  * delegates here with its live state.
  *
- * Manual picks pass through untouched (ChatViewModel handles per-turn
- * fallback when a "gateway" pick can't serve a send); "auto" prefers the
- * gateway while the dashboard probe is unresolved or ready. A capability-
- * preferred SSE fallback is selected only after a definitive unavailable,
- * unsupported, or sign-in-required verdict.
+ * Manual picks pass through untouched. "auto" follows the saved connection's
+ * stable owner: Dashboard/Gateway for a standard connection, or the
+ * capability-preferred SSE surface for a true API-only compatibility record.
+ * Live reachability and sign-in state never change the owner of an open chat.
  */
 fun resolveStreamingEndpointPreference(
     preference: String,
     gateway: GatewayAvailability,
     capabilities: ServerCapabilities,
+    gatewayOwned: Boolean = true,
 ): String = when (preference) {
     "sessions", "completions", "runs", "gateway" -> preference
-    else -> if (
-        gateway == GatewayAvailability.Ready ||
-        gateway == GatewayAvailability.Unknown
-    ) {
-        "gateway"
-    } else {
-        capabilities.preferredChatEndpoint()
-    }
+    else -> if (gatewayOwned) "gateway" else capabilities.preferredChatEndpoint()
 }
 
 /**

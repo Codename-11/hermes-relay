@@ -28,23 +28,25 @@ class ChatRuntimeStatusTest {
     }
 
     @Test
-    fun `API SSE ready is healthy fallback when gateway is unavailable`() {
+    fun `API SSE ready is healthy only for an API-owned conversation`() {
         assertEquals(
-            ChatRuntimeStatus.Connected(ChatTransportPath.ApiSse, fallback = true),
+            ChatRuntimeStatus.Connected(ChatTransportPath.ApiSse, fallback = false),
             resolveChatRuntimeStatus(
                 gateway = ChatTransportReadiness.Unavailable,
                 apiSse = ChatTransportReadiness.Ready,
+                owner = ChatTransportPath.ApiSse,
             ),
         )
     }
 
     @Test
-    fun `ready API fallback wins while gateway is still connecting`() {
+    fun `ready sibling API cannot mask gateway auth expiry`() {
         assertEquals(
-            ChatRuntimeStatus.Connected(ChatTransportPath.ApiSse, fallback = true),
+            ChatRuntimeStatus.Unavailable,
             resolveChatRuntimeStatus(
-                gateway = ChatTransportReadiness.Connecting,
+                gateway = ChatTransportReadiness.Unavailable,
                 apiSse = ChatTransportReadiness.Ready,
+                owner = ChatTransportPath.Gateway,
             ),
         )
     }
@@ -63,6 +65,7 @@ class ChatRuntimeStatusTest {
             resolveChatRuntimeStatus(
                 gateway = ChatTransportReadiness.Unavailable,
                 apiSse = ChatTransportReadiness.Connecting,
+                owner = ChatTransportPath.ApiSse,
             ),
         )
     }

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Passively observed Desktop/TUI turns now show live activity in the Android session drawer.** A uniquely matched selected session projects Working or Waiting without Android resuming, activating, or interrupting the external runtime; ambiguous cross-profile matches remain neutral. (Related: #365)
+- **Android Chat keeps one transport owner through sign-out and outages.** Dashboard/Gateway conversations now preserve their transcript, draft, profile, and session for sign-in or retry instead of silently sending the next turn to a reachable Direct API database. Legacy API-only connections and explicitly selected Direct API chats remain supported.
 - **Android keeps completed chat text visible when Dashboard sign-in expires.** Generic and reason-coded history `401` responses settle the local turn, preserve its transcript, and surface the existing sign-in recovery without reading another profile's API history.
 - **Android keeps long-running context compaction alive.** A client-visible compaction status extends and refreshes the Gateway turn watchdog instead of interrupting healthy compression after the ordinary idle window. (Supersedes #484.)
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)

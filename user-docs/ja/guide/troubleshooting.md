@@ -36,10 +36,10 @@ tailnet HTTPS `:10443` がローカル Dashboard `:9119` へ転送されます�
 - Dashboard/Gateway URL、ログイン、`/api/ws` を確認します。
 - エラーが表示された場合は **Retry** を 1 回タップします。
 - Hermes サーバーのログを確認します。
-- オプションの API fallback は別に診断します。障害があっても正常な Gateway 接続はブロックしません。
+- オプションの Direct API は別に診断します。障害があっても正常な Gateway 接続はブロックしません。
 - ローカルモデルは数分かかる場合があります。Android がバックグラウンド接続を切断しても、再接続時に完了済みの応答を取得します。
 
-意図的に設定した API fallback が利用できない場合は、`API_SERVER_ENABLED`、
+意図的に設定した Direct API が利用できない場合は、`API_SERVER_ENABLED`、
 bind アドレス、`http://<host>:8642/health`、管理者が作成した `API_SERVER_KEY`、
 ファイアウォールを確認します。Dashboard ログインではこのキーは作成されません。
 

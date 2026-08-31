@@ -847,7 +847,7 @@ internal fun routeSurfaceSecurityPresentation(
     val label = when (surface) {
         EndpointSurface.Standard,
         EndpointSurface.Dashboard -> "Dashboard & Gateway"
-        EndpointSurface.Api -> "API fallback"
+        EndpointSurface.Api -> "Direct API"
         EndpointSurface.Relay -> "Relay tools"
     }
     val securityVerdict = classifySurfaceSecurity(

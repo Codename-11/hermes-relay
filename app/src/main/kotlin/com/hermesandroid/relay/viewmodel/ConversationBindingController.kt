@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,7 @@ internal data class ConversationBinding(
     val contextKey: String? = null,
     val profileName: String? = null,
     val sessionId: String? = null,
+    val transport: SessionTransport? = null,
     val displayProfile: Profile? = null,
     val origin: ConversationBindingOrigin = ConversationBindingOrigin.GlobalSelection,
     val revision: Long = 0L,
@@ -46,6 +48,7 @@ internal class ConversationBindingController {
         sessionId: String?,
         displayProfile: Profile?,
         lockedProfileToken: String?,
+        transport: SessionTransport? = sessionId?.let(SessionTransport::forSessionId),
     ): Boolean {
         if (!profileAllowed(profileName, lockedProfileToken)) return false
         reduce(
@@ -54,6 +57,7 @@ internal class ConversationBindingController {
             sessionId = sessionId,
             displayProfile = displayProfile,
             origin = ConversationBindingOrigin.ExplicitSession,
+            transport = transport,
         )
         return true
     }
@@ -63,6 +67,7 @@ internal class ConversationBindingController {
         profileName: String?,
         sessionId: String?,
         displayProfile: Profile? = null,
+        transport: SessionTransport? = sessionId?.let(SessionTransport::forSessionId),
     ) {
         reduce(
             contextKey = contextKey,
@@ -70,6 +75,7 @@ internal class ConversationBindingController {
             sessionId = sessionId,
             displayProfile = displayProfile,
             origin = ConversationBindingOrigin.GlobalSelection,
+            transport = transport,
         )
     }
 
@@ -79,6 +85,7 @@ internal class ConversationBindingController {
         profileName: String?,
         sessionId: String?,
         displayProfile: Profile? = null,
+        transport: SessionTransport? = sessionId?.let(SessionTransport::forSessionId),
     ): Boolean {
         val current = _state.value
         if (
@@ -89,7 +96,7 @@ internal class ConversationBindingController {
                     current.sessionId != sessionId
                 )
         ) return false
-        forceGlobal(contextKey, profileName, sessionId, displayProfile)
+        forceGlobal(contextKey, profileName, sessionId, displayProfile, transport)
         return true
     }
 
@@ -98,17 +105,19 @@ internal class ConversationBindingController {
         if (current.sessionId == sessionId) return
         _state.value = current.copy(
             sessionId = sessionId,
+            transport = sessionId?.let(SessionTransport::forSessionId) ?: current.transport,
             revision = current.revision + 1,
         )
     }
 
     /** A user-requested draft keeps its owner and fences persisted-session reconciliation. */
-    fun startFreshDraft() {
+    fun startFreshDraft(transport: SessionTransport? = _state.value.transport) {
         val current = _state.value
         if (!current.isBound) return
         if (current.sessionId == null && current.hasExplicitOwner) return
         _state.value = current.copy(
             sessionId = null,
+            transport = transport,
             origin = ConversationBindingOrigin.ExplicitSession,
             revision = current.revision + 1,
         )
@@ -130,6 +139,7 @@ internal class ConversationBindingController {
         sessionId: String?,
         displayProfile: Profile?,
         origin: ConversationBindingOrigin,
+        transport: SessionTransport?,
     ) {
         val current = _state.value
         val next = ConversationBinding(
@@ -138,6 +148,7 @@ internal class ConversationBindingController {
             sessionId = sessionId,
             displayProfile = displayProfile,
             origin = origin,
+            transport = transport,
             revision = current.revision + 1,
         )
         if (current.copy(revision = next.revision) != next) {

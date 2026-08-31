@@ -34,11 +34,11 @@ Verified upstream source snapshot:
 
 | Surface | Owner | Requires Relay | Android usage | Notes |
 |---------|-------|----------------|---------------|-------|
-| `/v1/capabilities` | Upstream API server | No | Optional fallback capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
-| `/v1/chat/completions` | Upstream API server | No | Chat fallback | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
-| `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | Chat fallback | Structured run events and stop/approval support. |
+| `/v1/capabilities` | Upstream API server | No | Direct API capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
+| `/v1/chat/completions` | Upstream API server | No | API-only compatibility chat | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
+| `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | API-only compatibility chat | Structured run events and stop/approval support. |
 | Dashboard `/api/health` | Upstream dashboard | No | Route/process readiness | Lightweight canonical readiness probe used by official Desktop. Android falls back to `/api/status` only for confirmed legacy hosts without this route; transient failures never trigger the heavyweight fallback. |
-| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary profile-scoped session directory/history or optional SSE fallback | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. The standard Android drawer and stored-history reader use authenticated Dashboard REST independently of `/api/ws` readiness; the Gateway socket owns live chat and activity, not whether persisted rows may be read. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
+| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary profile-scoped Dashboard directory/history or API-only compatibility storage | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. The standard Android drawer and stored-history reader use authenticated Dashboard REST independently of `/api/ws` readiness; the Gateway socket owns live chat and activity, not whether persisted rows may be read. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Authenticated read-only API-server skill/toolset inventory; Android Diagnostics summarizes enabled toolsets and Relay tool visibility. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth and post-selection diagnostics | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity, resource pressure, and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. `message.complete` is the ordinary terminal event; `session.info {running:false}` is the authoritative settle backstop when a replacement socket missed that terminal frame. A reconnect reactivates the exact live runtime with `session.activate`; durable `session.resume` remains the cold-open path and an explicit rejection never creates a replacement context. |
@@ -168,7 +168,7 @@ capabilities, not identity:
 | Surface | Product role | Required for the standard path |
 |---------|--------------|--------------------------------|
 | Dashboard/Gateway | Primary chat, auth, sessions, Manage, and Vanilla Hermes voice | Yes |
-| API server | Automatic chat fallback and advanced headless compatibility | No |
+| API server | Explicit API-only and advanced headless compatibility | No |
 | Relay | Pairing, terminal, bridge/device control, media, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
 
 Existing API-only records and headless deployments remain supported compatibility
@@ -181,10 +181,10 @@ The app should present Vanilla Hermes as the default path:
 
 1. Connect to and authenticate with the Dashboard/Gateway.
 2. Use gateway chat when `/api/ws` is ready.
-3. Discover or accept an API server as an optional automatic fallback; otherwise
-   keep the connection healthy with API fallback marked unavailable.
-4. When needed, fall back to API-server
-   SSE.
+3. Keep any discovered API server as an optional compatibility capability; it
+   does not alter the owner of the active Dashboard conversation.
+4. Use API-server SSE only for a legacy API-only record or an explicit advanced
+   Direct API selection/new chat.
 5. Use Vanilla Hermes dashboard voice when audio routes are present.
 6. Offer Relay pairing only for Relay-owned power features. Prefer the
    Dashboard-origin plugin ingress advertised by pairing; retain a direct Relay
@@ -233,7 +233,7 @@ keeping route ownership explicit:
 - Connection/profile ownership plus request generation are rechecked before
   publication, so a late response cannot populate a newer profile selection.
 
-## API Fallback Compatibility Details
+## Direct API Compatibility Details
 
 - Dashboard/API session-list `is_active` is a persistence-recency hint: an
   unended row whose `last_active` is less than five minutes old. It is not a

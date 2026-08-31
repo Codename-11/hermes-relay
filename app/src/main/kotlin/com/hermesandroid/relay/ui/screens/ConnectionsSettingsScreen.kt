@@ -62,6 +62,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.gatewayRouteUrl
 import com.hermesandroid.relay.data.isDashboardOnlyRoute
@@ -386,6 +387,12 @@ private fun ConnectionListCard(
     } else {
         connection.resolvedDashboardUrl
     }
+    val selectedProfile: Profile? = if (activeConnectionViewModel != null) {
+        val profile by activeConnectionViewModel.selectedProfile.collectAsState()
+        profile
+    } else {
+        null
+    }
     val presentedConnection = activeConnection ?: connection
     val presentation = resolveGatewayCardPresentation(
         connection = presentedConnection,
@@ -429,13 +436,7 @@ private fun ConnectionListCard(
                 modifier = Modifier
                     .size(10.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(
-                        if (presentation.status == GatewayCardStatus.Online) {
-                            com.hermesandroid.relay.ui.theme.RelayRefresh.Green
-                        } else {
-                            MaterialTheme.colorScheme.outline
-                        },
-                    ),
+                    .background(gatewayStatusColor(presentation.status)),
             )
             Icon(
                 imageVector = Icons.Filled.Dns,
@@ -484,6 +485,20 @@ private fun ConnectionListCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (isActive) {
+                    Text(
+                        text = listOfNotNull(
+                            stringResource(R.string.conn_info_profile),
+                            selectedProfile?.name?.takeIf { it.isNotBlank() }
+                                ?: stringResource(R.string.settings_server_default),
+                            selectedProfile?.model?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             if (onSwitch != null || isSwitching || justSwitched) {
                 OutlinedButton(

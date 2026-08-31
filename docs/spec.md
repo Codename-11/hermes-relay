@@ -19,7 +19,7 @@ Current capabilities are split between vanilla upstream Hermes and optional Rela
 
 | Surface | Requires Relay | What |
 |---------|----------------|------|
-| **Chat** | No | Talk to any Hermes agent profile with dashboard `/api/ws` live thinking when signed in, or API-server SSE fallback |
+| **Chat** | No | Talk to any Hermes agent profile with dashboard `/api/ws` live thinking when signed in, or an explicit API-only compatibility connection |
 | **Manage** | No | Dashboard-backed config, profiles, model/provider keys, skills, MCP, and diagnostics |
 | **Vanilla Hermes voice** | No | Dashboard `/api/audio/transcribe`, streaming `/api/audio/speak-stream`, and compatible `/api/audio/speak` fallback with the Manage session |
 | **Terminal** | Yes | Secure remote shell access to the Hermes server via tmux |
@@ -27,8 +27,9 @@ Current capabilities are split between vanilla upstream Hermes and optional Rela
 | **Relay power features** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media relay |
 
 The standard Vanilla Hermes connection needs only the Dashboard/Gateway surface.
-An API-server endpoint can be discovered or added as an automatic fallback for
-chat and advanced headless compatibility. Pairing adds the Relay URL, session
+An API-server endpoint can be retained or added for explicit API-only chat and
+advanced headless compatibility. It never takes over a Dashboard-owned
+conversation after sign-out or a route failure. Pairing adds the Relay URL, session
 token, terminal/bridge grants, and optional network candidates.
 
 **What it is not:**
@@ -42,7 +43,7 @@ token, terminal/bridge grants, and optional network candidates.
 
 1. **Vanilla Hermes first** — chat, Manage, and voice must work against unmodified upstream Hermes before any Relay power path is considered.
 2. **Secure by default** — WSS/HTTPS for remote paths; dashboard, API, and Relay auth stay on their native surfaces.
-3. **Realtime where the surface supports it** — gateway chat can stream live thinking; API-server SSE remains the fallback; terminal and bridge stay realtime through Relay.
+3. **Realtime where the surface supports it** — gateway chat can stream live thinking; API-server SSE remains an explicit compatibility mode; terminal and bridge stay realtime through Relay.
 4. **Clean UX** — Material 3, minimal setup, and clear route identity for Vanilla Hermes vs Relay.
 5. **Offline-aware** — graceful degradation when connection drops. Auto-reconnect with exponential backoff.
 6. **Server-side state** — the app is a thin client. Sessions, history, memory, profiles, and dashboard state live on the Hermes server.
@@ -80,7 +81,8 @@ and supervised reconfiguration rather than silently trusting a device user.
 
 ```
 Android app
-  |-- Vanilla Hermes chat   -> dashboard /api/ws, then API-server SSE fallback
+  |-- Vanilla Hermes chat   -> dashboard /api/ws (transport-affine)
+  |-- API-only chat         -> API-server SSE compatibility routes
   |-- Vanilla Hermes Manage -> dashboard /api/*
   |-- Vanilla Hermes voice  -> dashboard /api/audio/*
   |-- Relay terminal      -> Tailscale Serve WSS, or opt-in Hermes Secure Link :9443/relay/ws
@@ -111,7 +113,7 @@ A saved **Connection** represents one Hermes installation, not one transport.
 Its stable identity is independent of endpoint URLs. Dashboard/Gateway is the
 standard upstream surface; API server and Relay endpoints are optional
 capabilities that can be discovered, added, removed, and diagnosed separately.
-The normal UI reports outcomes such as Chat, Manage, Voice, API fallback, and
+The normal UI reports outcomes such as Chat, Manage, Voice, Direct API, and
 Relay extensions instead of treating a missing optional endpoint as a broken
 connection.
 
@@ -217,8 +219,9 @@ to attach the PR a coding session created, then the repo-scoped read-only
 this metadata is optional; older Dashboard and API-server hosts retain the
 ordinary session row.
 
-Chat availability is derived only from the authenticated Gateway and supported
-API-server fallback routes. A Send with no usable route remains fail-closed and
+Chat availability is derived only from the active conversation owner: the
+authenticated Gateway or an explicitly API-owned compatibility route. A Send
+with no usable owner remains fail-closed and
 surfaces a retryable conversation failure plus secret-free Diagnostics evidence.
 Profile-owned Gateway history is required to load through that exact profile;
 an unavailable scoped reader surfaces a history failure instead of accepting an
@@ -608,7 +611,7 @@ Bottom navigation bar with 4 tabs:
 - **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. A profile switch marks the replacement list loading before clearing the previous profile's rows and keeps that state until the exact-profile fetch settles, so an empty-state claim never flashes before server truth arrives. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
 - **Cold profile hydration** — a persisted named profile scopes its Dashboard session directory and last-session restore immediately, before `/api/profiles` metadata is available. Server-default selection waits for the lightweight active-profile scope. Roster, avatars, pets, skills, and model metadata never precede the first directory result. The startup sphere releases after route selection; Chat keeps identity and cached rows mounted while its existing animated status surfaces show Gateway wake, session restore, and directory loading.
 - **Authoritative session activity** — one composite registry keyed by connection, normalized profile, and durable session id drives the drawer, filters, grouping, animation, accessibility, and the visible composer. Exact pending approval/clarify/sudo/secret/MCP requests produce **Needs input**; the Gateway's process-wide `session.active_list` supplies **Starting**, **Working**, and **Idle**; exact terminal or `session.info {running:false}` can settle the matching generation. Because active-list rows normally have no profile metadata, Android assigns a row through exact foreground/detached ownership already held by that client, explicit profile metadata if a future upstream sends it, or the currently selected passive session when its durable id has exactly one owner in the current connection directory. Duplicate same-id owners across profiles remain unresolved and create no status. Resolved rows from a partial snapshot may update their exact owners, but disappearance settles a scope only when the successful process-wide snapshot was completely and unambiguously resolved for it. Restart/checkpoint recovery is **Checking**; a failed or unsupported live refresh is **Unavailable**, never inferred Idle. REST `is_active` remains recency metadata only. `process.list` may add a separate **Background work** indicator and never keeps the parent conversation Working. Old socket generations, ambiguous bare session ids, and delayed snapshots cannot revive newer settled state.
-- **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible Android-owned turn without sending `session.interrupt`; each Android-owned running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Opening, foregrounding, or selecting a saved session without that exact checkpoint is read-only observation: Android warms only the socket, reads profile-scoped history, and polls `session.active_list` without `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`. A Desktop/TUI-owned turn therefore remains owned by its producing client; Android refreshes persisted progress and performs one final history read when the runtime settles. Explicit send/config actions may resume the destination session, explicit Stop still interrupts, and SSE fallback stays single-stream and cancels on navigation.
+- **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible Android-owned turn without sending `session.interrupt`; each Android-owned running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Opening, foregrounding, or selecting a saved session without that exact checkpoint is read-only observation: Android warms only the socket, reads profile-scoped history, and polls `session.active_list` without `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`. A Desktop/TUI-owned turn therefore remains owned by its producing client; Android refreshes persisted progress and performs one final history read when the runtime settles. Explicit send/config actions may resume the destination session, explicit Stop still interrupts, and Direct API compatibility chat stays single-stream and cancels on navigation.
 - **Queued Gateway follow-ups** — every local queued item is immutably scoped to its originating connection, profile, stored session, transport, and run generation; only that run's completion can make it eligible, and switching sessions shows only that session's queue. Restored text queues retain the same scope, while unavailable/deleted destinations and non-restorable attachment queues fail visibly instead of following the current composer. Drained messages add `queued: true` to `prompt.submit`; ordinary sends omit the field. Authoritative submit rejections (`4004`, `4018`, `4028`, `4029`, `4030`, `4090`, `5008`, `5070`, and `5071`) preserve the server message and never fall through to API-server SSE.
 - **Durable composer drafts** — each connection/profile/session owns one app-private draft containing text, quote/edit context, and pending attachment bytes. Metadata and content-addressed blobs live under Android's no-backup directory, are capped at 64 drafts and 128 MB of retained blobs outside the active draft, flush when Chat backgrounds, and are removed after a successful send. Session/profile/connection navigation saves the previous owner before restoring the destination; an opened cross-profile session uses its actual owning profile rather than the global picker.
 - **Large paste review** — a default-on Chat setting converts any single insertion of at least 5,000 characters into a visible `pasted-text.txt` attachment before the normal message-length limit rejects it. Gateway uses upstream `file.attach`; API-server SSE and proactive Thread paths materialize the same UTF-8 text into the outgoing prompt and remove only the synthetic attachment from that transport, so the behavior never requires Relay or silently drops content.
@@ -660,7 +663,7 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 ### Settings Tab
 - **Active agent card (v0.6.0)** — top-of-screen summary card showing the current Connection / Profile / Personality. Tap navigates to Chat and auto-opens the agent sheet via the `openAgentSheet` nav arg, giving Settings-originating users a one-tap path to change agent context without leaving the flow.
 - **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, voice, Pair-readiness, credential-store recovery, history-failure, and rejected-Send evidence without secrets. See `docs/decisions.md` §19.
-- **Connection (single-server settings)** — summary-first detail for one Hermes installation. Dashboard/Gateway health drives standard Chat, Manage, Sessions, and Voice readiness. API fallback and Relay extensions appear as independently optional capabilities. Dashboard/Gateway address and network paths are edited under Routes. Advanced retains only the optional direct API credential, explicit direct Relay endpoint override, and insecure-development controls; missing API or Relay settings never make a healthy Dashboard/Gateway connection look broken. Every Relay QR, enter-code, and show-code method uses the shared connection-scoped Pair flow. Transport security posture and paired-device grants remain visible without leading the normal setup flow with ports or bearer keys.
+- **Connection (single-server settings)** — summary-first detail for one Hermes installation. Dashboard/Gateway health drives standard Chat, Manage, Sessions, and Voice readiness. Direct API compatibility and Relay extensions appear as independently optional capabilities. Dashboard/Gateway address and network paths are edited under Routes. Advanced retains only the optional direct API credential, explicit direct Relay endpoint override, and insecure-development controls; missing API or Relay settings never make a healthy Dashboard/Gateway connection look broken. Every Relay QR, enter-code, and show-code method uses the shared connection-scoped Pair flow. Transport security posture and paired-device grants remain visible without leading the normal setup flow with ports or bearer keys.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
 - **Voice** — route-aware voice engine selector (`Vanilla Hermes` via dashboard audio, `Relay Voice Output`, and experimental `Realtime Agent`), global interaction mode (tap / hold / continuous), silence threshold slider, a final-answer-only speech policy, Auto-TTS toggle, selected-engine cards for dashboard or relay-backed settings, language picker, and a Test Current Engine card. Final-answer-only keeps tool/service progress and intermediate commentary visual while both voice engines wait to speak the settled answer; approvals, confirmation questions, and blocking failures remain actionable. Vanilla Hermes voice depends on Manage/dashboard auth; Relay-backed engines run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
@@ -711,13 +714,15 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
 | `/api/profiles/{name}/memory` | GET | Profile-scoped memory listing. Returns `{profile, memories_dir, entries: [{name, filename, path, content, size_bytes, truncated}], total}` for `*.md` files directly under `<profile>/memories/` (non-recursive). Ordering: `MEMORY.md` first, `USER.md` second, remainder alphabetical. Each entry capped at 50KB inline with `truncated: true` when larger. Absent memories dir → 200 with empty `entries` array. Same auth model as `/config`. 404 on unknown profile. See §22 in decisions.md. |
 
-### 6.2 Chat — Dashboard/Gateway Primary with Optional API Fallback
+### 6.2 Chat — Dashboard/Gateway Primary with Explicit API Compatibility
 
-Chat bypasses the Relay server entirely. In `Auto`, Android uses the upstream
-dashboard `/api/ws` gateway when dashboard auth is ready because that is the
-vanilla upstream path with live thinking/reasoning events. When that gateway is
-unavailable, Android falls back to API-server SSE routes. The native Sessions
-API fallback looks like:
+Chat bypasses the Relay server entirely. In `Auto`, a standard saved connection
+uses the upstream dashboard `/api/ws` gateway because that is the vanilla
+upstream path with live thinking/reasoning events. That owner is stable: sign-in
+expiry or a temporary route failure preserves the transcript and draft and
+offers sign-in/retry; it never dispatches the turn to another database. A
+legacy API-only record or an explicit advanced Direct API selection uses the
+API-server SSE routes. The native Sessions compatibility path looks like:
 
 Model inventory also stays upstream-owned. Android may call the optional Relay
 `POST /relay/model-capabilities` route to refine reasoning-effort choices for
@@ -1204,7 +1209,7 @@ See `docs/decisions.md` → **Voice Mode — Architecture** for the historical b
 
 ## 8. Current Scope
 
-As of v1.0.0, the current scope is maintaining the vanilla-Hermes-first contract while keeping Relay power features additive and cleanly manageable. Vanilla Hermes Dashboard/Gateway chat, Manage, sessions, and dashboard voice must continue to work against unmodified upstream Hermes without an API-server or Relay requirement. API fallback remains optional and Relay work should be plugin-owned, diagnosable through `hermes relay doctor`, and removable without becoming a hidden requirement for the vanilla Hermes app path.
+As of v1.0.0, the current scope is maintaining the vanilla-Hermes-first contract while keeping Relay power features additive and cleanly manageable. Vanilla Hermes Dashboard/Gateway chat, Manage, sessions, and dashboard voice must continue to work against unmodified upstream Hermes without an API-server or Relay requirement. Direct API compatibility remains optional and Relay work should be plugin-owned, diagnosable through `hermes relay doctor`, and removable without becoming a hidden requirement for the vanilla Hermes app path.
 
 **Still non-goals for the current cadence:**
 - Biometric session lock (fingerprint/face gate on terminal and/or chat resume). Tracked under Phase 4.
@@ -1252,7 +1257,7 @@ Current Android dependency versions. Source of truth is `gradle/libs.versions.to
 | Surface | How We Connect |
 |---------|---------------|
 | **Gateway chat** | Dashboard `/api/auth/ws-ticket` + `/api/ws` for live thinking/reasoning and session-scoped `image.attach_bytes` / `pdf.attach` / `file.attach` uploads when Manage auth is ready |
-| **API-server chat fallback** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes; a known selected multiplex profile uses the shared listener's `/p/<profile>` prefix and its own encrypted profile credential |
+| **API-only compatibility chat** | `/api/sessions/*/chat/stream`, `/v1/chat/completions`, or `/v1/runs` based on capability probes; a known selected multiplex profile uses the shared listener's `/p/<profile>` prefix and its own encrypted profile credential |
 | **API-server sessions** | `GET/POST/PATCH/DELETE /api/sessions` for CRUD |
 | **Manage** | Dashboard `/api/status`, `/api/auth/me`, `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*` |
 | **Vanilla Hermes voice** | Dashboard `POST /api/audio/transcribe`, WebSocket `/api/audio/speak-stream`, and `POST /api/audio/speak` compatibility fallback, all scoped by the selected profile when present |

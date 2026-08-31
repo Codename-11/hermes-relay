@@ -194,7 +194,7 @@ test("malformed or plaintext public candidates block the invite receipt", () => 
   assert.deepEqual(receipt.blockingIssues, [
     "public: Dashboard must use HTTPS",
     "public: Relay must use WSS",
-    "public: API fallback must use HTTPS",
+    "public: Direct API must use HTTPS",
   ]);
 
   assert.match(
