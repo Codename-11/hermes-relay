@@ -88,6 +88,10 @@ The initial catalog covers ordinary streaming, rapid chunks/reasoning/tool
 events, queued turns, scoped and foreign/unscoped inputs, persisted history,
 and both issue #365 terminal-gap forms:
 
+- `initial_history_bind`: a durable, profile-scoped transcript exists before
+  the client resumes, so rendered clients can exercise first-composition
+  binding without relying on a new turn to trigger recomposition.
+
 - `subagent_child_preview`: interleaved concurrent child lifecycle events carry
   stable child/session identity, thinking/progress/tool previews, and distinct
   completed/interrupted terminal states. Its upstream requirement also proves
