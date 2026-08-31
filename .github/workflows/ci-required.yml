@@ -20,13 +20,25 @@ on:
         description: "Exact candidate commit to check"
         required: true
         type: string
+      android_preset:
+        description: "Optional Android-only compute lane"
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - focused
+          - lint
+          - assemble-debug
+          - release-smoke
+          - all-final
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: ci-required-${{ github.ref }}
+  group: ci-required-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', inputs.head_sha, inputs.android_preset) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -113,33 +125,41 @@ jobs:
 
   android:
     needs: changes
-    if: needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.android == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     uses: ./.github/workflows/ci-android.yml
+
+  android_on_demand:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' && inputs.android_preset != 'auto'
+    uses: ./.github/workflows/android-on-demand.yml
+    with:
+      head_sha: ${{ inputs.head_sha }}
+      preset: ${{ inputs.android_preset }}
 
   desktop:
     needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    if: needs.changes.outputs.desktop == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     uses: ./.github/workflows/ci-desktop.yml
 
   plugin:
     needs: changes
-    if: needs.changes.outputs.plugin == 'true'
+    if: needs.changes.outputs.plugin == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     uses: ./.github/workflows/ci-plugin.yml
 
   dashboard:
     needs: changes
-    if: needs.changes.outputs.dashboard == 'true'
+    if: needs.changes.outputs.dashboard == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     uses: ./.github/workflows/ci-dashboard.yml
 
   contract:
     needs: changes
-    if: needs.changes.outputs.contract == 'true'
+    if: needs.changes.outputs.contract == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     uses: ./.github/workflows/ci-contract.yml
 
   docs:
     name: Build public docs
     needs: changes
-    if: needs.changes.outputs.docs == 'true'
+    if: needs.changes.outputs.docs == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,11 +181,12 @@ jobs:
   guard:
     name: Required checks
     if: always()
-    needs: [changes, android, desktop, plugin, dashboard, contract, docs]
+    needs: [changes, android, android_on_demand, desktop, plugin, dashboard, contract, docs]
     runs-on: ubuntu-latest
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       ANDROID_RESULT: ${{ needs.android.result }}
+      ANDROID_ON_DEMAND_RESULT: ${{ needs.android_on_demand.result }}
       DESKTOP_RESULT: ${{ needs.desktop.result }}
       PLUGIN_RESULT: ${{ needs.plugin.result }}
       DASHBOARD_RESULT: ${{ needs.dashboard.result }}
@@ -176,7 +197,7 @@ jobs:
         shell: bash
         run: |
           failed=0
-          for check in CHANGES ANDROID DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
+          for check in CHANGES ANDROID ANDROID_ON_DEMAND DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
             result_var="${check}_RESULT"
             result="${!result_var}"
             echo "$check: $result"
