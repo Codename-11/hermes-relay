@@ -1,0 +1,29 @@
+{
+  "name": "compaction_status",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260831_120000_compaction",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete"
+  ],
+  "initial_history": [],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "status.update", "payload": {"kind": "compacting", "text": "Compacting context"}},
+        {"op": "sleep", "milliseconds": 50},
+        {"op": "event", "type": "status.update", "payload": {"kind": "compacting", "text": "Compacting context"}},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Exercise compaction status.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "Compaction finished.", "timestamp": 2.0, "finish_reason": "stop"}
+          ]
+        },
+        {"op": "set_running", "value": false},
+        {"op": "event", "type": "message.complete", "payload": {"text": "Compaction finished.", "status": "complete"}}
+      ]
+    }
+  ]
+}

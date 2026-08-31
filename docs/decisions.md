@@ -3772,7 +3772,7 @@ be considered later without being silently introduced now.
 
 ## ADR 66 — Android Supervised Mode is a parent-controlled client policy
 
-**Status:** Implemented in code; physical managed-device certification pending (2026-08-24).
+**Status:** Implemented in code; app-specific parent credential and physical managed-device certification pending (2026-08-31).
 
 **Context.** Some operators prepare a deliberately restricted Hermes profile
 for use through a parent-supervised Android client. The profile remains the
@@ -3784,9 +3784,10 @@ child security or as a server-enforced account type.
 **Decision.** Android will treat Supervised Mode as an opt-in, locally enforced
 policy pinned to one existing Connection and one existing Hermes profile. The
 parent is responsible for preparing and reviewing that profile before enabling
-the mode. Entering, changing, or leaving the parent policy requires Android
-device authentication. That prompt authenticates an enrolled device user, not
-a distinct server-side parent identity. While the policy is active, the app restores directly
+the mode. Entering, changing, or leaving the parent policy requires the
+app-global parent PIN or password. Android's screen lock, device credential,
+and enrolled biometrics are not parent authority because the supervised user
+may legitimately control them. While the policy is active, the app restores directly
 into a restricted root and never renders the ordinary app behind an
 authentication prompt. A missing Connection, missing profile, malformed policy,
 failed authentication, process restart, or restored route that cannot prove its
@@ -3799,6 +3800,37 @@ policy editor or full application settings. Backgrounding, inactivity, process
 recreation, and leaving parent settings relock parent access according to the
 policy. Deep links, notification actions, restored navigation, shortcuts, and
 programmatic routes pass the same gate.
+
+The parent credential store persists only salted verifiers in app-private
+DataStore. Parent and recovery verifiers use independent 128-bit salts and
+PBKDF2-HMAC-SHA256 with 310,000 iterations; candidate comparison is
+constant-time. Five failures start a persisted 30-second delay, repeated
+failures increase it to a capped 15 minutes, and successful verification clears
+the counter. Enrollment first requires an explicit choice: an exactly six-digit
+PIN entered through the app keypad, or a password of at least eight and at most
+64 characters entered through the normal password keyboard. It returns a randomly
+generated six-word recovery phrase exactly once. Six distinct words from a
+128-word vocabulary provide about 42 bits of entropy: deliberately less than the
+previous opaque code, but materially easier to read, type, and send for this
+family-facing client restriction. Authenticated change and recovery
+reset replace both verifiers and issue a new recovery phrase; unauthenticated
+enrollment cannot overwrite an existing or corrupt record.
+
+An authenticated parent may remove the app-global credential without presenting
+the recovery phrase. Removal atomically deletes the credential record and sets
+every supervised policy to `enabled = false`, so no policy can remain active
+without an unlock path. All other policy configuration is retained for later
+re-enrollment. It does not delete server-owned Hermes sessions or history. If both the parent
+credential and recovery phrase are lost, the deliberate last-resort escape hatch
+is Android's **Clear data** action for the app. Uninstall/reinstall is not the
+documented recovery path because Android backup restore may restore local state.
+
+Missing, malformed, unsupported-version, weakened-KDF, and unreadable records
+fail closed. A legacy enabled policy has no trustworthy app parent identity to
+migrate, so it stays at the restricted root. Recovery requires resetting local
+app data, reconnecting, and configuring Supervised Mode again; Android must not
+disable the policy or promote the current device user automatically. Server
+sessions and history are not deleted by that local reset.
 
 The parent policy controls capabilities rather than imposing a special
 attachment count. Initial capabilities are text chat, new chat, cancel, steer,
@@ -3872,8 +3904,28 @@ or applicable legal obligations. Public language uses **Supervised Mode** or
 **parent-controlled client**, not "child account," "safe for children," or
 "server enforced."
 
+The verifier design raises the cost of an offline guess but cannot make a
+six-digit PIN high entropy. A privileged attacker who can copy or roll back the
+app-private store can attempt guesses offline or weaken the persisted backoff;
+device integrity, backup policy, and a strong parent password remain relevant.
+The recovery phrase may be copied or shared with a brief instruction to remove
+the message or saved copy from the phone after it reaches a parent-only place.
+It must otherwise be stored outside the supervised user's reach. Stock
+Android also cannot give one app a parent-only biometric enrollment or tell the
+app which enrolled fingerprint or face authenticated. Biometric convenience may
+be considered only as an explicit second layer over this app credential, never
+as proof of a distinct parent.
+
+**Localization decision.** Until physical certification and fluent security-copy
+review, the Supervised Mode and parent-authentication surface remains canonical
+English in every app locale. It intentionally falls back to English and must not
+be described as localized. Security-critical setup, recovery, migration, and
+lockout wording will move into the translated catalogs together after review;
+machine-translating only part of this boundary is not accepted.
+
 **Verification gate.** Implementation requires policy, authentication,
-navigation, process-death, deep-link, notification, capability, attachment,
+navigation, KDF-record validation, persisted throttling, change/recovery
+rotation, corruption/migration, process-death, deep-link, notification, capability, attachment,
 voice, session-ownership, Relay-tag, and revocation tests. Physical testing must
 cover the exact Android build on a managed/restricted device, including relock,
 restart, offline recovery, and attempts to escape the restricted root. Until
