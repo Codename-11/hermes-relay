@@ -57,7 +57,7 @@ case "${1:-help}" in
     ;;
   prepush)
     echo "Running Android pre-push checks..."
-    python3 scripts/android-prepush.py
+    python3 scripts/android-prepush.py --both-flavors
     ;;
   clean)
     echo "Cleaning build..."
@@ -103,7 +103,7 @@ case "${1:-help}" in
     echo "  install-fast  Build arm64 only + install + launch"
     echo "  test       Run sideload debug unit tests"
     echo "  lint       Run lint checks"
-    echo "  prepush    Run Android repository checks, lint, and focused CI tests"
+    echo "  prepush    Run the optional full local Android verification gate"
     echo "  clean      Clean build outputs"
     echo "  devices    List connected devices"
     echo "  wireless   Pair for wireless debugging"
