@@ -441,7 +441,7 @@ class GatewayForegroundRecoveryInstrumentedTest {
         viewModel.setProfileMessageLoaderWithMode { profile, sessionId, mode ->
             dashboard.getSessionMessages(sessionId, profile, mode)
         }
-        viewModel.setDashboardHistorySignInRequiredHandler {
+        viewModel.setDashboardSignInRequiredHandler {
             historySignInRequired.value = true
         }
     }

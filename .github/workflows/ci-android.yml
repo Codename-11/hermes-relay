@@ -30,6 +30,11 @@ on:
       - "gradle.properties"
       - "gradlew"
       - "gradlew.bat"
+      - "scripts/android-lane.ps1"
+      - "scripts/android-prepush.py"
+      - "scripts/dev.bat"
+      - "scripts/dev.sh"
+      - "scripts/tests/android_prepush_test.py"
       - "scripts/check-android-locales.py"
       - "scripts/android-locale-harness.py"
       - "scripts/check-android-collection-apis.py"
@@ -38,6 +43,7 @@ on:
       - "scripts/tests/check_android_native_compat_test.py"
       - "scripts/tests/check_android_release_notes_test.py"
       - ".github/workflows/ci-android.yml"
+      - ".github/workflows/android-on-demand.yml"
       - ".github/workflows/play-preflight-android.yml"
       - ".github/workflows/approve-release-android.yml"
       - ".github/workflows/release-android.yml"
@@ -80,6 +86,7 @@ jobs:
       - name: Validate Android release notes
         run: |
           python3 scripts/check-android-release-notes.py
+          python3 -m unittest scripts.tests.android_prepush_test
           python3 -m unittest scripts.tests.check_android_release_notes_test
 
       - name: Test Android native compatibility checker

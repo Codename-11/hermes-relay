@@ -58,21 +58,6 @@ class UpstreamTransportControllerAuthClientTest {
     }
 
     @Test
-    fun dashboardHistoryAuthLossOverridesAStillReadySocket() {
-        val controller = UpstreamTransportController(
-            context = mockk<Context>(relaxed = true),
-            activeConnectionIdProvider = { null },
-            dashboardUrlProvider = { null },
-            gatewayKeepAliveProvider = { false },
-        )
-        controller.updateGatewayAvailability(GatewayAvailability.Ready)
-
-        controller.markGatewaySignInRequired()
-
-        assertEquals(GatewayAvailability.SignInRequired, controller.gatewayAvailability.value)
-    }
-
-    @Test
     fun retiredGatewayClientCallbackCannotChangeCurrentConnection() {
         val current = mockk<GatewayChatClient>()
         val retired = mockk<GatewayChatClient>()

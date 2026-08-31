@@ -1717,9 +1717,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun markGatewayUnsupported() = upstreamTransport.markGatewayUnsupported()
 
-    /** Promote an authenticated Dashboard history rejection into Chat's sign-in recovery card. */
-    fun markDashboardHistorySignInRequired() = upstreamTransport.markGatewaySignInRequired()
-
     private fun updateGatewayAvailability(probed: GatewayAvailability) =
         upstreamTransport.updateGatewayAvailability(probed)
 

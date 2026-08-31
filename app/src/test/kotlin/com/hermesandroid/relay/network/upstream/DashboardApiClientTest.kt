@@ -567,19 +567,19 @@ class DashboardApiClientTest {
             401,
             "Session failed - HTTP 401: {\"reason\":\"no_cookie\",\"detail\":\"Unauthorized\"}",
         )
-        val generic = DashboardHttpException(401, "Session failed - HTTP 401: Unauthorized")
         val expired = DashboardHttpException(
             401,
-            "Session failed - HTTP 401: {\"reason\":\"session_expired\"}",
+            "Session failed - HTTP 401: {\"reason\":\"session_expired\",\"detail\":\"invalid_or_expired_session\"}",
         )
+        val generic = DashboardHttpException(401, "Session failed - HTTP 401: Unauthorized")
         val forbidden = DashboardHttpException(
             403,
             "Session failed - HTTP 403: forbidden",
         )
 
         assertTrue(noCookie.isDashboardSignInRequiredFailure())
-        assertTrue(generic.isDashboardSignInRequiredFailure())
         assertTrue(expired.isDashboardSignInRequiredFailure())
+        assertTrue(generic.isDashboardSignInRequiredFailure())
         assertFalse(forbidden.isDashboardSignInRequiredFailure())
     }
 

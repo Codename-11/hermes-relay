@@ -209,9 +209,7 @@ internal class HermesRuntimeBinder(
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
-        chat.setDashboardHistorySignInRequiredHandler(
-            connection::markDashboardHistorySignInRequired,
-        )
+        chat.setDashboardSignInRequiredHandler(connection::probeNow)
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
         chat.profileSessionDeleter = connection::deleteSession
         chat.profileSessionRenamer = connection::renameSession
