@@ -6,10 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Android What's New now provides a readable, complete release record.** One overall title and summary lead into selected highlights, every remaining user-visible addition, improvement, and fix, and relevant compatibility boundaries. Toast counts and previews are derived from that same inventory, so View all no longer promises details the expanded dialog and history cannot show.
+
 ### Fixed
 
 - **Android Chat keeps one transport owner through sign-out and outages.** Dashboard/Gateway conversations now preserve their transcript, draft, profile, and session for sign-in or retry instead of silently sending the next turn to a reachable Direct API database. Legacy API-only connections and explicitly selected Direct API chats remain supported.
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)
+- **Supervised Gateway setup stays parent-owned.** Add Gateway is single-flight and checks live parent authority before allocating a draft, relock/back cancels the exact pending setup, and the locked Chat footer no longer attempts protected navigation.
+- **Generated images stay visible and use their intended Chat animation.** Completed image media survives a marker-lagging history refresh, and both the built-in `image_generate` tool and profile tools ending in `_create_image` use the image-generation presentation.
 
 ## [Android 1.14.0] - 2026-08-30
 

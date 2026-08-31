@@ -1531,6 +1531,86 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_preservesCompletedGeneratedImageUntilMarkerPersists() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live-image",
+                role = MessageRole.ASSISTANT,
+                content = "Here is the generated image.",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = "generated.png",
+                        relayToken = "/tmp/generated.png",
+                        state = AttachmentState.LOADED,
+                    ),
+                ),
+                toolCalls = listOf(
+                    ToolCall(
+                        id = "image-call",
+                        name = "willow_create_image",
+                        args = null,
+                        result = "success",
+                        success = true,
+                        isComplete = true,
+                    ),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-server-image",
+                    role = "assistant",
+                    content = JsonPrimitive("Here is the generated image."),
+                ),
+            ),
+        )
+
+        val message = handler.messages.value.single()
+        assertEquals("assistant-server-image", message.id)
+        assertEquals("assistant-live-image", message.uiKey)
+        assertEquals(1, message.attachments.size)
+        assertEquals("generated.png", message.attachments.single().fileName)
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotCarryUnownedAssistantInboundImage() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "assistant-live-generic",
+                role = MessageRole.ASSISTANT,
+                content = "A generic fetched image.",
+                timestamp = 1L,
+                attachments = listOf(
+                    Attachment(
+                        contentType = "image/png",
+                        content = "",
+                        fileName = "generic.png",
+                        relayToken = "generic-token",
+                        state = AttachmentState.LOADED,
+                    ),
+                ),
+            ),
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-server-generic",
+                    role = "assistant",
+                    content = JsonPrimitive("A generic fetched image."),
+                ),
+            ),
+        )
+
+        assertTrue(handler.messages.value.single().attachments.isEmpty())
+    }
+
+    @Test
     fun loadMessageHistory_consumesOutboundAttachmentOncePerDuplicateContent() {
         // Two identical-text sends, only the first with an attachment: the
         // attachment must land on exactly one reloaded row, not both.
