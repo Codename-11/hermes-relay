@@ -185,6 +185,10 @@ internal fun WhatsNewToastContent(
 ) {
     val title = stringResource(R.string.whats_new_title)
     val highlight = entry.highlight
+    val digest = entry.resolvedToastDigest()
+    val releaseTitle = entry.title?.takeIf(String::isNotBlank) ?: highlight?.title.orEmpty()
+    val releaseSummary = entry.summary?.takeIf(String::isNotBlank)
+        ?: highlight?.summary?.takeIf(String::isNotBlank)
     Surface(
         color = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -220,14 +224,14 @@ internal fun WhatsNewToastContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = highlight?.title ?: entry.title.orEmpty(),
+                            text = releaseTitle,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        highlight?.summary?.takeIf(String::isNotBlank)?.let { summary ->
+                        releaseSummary?.let { summary ->
                             Text(
                                 text = summary,
                                 style = MaterialTheme.typography.bodySmall,
@@ -251,9 +255,9 @@ internal fun WhatsNewToastContent(
                     )
                 }
             }
-            entry.toastDigest?.takeIf {
-                it.additionalFeatureCount > 0 || it.fixCount > 0
-            }?.let { digest ->
+            digest?.takeIf {
+                it.additionalFeatureCount > 0 || it.improvementCount > 0 || it.fixCount > 0
+            }?.let { resolvedDigest ->
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f),
@@ -272,21 +276,30 @@ internal fun WhatsNewToastContent(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         val counts = buildList {
-                            if (digest.additionalFeatureCount > 0) {
+                            if (resolvedDigest.additionalFeatureCount > 0) {
                                 add(
                                     pluralStringResource(
                                         R.plurals.changelog_additional_feature_count,
-                                        digest.additionalFeatureCount,
-                                        digest.additionalFeatureCount,
+                                        resolvedDigest.additionalFeatureCount,
+                                        resolvedDigest.additionalFeatureCount,
                                     ),
                                 )
                             }
-                            if (digest.fixCount > 0) {
+                            if (resolvedDigest.improvementCount > 0) {
+                                add(
+                                    pluralStringResource(
+                                        R.plurals.changelog_improvement_count,
+                                        resolvedDigest.improvementCount,
+                                        resolvedDigest.improvementCount,
+                                    ),
+                                )
+                            }
+                            if (resolvedDigest.fixCount > 0) {
                                 add(
                                     pluralStringResource(
                                         R.plurals.changelog_fix_count,
-                                        digest.fixCount,
-                                        digest.fixCount,
+                                        resolvedDigest.fixCount,
+                                        resolvedDigest.fixCount,
                                     ),
                                 )
                             }
@@ -298,11 +311,11 @@ internal fun WhatsNewToastContent(
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = digest.preview.joinToString(", ") + "…",
+                            text = resolvedDigest.preview.joinToString(", ") + "…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

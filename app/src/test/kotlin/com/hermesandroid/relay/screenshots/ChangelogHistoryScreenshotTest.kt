@@ -19,13 +19,17 @@ import org.robolectric.annotation.GraphicsMode
 class ChangelogHistoryScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun latestReleaseIsCuratedAndInstalled() {
+    @Test fun latestReleaseShowsHighlightsAndCompleteDetails() {
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 ChangelogScreen(onClose = {})
             }
         }
-        compose.onNodeWithText("Reliable routes").assertExists()
+        compose.onNodeWithText("v1.14.0 — Connections, delegated work, Git, and voice").assertExists()
+        compose.onNodeWithText("Highlights").assertExists()
+        compose.onNodeWithText("Fixed").assertExists()
+        compose.onNodeWithText("Wake-word detection starts reliably").assertExists()
+        compose.onNodeWithText("Compatibility").assertExists()
         compose.onNodeWithText("Installed").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/changelog-history.png")
     }

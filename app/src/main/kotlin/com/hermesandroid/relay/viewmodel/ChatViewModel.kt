@@ -126,6 +126,7 @@ import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -9619,7 +9620,7 @@ class ChatViewModel : ViewModel() {
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
-                toolName == "image_generate" &&
+                isImageGenerationToolName(toolName) &&
                     observedImageToolStates.putIfAbsent(toolCallId, "running") != null
             if (!alreadyObserved) {
                 handler.onToolCallStart(currentMessageId, toolCallId, toolName, argsPreview)
