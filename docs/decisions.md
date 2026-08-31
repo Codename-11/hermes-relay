@@ -4034,9 +4034,10 @@ The precedence is:
    revalidated. A failed or unsupported live refresh is **Unavailable**.
 
 Android resolves each active-list row through exact foreground or detached
-ownership already held by that client, or explicit profile metadata if a
-future upstream sends it. A bounded REST directory never proves that a durable
-`session_key` is globally unique. Ambiguous or unresolved rows apply no status.
+ownership already held by that client, explicit profile metadata if a future
+upstream sends it, or the currently selected passive session when its durable
+`session_key` has exactly one owner in the current connection directory.
+Duplicate same-id owners across profiles remain ambiguous and apply no status.
 Resolved rows from a partial snapshot may update their exact owners, but they
 cannot infer absence. A missing row clears stale live state for a scope only
 when the successful process-wide snapshot was complete and every relevant row
@@ -4076,7 +4077,10 @@ paths, which concern exact Android-owned checkpoints.
 and saved-session selection establish only the shared Gateway socket. They use
 profile-scoped REST history plus process-wide `session.active_list`; while an
 unowned row with the selected durable id is live, Android performs bounded
-history refreshes and one final read after settlement. These observer paths send
+history refreshes and one final read after settlement. When that durable id has
+exactly one owner in the current connection directory, the same read-only row
+also projects Working or Waiting for the selected session; duplicate cross-profile
+owners remain neutral. These observer paths send
 no `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`.
 Exact Android-owned checkpoints retain `session.activate` with durable-resume
 fallback, and explicit send or session-config actions may resume because the user

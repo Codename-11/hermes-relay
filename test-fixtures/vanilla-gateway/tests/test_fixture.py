@@ -138,6 +138,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         await self.rpc(observer, 3, "session.active_list")
         active = (await observer.receive_json())["result"]["sessions"]
         self.assertEqual("working", active[0]["status"])
+        self.assertNotIn("profile", active[0])
         async with self.session.get(
             f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
             params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},

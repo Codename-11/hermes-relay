@@ -291,7 +291,7 @@ internal data class ResolvedGatewayActiveSessions(
     val ambiguousForCurrent: Boolean,
 )
 
-/** Resolve process-wide runtime rows without ever inventing a profile owner. */
+/** Resolve process-wide runtime rows without ever inventing an ambiguous profile owner. */
 internal fun resolveGatewayActiveSessions(
     sessions: List<GatewayActiveSession>,
     directory: Set<SessionActivityOwner>,
@@ -316,6 +316,8 @@ internal fun resolveGatewayActiveSessions(
                 currentRuntimeId == row.runtimeSessionId &&
                 currentOwner.storedSessionId == row.storedSessionId -> currentOwner
             explicitProfile != null && candidates.size == 1 -> candidates.single()
+            explicitProfile == null && currentOwner != null && candidates.singleOrNull() == currentOwner ->
+                currentOwner
             else -> null
         }
         if (owner == null) {
