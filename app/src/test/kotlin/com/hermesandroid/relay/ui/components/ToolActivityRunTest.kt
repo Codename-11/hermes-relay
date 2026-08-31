@@ -28,6 +28,7 @@ class ToolActivityRunTest {
         val standalone = listOf(
             call("risk", "read_file").copy(outputRisk = "high"),
             call("image", "image_generate"),
+            call("profile-image", "willow_create_image"),
             call("approval", "request_user_input"),
             call("delegate", "delegate_task"),
         )
