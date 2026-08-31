@@ -86,13 +86,23 @@ def main() -> int:
         print("\nAndroid repository checks passed.")
         return 0
 
-    wrapper = REPO_ROOT / ("gradlew.bat" if sys.platform == "win32" else "gradlew")
-    gradle = [
-        str(wrapper),
+    if sys.platform == "win32":
+        gradle = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "android-lane.ps1"),
+            "gradle",
+        ]
+    else:
+        gradle = [str(REPO_ROOT / "gradlew")]
+    gradle.extend([
         "--console=plain",
         "--configuration-cache",
         *tasks,
-    ]
+    ])
     if not args.skip_tests:
         for test_name in FOCUSED_TESTS:
             gradle.extend(("--tests", test_name))
