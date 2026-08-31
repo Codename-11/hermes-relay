@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Android Supervised Mode uses app-specific parent access.** Parents choose a six-digit PIN or password, receive a shareable six-word recovery phrase, and can remove the credential without losing their supervised profile, capability, appearance, visibility, session, or relock settings. Android device credentials and biometrics no longer grant parent access.
+
 ## [Android 1.14.0] - 2026-08-30
 
 ### Added

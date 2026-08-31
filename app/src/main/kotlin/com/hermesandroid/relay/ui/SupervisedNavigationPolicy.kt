@@ -132,12 +132,10 @@ internal fun sanitizeSupervisedChatRouteArgs(
     }
 }
 
-/** A disabled policy may become active only after an enrolled credential succeeds. */
+/** A disabled policy may become active only after the app-specific parent credential succeeds. */
 internal fun mayEnableSupervisedMode(
     policy: SupervisedModePolicy,
-    deviceSecure: Boolean,
-    deviceCredentialConfirmed: Boolean,
+    parentCredentialConfirmed: Boolean,
 ): Boolean = !policy.enabled &&
     policy.isConfigured &&
-    deviceSecure &&
-    deviceCredentialConfirmed
+    parentCredentialConfirmed

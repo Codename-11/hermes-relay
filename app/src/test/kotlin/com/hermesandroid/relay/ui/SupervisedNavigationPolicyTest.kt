@@ -153,25 +153,23 @@ class SupervisedNavigationPolicyTest {
         )
     }
 
-    @Test fun `first enable requires configured policy secure screen and successful device credential`() {
+    @Test fun `first enable requires configured policy and successful app parent credential`() {
         val configured = SupervisedModePolicy(pinnedProfileName = "willow")
 
         assertFalse(
             mayEnableSupervisedMode(
                 configured,
-                deviceSecure = false,
-                deviceCredentialConfirmed = true,
+                parentCredentialConfirmed = false,
             ),
         )
         assertFalse(
             mayEnableSupervisedMode(
                 configured,
-                deviceSecure = true,
-                deviceCredentialConfirmed = false,
+                parentCredentialConfirmed = false,
             ),
         )
-        assertFalse(mayEnableSupervisedMode(SupervisedModePolicy(), true, true))
-        assertTrue(mayEnableSupervisedMode(configured, true, true))
-        assertFalse(mayEnableSupervisedMode(configured.copy(enabled = true), true, true))
+        assertFalse(mayEnableSupervisedMode(SupervisedModePolicy(), true))
+        assertTrue(mayEnableSupervisedMode(configured, true))
+        assertFalse(mayEnableSupervisedMode(configured.copy(enabled = true), true))
     }
 }
