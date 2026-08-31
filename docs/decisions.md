@@ -59,8 +59,9 @@
 ### 3. Chat via Direct API, Not Relay Proxy
 
 **Status:** Superseded as the standard route by ADR 38 (2026-07-18). Direct API
-chat remains the automatic fallback and an advanced headless compatibility
-mode; the upstream Dashboard/Gateway is now the primary connection surface.
+chat remains an explicit API-only/headless compatibility mode; the upstream
+Dashboard/Gateway is now the primary connection surface. ADR 71 removes
+availability-driven fallback between their non-interchangeable session stores.
 
 **Decision:** ~~Chat channel proxies through the relay to the WebAPI.~~ **Updated:** Chat now connects directly from the Android app to the Hermes API Server via HTTP/SSE. The relay server is only used for bridge and terminal channels.
 
@@ -2210,7 +2211,7 @@ starting connectivity does not itself require or imply a tool grant.
 
 ## ADR 38 — Dashboard/Gateway is the primary Android connection surface
 
-**Status:** Accepted (2026-07-18).
+**Status:** Superseded by ADR 71 for chat fallback semantics (2026-08-31).
 
 **Context.** Android originally treated the API server URL and bearer key as the
 identity and prerequisite for every saved connection. The app later gained the
@@ -2226,7 +2227,7 @@ stable identity independent of endpoint URLs.
 - **Dashboard/Gateway is standard.** It owns primary chat, dashboard auth,
   sessions, Manage, and Vanilla Hermes voice against unmodified upstream Hermes.
 - **API server is optional.** When discovered or explicitly configured, it is an
-  automatic chat fallback and an advanced headless compatibility surface. Its
+  API-only chat and advanced headless compatibility surface. Its
   bearer is requested and validated only when that endpoint is configured.
 - **Relay is optional.** It adds pairing, terminal, bridge/device control,
   media, notification companion, enhanced voice, and desktop tooling. It never
@@ -2238,15 +2239,14 @@ stable identity independent of endpoint URLs.
   profile's authoritative Hermes session database without proxying chat.
   Native Gateway lifecycle events take precedence, and absence of the optional
   route silently restores the vanilla behavior.
-- **Readiness is capability-based.** Chat, Manage, Voice, API fallback, and
+- **Readiness is capability-based.** Chat, Manage, Voice, Direct API, and
   Relay extensions report their own state. A missing optional endpoint does not
   mark the whole connection unhealthy.
-- **Routing is automatic.** Chat prefers Dashboard/Gateway and falls back to the
-  API server only when configured and usable. Users choose a transport only in
-  advanced diagnostics or compatibility settings, not during normal setup.
-  Endpoint discovery may advertise a conventional API route, but does not enable
-  that optional fallback unless the connection has persisted API configuration;
-  cold-start state remains unconfigured until that persisted value is hydrated.
+- **Routing is owner-bound.** Standard Chat uses Dashboard/Gateway. Legacy
+  API-only records and explicit advanced compatibility selections use the API
+  server. Live authentication or reachability never changes an open chat's
+  owner. Endpoint discovery may advertise a conventional API route, but does
+  not enable it for a Dashboard-owned conversation.
 
 **Product flow.** Normal onboarding asks for one Hermes address, discovers the
 Dashboard/Gateway, authenticates through its supported provider, and finishes
@@ -2260,8 +2260,8 @@ An API endpoint or Relay can be added later without recreating the connection.
 
 - Dashboard-only Hermes connections can chat, manage, use sessions, and use
   Vanilla Hermes voice without fake API credentials.
-- API outages do not degrade a healthy Gateway session; they remove only the
-  fallback capability.
+- API outages do not degrade a healthy Gateway session; they affect only an
+  explicit Direct API compatibility conversation.
 - Connection storage, diagnostics, backup/restore, route discovery, pairing,
   and profile/session scoping must tolerate independently absent endpoints.
 - Legacy API-only users keep working, but public documentation no longer teaches
@@ -4244,3 +4244,46 @@ large profile database remains a separate certification gate.
 `apps/desktop/src/app/session/hooks/use-session-list-actions.ts`. Android wiring
 lives in `DashboardApiClient`, `HermesRuntimeBinder`, `ChatScreen`, and
 `ChatViewModel`.
+
+---
+
+## ADR 71 — Android conversations are transport-affine
+
+**Status:** Accepted (2026-08-31).
+
+**Context.** Standard Android Chat now follows the upstream Dashboard/Gateway
+model, but Auto resolution still changed a live conversation to API-server
+sessions, completions, or runs when Dashboard sign-in expired or Gateway became
+unavailable. The optional API server could therefore make Chat appear connected
+and even complete a local turn while Dashboard session/history reads returned
+401. Gateway and API-server session ids belong to different databases and are
+not interchangeable, especially for named profile homes. Reachability of one
+surface is not authority to mutate a conversation owned by the other.
+
+**Decision.** Every Android conversation binding includes its transport owner
+alongside connection, profile, and session identity.
+
+- A standard saved connection's Auto owner is Gateway and does not change with
+  Gateway availability. `SignInRequired` requests Dashboard sign-in; a temporary
+  failure preserves transcript, draft, attachments, queued destination, and
+  retry state.
+- Missing Gateway clients and failed Gateway preflight never dispatch the turn
+  through API-server SSE. Attachments, voice sends, slash commands, queued
+  turns, session restore, and profile switches all use the same bound owner.
+- A legacy connection with API configuration but no persisted Dashboard route
+  remains API-only. Existing `api_…` records retain their API session slot.
+  Advanced manual Direct API selection is explicit and takes effect for a new
+  chat; it does not migrate an existing Gateway transcript or session.
+- Cold-start restoration selects the persisted session slot from the saved
+  connection/manual preference, not a transient auth or health verdict.
+  Dashboard history remains authoritative for Gateway bindings; API session
+  history remains authoritative only for API-owned bindings.
+- User-facing Connected and ordinary route labels describe the active binding
+  owner. A reachable sibling endpoint cannot mask sign-out or failure. Exact
+  endpoint names remain available in advanced diagnostics/compatibility UI.
+
+**Consequences.** Sessions, runs, and completions remain useful for legitimate
+API-only/headless clients, compatibility testing, and existing API records, but
+they are no longer automatic recovery for standard Chat. Users retry or sign in
+without losing local work, named profiles cannot cross databases silently, and
+readiness reflects the conversation that will actually receive the next turn.

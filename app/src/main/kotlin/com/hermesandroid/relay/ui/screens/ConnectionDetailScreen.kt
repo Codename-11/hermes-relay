@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.gatewayRouteUrl
@@ -83,6 +84,7 @@ import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
+import com.hermesandroid.relay.viewmodel.resolveActiveChatTransport
 import kotlinx.coroutines.launch
 
 /**
@@ -476,12 +478,16 @@ private fun ActiveOverview(
     val effectiveDashboardUrl by connectionViewModel.effectiveDashboardUrl.collectAsState()
     val relayConfigured by connectionViewModel.relayConfigured.collectAsState()
     val standardVoiceAvailability by connectionViewModel.standardVoiceAvailability.collectAsState()
-    val usingApiFallback = apiReachable && gatewayAvailability in setOf(
-        GatewayAvailability.SignInRequired,
-        GatewayAvailability.Unreachable,
-        GatewayAvailability.Unsupported,
-    )
-    val currentRouteUrl = if (usingApiFallback) {
+    val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
+    // Observe the binding as well as the saved preference so a restored
+    // conversation immediately presents its actual owner.
+    val activeConversationTransport by connectionViewModel.activeConversationTransport.collectAsState()
+    val usingDirectApi = resolveActiveChatTransport(
+        boundOwner = activeConversationTransport,
+        connection = connection,
+        preference = streamingEndpoint,
+    ) == SessionTransport.SSE
+    val currentRouteUrl = if (usingDirectApi) {
         activeEndpoint?.api?.url ?: connection.apiServerUrl
     } else {
         effectiveDashboardUrl
@@ -492,23 +498,29 @@ private fun ActiveOverview(
         effectiveDashboardUrl = currentRouteUrl,
     )
     val routeStatus = when {
-        gatewayAvailability == GatewayAvailability.Ready || usingApiFallback ->
+        usingDirectApi && apiReachable ->
             OverviewStatus(stringResource(R.string.active_section_reachable), OverviewTone.Good)
-        gatewayAvailability == GatewayAvailability.SignInRequired ->
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.Ready ->
+            OverviewStatus(stringResource(R.string.active_section_reachable), OverviewTone.Good)
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.SignInRequired ->
             OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
-        gatewayAvailability == GatewayAvailability.Unknown ||
-            apiHealth == ConnectionViewModel.HealthStatus.Probing ->
+        (!usingDirectApi && gatewayAvailability == GatewayAvailability.Unknown) ||
+            (usingDirectApi && apiHealth == ConnectionViewModel.HealthStatus.Probing) ->
             OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
-        gatewayAvailability == GatewayAvailability.Unsupported ->
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.Unsupported ->
             OverviewStatus(stringResource(R.string.active_section_unsupported), OverviewTone.Warning)
         else -> OverviewStatus(stringResource(R.string.active_section_unreachable), OverviewTone.Warning)
     }
     val chatStatus = when {
-        gatewayAvailability == GatewayAvailability.Ready || usingApiFallback ->
+        usingDirectApi && apiReachable ->
             OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
-        gatewayAvailability == GatewayAvailability.SignInRequired ->
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.Ready ->
+            OverviewStatus(stringResource(R.string.active_section_ready), OverviewTone.Good)
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.SignInRequired ->
             OverviewStatus(stringResource(R.string.active_section_sign_in), OverviewTone.Info)
-        gatewayAvailability == GatewayAvailability.Unreachable && !apiReachable ->
+        !usingDirectApi && gatewayAvailability == GatewayAvailability.Unreachable ->
+            OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
+        usingDirectApi && !apiReachable && apiHealth != ConnectionViewModel.HealthStatus.Probing ->
             OverviewStatus(stringResource(R.string.active_section_offline), OverviewTone.Warning)
         else -> OverviewStatus(stringResource(R.string.active_section_checking), OverviewTone.Neutral)
     }

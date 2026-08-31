@@ -214,7 +214,7 @@ reattaches its live reply, reasoning, tool state, and pending interaction card;
 if it finished while detached, the saved transcript is loaded instead. Multiple
 running chats keep separate recovery state across an app restart.
 
-Tapping **Stop** still interrupts the visible turn. Servers using an SSE fallback
+Tapping **Stop** still interrupts the visible turn. Direct API connections
 cannot multiplex live chats, so switching there stops the current stream before
 opening the next conversation.
 

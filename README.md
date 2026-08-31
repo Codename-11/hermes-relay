@@ -99,7 +99,7 @@ The wizard probes everything and finishes with a capability card:
 | **Chat** | Dashboard/Gateway ready — you can talk |
 | **Manage** | Models, keys, skills, and profiles are available from the phone |
 | **Voice** | Speech ready via your server (or one Manage sign-in away) |
-| **API fallback** | Optional API route available/unavailable |
+| **Direct API** | Optional API-only compatibility route available/unavailable |
 | **Relay** | Recommended extensions paired/unpaired; never blocks the upstream path |
 
 One dashboard sign-in unlocks Chat, Manage, sessions, and standard voice. That's
@@ -140,7 +140,7 @@ manual fallbacks when QR or clipboard transfer is unavailable.
 [Desktop CLI pairing](https://hermes-relay.dev/docs/desktop/pairing) ·
 [server, TLS, legacy install, and uninstall reference](https://hermes-relay.dev/docs/reference/relay-server)
 
-**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the Dashboard/Gateway enabled · Python 3.11+ when installing the Hermes-Relay plugin. The API fallback is optional; the Hermes-Relay plugin is encouraged for the complete experience.
+**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the Dashboard/Gateway enabled · Python 3.11+ when installing the Hermes-Relay plugin. Direct API is optional; the Hermes-Relay plugin is encouraged for the complete experience.
 
 ## Screenshots
 
@@ -240,13 +240,13 @@ remote tool surface. See the [desktop tools guide](https://hermes-relay.dev/docs
 
 ```
 Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, vanilla voice]
-Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat fallback, sessions, runs]
+Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [Direct API chat, sessions, runs]
 Phone        (WSS/HTTP) --> Relay             (:8767)   [terminal, bridge, media, relay voice, sessions]
 CLI          (WSS)      --> Relay             (:8767)   [machine tools, tui, terminal]
 ```
 
-Chat prefers the Hermes dashboard gateway when Manage auth is ready, then falls
-back to the upstream API server SSE path with the API key. Manage and Vanilla Hermes
+Standard connections keep Chat on the Hermes Dashboard/Gateway. Explicit API-only
+connections use the upstream Direct API SSE path with an API key. Manage and Vanilla Hermes
 voice ride the Hermes dashboard with its own one-time sign-in, so a vanilla
 install needs no plugin for either. The optional relay on `:8767` adds the power
 surfaces: terminal, bridge phone control, media handoff, machine tools, and

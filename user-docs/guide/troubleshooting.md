@@ -51,7 +51,7 @@ If a Tailscale route fails its probe:
   tailnet HTTPS `:10443` and proxies local Dashboard `:9119` plus the
   same-origin Relay path. Open `https://<tailnet-host>:10443/api/health` from
   the phone. Old `:443`/`:9119` listeners are migration or explicit routes;
-  API fallback `:8642` is optional and direct Relay `:8767` is legacy-only.
+  Direct API `:8642` is optional and direct Relay `:8767` is legacy-only.
 
 ## Android Studio can't see a phone over Tailscale ADB
 
@@ -74,10 +74,10 @@ If `adb connect` is refused, the pairing succeeded but the wrong port was used,
 or Wireless debugging rotated ports. Reopen **Developer options -> Wireless
 debugging** on the phone and copy the current main port.
 
-## Optional API fallback is unavailable
+## Optional Direct API is unavailable
 
 This does not block a healthy Dashboard/Gateway connection. If you intentionally
-configured API fallback or an API-only headless connection, its
+configured Direct API or an API-only headless connection, its
 `API_SERVER_KEY` is a secret created by the server operator; Dashboard sign-in
 does not create or reveal one:
 
@@ -90,7 +90,7 @@ does not create or reveal one:
 - Confirm the dashboard session is signed in and `/api/ws` is available
 - Look for error banners in the chat — tap **Retry** to resend
 - Check the Hermes server logs for errors
-- If optional API fallback is configured, check its status separately
+- If optional Direct API is configured, check its status separately
 
 ## Long turns with local models
 

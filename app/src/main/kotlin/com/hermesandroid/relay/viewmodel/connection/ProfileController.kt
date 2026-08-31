@@ -130,8 +130,8 @@ class ProfileController(
     private val dashboardClientFactory: (connectionId: String, dashboardUrl: String) -> DashboardApiClient,
     /** Current `streamingEndpoint` preference (for [activeSessionTransport]). */
     private val streamingEndpointProvider: () -> String,
-    /** Current gateway availability tier (for [activeSessionTransport]). */
-    private val gatewayAvailabilityProvider: () -> GatewayAvailability,
+    /** Stable Auto owner for the active saved connection. */
+    private val automaticTransportProvider: () -> SessionTransport,
     /** Writes `ConnectionViewModel._lastSessionId`. */
     private val setLastSessionId: (String?) -> Unit,
     /** Legacy default (untransported) session id for the server-default profile. */
@@ -1517,19 +1517,14 @@ class ProfileController(
 
     /**
      * Which transport's session slot to restore right now — or `null` when the
-     * decision is still pending (the gateway probe hasn't landed). A manual
-     * streaming-endpoint override resolves immediately; under `"auto"`, Unknown
-     * remains Gateway-owned because the transport resolver also chooses Gateway
-     * until a definitive fallback verdict exists.
+     * decision is still pending. A manual streaming-endpoint override resolves
+     * immediately; under `"auto"`, the saved connection contract owns the
+     * choice, never a transient reachability or authentication verdict.
      */
     fun activeSessionTransport(): SessionTransport? {
         val preference = streamingEndpointProvider()
         if (preference != "auto") return SessionTransport.forEndpoint(preference)
-        return when (gatewayAvailabilityProvider()) {
-            GatewayAvailability.Ready -> SessionTransport.GATEWAY
-            GatewayAvailability.Unknown -> SessionTransport.GATEWAY
-            else -> SessionTransport.SSE
-        }
+        return automaticTransportProvider()
     }
 
     /**

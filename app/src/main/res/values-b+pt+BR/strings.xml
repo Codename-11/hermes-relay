@@ -288,7 +288,7 @@
     <string name="cw_cloud_subtitle">Conecte ao seu agente hospedado</string>
     <string name="cw_server_vps_title">Gateway remoto</string>
     <string name="cw_server_vps_subtitle">Informe o endereço do Dashboard</string>
-    <string name="cw_relay_optional_note">Endereços privados LAN e Tailscale podem usar HTTP ou HTTPS. Endereços públicos exigem HTTPS. Relay e fallback da API são opcionais.</string>
+    <string name="cw_relay_optional_note">Endereços privados LAN e Tailscale podem usar HTTP ou HTTPS. Endereços públicos exigem HTTPS. Relay e API direta são opcionais.</string>
     <string name="cw_cloud_entry_title">Conectar ao Hermes hospedado pela Nous</string>
     <string name="cw_cloud_entry_description">Insira o endereço do agente mostrado no Nous Portal. Você entrará com segurança depois que o Hermes for encontrado.</string>
     <string name="cw_cloud_agent_name">Endereço do agente</string>
@@ -373,7 +373,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 ou http://your-server:8642</string>
     <string name="cw_api_url_supporting">API do Hermes usada pelo Chat e pelas sessões — a porta 8642 da API e http:// são presumidos para hosts sem esquema (a porta 9119 do painel é determinada separadamente)</string>
     <string name="cw_scan_message">Procurando o painel/a API do Hermes nesta LAN…</string>
-    <string name="cw_dashboard_signin_hint">Entre pelo painel para liberar Gerenciar e voz — a chave da API é usada apenas no fallback opcional pela API direta.</string>
+    <string name="cw_dashboard_signin_hint">Entre pelo painel para liberar Gerenciar e voz — a chave da API é usada apenas em conexões explícitas pela API direta.</string>
     <string name="cw_pair_relay_section">Parear o Relay (opcional)</string>
     <string name="cw_pair_relay_section_desc">O plugin do Relay já está em execução? Faça o pareamento aqui para ativar Terminal, Bridge e permissões de canais.</string>
     <string name="cw_pair_relay_url_label">URL do Relay</string>
@@ -665,7 +665,7 @@
     <string name="settings_hermes_management">Gerenciamento do Hermes</string>
     <string name="settings_hermes_management_desc">Recursos do painel: habilidades, cron, MCP, perfis e modelos</string>
     <string name="settings_chat">Chat</string>
-    <string name="settings_chat_desc">Comportamento do chat, Gateway, fallback da API, exibição de ferramentas e tamanho das mensagens</string>
+    <string name="settings_chat_desc">Comportamento do chat, Gateway, API direta, exibição de ferramentas e tamanho das mensagens</string>
     <string name="settings_voice_mode">Modo de voz</string>
     <string name="settings_voice_mode_desc">Voz do painel, opções de relay em tempo real e provedores</string>
     <string name="settings_threads">Threads</string>
@@ -775,11 +775,11 @@
     <string name="chat_settings_debug">Depuração</string>
     <string name="chat_settings_show_system_messages_desc">Mostre os marcadores ocultos \"[System: …]\" do servidor (alterações de modelo/personalidade). Desativado corresponde ao desktop/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Endpoint de streaming</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: escolhe o melhor caminho com base no que seu servidor oferece. Em uso no momento: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: conexões padrão usam o Gateway; conexões somente API usam a API direta. Em uso no momento: </string>
     <string name="chat_settings_gateway_suffix"> (pensamento ao vivo pelo WebSocket do painel)</string>
     <string name="chat_settings_chat_completions_suffix"> (chat por /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (chat transmitido explicitamente por /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Gateway: pensamento ao vivo + eventos avançados de ferramentas pelo WebSocket do painel (/api/ws) — o mesmo usado pelo app para desktop. Exige login em Gerenciar; quando indisponível, usa SSE como alternativa em cada turno.</string>
+    <string name="chat_settings_gateway_desc">Gateway: pensamento ao vivo + eventos avançados de ferramentas pelo WebSocket do painel (/api/ws) — o mesmo usado pelo app para desktop. Exige login em Gerenciar; quando indisponível, este chat permanece no Gateway e oferece login ou nova tentativa.</string>
     <string name="chat_settings_sessions_desc">Sessões: fluxo nativo do Hermes em /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: SSE compatível com OpenAI por /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Runs: use somente quando seu servidor transmitir /v1/runs diretamente.</string>
@@ -3339,7 +3339,7 @@
     <string name="active_section_dashboard_unreachable">Inacessível</string>
     <string name="active_section_no_fallback_routes">Ainda não há rotas alternativas</string>
     <string name="active_section_no_fallback_routes_desc">Adicione uma rota de API opcional para chat direto alternativo e troca de rede.</string>
-    <string name="active_section_add_api_fallback">Adicionar rota alternativa</string>
+    <string name="active_section_add_api_fallback">Adicionar rota de API direta</string>
     <string name="active_section_security_authentication">Autenticação</string>
     <string name="active_section_dashboard_session">Sessão do Dashboard</string>
     <string name="active_section_credential_storage">Armazenamento de credenciais</string>
@@ -3364,7 +3364,7 @@
     <string name="cw_timeline_authenticated">Autenticação verificada</string>
     <string name="cw_timeline_ready">Conexão pronta</string>
     <string name="cw_timeline_ready_detail">Chat, Manage e Voice podem usar este Dashboard</string>
-    <string name="active_section_optional_api_fallback">Fallback opcional pela API direta</string>
+    <string name="active_section_optional_api_fallback">API direta opcional</string>
     <string name="active_section_api_not_required">Não é necessário quando esta conexão usa o Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Onde obtenho essa chave?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY é criada no seu servidor Hermes; este aplicativo não fornece a chave. Configure-a somente ao ativar o servidor de API opcional, que exige uma chave utilizável, e insira aqui o mesmo valor.</string>
@@ -4378,7 +4378,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">API direta</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">Defina o endereço do Dashboard e do Gateway que este telefone deve usar. Rotas privadas de LAN e Tailscale podem usar HTTP ou HTTPS; rotas públicas exigem HTTPS.</string>
     <string name="dashboard_address_editor_title">Endereço do gateway</string>
@@ -4395,7 +4395,7 @@
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
-    <string name="network_routes_summary">Rotas LAN, Tailscale e públicas são formas de acessar este Gateway. O fallback da API e as extensões Relay são opcionais.</string>
+    <string name="network_routes_summary">Rotas LAN, Tailscale e públicas são formas de acessar este Gateway. A API direta e as extensões Relay são opcionais.</string>
     <string name="network_routes_title">Network routes</string>
     <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>

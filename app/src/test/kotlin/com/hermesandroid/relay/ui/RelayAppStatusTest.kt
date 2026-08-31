@@ -197,6 +197,39 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `dashboard sign-out is not masked by a reachable sibling API`() {
+        val status = resolveAppChatRuntimeStatus(
+            connection = connection(
+                dashboardUrl = "https://host.ts.net:9119",
+                apiServerUrl = "https://host.ts.net:8642",
+            ),
+            gatewayAvailability = GatewayAvailability.SignInRequired,
+            apiHealth = ConnectionViewModel.HealthStatus.Reachable,
+            streamingEndpoint = "sessions",
+            conversationOwner = com.hermesandroid.relay.data.SessionTransport.GATEWAY,
+        )
+
+        assertEquals(ChatRuntimeStatus.Unavailable, status)
+    }
+
+    @Test
+    fun `legacy API-only connection remains connected compatibility chat`() {
+        val status = resolveAppChatRuntimeStatus(
+            connection = connection(
+                dashboardUrl = null,
+                apiServerUrl = "https://host.ts.net:8642",
+            ),
+            gatewayAvailability = GatewayAvailability.Unreachable,
+            apiHealth = ConnectionViewModel.HealthStatus.Reachable,
+        )
+
+        assertEquals(
+            ChatRuntimeStatus.Connected(ChatTransportPath.ApiSse, fallback = false),
+            status,
+        )
+    }
+
+    @Test
     fun `committed pair target stays ready while public inventory catches up`() {
         assertTrue(
             resolvePairSetupReady(
@@ -392,7 +425,7 @@ class RelayAppStatusTest {
     }
 
     private fun connected(path: ChatTransportPath) =
-        ChatRuntimeStatus.Connected(transport = path, fallback = path == ChatTransportPath.ApiSse)
+        ChatRuntimeStatus.Connected(transport = path, fallback = false)
 
     private fun connection(
         dashboardUrl: String? = null,

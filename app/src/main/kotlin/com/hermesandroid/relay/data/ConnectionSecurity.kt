@@ -124,7 +124,7 @@ private fun EndpointCandidate?.secureLinkProtects(label: String, url: String): B
     val normalized = url.trim().trimEnd('/')
     val service = when (label) {
         "Chat & Manage", "Dashboard & Gateway" -> "dashboard"
-        "API / sessions", "API fallback" -> "api"
+        "API / sessions", "API fallback", "Direct API" -> "api"
         "Relay tools" -> "relay"
         else -> return false
     }
@@ -170,7 +170,7 @@ fun computeConnectionSecurity(
         apiUrl.trim().takeIf { it.isNotBlank() }?.let {
             add(
                 classifySurfaceSecurity(
-                    label = "API fallback",
+                    label = "Direct API",
                     url = it,
                     activeEndpoint = apiEndpoint,
                     isTailscaleDetected = isTailscaleDetected,
