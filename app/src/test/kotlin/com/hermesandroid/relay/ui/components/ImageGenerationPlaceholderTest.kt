@@ -26,6 +26,7 @@ class ImageGenerationPlaceholderTest {
         )
 
         assertTrue(active.showsImageGenerationPlaceholder())
+        assertTrue(active.copy(name = "willow_create_image").showsImageGenerationPlaceholder())
         assertFalse(active.copy(isComplete = true, success = true).showsImageGenerationPlaceholder())
         assertFalse(active.copy(name = "video_generate").showsImageGenerationPlaceholder())
     }

@@ -265,6 +265,7 @@ import com.hermesandroid.relay.ui.components.ToolTranscriptItem
 import com.hermesandroid.relay.ui.components.groupTranscriptTools
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
 import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
 import com.hermesandroid.relay.ui.showHumanError
@@ -1228,7 +1229,7 @@ fun ChatScreen(
         buildMap {
             messages.forEach { message ->
                 val generationCount = message.toolCalls.count {
-                    it.name.trim().equals("image_generate", ignoreCase = true)
+                    isImageGenerationToolName(it.name)
                 }
                 if (generationCount > 0) {
                     put(message.uiKey, nextOrdinal + generationCount - 1)
