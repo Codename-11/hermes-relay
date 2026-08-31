@@ -117,7 +117,7 @@ goto end
 
 :prepush
 echo Running Android pre-push checks...
-python scripts\android-prepush.py
+python scripts\android-prepush.py --both-flavors
 if errorlevel 1 exit /b %errorlevel%
 goto end
 
@@ -174,7 +174,7 @@ echo   test-one   Run one test class or wildcard pattern
 echo   install-fast  Build arm64 only + install + launch
 echo   test       Run sideload debug unit tests
 echo   lint       Run lint checks
-echo   prepush    Run Android repository checks, lint, and focused CI tests
+echo   prepush    Run the optional full local Android verification gate
 echo   clean      Clean build outputs
 echo   devices    List connected devices
 echo   version    Show current version from libs.versions.toml
