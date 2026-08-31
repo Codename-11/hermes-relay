@@ -830,30 +830,43 @@ def _tailscale_endpoint(
     )
     dashboard_url = f"{dashboard_scheme}://{dashboard_url_host}{dashboard_port_suffix}"
 
-    api_serve_tls = bool(
-        (api_listener is not None or (not serve_services_dict and api_port in serve_ports))
-        and hostname
-        and hostname.endswith(".ts.net")
-    )
-    api_host = hostname if api_serve_tls else (tailscale_ip or hostname)
-    if not isinstance(api_host, str) or not api_host.strip():
-        return None
-    api_host = api_host.strip().rstrip(".")
-    return {
+    # A classified helper status is authoritative about which optional
+    # services are actually published. Do not advertise a raw 100.x API
+    # fallback when the helper explicitly reports API Serve inactive: the
+    # API process may be bound only to LAN, making that tailnet address both
+    # misleading and unreachable. Pre-classification helpers keep the old
+    # direct-tailnet fallback for compatibility because they cannot express
+    # per-service activity.
+    include_api = api_listener is not None or not serve_services_dict
+    api_endpoint: Optional[dict[str, Any]] = None
+    if include_api:
+        api_serve_tls = bool(
+            (api_listener is not None or api_port in serve_ports)
+            and hostname
+            and hostname.endswith(".ts.net")
+        )
+        api_host = hostname if api_serve_tls else (tailscale_ip or hostname)
+        if not isinstance(api_host, str) or not api_host.strip():
+            return None
+        api_endpoint = {
+            "host": api_host.strip().rstrip("."),
+            "port": api_listener or api_port,
+            "tls": True if api_serve_tls else api_tls,
+        }
+
+    candidate: dict[str, Any] = {
         "role": "tailscale",
         "priority": priority,
         "recommended": True,
-        "api": {
-            "host": api_host,
-            "port": api_listener or api_port,
-            "tls": True if api_serve_tls else api_tls,
-        },
         "dashboard": {"url": dashboard_url},
         "relay": {
             "url": dashboard_relay_ingress_url(dashboard_url),
             "transport_hint": "wss" if dashboard_serve_tls else "ws",
         },
     }
+    if api_endpoint is not None:
+        candidate["api"] = api_endpoint
+    return candidate
 
 
 def validate_endpoint_candidate_security(candidate: dict[str, Any]) -> None:
@@ -1035,13 +1048,16 @@ def normalize_endpoint_candidates(
             continue
 
         merged = dict(candidate)
-        merged_api = dict(api_dict)
-        merged_api.update(replacement["api"])
         merged_relay = dict(relay_dict)
         merged_relay.update(replacement["relay"])
         merged["priority"] = replacement["priority"]
         merged["recommended"] = replacement["recommended"]
-        merged["api"] = merged_api
+        if "api" in replacement:
+            merged_api = dict(api_dict)
+            merged_api.update(replacement["api"])
+            merged["api"] = merged_api
+        else:
+            merged.pop("api", None)
         merged["dashboard"] = replacement["dashboard"]
         merged["relay"] = merged_relay
         normalized.append(merged)
@@ -1714,14 +1730,16 @@ def render_qr_terminal(payload: str) -> str:
 
     try:
         # error="l" (low ~7% redundancy) keeps the QR version as small as
-        # possible given the signed payload length. border=1 is the minimum
-        # scannable quiet zone. compact=True packs two modules per character
+        # possible given the signed payload length. Keep the standard
+        # four-module quiet zone; dense multi-route invites become unreliable
+        # when terminal chrome or adjacent text touches the symbol. compact=True
+        # packs two modules per character
         # vertically via ▀ / ▄ half-blocks, halving the visual height vs the
         # full-block renderer. Together these produce the smallest terminal
         # QR segno can emit without dropping features.
         qr = segno.make(payload, error="l")
         buf = io.StringIO()
-        qr.terminal(out=buf, compact=True, border=1)
+        qr.terminal(out=buf, compact=True, border=4)
         return buf.getvalue()
     except Exception as e:
         return f"  (QR render failed: {e})\n"
@@ -1739,7 +1757,7 @@ def render_qr_png(payload: str, path: Optional[str] = None) -> Optional[str]:
 
     try:
         qr = segno.make(payload, error="l")
-        qr.save(path, scale=8, border=2)
+        qr.save(path, scale=8, border=4)
         return path
     except Exception:
         return None

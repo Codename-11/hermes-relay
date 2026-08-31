@@ -487,6 +487,48 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
         self.assertEqual(result.get("endpoints"), qr["endpoints"])
 
+    async def test_mint_removes_stale_api_when_classified_tailscale_api_is_inactive(self) -> None:
+        endpoints = [
+            {
+                "role": "tailscale",
+                "priority": 0,
+                "api": {"host": "100.64.0.1", "port": 8642, "tls": False},
+                "dashboard": {"url": "https://test.tail-xyz.ts.net:10443"},
+                "relay": {
+                    "url": (
+                        "wss://test.tail-xyz.ts.net:10443/"
+                        "api/plugins/hermes-relay/transport"
+                    ),
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+
+        with mock.patch(
+            "plugin.pair._tailscale_status",
+            return_value={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "recommended_listener_port": 10443,
+                "serve_ports": [10443],
+                "serve_services": {
+                    "dashboard": {"active": True, "listen_ports": [10443]},
+                    "api": {"active": False, "listen_ports": []},
+                },
+            },
+        ):
+            result = await self._mint({"endpoints": endpoints})
+
+        qr = json.loads(result["qr_payload"])
+        tailscale = qr["endpoints"][0]
+        self.assertNotIn("api", tailscale)
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:10443",
+        )
+        self.assertEqual(result.get("endpoints"), qr["endpoints"])
+
     async def test_mint_with_endpoints_signature_verifies(self) -> None:
         """ADR 24: the HMAC over a v3 payload must verify unchanged."""
         from plugin.relay.qr_sign import load_or_create_secret, verify_payload
@@ -760,6 +802,31 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         self.assertEqual(
             tailscale["relay"]["url"],
             "wss://test.tail-xyz.ts.net:10443/api/plugins/hermes-relay/transport",
+        )
+        self.assertNotIn("api", tailscale)
+
+    def test_tailscale_omits_api_when_classified_service_is_inactive(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "recommended_listener_port": 10443,
+                "serve_ports": [10443],
+                "serve_services": {
+                    "dashboard": {"active": True, "listen_ports": [10443]},
+                    "api": {"active": False, "listen_ports": []},
+                },
+            },
+        )
+
+        tailscale = endpoints[0]
+        self.assertNotIn("api", tailscale)
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:10443",
         )
 
     def test_tailscale_uses_443_when_recommended_listener_is_absent(self) -> None:
