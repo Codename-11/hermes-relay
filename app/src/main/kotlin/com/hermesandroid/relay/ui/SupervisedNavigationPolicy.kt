@@ -15,18 +15,24 @@ internal fun isSupervisedRouteAllowed(route: String?, parentAccessUnlocked: Bool
 internal fun mayStartAddConnection(
     supervisedEnabled: Boolean,
     parentAccessUnlocked: Boolean,
-): Boolean = !supervisedEnabled || parentAccessUnlocked
+    activeTargetId: String? = null,
+): Boolean = activeTargetId == null && (!supervisedEnabled || parentAccessUnlocked)
 
 internal inline fun runAddConnectionAction(
     supervisedEnabled: Boolean,
     parentAccessUnlocked: Boolean,
-    navigateToPair: () -> Unit,
-    prepareConnection: () -> Unit,
-): Boolean {
-    if (!mayStartAddConnection(supervisedEnabled, parentAccessUnlocked)) return false
-    navigateToPair()
-    prepareConnection()
-    return true
+    activeTargetId: String?,
+    allocateTarget: () -> String,
+    recordTarget: (String) -> Unit,
+    navigateToPair: (String) -> Unit,
+    prepareConnection: (String) -> Unit,
+): String? {
+    if (!mayStartAddConnection(supervisedEnabled, parentAccessUnlocked, activeTargetId)) return null
+    val targetId = allocateTarget()
+    recordTarget(targetId)
+    navigateToPair(targetId)
+    prepareConnection(targetId)
+    return targetId
 }
 
 /** Do not inspect or mutate a NavController until its first destination exists. */
