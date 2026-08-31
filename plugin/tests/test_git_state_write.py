@@ -12,6 +12,8 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
+from threading import Event, Thread
+from unittest.mock import patch
 
 from plugin import git_state
 
@@ -48,6 +50,15 @@ def _init_bare_remote(root: Path, name: str) -> Path:
     remote.mkdir(parents=True, exist_ok=True)
     _run(["git", "init", "-q", "--bare", "-b", "main"], remote)
     return remote
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        _run(["cmd", "/c", "mklink", "/J", str(link), str(target)], link.parent)
 
 
 class _MutationBase(unittest.TestCase):
@@ -99,6 +110,46 @@ class StageUnstageTests(_MutationBase):
         with self.assertRaises(git_state.GitStateError):
             git_state.stage(self.repo, ["../outside"])
 
+    def test_stage_treats_wildcard_as_literal_path(self) -> None:
+        (self.repo / "first.txt").write_text("first", encoding="utf-8")
+        (self.repo / "second.txt").write_text("second", encoding="utf-8")
+
+        with self.assertRaises(git_state.GitError):
+            git_state.stage(self.repo, ["*.txt"])
+
+        status = git_state.repo_status(self.repo)
+        self.assertEqual([], status["staged"])
+        self.assertEqual(
+            {"first.txt", "second.txt"},
+            {entry["path"] for entry in status["untracked"]},
+        )
+
+    def test_stage_treats_pathspec_magic_as_literal_path(self) -> None:
+        literal = "name[1].txt"
+        expanded = "name1.txt"
+        (self.repo / literal).write_text("literal", encoding="utf-8")
+        (self.repo / expanded).write_text("expanded", encoding="utf-8")
+
+        git_state.stage(self.repo, [literal])
+
+        status = git_state.repo_status(self.repo)
+        self.assertEqual({literal}, {entry["path"] for entry in status["staged"]})
+        self.assertEqual({expanded}, {entry["path"] for entry in status["untracked"]})
+
+    def test_unstage_treats_wildcard_as_literal_path(self) -> None:
+        for name in ("first.txt", "second.txt"):
+            (self.repo / name).write_text(name, encoding="utf-8")
+            _git(self.repo, "add", name)
+
+        with self.assertRaises(git_state.GitError):
+            git_state.unstage(self.repo, ["*.txt"])
+
+        status = git_state.repo_status(self.repo)
+        self.assertEqual(
+            {"first.txt", "second.txt"},
+            {entry["path"] for entry in status["staged"]},
+        )
+
 
 class CommitTests(_MutationBase):
     def test_commit_creates_a_real_commit(self) -> None:
@@ -147,6 +198,17 @@ class CommitTests(_MutationBase):
         with self.assertRaises(git_state.GitError):
             git_state.commit_selected(self.repo, "", ["a.txt"])
 
+    def test_commit_selected_treats_wildcard_as_literal_path(self) -> None:
+        for name in ("first.txt", "second.txt"):
+            (self.repo / name).write_text(name, encoding="utf-8")
+            _git(self.repo, "add", name)
+
+        with self.assertRaises(git_state.GitError):
+            git_state.commit_selected(self.repo, "must stay scoped", ["*.txt"])
+
+        self.assertNotIn("first.txt", _git(self.repo, "ls-tree", "-r", "--name-only", "HEAD"))
+        self.assertNotIn("second.txt", _git(self.repo, "ls-tree", "-r", "--name-only", "HEAD"))
+
 
 class DiscardConfirmationTests(_MutationBase):
     def test_discard_requires_confirmation_string(self) -> None:
@@ -178,6 +240,222 @@ class DiscardConfirmationTests(_MutationBase):
             delete_untracked=True,
         )
         self.assertFalse((self.repo / "untracked.txt").exists())
+
+    def test_discard_delete_untracked_rejects_link_outside_repo(self) -> None:
+        outside = self.base / "outside.txt"
+        outside.write_text("keep", encoding="utf-8")
+        link = self.repo / "untracked-link.txt"
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+
+        with self.assertRaisesRegex(git_state.GitStateError, "link or junction"):
+            git_state.discard(
+                self.repo,
+                ["untracked-link.txt"],
+                confirmation=git_state.CONFIRM_DISCARD,
+                delete_untracked=True,
+            )
+
+        self.assertEqual("keep", outside.read_text(encoding="utf-8"))
+        self.assertTrue(link.is_symlink())
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction fallback")
+    def test_discard_rejects_junction_on_python_311_fallback(self) -> None:
+        target = self.repo / "target"
+        target.mkdir()
+        (target / "keep.txt").write_text("keep", encoding="utf-8")
+        junction = self.repo / "junction"
+        _run(["cmd", "/c", "mklink", "/J", str(junction), str(target)], self.repo)
+
+        with patch.object(Path, "is_junction", return_value=False, create=True):
+            with self.assertRaisesRegex(git_state.GitStateError, "link or junction"):
+                git_state.discard(
+                    self.repo,
+                    ["junction/keep.txt"],
+                    confirmation=git_state.CONFIRM_DISCARD,
+                    delete_untracked=True,
+                )
+
+        self.assertEqual("keep", (target / "keep.txt").read_text(encoding="utf-8"))
+
+    def test_discard_delete_untracked_treats_wildcard_as_literal_path(self) -> None:
+        for name in ("first.txt", "second.txt"):
+            (self.repo / name).write_text(name, encoding="utf-8")
+
+        git_state.discard(
+            self.repo,
+            ["*.txt"],
+            confirmation=git_state.CONFIRM_DISCARD,
+            delete_untracked=True,
+        )
+
+        self.assertTrue((self.repo / "first.txt").exists())
+        self.assertTrue((self.repo / "second.txt").exists())
+
+    def test_discard_does_not_delete_when_tracking_check_fails(self) -> None:
+        target = self.repo / "keep.txt"
+        target.write_text("keep", encoding="utf-8")
+
+        with patch.object(
+            git_state,
+            "_run_git_bounded",
+            return_value=(128, "", "fatal: repository unavailable"),
+        ):
+            with self.assertRaisesRegex(git_state.GitStateError, "ls-files failed"):
+                git_state.discard(
+                    self.repo,
+                    ["keep.txt"],
+                    confirmation=git_state.CONFIRM_DISCARD,
+                    delete_untracked=True,
+                )
+
+        self.assertEqual("keep", target.read_text(encoding="utf-8"))
+
+    def test_discard_delete_untracked_does_not_follow_swapped_parent(self) -> None:
+        nested = self.repo / "nested"
+        nested.mkdir()
+        (nested / "delete.txt").write_text("repo", encoding="utf-8")
+        parked = self.repo / "nested-original"
+        outside = self.base / "outside"
+        outside.mkdir()
+        outside_file = outside / "delete.txt"
+        outside_file.write_text("keep", encoding="utf-8")
+        original_validate = git_state._validate_untracked_delete_path
+
+        def swap_before_delete(repo: Path, path: str) -> str:
+            if nested.exists() and not nested.is_symlink():
+                nested.rename(parked)
+                _link_directory(nested, outside)
+            return original_validate(repo, path)
+
+        with patch.object(
+            git_state,
+            "_validate_untracked_delete_path",
+            side_effect=swap_before_delete,
+        ):
+            with self.assertRaisesRegex(git_state.GitStateError, "link or junction"):
+                git_state.discard(
+                    self.repo,
+                    ["nested/delete.txt"],
+                    confirmation=git_state.CONFIRM_DISCARD,
+                    delete_untracked=True,
+                )
+
+        self.assertEqual("keep", outside_file.read_text(encoding="utf-8"))
+        self.assertTrue((parked / "delete.txt").exists())
+
+    def test_discard_delete_untracked_rejects_swapped_repo_root(self) -> None:
+        (self.repo / "delete.txt").write_text("repo", encoding="utf-8")
+        parked = self.base / "write-repo-original"
+        outside = self.base / "outside-repo"
+        outside.mkdir()
+        outside_file = outside / "delete.txt"
+        outside_file.write_text("keep", encoding="utf-8")
+        original_validate = git_state._validate_untracked_delete_path
+
+        def swap_before_delete(repo: Path, path: str) -> str:
+            self.repo.rename(parked)
+            _link_directory(self.repo, outside)
+            return original_validate(repo, path)
+
+        with patch.object(
+            git_state,
+            "_validate_untracked_delete_path",
+            side_effect=swap_before_delete,
+        ):
+            with self.assertRaisesRegex(git_state.GitStateError, "repository root changed"):
+                git_state.discard(
+                    self.repo,
+                    ["delete.txt"],
+                    confirmation=git_state.CONFIRM_DISCARD,
+                    delete_untracked=True,
+                )
+
+        self.assertEqual("keep", outside_file.read_text(encoding="utf-8"))
+        self.assertTrue((parked / "delete.txt").exists())
+
+    def test_discard_tracked_treats_wildcard_as_literal_path(self) -> None:
+        for name in ("first.txt", "second.txt"):
+            (self.repo / name).write_text("v1", encoding="utf-8")
+            _git(self.repo, "add", name)
+        _git(self.repo, "commit", "-q", "-m", "add tracked files")
+        for name in ("first.txt", "second.txt"):
+            (self.repo / name).write_text("v2", encoding="utf-8")
+
+        git_state.discard(
+            self.repo,
+            ["*.txt"],
+            confirmation=git_state.CONFIRM_DISCARD,
+        )
+
+        self.assertEqual("v2", (self.repo / "first.txt").read_text(encoding="utf-8"))
+        self.assertEqual("v2", (self.repo / "second.txt").read_text(encoding="utf-8"))
+
+    def test_discard_serializes_against_checkout_on_same_repo(self) -> None:
+        target = self.repo / "delete.txt"
+        target.write_text("delete", encoding="utf-8")
+        _git(self.repo, "branch", "other")
+        validation_reached = Event()
+        allow_discard = Event()
+        checkout_started = Event()
+        checkout_completed = Event()
+        errors: list[BaseException] = []
+        original_validate = git_state._validate_untracked_delete_path
+
+        def blocked_validate(repo: Path, path: str) -> str:
+            result = original_validate(repo, path)
+            validation_reached.set()
+            if not allow_discard.wait(5):
+                raise AssertionError("test timed out waiting to continue discard")
+            return result
+
+        def run_discard() -> None:
+            try:
+                git_state.discard(
+                    self.repo,
+                    ["delete.txt"],
+                    confirmation=git_state.CONFIRM_DISCARD,
+                    delete_untracked=True,
+                )
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        def run_checkout() -> None:
+            checkout_started.set()
+            try:
+                git_state.checkout(
+                    self.repo,
+                    "other",
+                    confirmation=git_state.CONFIRM_DIRTY_CHECKOUT,
+                )
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+            finally:
+                checkout_completed.set()
+
+        with patch.object(
+            git_state,
+            "_validate_untracked_delete_path",
+            side_effect=blocked_validate,
+        ):
+            discard_thread = Thread(target=run_discard)
+            checkout_thread = Thread(target=run_checkout)
+            discard_thread.start()
+            self.assertTrue(validation_reached.wait(5))
+            checkout_thread.start()
+            self.assertTrue(checkout_started.wait(5))
+            self.assertFalse(checkout_completed.wait(0.2))
+            allow_discard.set()
+            discard_thread.join(5)
+            checkout_thread.join(5)
+
+        self.assertFalse(discard_thread.is_alive())
+        self.assertFalse(checkout_thread.is_alive())
+        self.assertEqual([], errors)
+        self.assertFalse(target.exists())
+        self.assertEqual("other", _git(self.repo, "branch", "--show-current"))
 
     def test_discard_returns_fresh_status(self) -> None:
         (self.repo / "tracked.txt").write_text("v1", encoding="utf-8")
