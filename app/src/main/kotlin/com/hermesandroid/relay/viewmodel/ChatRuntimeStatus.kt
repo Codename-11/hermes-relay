@@ -28,25 +28,26 @@ sealed interface ChatRuntimeStatus {
 }
 
 /**
- * Resolve chat health in product priority order:
- * Gateway primary, API/SSE fallback, pending connection, then unavailable.
+ * Resolve chat health for the active conversation owner only. A reachable
+ * sibling endpoint cannot make a signed-out or unreachable conversation look
+ * connected.
  */
 fun resolveChatRuntimeStatus(
     gateway: ChatTransportReadiness,
     apiSse: ChatTransportReadiness,
-): ChatRuntimeStatus = when {
-    gateway == ChatTransportReadiness.Ready -> ChatRuntimeStatus.Connected(
-        transport = ChatTransportPath.Gateway,
-        fallback = false,
-    )
-
-    apiSse == ChatTransportReadiness.Ready -> ChatRuntimeStatus.Connected(
-        transport = ChatTransportPath.ApiSse,
-        fallback = true,
-    )
-
-    gateway == ChatTransportReadiness.Connecting ||
-        apiSse == ChatTransportReadiness.Connecting -> ChatRuntimeStatus.Connecting
-
-    else -> ChatRuntimeStatus.Unavailable
+    owner: ChatTransportPath = ChatTransportPath.Gateway,
+): ChatRuntimeStatus {
+    val readiness = when (owner) {
+        ChatTransportPath.Gateway -> gateway
+        ChatTransportPath.ApiSse -> apiSse
+    }
+    return when (readiness) {
+        ChatTransportReadiness.Ready -> ChatRuntimeStatus.Connected(
+            transport = owner,
+            fallback = false,
+        )
+        ChatTransportReadiness.Connecting -> ChatRuntimeStatus.Connecting
+        ChatTransportReadiness.NotConfigured,
+        ChatTransportReadiness.Unavailable -> ChatRuntimeStatus.Unavailable
+    }
 }

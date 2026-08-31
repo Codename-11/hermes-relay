@@ -637,22 +637,22 @@
           <span class="branch-label yes">Yes — manual</span>
           <div class="fnode term">
             <div class="t">Use it verbatim</div>
-            <div class="s">Manual pick wins. Per-turn fallback still applies if it can't serve.</div>
+            <div class="s">Manual selection owns a new chat; existing bindings do not migrate.</div>
           </div>
         </div>
         <div class="branch-col">
           <span class="branch-label no">No — "auto"</span>
           <div class="fnode dec" style="width:100%">
-            <div class="t">gateway == Ready?</div>
+            <div class="t">Saved connection owner?</div>
           </div>
           <div class="conn"></div>
           <div class="branch">
             <div class="branch-col">
-              <span class="branch-label yes">Yes</span>
+              <span class="branch-label yes">Standard</span>
               <div class="fnode gateway"><div class="t">→ "gateway"</div></div>
             </div>
             <div class="branch-col">
-              <span class="branch-label no">No</span>
+              <span class="branch-label no">API-only</span>
               <div class="fnode sse">
                 <div class="t">capabilities<br>.preferredChatEndpoint()</div>
                 <div class="s">sessions › completions › runs</div>
@@ -672,40 +672,26 @@
       </div>
       <div class="conn arrow"></div>
       <div class="fnode dec">
-        <div class="t">Voice interface-context present AND endpoint == gateway?</div>
+        <div class="t">Bound owner == "gateway"?</div>
       </div>
       <div class="conn"></div>
       <div class="branch">
         <div class="branch-col">
-          <span class="branch-label yes">Yes</span>
-          <div class="fnode sse">
-            <div class="t">Force SSE fallback</div>
-            <div class="s">gateway can't carry system_message</div>
-          </div>
+          <span class="branch-label no">Direct API owner</span>
+          <div class="fnode sse"><div class="t">dispatchSse(endpoint)</div></div>
         </div>
         <div class="branch-col">
-          <span class="branch-label no">No</span>
-          <div class="fnode dec" style="width:100%"><div class="t">effectiveEndpoint == "gateway"?</div></div>
+          <span class="branch-label yes">Gateway owner</span>
+          <div class="fnode dec" style="width:100%"><div class="t">gateway client live?</div></div>
           <div class="conn"></div>
           <div class="branch">
             <div class="branch-col">
-              <span class="branch-label no">SSE pick</span>
-              <div class="fnode sse"><div class="t">dispatchSse(endpoint)</div></div>
+              <span class="branch-label no">null</span>
+              <div class="fnode term"><div class="t">Preserve + Retry</div><div class="s">sign in or reconnect; no owner change</div></div>
             </div>
             <div class="branch-col">
-              <span class="branch-label yes">gateway</span>
-              <div class="fnode dec" style="width:100%"><div class="t">gateway client live?</div></div>
-              <div class="conn"></div>
-              <div class="branch">
-                <div class="branch-col">
-                  <span class="branch-label no">null</span>
-                  <div class="fnode sse"><div class="t">dispatchSse(fallback)</div></div>
-                </div>
-                <div class="branch-col">
-                  <span class="branch-label yes">yes</span>
-                  <div class="fnode gateway"><div class="t">gateway.sendTurn()</div></div>
-                </div>
-              </div>
+              <span class="branch-label yes">yes</span>
+              <div class="fnode gateway"><div class="t">gateway.sendTurn()</div></div>
             </div>
           </div>
         </div>
@@ -725,26 +711,25 @@
         </div>
         <div class="branch-col">
           <span class="branch-label no">onPreflightFailure</span>
-          <div class="fnode sse term">
-            <div class="t">dispatchSse(fallback)</div>
-            <div class="s">nothing started server-side → safe to retry on SSE</div>
+          <div class="fnode term">
+            <div class="t">Preserve + Retry</div>
+            <div class="s">nothing started server-side; conversation stays Gateway-owned</div>
           </div>
         </div>
       </div>
     </div>
 
     <div class="callout std">
-      <strong>SSE fallback resolution.</strong> When the chosen SSE endpoint is
-      <code>sessions</code> but there's no session yet, it downgrades to stateless
-      <code>completions</code> for that first turn — there's nothing to stream against
-      otherwise. <span class="ref">resolveSseFallback()</span>
+      <strong>Transport affinity.</strong> Gateway and Direct API sessions live in
+      different stores. Sign-in expiry or route loss never authorizes Android to
+      resubmit the turn through another owner.
     </div>
   </section>
 
   <!-- ───────────────────────── 5 ───────────────────────── -->
   <section id="inputs">
-    <div class="section-head"><span class="num">05</span><h2>Decision inputs: availability + capabilities</h2></div>
-    <p>The two flowcharts above read two pieces of probed state. Both are computed at connect time and refreshed on resume.</p>
+    <div class="section-head"><span class="num">05</span><h2>Owner, readiness, and capabilities</h2></div>
+    <p>Saved connection state chooses the owner. Availability reports whether that owner is ready; Direct API capabilities choose an endpoint only inside an API-owned conversation.</p>
 
     <div class="paths" style="margin-top:16px">
       <div class="panel">
@@ -752,7 +737,7 @@
         <p class="ref">GatewayModels.kt:22 · set by the dashboard <code>/api/status</code> + <code>/api/auth/me</code> probe</p>
         <ul style="padding-left:18px;margin-top:10px">
           <li><span class="dot neutral"></span><strong>Unknown</strong> — no probe yet (startup / connection switch)</li>
-          <li><span class="dot ok"></span><strong>Ready</strong> — reachable + authenticated (or no auth) → gateway preferred</li>
+          <li><span class="dot ok"></span><strong>Ready</strong> — reachable + authenticated (or no auth) → Gateway can send</li>
           <li><span class="dot warn"></span><strong>SignInRequired</strong> — reachable but gated; Manage sign-in unlocks it</li>
           <li><span class="dot bad"></span><strong>Unreachable</strong> — <code>/api/status</code> didn't answer</li>
           <li><span class="dot bad"></span><strong>Unsupported</strong> — <em>sticky</em>: WS upgrade/ticket got 404/403 (build predates embedded chat)</li>
@@ -788,8 +773,8 @@
           <tr><th>Feature</th><th>Path</th><th>Surface</th><th>Degrades to</th></tr>
         </thead>
         <tbody>
-          <tr><td><strong>Chat (live thinking)</strong></td><td class="std-c">Vanilla Hermes</td><td>Gateway WS</td><td>Sessions → Completions → Runs SSE</td></tr>
-          <tr><td><strong>Chat (fallback)</strong></td><td class="std-c">Vanilla Hermes</td><td>API-server SSE</td><td>Inline-annotation parser</td></tr>
+          <tr><td><strong>Chat (live thinking)</strong></td><td class="std-c">Vanilla Hermes</td><td>Gateway WS</td><td>Sign in or retry on the same owner</td></tr>
+          <tr><td><strong>Direct API chat</strong></td><td class="std-c">Vanilla Hermes</td><td>API-server SSE</td><td>Inline-annotation parser</td></tr>
           <tr><td><strong>Session history / CRUD</strong></td><td class="std-c">Vanilla Hermes</td><td><code>/api/sessions</code></td><td>Stateless completions (no persistence)</td></tr>
           <tr><td><strong>Manage</strong> (config/profiles/model/env/MCP)</td><td class="std-c">Vanilla Hermes</td><td>Dashboard <code>/api/*</code></td><td>—  (hidden if dashboard down)</td></tr>
           <tr><td><strong>Vanilla Hermes voice</strong> (STT/TTS)</td><td class="std-c">Vanilla Hermes</td><td>Dashboard <code>/api/audio/*</code></td><td>Relay voice if paired (Auto route)</td></tr>

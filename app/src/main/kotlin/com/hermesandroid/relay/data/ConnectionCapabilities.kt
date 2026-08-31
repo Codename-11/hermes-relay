@@ -29,3 +29,24 @@ val Connection.capabilities: ConnectionCapabilities
         apiServerConfigured = apiServerUrl.isNotBlank(),
         relayConfigured = relayUrl.isNotBlank(),
     )
+
+/**
+ * Stable owner for an Auto chat before a conversation is opened.
+ *
+ * A legacy API-only record has no persisted Dashboard route; the conventional
+ * same-host `:9119` derivation remains useful for an explicit upgrade, but it
+ * must not silently turn that compatibility record into a Gateway-owned chat.
+ * Once a Dashboard route (or authenticated Dashboard origin) is persisted,
+ * standard Chat belongs to Gateway even while that route is signed out or
+ * temporarily unreachable.
+ */
+val Connection.automaticChatTransport: SessionTransport
+    get() {
+        val dashboardPersisted = !dashboardUrl.isNullOrBlank() ||
+            !authenticatedDashboardOrigin.isNullOrBlank()
+        return if (dashboardPersisted) SessionTransport.GATEWAY else SessionTransport.SSE
+    }
+
+fun Connection.chatTransportForPreference(preference: String): SessionTransport =
+    if (preference == "auto") automaticChatTransport
+    else SessionTransport.forEndpoint(preference)

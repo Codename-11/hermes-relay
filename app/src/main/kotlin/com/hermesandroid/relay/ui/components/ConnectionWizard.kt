@@ -132,7 +132,7 @@ import java.net.URI
  * Settings → Gateways. Hermes setup starts with the one Dashboard address
  * the phone can open, probes public `/api/status`, and lets advertised
  * capabilities select authentication. A separate public sign-in URL is never
- * universally required. API fallback, Relay pairing, and extra LAN/Tailscale
+ * universally required. Direct API, Relay pairing, and extra LAN/Tailscale
  * routes remain explicit advanced paths.
  *
  * Steps:

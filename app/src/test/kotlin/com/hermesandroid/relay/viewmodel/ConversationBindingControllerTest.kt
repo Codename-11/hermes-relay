@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionTransport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -111,5 +112,41 @@ class ConversationBindingControllerTest {
         assertFalse(controller.state.value.hasExplicitOwner)
         assertEquals("alpha", controller.state.value.profileName)
         assertEquals("a1", controller.state.value.sessionId)
+    }
+
+    @Test
+    fun gatewayOwnerSurvivesSessionClearAndLifecycleReconciliation() {
+        controller.forceGlobal(
+            contextKey = "c::victor",
+            profileName = "victor",
+            sessionId = "20260831_120000_deadbeef",
+            transport = SessionTransport.GATEWAY,
+        )
+
+        controller.startFreshDraft()
+        controller.reconcileGlobal(
+            contextKey = "c::victor",
+            profileName = "victor",
+            sessionId = null,
+            transport = SessionTransport.GATEWAY,
+        )
+
+        assertEquals(SessionTransport.GATEWAY, controller.state.value.transport)
+        assertNull(controller.state.value.sessionId)
+    }
+
+    @Test
+    fun explicitApiSessionKeepsItsCompatibilityOwner() {
+        controller.openExplicit(
+            contextKey = "c::default",
+            profileName = null,
+            sessionId = "api_1788192000_deadbeef",
+            displayProfile = null,
+            lockedProfileToken = null,
+        )
+
+        assertEquals(SessionTransport.SSE, controller.state.value.transport)
+        controller.switchSession(null)
+        assertEquals(SessionTransport.SSE, controller.state.value.transport)
     }
 }

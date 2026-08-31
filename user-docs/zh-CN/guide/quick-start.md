@@ -61,7 +61,7 @@ API 服务器仍是可选 fallback。upstream 标准路径不强制要求 Relay�
 - **Chat · Ready** 表示可以发送消息。
 - **Manage** 可能仍要求登录 Dashboard。
 - **Voice** 通过同一个 Dashboard 会话启用。
-- **API fallback** 不可用时不会阻止 Chat。
+- **Direct API** 不可用时不会阻止 Chat。
 - **Relay · Paired** 表示推荐扩展已启用；Relay 故障不应阻止 upstream 标准路径。
 
 ## 5. 发送第一条消息

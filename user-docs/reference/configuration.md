@@ -9,7 +9,7 @@ These are configured during onboarding or from the **Settings → Gateways** scr
 Hermes-Relay now treats connection auth as three related but separate contexts:
 
 - **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the vanilla dashboard/desktop path. Current gateways use a native bearer when `native_pkce` is advertised; compatibility gateways use exact-origin cookies. Both mint short-lived `/api/ws` tickets for Chat, sessions, Manage, and standard voice. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
-- **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
+- **Direct API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls for API-only/headless compatibility. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key only for Direct API paths.
 - **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for vanilla dashboard/API use, but it is required for relay power tools.
 
 **Chat** is the home screen. **Manage** is reached from **Settings → Hermes management**, and **Terminal** and **Bridge** from **Settings → Power tools** (and deep links); Manage and Bridge each keep a back arrow to Chat. Unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
@@ -26,7 +26,7 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 - **Routes** — **Dashboard & Gateway** shows the normal required address used by Manage, Gateway chat, sessions, voice, and sign-in, with edit and re-check actions. Optional LAN/Tailscale access paths and direct API/Relay compatibility details live below it. Each advertised surface is probed independently; an authenticated Dashboard origin cannot replace API or Relay ownership.
 - **Security** — reports protection and credential ownership per surface. Only surfaces currently in use affect the rollup; an available or unreachable fallback stays neutral. Dashboard authentication and Relay pairing tokens/per-channel grants remain separate even when transports share one authority.
 - **Advanced** — compatibility and endpoint overrides that most Dashboard/Gateway users do not need:
-  - **Optional direct API fallback** — API Server URL and API Key with **Save & Test**. This preserves the direct host/API-key path for headless and compatibility installs.
+  - **Optional Direct API** — API Server URL and API Key with **Save & Test**. This preserves the direct host/API-key path for API-only, headless, and compatibility installs.
   - **Direct Relay endpoint** — an explicit standalone Relay URL override with a reachability test and **Disconnect**. Normal same-origin Relay pairing does not require exposing a second user-facing port.
   - **Pair Relay** — opens the shared connection-scoped flow for QR scan, entering a server-issued code, or showing a phone-generated code. Advanced does not maintain a second inline pairing state machine.
   - **Allow plain (unencrypted) connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is stored for later but the Transport Security badge usually derives a more accurate label from the live active-route role. Operator intent is the trust model — the toggle gates the UI's ability to save `ws://` / `http://` URLs, nothing server-side.
@@ -35,8 +35,8 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
-| API Server URL | EncryptedSharedPreferences | Optional advanced/legacy compatibility endpoint for API-only records or fallback Chat. Normal Dashboard onboarding does not require it, and an unavailable API fallback does not degrade Dashboard/Gateway readiness. |
-| API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Android Chat fallback, not by dashboard login. |
+| API Server URL | EncryptedSharedPreferences | Optional advanced/legacy compatibility endpoint for API-only records or explicit Direct API Chat. Normal Dashboard onboarding does not require it, and an unavailable Direct API route does not degrade Dashboard/Gateway readiness. |
+| API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Direct API, not by dashboard login. |
 | Dashboard URL | DataStore | The Dashboard/Gateway route entered during normal onboarding; it may be LAN, Tailscale, or public. Redirect providers must still return to the externally reachable Dashboard origin registered as `<public-dashboard-origin>/auth/callback`. Hermes normally derives this from trusted proxy headers; operators use upstream `dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when that reconstruction is unreliable. Native PKCE uses a different advertised origin only for its browser transaction. On the older cookie compatibility flow Android verifies the installation and asks before saving a different authenticated Dashboard origin. Normal setup therefore does not require a second public sign-in field. Public origins require HTTPS, while same-origin or explicitly reviewed literal LAN/Tailscale/loopback HTTP retains upstream's trusted-network mode. |
 | Dashboard session cookies | EncryptedSharedPreferences | Compatibility auth cookies for the dashboard/admin server, stored separately from native bearer tokens, API keys, and Relay sessions. Every interactive provider, including password providers, uses native PKCE whenever `/api/status.auth_flows` advertises it; older gateways and client-local native failures use the cookie flow. Cookies stay on the exact host that issued them and are never copied between LAN, Tailscale, public, or derived Dashboard hosts. |
 | Relay URL | EncryptedSharedPreferences | Optional Hermes-Relay transport address for Bridge, Terminal, device tools, and Relay sessions. It is recorded only after explicit configuration or pairing; Android does not assume an exposed port, and Dashboard auth never substitutes for Relay pairing/grants. |
@@ -308,5 +308,5 @@ The app permits cleartext at the Android network-security layer so LAN, emulator
 
 For remote access, prefer `hermes-relay-tailscale enable`, which maps dedicated
 tailnet HTTPS `:10443` to local Dashboard `:9119` and its same-origin Relay
-ingress without colliding with a reverse proxy on `:443`. The API fallback on
+ingress without colliding with a reverse proxy on `:443`. Direct API on
 `:8642` is optional; direct Relay `:8767` is legacy-only.

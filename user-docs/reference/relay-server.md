@@ -11,7 +11,7 @@ detail.
 
 | Feature | Relay required? | Auth path |
 |---------|-----------------|-----------|
-| Chat | No | Dashboard/Gateway session; API bearer only for optional fallback |
+| Chat | No | Dashboard/Gateway session; API bearer only for explicit Direct API |
 | Vanilla Hermes Voice Mode | No | Dashboard session from Manage |
 | Relay voice extras | Yes for relay TTS/STT/realtime endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
 | Realtime Agent voice engine | Yes; experimental `/voice/realtime-agent/*` broker | Hermes API bearer or relay session with `voice:realtime` |

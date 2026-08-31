@@ -667,17 +667,21 @@ class UpstreamTransportController(
      * - "sessions" / "completions" / "runs" pass through unchanged (manual override wins).
      * - "auto" → reads `serverCapabilities.value.preferredChatEndpoint()`.
      */
-    fun resolveStreamingEndpoint(preference: String): String =
+    fun resolveStreamingEndpoint(
+        preference: String,
+        gatewayOwned: Boolean,
+    ): String =
         resolveStreamingEndpointPreference(
             preference = preference,
             gateway = _gatewayAvailability.value,
             capabilities = _serverCapabilities.value,
+            gatewayOwned = gatewayOwned,
         )
 
     /**
      * Capability-resolved SSE endpoint, ignoring the gateway tier — wired to
      * [com.hermesandroid.relay.viewmodel.ChatViewModel.sseFallbackEndpoint] for
-     * per-turn gateway fallbacks.
+     * explicit API-owned compatibility conversations.
      */
     fun resolveSseStreamingEndpoint(): String =
         _serverCapabilities.value.preferredChatEndpoint()

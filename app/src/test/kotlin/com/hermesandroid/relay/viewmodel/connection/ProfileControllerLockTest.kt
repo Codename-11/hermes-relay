@@ -118,7 +118,7 @@ class ProfileControllerLockTest {
             // (no gateway probe gating) — keeps refreshLastSessionForProfile from
             // bailing early on Unknown.
             streamingEndpointProvider = { streamingEndpoint },
-            gatewayAvailabilityProvider = { gatewayAvailability },
+            automaticTransportProvider = { SessionTransport.GATEWAY },
             setLastSessionId = { lastSessionIds += it },
             legacyDefaultSessionId = { null },
             rebuildChatApiClient = { },
@@ -208,13 +208,16 @@ class ProfileControllerLockTest {
     }
 
     @Test
-    fun autoUnknownRestoresGatewayBucketUntilDefinitiveFallback() {
+    fun autoGatewayOwnerDoesNotChangeRestoreBucketAfterOutage() {
         streamingEndpoint = "auto"
         gatewayAvailability = GatewayAvailability.Unknown
 
         assertEquals(SessionTransport.GATEWAY, controller.activeSessionTransport())
 
         gatewayAvailability = GatewayAvailability.Unreachable
+        assertEquals(SessionTransport.GATEWAY, controller.activeSessionTransport())
+
+        streamingEndpoint = "sessions"
         assertEquals(SessionTransport.SSE, controller.activeSessionTransport())
     }
 

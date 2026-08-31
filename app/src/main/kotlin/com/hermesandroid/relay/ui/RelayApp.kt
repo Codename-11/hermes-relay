@@ -136,6 +136,8 @@ import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.SessionTransport
+import com.hermesandroid.relay.data.chatTransportForPreference
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.SupervisedModePolicy
@@ -283,6 +285,8 @@ internal fun resolveAppChatRuntimeStatus(
     connection: Connection?,
     gatewayAvailability: GatewayAvailability,
     apiHealth: ConnectionViewModel.HealthStatus,
+    streamingEndpoint: String = "auto",
+    conversationOwner: SessionTransport? = null,
 ): ChatRuntimeStatus {
     val capabilities = connection?.capabilities
     val gateway = when {
@@ -298,7 +302,11 @@ internal fun resolveAppChatRuntimeStatus(
             apiHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
         else -> ChatTransportReadiness.Unavailable
     }
-    return resolveChatRuntimeStatus(gateway = gateway, apiSse = api)
+    val owner = when (conversationOwner ?: connection?.chatTransportForPreference(streamingEndpoint)) {
+        SessionTransport.SSE -> ChatTransportPath.ApiSse
+        else -> ChatTransportPath.Gateway
+    }
+    return resolveChatRuntimeStatus(gateway = gateway, apiSse = api, owner = owner)
 }
 
 internal fun shouldSettleStartupUnreachable(
@@ -360,7 +368,7 @@ internal fun resolveFooterRouteCandidate(
  *
  * Endpoint roles are operator and wire metadata, so an internal role such as
  * `authenticated_dashboard` must never leak into this constrained surface.
- * Gateway labels describe how the Dashboard is reached; API fallback keeps
+ * Gateway labels describe how the Dashboard is reached; Direct API keeps
  * the route's ordinary transport label.
  */
 internal fun resolveFooterRouteLabel(
@@ -1593,6 +1601,7 @@ fun RelayApp() {
         // evidence alone left a window where the reveal showed the CTA for
         // the few hundred ms until the client-based health verdict landed.
         val chatReady by connectionViewModel.chatReady.collectAsState()
+        val conversationOwner by connectionViewModel.activeConversationTransport.collectAsState()
         var startupGateMinElapsed by remember { mutableStateOf(false) }
         var startupGateTimedOut by remember { mutableStateOf(false) }
         var startupGateReleased by remember { mutableStateOf(false) }
@@ -1619,6 +1628,8 @@ fun RelayApp() {
             connection = activeConnection,
             gatewayAvailability = gatewayAvailability,
             apiHealth = apiHealth,
+            streamingEndpoint = streamingEndpoint,
+            conversationOwner = conversationOwner,
         )
         // A Dashboard/Gateway-only connection is a complete standard Hermes
         // connection. Startup readiness follows the same transport-neutral
@@ -2125,7 +2136,9 @@ fun RelayApp() {
                             ?: stringResource(R.string.status_no_route),
                     )
                     val transportStatus = resolveChatTransportStatus(
-                        streamingEndpoint = streamingEndpoint,
+                        streamingEndpoint = connectionViewModel.resolveActiveStreamingEndpoint(
+                            streamingEndpoint,
+                        ),
                         gatewayAvailability = gatewayAvailability,
                         serverCapabilities = serverCapabilities,
                     )
