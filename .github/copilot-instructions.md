@@ -5,9 +5,8 @@ not `AGENTS.md`) picks up the project's agent guidance.
 
 **Read [AGENTS.md](../AGENTS.md) first — it is the single source of truth**
 for agent guidance: the entry point, the non-negotiables, and the public-repo
-writing hygiene. It links on to `CLAUDE.md` for the deep reference
-(architecture, upstream Hermes API, repository layout, per-language code style,
-the dev loop, and the Key Files map). Follow those; don't restate them here.
+writing hygiene. `CLAUDE.md` imports that same canonical file. Follow
+`AGENTS.md` and its linked project records; don't restate them here.
 
 Quick non-negotiables (the full list and rationale are in `AGENTS.md`):
 
@@ -17,6 +16,8 @@ Quick non-negotiables (the full list and rationale are in `AGENTS.md`):
 - **Conventional Commits**, `main`/`dev` branching — feature branches off
   `dev`, `--no-ff` merges, tags cut from `main`.
 - **Android:** Jetpack Compose (no XML), kotlinx.serialization (no Gson),
-  OkHttp (no Ktor), `wss://` only; run `./gradlew lint` before pushing Kotlin.
+  OkHttp (no Ktor), `wss://` only. Narrow local checks use the Android lane;
+  pushed exact SHAs prefer `Android On-Demand` for heavy verification; full
+  local pre-push remains an explicit fallback.
 - **Public repo:** no personal names, no private infrastructure, no
   AI/assistant self-narration in committed prose.
