@@ -6,6 +6,20 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Upstream a public Dashboard plugin WebSocket admission seam
+
+The same-origin Relay ingress follows current upstream's bundled Dashboard
+plugin pattern but must feature-detect private
+`hermes_cli.web_server._ws_request_is_allowed` and `_ws_auth_ok` helpers.
+Propose one public helper that combines Host/Origin policy, single-use ticket
+authentication, and runtime plugin-enabled gating for `APIRouter` WebSockets.
+After it is available in the supported Hermes baseline, replace the private
+imports and remove the Relay plugin's local runtime-disable polling. Until
+then, missing helpers fail closed and direct Relay remains an advanced
+compatibility route.
+
+---
+
 ## Certify Android session activity across lifecycle and profile boundaries
 
 The contract fixture now covers every upstream live status, complete-snapshot
@@ -26,6 +40,9 @@ model device-certified:
   renders as Working.
 - Run a background process that outlives its parent turn and verify Background
   work remains separate from the conversation's Idle state.
+- On a physical phone, open and repeatedly foreground Android while the same
+  session is working in official Desktop/TUI; verify Android sends no live
+  attach/interrupt RPC, the producer completes, and final history appears.
 - Pursue an upstream `session.active_list` profile field/filter or an aggregate
   activity route with explicit profile ownership so multi-profile clients do
   not need to resolve process-wide rows from durable keys.
@@ -1148,16 +1165,19 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 
 ### Session drawer audit follow-ups
 
-- **Persist and server-back Pin/Archive behavior.** The drawer currently keeps
-  both sets in composable memory. They reset when the drawer/app is recreated,
-  and Archive does not call the existing upstream profile-scoped archive API or
-  load archived rows. Either wire Archive end to end and persist Pin locally,
-  or remove the misleading actions until those contracts are complete.
-- **Paginate large session stores.** Android requests only the 200 most-recent
-  rows and filters/searches them locally. Older sessions are therefore
-  undiscoverable on long-lived profiles even though upstream list APIs support
-  `offset`. Add incremental paging (and server search where capability-backed)
-  without regressing profile scoping or compression-tip projection.
+- **Certify first-open latency against a large profile store.** Verify a cold
+  launch, immediate drawer open, repeated close/open, and profile switches on a
+  real high-row-count Dashboard. The first bounded page must not wait on
+  Gateway socket readiness; cached rows must remain visible; a timeout must end
+  without another long automatic read; and the final failure must be retryable
+  **Unavailable**, never "No sessions." Capture both client timing and the
+  server's session-list request duration before calling the path fixed.
+- **Certify progressive paging on large stores.** Android loads 50 visible-source
+  recents first and appends 50-row `offset` pages near the end of the drawer.
+  Exercise repeated near-end triggers, a profile/route switch during page load,
+  hidden-source preference changes, terminal short pages, and server search
+  without regressing ownership, cached rows, pin/archive state, or compression
+  tips.
 
 The client-side mitigations shipped (see DEVLOG 2026-06-27): the `updateSessions` clobber guard, the post-turn title reconcile (gateway), and the subtle "not auto-named here" drawer note on SSE. These two are the larger follow-ups:
 
@@ -1300,7 +1320,12 @@ and whether the agent is waiting on the user.
   permissions; exercise compact, expanded, collapsed, and full-Voice handoff
   states, background tap-through, rotation and insets, cancel/back, microphone
   denial, network failure, process kill/recreation, and wake→voice→wake
-  resumption. Measure idle battery drain because third-party assistants do not
+  resumption. For background and keyguard capture, record `AudioRecord`, AppOps,
+  and foreground-service state: the user-installed app owns capture outside the
+  separate session process, so confirm whether the selected Assistant role is
+  sufficient on each target OS or whether activation needs an explicit,
+  activation-scoped microphone foreground-service lease. Measure idle battery
+  drain because third-party assistants do not
   receive Google's dedicated low-power hotword hardware.
 
 - **Audio quality guardrails** — normalize output volume across realtime and

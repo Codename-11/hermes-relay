@@ -1,6 +1,8 @@
 package com.hermesandroid.relay.data
 
 import kotlinx.serialization.Serializable
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.URI
 
 @Serializable
@@ -65,6 +67,14 @@ data class Connection(
      * "derive from [apiServerUrl] using the conventional same-host :9119".
      */
     val dashboardUrl: String? = null,
+    /**
+     * Credential-free origin that most recently completed Dashboard
+     * authentication for this connection. Public origins require HTTPS;
+     * loopback/private-overlay HTTP retains upstream's trusted-network mode.
+     * Dashboard/Gateway consumers prefer this origin, while [routeCandidates]
+     * continue to own only network route selection for API and Relay.
+     */
+    val authenticatedDashboardOrigin: String? = null,
     val dashboardAuthRequired: Boolean? = null,
     val dashboardAuthProviders: List<String> = emptyList(),
     val dashboardLastStatus: DashboardConnectionStatus? = null,
@@ -77,6 +87,11 @@ data class Connection(
     val routeCandidates: List<EndpointCandidate> = emptyList(),
     /** Optional user preference such as "lan" or "tailscale"; null means Auto. */
     val preferredRouteRole: String? = null,
+    /**
+     * Explicit per-installation consent for Relay Git repository discovery.
+     * Missing legacy values remain off; route/profile changes do not broaden it.
+     */
+    val gitRepoScanningEnabled: Boolean = false,
     /** Epoch milliseconds. Pass `System.currentTimeMillis()`; do not pass seconds. */
     val pairedAt: Long? = null,
     /** Last time the user explicitly selected this connection. */
@@ -86,21 +101,27 @@ data class Connection(
     /** Epoch milliseconds. The auth.ok `expires_at` field is seconds — multiply by 1000 at the call site. */
     val expiresAt: Long? = null,
 ) {
-    /**
-     * Effective Dashboard/Gateway endpoint. Legacy records did not persist a
-     * dashboard URL, so they retain the conventional same-host `:9119`
-     * derivation from the API server. Dashboard-only records persist an
-     * explicit URL and may leave [apiServerUrl] and [relayUrl] blank.
-     */
-    val resolvedDashboardUrl: String
+    /** Saved Dashboard/Gateway route before any authenticated-origin override. */
+    val configuredDashboardUrl: String
         get() = dashboardUrl
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: deriveDefaultDashboardUrl(apiServerUrl).orEmpty()
 
+    /**
+     * Effective Dashboard/Gateway endpoint. A verified authenticated origin
+     * wins without rewriting the saved network route. Legacy records retain
+     * the conventional same-host `:9119` derivation through
+     * [configuredDashboardUrl].
+     */
+    val resolvedDashboardUrl: String
+        get() = authenticatedDashboardOrigin
+            ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+            ?: configuredDashboardUrl
+
     /** Stable display/host identity that does not depend on the API surface. */
     val primaryEndpointUrl: String
-        get() = resolvedDashboardUrl.takeIf { it.isNotBlank() }
+        get() = configuredDashboardUrl.takeIf { it.isNotBlank() }
             ?: apiServerUrl.trim().takeIf { it.isNotBlank() }
             ?: relayUrl.trim()
 
@@ -506,6 +527,12 @@ data class Connection(
             )
         }
 
+        /**
+         * Normalize a hand-typed Dashboard/Gateway address. Bare private,
+         * LAN, and Tailscale hosts use upstream's `http://…:9119` default;
+         * bare public hosts use `https://` on the standard HTTPS port.
+         * Explicit schemes and ports are preserved for precise validation.
+         */
         fun normalizeDashboardUrlInput(
             raw: String,
             defaultPort: Int = DEFAULT_DASHBOARD_PORT,
@@ -513,7 +540,10 @@ data class Connection(
             val trimmed = raw.trim().trimEnd('/')
             if (trimmed.isEmpty()) return trimmed
             if (SCHEME_REGEX.containsMatchIn(trimmed)) return trimmed
-            val withScheme = "http://$trimmed"
+            val provisionalHttpUrl = "http://$trimmed"
+            val publicAddress = inferRouteRole(provisionalHttpUrl) == "public"
+            val withScheme = if (publicAddress) "https://$trimmed" else provisionalHttpUrl
+            if (publicAddress) return withScheme
             val uri = runCatching { URI(withScheme) }.getOrNull()
             val canAppendPort = uri != null &&
                 !uri.host.isNullOrBlank() &&
@@ -528,15 +558,40 @@ data class Connection(
                 .getOrNull()
                 ?.lowercase()
                 ?: return "custom"
+            val normalizedHost = host.removePrefix("[").removeSuffix("]")
+            if (normalizedHost.contains(':')) {
+                val address = runCatching { InetAddress.getByName(normalizedHost) }
+                    .getOrNull() as? Inet6Address
+                    ?: return "public"
+                return when {
+                    isTailscaleIpv6(address) -> "tailscale"
+                    address.isAnyLocalAddress ||
+                        address.isLoopbackAddress ||
+                        address.isLinkLocalAddress ||
+                        isUniqueLocalIpv6(address) -> "lan"
+                    else -> "public"
+                }
+            }
             return when {
-                host.endsWith(".ts.net") || isTailscaleIpv4(host) -> "tailscale"
-                host == "localhost" ||
-                    host == "127.0.0.1" ||
-                    host == "::1" ||
-                    isPrivateLanIpv4(host) -> "lan"
+                normalizedHost.endsWith(".ts.net") || isTailscaleIpv4(normalizedHost) -> "tailscale"
+                normalizedHost == "localhost" ||
+                    normalizedHost == "127.0.0.1" ||
+                    normalizedHost.endsWith(".local") ||
+                    normalizedHost.endsWith(".lan") ||
+                    !normalizedHost.contains('.') ||
+                    isPrivateLanIpv4(normalizedHost) -> "lan"
                 else -> "public"
             }
         }
+
+        private fun isTailscaleIpv6(address: Inet6Address): Boolean {
+            val bytes = address.address
+            val prefix = intArrayOf(0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0)
+            return prefix.indices.all { index -> bytes[index].toInt() and 0xff == prefix[index] }
+        }
+
+        private fun isUniqueLocalIpv6(address: Inet6Address): Boolean =
+            address.address.first().toInt() and 0xfe == 0xfc
 
         private fun isTailscaleIpv4(host: String): Boolean {
             val parts = host.split('.').mapNotNull { it.toIntOrNull() }
@@ -556,4 +611,46 @@ data class Connection(
             }
         }
     }
+}
+
+/** Normalize an absolute, credential-free HTTPS origin for authenticated Dashboard use. */
+internal fun normalizeCredentialFreeHttpsOrigin(raw: String): String? {
+    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
+    if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+    if (parsed.host.isNullOrBlank() || parsed.userInfo != null) return null
+    if (parsed.query != null || parsed.fragment != null) return null
+    if (parsed.port > 65_535) return null
+    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
+}
+
+/**
+ * Normalize a reviewed Dashboard credential owner. Public origins require
+ * HTTPS; cleartext is accepted only for literal loopback, RFC1918/link-local,
+ * or Tailscale CGNAT addresses.
+ */
+internal fun normalizeCredentialFreeAuthenticatedDashboardOrigin(raw: String): String? {
+    normalizeCredentialFreeHttpsOrigin(raw)?.let { return it }
+    val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
+    if (!parsed.scheme.equals("http", ignoreCase = true)) return null
+    val host = parsed.host
+        ?.lowercase()
+        ?.removePrefix("[")
+        ?.removeSuffix("]")
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    if (parsed.userInfo != null || parsed.query != null || parsed.fragment != null) return null
+    if (parsed.port > 65_535) return null
+    val trustedHost = host == "localhost" || host == "127.0.0.1" || host == "::1" ||
+        host.split('.').mapNotNull(String::toIntOrNull).let { octets ->
+            octets.size == 4 && octets.all { it in 0..255 } && when {
+                octets[0] == 10 -> true
+                octets[0] == 172 && octets[1] in 16..31 -> true
+                octets[0] == 192 && octets[1] == 168 -> true
+                octets[0] == 169 && octets[1] == 254 -> true
+                octets[0] == 100 && octets[1] in 64..127 -> true
+                else -> false
+            }
+        }
+    if (!trustedHost) return null
+    return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
 }

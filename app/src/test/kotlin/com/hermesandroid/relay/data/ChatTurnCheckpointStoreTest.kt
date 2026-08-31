@@ -88,6 +88,20 @@ class ChatTurnCheckpointStoreTest {
     }
 
     @Test
+    fun checkpointWithoutProfileKey_remainsReadableAsLegacyIdentity() = runTest {
+        val current = sampleCheckpoint().copy(profileKey = "default")
+        val legacyJson = Json.encodeToString(current)
+            .replace("\"profileKey\":\"default\",", "")
+        dataStore.edit { preferences ->
+            preferences[stringPreferencesKey("chat_inflight_turn_checkpoint_v1")] = legacyJson
+        }
+
+        val restored = store.read()
+        assertEquals(current.contextKey, restored?.contextKey)
+        assertNull(restored?.profileKey)
+    }
+
+    @Test
     fun multipleRunningSessions_mergeAndRemoveIndependently() = runTest {
         val first = sampleCheckpoint()
         val second = sampleCheckpoint().copy(
@@ -106,7 +120,8 @@ class ChatTurnCheckpointStoreTest {
     }
 
     private fun sampleCheckpoint() = ChatTurnCheckpoint(
-        contextKey = "connection-a/profile-default",
+        contextKey = AgentDisplay.profileContextKey("connection-a", null),
+        profileKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
         sessionId = "stored-42",
         liveSessionId = "live-42",
         transport = "gateway",

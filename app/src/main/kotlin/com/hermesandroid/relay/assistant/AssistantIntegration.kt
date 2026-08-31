@@ -39,13 +39,37 @@ enum class AssistantSessionPhase {
     Closed,
 }
 
+enum class AssistantSessionNotice {
+    NoSpeech,
+}
+
 data class AssistantSessionSnapshot(
     val phase: AssistantSessionPhase = AssistantSessionPhase.Launching,
     val transcript: String? = null,
     val response: String = "",
+    val notice: AssistantSessionNotice? = null,
     val error: String? = null,
     val screenContextSupported: Boolean = false,
 )
+
+internal fun assistantSnapshotForPresentation(
+    snapshot: AssistantSessionSnapshot,
+    locked: Boolean,
+): AssistantSessionSnapshot = if (locked) {
+    snapshot.copy(
+        transcript = null,
+        response = "",
+        error = null,
+        screenContextSupported = false,
+    )
+} else {
+    snapshot
+}
+
+internal fun assistantSnapshotMatchesActivation(
+    expectedActivationId: String?,
+    receivedActivationId: String?,
+): Boolean = expectedActivationId != null && expectedActivationId == receivedActivationId
 
 object AssistantRole {
     fun status(context: Context): AssistantRoleStatus {
@@ -209,6 +233,7 @@ object AssistantSessionProtocol {
             onFailure = { failure ->
                 publish(
                     application,
+                    activation.id,
                     AssistantSessionSnapshot(
                         phase = AssistantSessionPhase.Error,
                         error = failure.message ?: "Hermes voice could not start",
@@ -219,13 +244,19 @@ object AssistantSessionProtocol {
         return true
     }
 
-    fun publish(context: Context, snapshot: AssistantSessionSnapshot) {
+    fun publish(
+        context: Context,
+        activationId: String,
+        snapshot: AssistantSessionSnapshot,
+    ) {
         context.sendBroadcast(
             Intent(context, AssistantSessionStateReceiver::class.java).apply {
                 action = ACTION_STATUS
+                putExtra(EXTRA_ACTIVATION_ID, activationId)
                 putExtra(EXTRA_PHASE, snapshot.phase.name)
                 putExtra(EXTRA_TRANSCRIPT, snapshot.transcript)
                 putExtra(EXTRA_RESPONSE, snapshot.response)
+                putExtra(EXTRA_NOTICE, snapshot.notice?.name)
                 putExtra(EXTRA_ERROR, snapshot.error)
                 putExtra(EXTRA_SCREEN_CONTEXT_SUPPORTED, snapshot.screenContextSupported)
             }
@@ -236,10 +267,6 @@ object AssistantSessionProtocol {
             // leave wake listening paused after full Voice closes.
             finish(context, cancelVoice = false)
         }
-    }
-
-    fun publish(context: Context, state: VoiceUiState) {
-        publish(context, snapshotFromVoiceState(state))
     }
 
     internal fun snapshotFromVoiceState(state: VoiceUiState): AssistantSessionSnapshot {
@@ -256,7 +283,10 @@ object AssistantSessionProtocol {
             phase = phase,
             transcript = state.transcribedText?.take(MAX_SESSION_TEXT_CHARS),
             response = state.responseText.take(MAX_SESSION_TEXT_CHARS),
-            error = state.error?.take(MAX_SESSION_ERROR_CHARS),
+            notice = state.assistantNotice,
+            error = state.error
+                ?.takeIf { phase == AssistantSessionPhase.Error }
+                ?.take(MAX_SESSION_ERROR_CHARS),
         )
     }
 
@@ -350,6 +380,9 @@ object AssistantSessionProtocol {
             phase = phase,
             transcript = intent.getStringExtra(EXTRA_TRANSCRIPT),
             response = intent.getStringExtra(EXTRA_RESPONSE).orEmpty(),
+            notice = intent.getStringExtra(EXTRA_NOTICE)?.let { raw ->
+                runCatching { AssistantSessionNotice.valueOf(raw) }.getOrNull()
+            },
             error = intent.getStringExtra(EXTRA_ERROR),
             screenContextSupported = intent.getBooleanExtra(
                 EXTRA_SCREEN_CONTEXT_SUPPORTED,
@@ -360,24 +393,33 @@ object AssistantSessionProtocol {
 
     private const val MAX_SESSION_TEXT_CHARS = 4_000
     private const val MAX_SESSION_ERROR_CHARS = 1_000
+    private const val EXTRA_NOTICE = "notice"
 }
 
 object AssistantSessionState {
     private val _snapshot = MutableStateFlow(AssistantSessionSnapshot())
     val snapshot: StateFlow<AssistantSessionSnapshot> = _snapshot.asStateFlow()
+    @Volatile private var activationId: String? = null
 
-    internal fun update(snapshot: AssistantSessionSnapshot) {
+    internal fun update(receivedActivationId: String?, snapshot: AssistantSessionSnapshot) {
+        if (!assistantSnapshotMatchesActivation(activationId, receivedActivationId)) return
         _snapshot.value = snapshot
     }
 
-    internal fun reset() {
+    internal fun reset(activationId: String) {
+        this.activationId = activationId
         _snapshot.value = AssistantSessionSnapshot()
     }
 }
 
 class AssistantSessionStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        AssistantSessionState.update(AssistantSessionProtocol.readSnapshot(intent))
+        AssistantSessionState.update(
+            receivedActivationId = intent.getStringExtra(
+                AssistantSessionProtocol.EXTRA_ACTIVATION_ID
+            ),
+            snapshot = AssistantSessionProtocol.readSnapshot(intent),
+        )
     }
 }
 
@@ -423,6 +465,7 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
                 onFailure = { failure ->
                     AssistantSessionProtocol.publish(
                         application,
+                        id,
                         AssistantSessionSnapshot(
                             phase = AssistantSessionPhase.Error,
                             error = failure.message ?: "Hermes voice could not start",
@@ -430,6 +473,7 @@ class AssistantSessionLifecycleReceiver : BroadcastReceiver() {
                     )
                 },
             )
+            application.runtime.republishAssistantSnapshot(id)
             return
         }
         if (AssistantSessionProtocol.isStartAction(intent.action)) {

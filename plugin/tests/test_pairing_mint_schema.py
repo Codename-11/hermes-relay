@@ -132,6 +132,32 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
         self.assertEqual(qr["key"], "")
 
+    async def test_explicit_api_disabled_omits_api_fields_and_candidate_records(self) -> None:
+        result = await self._mint({
+            "api_enabled": False,
+            "dashboard_url": "http://10.0.0.42:9119",
+            "endpoints": [{
+                "role": "lan",
+                "priority": 0,
+                "api": {"host": "10.0.0.42", "port": 8642, "tls": False},
+                "relay": {"url": "ws://10.0.0.42:8767"},
+            }],
+        })
+        qr = json.loads(result["qr_payload"])
+
+        for field in ("host", "port", "key", "tls"):
+            self.assertNotIn(field, qr)
+            self.assertNotIn(field, result)
+        self.assertTrue(qr["endpoints"])
+        self.assertTrue(all("api" not in item for item in qr["endpoints"]))
+
+    async def test_api_enabled_must_be_boolean(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint", json={"api_enabled": "false"}
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("boolean", (await response.json())["error"])
+
     async def test_body_overrides_api_host_port_tls(self) -> None:
         result = await self._mint({
             "host": "relay.example.com",
@@ -144,6 +170,15 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["port"], 443)
         self.assertTrue(qr["tls"])
 
+    async def test_public_api_override_rejects_plaintext(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint",
+            json={"host": "api.public.example", "port": 8642, "tls": False},
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("TLS", (await response.json())["error"])
+
     async def test_dashboard_url_flows_into_response_and_qr_payload(self) -> None:
         result = await self._mint({
             "dashboard_url": "https://dash.example.com/hermes/",
@@ -152,6 +187,99 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
         self.assertEqual(result["dashboard_url"], "https://dash.example.com/hermes")
         self.assertEqual(qr["dashboard_url"], "https://dash.example.com/hermes")
+        self.assertNotIn(":8767", json.dumps(qr))
+        self.assertEqual(
+            qr["relay"]["url"],
+            "wss://dash.example.com/hermes/api/plugins/hermes-relay/transport",
+        )
+
+    async def test_dashboard_mint_binds_top_level_relay_to_public_origin_not_tailscale_priority(self) -> None:
+        endpoints = [
+            {
+                "role": "tailscale",
+                "priority": 0,
+                "dashboard": {"url": "https://host.tailnet.ts.net"},
+                "relay": {
+                    "url": "wss://host.tailnet.ts.net/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        with mock.patch("plugin.pair._tailscale_status", return_value=None):
+            result = await self._mint({
+                "dashboard_url": "https://public.example",
+                "endpoints": endpoints,
+            })
+        qr = json.loads(result["qr_payload"])
+
+        self.assertEqual([item["role"] for item in qr["endpoints"]], ["tailscale", "public"])
+        self.assertEqual([item["priority"] for item in qr["endpoints"]], [0, 1])
+        self.assertEqual(
+            qr["relay"]["url"],
+            "wss://public.example/api/plugins/hermes-relay/transport",
+        )
+        self.assertEqual(result["relay_url"], qr["relay"]["url"])
+
+    async def test_dashboard_mint_rejects_cross_origin_relay_for_selected_dashboard(self) -> None:
+        response = await self.client.post(
+            "/pairing/mint",
+            json={
+                "dashboard_url": "https://public.example",
+                "endpoints": [{
+                    "role": "public",
+                    "priority": 0,
+                    "dashboard": {"url": "https://public.example"},
+                    "relay": {
+                        "url": "wss://other.example/api/plugins/hermes-relay/transport",
+                        "transport_hint": "wss",
+                    },
+                }],
+            },
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("same-origin Relay ingress", (await response.json())["error"])
+
+    async def test_dashboard_mint_rejects_duplicate_selected_origin_ingresses(self) -> None:
+        endpoints = [
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {
+                    "url": "wss://public.example/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss",
+                },
+            },
+            {
+                "role": "public",
+                "priority": 1,
+                "dashboard": {"url": "https://PUBLIC.EXAMPLE:443/"},
+                "relay": {
+                    "url": "wss://public.example:443/api/plugins/hermes-relay/transport/",
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+        response = await self.client.post(
+            "/pairing/mint",
+            json={
+                "dashboard_url": "https://public.example",
+                "endpoints": endpoints,
+            },
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("exactly one", (await response.json())["error"])
 
     async def test_dashboard_url_camel_alias_is_accepted(self) -> None:
         result = await self._mint({
@@ -162,16 +290,97 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(result["dashboard_url"], "https://dash.example.com")
         self.assertEqual(qr["dashboard_url"], "https://dash.example.com")
 
+    async def test_dashboard_url_rejects_credentials_and_fragments(self) -> None:
+        for dashboard_url in (
+            "https://user:secret@dash.example.com",
+            "https://dash.example.com/#token",
+        ):
+            with self.subTest(dashboard_url=dashboard_url):
+                response = await self.client.post(
+                    "/pairing/mint", json={"dashboard_url": dashboard_url}
+                )
+                self.assertEqual(response.status, 400)
+
+    async def test_public_dashboard_url_rejects_plaintext_but_private_http_remains_valid(self) -> None:
+        rejected = await self.client.post(
+            "/pairing/mint", json={"dashboard_url": "http://public.example"}
+        )
+        self.assertEqual(rejected.status, 400)
+        self.assertIn("https", (await rejected.json())["error"])
+
+        accepted = await self.client.post(
+            "/pairing/mint", json={"dashboard_url": "http://192.168.1.20:9119"}
+        )
+        self.assertEqual(accepted.status, 200, await accepted.text())
+
+    async def test_public_endpoint_candidates_reject_every_plaintext_surface(self) -> None:
+        candidates = (
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "http://public.example"},
+                "relay": {"url": "wss://public.example/relay"},
+            },
+            {
+                "role": "public",
+                "priority": 0,
+                "dashboard": {"url": "https://public.example"},
+                "relay": {"url": "ws://public.example:8767"},
+            },
+            {
+                "role": "public",
+                "priority": 0,
+                "api": {"host": "public.example", "port": 8642, "tls": False},
+                "relay": {"url": "wss://public.example/relay"},
+            },
+            {
+                "role": "public_legacy",
+                "priority": 0,
+                "legacy": True,
+                "relay": {"url": "ws://public.example:8767"},
+            },
+        )
+        for candidate in candidates:
+            with self.subTest(candidate=candidate):
+                response = await self.client.post(
+                    "/pairing/mint", json={"endpoints": [candidate]}
+                )
+                self.assertEqual(response.status, 400, await response.text())
+
+    async def test_legacy_direct_relay_requires_explicit_boolean_opt_in(self) -> None:
+        invalid = await self.client.post(
+            "/pairing/mint", json={"legacy_direct_relay": "true"}
+        )
+        self.assertEqual(invalid.status, 400)
+
+        result = await self._mint({
+            "dashboard_url": "https://dash.example.com",
+            "legacy_direct_relay": True,
+        })
+        qr = json.loads(result["qr_payload"])
+        self.assertEqual(qr["relay"]["url"], result["legacy_direct_relay_url"])
+        self.assertTrue(qr["relay"]["url"].endswith(":8767"))
+        self.assertTrue(qr["endpoints"][-1]["legacy"])
+
     async def test_ttl_and_transport_hint_flow_through_to_relay_block(self) -> None:
         result = await self._mint({
-            "ttl_seconds": 3600,
+            "ttl_seconds": 3600.0,
+            "grants": {"terminal": 1800.0},
             "transport_hint": "ws",
         })
         qr = json.loads(result["qr_payload"])
 
         relay = qr["relay"]
         self.assertEqual(relay["ttl_seconds"], 3600)
+        self.assertIs(type(relay["ttl_seconds"]), int)
+        self.assertEqual(relay["grants"]["terminal"], 1800)
+        self.assertIs(type(relay["grants"]["terminal"]), int)
         self.assertEqual(relay["transport_hint"], "ws")
+
+    async def test_fractional_pairing_durations_are_rejected(self) -> None:
+        response = await self.client.post("/pairing/mint", json={"ttl_seconds": 1.5})
+        self.assertEqual(response.status, 400)
+        self.assertIn("whole number", (await response.json())["error"])
 
     async def test_hermes_version_is_v2_when_metadata_present(self) -> None:
         result = await self._mint({"ttl_seconds": 3600})
@@ -191,14 +400,8 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertNotIn("endpoints", qr)
         self.assertNotIn("endpoints", result)
 
-    async def test_mint_with_endpoints_round_trips_verbatim(self) -> None:
-        """ADR 24: mint echoes ``endpoints`` array byte-for-byte.
-
-        The server must not reorder, normalize, or drop any entries —
-        the phone needs list order preserved for strict priority
-        semantics, and role strings must round-trip for the HMAC to
-        verify.
-        """
+    async def test_mint_normalizes_standard_routes_to_dashboard_ingress(self) -> None:
+        """Server refuses to sign implicit direct 8767 standard routes."""
         endpoints = [
             {
                 "role": "lan",
@@ -225,9 +428,13 @@ class PairingMintSchemaTests(AioHTTPTestCase):
 
         self.assertEqual(qr["hermes"], 3, "endpoints present → version 3")
         self.assertIn("endpoints", qr)
-        self.assertEqual(qr["endpoints"], endpoints)
-        # Mint body also mirrors it for the dashboard round-trip.
-        self.assertEqual(result.get("endpoints"), endpoints)
+        self.assertEqual(qr["endpoints"][0]["dashboard"]["url"], "http://192.168.1.100:9119")
+        self.assertEqual(
+            qr["endpoints"][0]["relay"]["url"],
+            "ws://192.168.1.100:9119/api/plugins/hermes-relay/transport",
+        )
+        self.assertNotIn(":8767", json.dumps(qr["endpoints"]))
+        self.assertEqual(result.get("endpoints"), qr["endpoints"])
 
     async def test_mint_normalizes_tailscale_magic_dns_when_serve_off(self) -> None:
         """Stale dashboard processes cannot sign a broken .ts.net HTTPS route."""
@@ -272,8 +479,54 @@ class PairingMintSchemaTests(AioHTTPTestCase):
         self.assertEqual(qr["hermes"], 3)
         self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
         self.assertFalse(tailscale["api"]["tls"])
-        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["dashboard"]["url"], "http://100.64.0.1:9119")
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "ws://100.64.0.1:9119/api/plugins/hermes-relay/transport",
+        )
         self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
+        self.assertEqual(result.get("endpoints"), qr["endpoints"])
+
+    async def test_mint_removes_stale_api_when_classified_tailscale_api_is_inactive(self) -> None:
+        endpoints = [
+            {
+                "role": "tailscale",
+                "priority": 0,
+                "api": {"host": "100.64.0.1", "port": 8642, "tls": False},
+                "dashboard": {"url": "https://test.tail-xyz.ts.net:10443"},
+                "relay": {
+                    "url": (
+                        "wss://test.tail-xyz.ts.net:10443/"
+                        "api/plugins/hermes-relay/transport"
+                    ),
+                    "transport_hint": "wss",
+                },
+            },
+        ]
+
+        with mock.patch(
+            "plugin.pair._tailscale_status",
+            return_value={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "recommended_listener_port": 10443,
+                "serve_ports": [10443],
+                "serve_services": {
+                    "dashboard": {"active": True, "listen_ports": [10443]},
+                    "api": {"active": False, "listen_ports": []},
+                },
+            },
+        ):
+            result = await self._mint({"endpoints": endpoints})
+
+        qr = json.loads(result["qr_payload"])
+        tailscale = qr["endpoints"][0]
+        self.assertNotIn("api", tailscale)
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:10443",
+        )
         self.assertEqual(result.get("endpoints"), qr["endpoints"])
 
     async def test_mint_with_endpoints_signature_verifies(self) -> None:
@@ -345,6 +598,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         prefer: str | None = None,
         public_url: str | None = "https://example.com",
         tailscale_status: dict | None = None,
+        legacy_direct_relay: bool = False,
     ) -> list[dict]:
         from plugin.pair import build_endpoint_candidates
 
@@ -370,6 +624,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
                 relay_tls=False,
                 public_url=public_url,
                 prefer=prefer,
+                legacy_direct_relay=legacy_direct_relay,
             )
 
     def test_prefer_none_keeps_natural_order(self) -> None:
@@ -404,16 +659,64 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         self.assertEqual([c["role"] for c in endpoints], ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
 
+    def test_public_dashboard_origin_never_infers_direct_8767(self) -> None:
+        endpoints = self._build(
+            mode="public",
+            public_url="https://public.example/base",
+            tailscale_status=None,
+        )
+
+        self.assertEqual(endpoints, [{
+            "role": "public",
+            "priority": 0,
+            "recommended": False,
+            "dashboard": {"url": "https://public.example/base"},
+            "relay": {
+                "url": "wss://public.example/base/api/plugins/hermes-relay/transport",
+                "transport_hint": "wss",
+            },
+        }])
+        self.assertNotIn(":8767", json.dumps(endpoints))
+
+    def test_public_mode_rejects_plaintext_even_for_private_or_tailnet_hosts(self) -> None:
+        for public_url in (
+            "http://public.example",
+            "http://192.168.1.20:9119",
+            "http://100.64.0.20:9119",
+        ):
+            with self.subTest(public_url=public_url):
+                with self.assertRaisesRegex(ValueError, "https"):
+                    self._build(mode="public", public_url=public_url)
+
+    def test_explicit_public_relay_path_requires_legacy_opt_in(self) -> None:
+        with self.assertRaisesRegex(ValueError, "legacy-direct-relay"):
+            self._build(mode="public", public_url="https://public.example/relay")
+
+    def test_explicit_legacy_mode_keeps_public_and_lan_direct_last(self) -> None:
+        endpoints = self._build(legacy_direct_relay=True)
+
+        self.assertEqual(
+            [candidate["role"] for candidate in endpoints],
+            ["tailscale", "public", "lan", "public_legacy", "legacy_direct"],
+        )
+        self.assertEqual(endpoints[-2]["relay"]["url"], "wss://example.com:8767")
+        self.assertEqual(endpoints[-1]["relay"]["url"], "ws://10.0.0.42:8767")
+        self.assertTrue(all(candidate.get("recommended") is False for candidate in endpoints[-2:]))
+
     def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:
         endpoints = self._build(mode="tailscale", public_url=None)
         tailscale = next(c for c in endpoints if c["role"] == "tailscale")
 
         self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
         self.assertFalse(tailscale["api"]["tls"])
-        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["dashboard"]["url"], "http://100.64.0.1:9119")
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "ws://100.64.0.1:9119/api/plugins/hermes-relay/transport",
+        )
         self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
 
-    def test_tailscale_uses_magic_dns_tls_when_serve_is_active(self) -> None:
+    def test_tailscale_uses_magic_dns_tls_when_dashboard_serve_is_active(self) -> None:
         endpoints = self._build(
             mode="tailscale",
             public_url=None,
@@ -421,17 +724,241 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
                 "available": True,
                 "hostname": "test.tail-xyz.ts.net",
                 "tailscale_ip": "100.64.0.1",
-                "serve_ports": [8642, 8767],
+                "serve_ports": [9119, 8642, 8767],
             },
         )
         tailscale = next(c for c in endpoints if c["role"] == "tailscale")
 
         self.assertEqual(tailscale["api"]["host"], "test.tail-xyz.ts.net")
         self.assertTrue(tailscale["api"]["tls"])
-        self.assertEqual(tailscale["relay"]["url"], "wss://test.tail-xyz.ts.net:8767")
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:9119",
+        )
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "wss://test.tail-xyz.ts.net:9119/api/plugins/hermes-relay/transport",
+        )
         self.assertEqual(tailscale["relay"]["transport_hint"], "wss")
 
-    def test_tailscale_uses_raw_ip_when_only_relay_serve_is_active(self) -> None:
+    def test_tailscale_uses_classified_dashboard_listener_not_proxy_target(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [443, 8642, 8767],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [443],
+                        "serve_routes": [{"proxy_target": "http://127.0.0.1:9119"}],
+                    },
+                    "api": {"active": True, "listen_ports": [8642]},
+                    "legacy_relay": {"active": True, "listen_ports": [8767]},
+                },
+            },
+        )
+        tailscale = endpoints[0]
+
+        self.assertEqual(tailscale["dashboard"]["url"], "https://test.tail-xyz.ts.net")
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "wss://test.tail-xyz.ts.net/api/plugins/hermes-relay/transport",
+        )
+        self.assertEqual(tailscale["api"], {
+            "host": "test.tail-xyz.ts.net",
+            "port": 8642,
+            "tls": True,
+        })
+
+    def test_tailscale_prefers_status_recommended_10443_in_mixed_listeners(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "recommended_listener_port": 10443,
+                "serve_ports": [10443, 443, 9119],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [10443, 443, 9119],
+                        "serve_routes": [{"proxy_target": "http://127.0.0.1:9119"}],
+                    },
+                },
+            },
+        )
+
+        tailscale = endpoints[0]
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:10443",
+        )
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "wss://test.tail-xyz.ts.net:10443/api/plugins/hermes-relay/transport",
+        )
+        self.assertNotIn("api", tailscale)
+
+    def test_tailscale_omits_api_when_classified_service_is_inactive(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "recommended_listener_port": 10443,
+                "serve_ports": [10443],
+                "serve_services": {
+                    "dashboard": {"active": True, "listen_ports": [10443]},
+                    "api": {"active": False, "listen_ports": []},
+                },
+            },
+        )
+
+        tailscale = endpoints[0]
+        self.assertNotIn("api", tailscale)
+        self.assertEqual(
+            tailscale["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:10443",
+        )
+
+    def test_tailscale_uses_443_when_recommended_listener_is_absent(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "recommended_listener_port": 10443,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [443, 9119],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [443, 9119],
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(endpoints[0]["dashboard"]["url"], "https://test.tail-xyz.ts.net")
+
+    def test_tailscale_retains_9119_when_it_is_the_only_dashboard_listener(self) -> None:
+        endpoints = self._build(
+            mode="tailscale",
+            public_url=None,
+            tailscale_status={
+                "available": True,
+                "hostname": "test.tail-xyz.ts.net",
+                "tailscale_ip": "100.64.0.1",
+                "serve_ports": [9119],
+                "serve_services": {
+                    "dashboard": {
+                        "active": True,
+                        "listen_ports": [9119],
+                        "serve_routes": [{"proxy_target": "http://127.0.0.1:9119"}],
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(
+            endpoints[0]["dashboard"]["url"],
+            "https://test.tail-xyz.ts.net:9119",
+        )
+
+    def test_funnel_auto_detection_prefers_recommended_10443(self) -> None:
+        from plugin.pair import build_endpoint_candidates
+        from plugin.relay import tailscale as tailscale_helper
+
+        with mock.patch("plugin.pair._tailscale_status", return_value=None), mock.patch.object(
+            tailscale_helper,
+            "funnel_url",
+            return_value="https://public.tail-xyz.ts.net/",
+        ) as funnel_url:
+            endpoints = build_endpoint_candidates(
+                mode="auto",
+                api_host="10.0.0.42",
+                api_port=8642,
+                api_tls=False,
+                relay_host="10.0.0.42",
+                relay_port=8767,
+                relay_tls=False,
+            )
+
+        funnel_url.assert_called_once_with(port=10443)
+        public = next(candidate for candidate in endpoints if candidate["role"] == "public")
+        self.assertEqual(public["dashboard"]["url"], "https://public.tail-xyz.ts.net")
+
+    def test_funnel_auto_detection_falls_back_through_443_to_old_9119(self) -> None:
+        from plugin.pair import build_endpoint_candidates
+        from plugin.relay import tailscale as tailscale_helper
+
+        def funnel_url(port: int) -> str | None:
+            return "https://legacy.tail-xyz.ts.net/" if port == 9119 else None
+
+        with mock.patch("plugin.pair._tailscale_status", return_value=None), mock.patch.object(
+            tailscale_helper,
+            "funnel_url",
+            side_effect=funnel_url,
+        ) as funnel_probe:
+            endpoints = build_endpoint_candidates(
+                mode="auto",
+                api_host="10.0.0.42",
+                api_port=8642,
+                api_tls=False,
+                relay_host="10.0.0.42",
+                relay_port=8767,
+                relay_tls=False,
+            )
+
+        self.assertEqual(
+            [call.kwargs["port"] for call in funnel_probe.call_args_list],
+            [10443, 443, 9119],
+        )
+        public = next(candidate for candidate in endpoints if candidate["role"] == "public")
+        self.assertEqual(public["dashboard"]["url"], "https://legacy.tail-xyz.ts.net")
+
+    def test_funnel_auto_detection_uses_443_before_9119(self) -> None:
+        from plugin.pair import build_endpoint_candidates
+        from plugin.relay import tailscale as tailscale_helper
+
+        def funnel_url(port: int) -> str | None:
+            return "https://legacy-443.tail-xyz.ts.net/" if port == 443 else None
+
+        with mock.patch("plugin.pair._tailscale_status", return_value=None), mock.patch.object(
+            tailscale_helper,
+            "funnel_url",
+            side_effect=funnel_url,
+        ) as funnel_probe:
+            endpoints = build_endpoint_candidates(
+                mode="auto",
+                api_host="10.0.0.42",
+                api_port=8642,
+                api_tls=False,
+                relay_host="10.0.0.42",
+                relay_port=8767,
+                relay_tls=False,
+            )
+
+        self.assertEqual(
+            [call.kwargs["port"] for call in funnel_probe.call_args_list],
+            [10443, 443],
+        )
+        public = next(candidate for candidate in endpoints if candidate["role"] == "public")
+        self.assertEqual(
+            public["dashboard"]["url"],
+            "https://legacy-443.tail-xyz.ts.net",
+        )
+
+    def test_tailscale_uses_raw_ip_when_only_legacy_relay_serve_is_active(self) -> None:
         endpoints = self._build(
             mode="tailscale",
             public_url=None,
@@ -446,7 +973,11 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
 
         self.assertEqual(tailscale["api"]["host"], "100.64.0.1")
         self.assertFalse(tailscale["api"]["tls"])
-        self.assertEqual(tailscale["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual(tailscale["dashboard"]["url"], "http://100.64.0.1:9119")
+        self.assertEqual(
+            tailscale["relay"]["url"],
+            "ws://100.64.0.1:9119/api/plugins/hermes-relay/transport",
+        )
         self.assertEqual(tailscale["relay"]["transport_hint"], "ws")
 
 

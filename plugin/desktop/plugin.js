@@ -29,7 +29,8 @@ const messages = {
     'action.confirm': 'Confirm',
     'action.copy': 'Copy invite',
     'action.open': 'Open Hermes Relay',
-    'action.pair': 'Pair new device',
+    'action.pair': 'Pair Android',
+    'action.pairDesktop': 'Desktop compatibility invite',
     'action.refresh': 'Refresh',
     'activity.empty': 'No recent bridge activity.',
     'activity.title': 'Bridge activity',
@@ -57,6 +58,18 @@ const messages = {
 
 export function profileQueryKey(profile, resource) {
   return [PLUGIN_ID, profile || 'default', resource]
+}
+
+/**
+ * Pairing defaults to Dashboard-origin routes discovered by the backend.
+ * Current standalone Desktop clients cannot obtain Dashboard WebSocket
+ * tickets, so their direct Relay fallback is an explicit, separate action.
+ */
+export function pairingMintBody({ desktopCompatibility = false } = {}) {
+  return {
+    mode: 'auto',
+    ...(desktopCompatibility ? { legacy_direct_relay: true } : {})
+  }
 }
 
 function text(value, fallback = '—') {
@@ -138,6 +151,7 @@ function createManagement(ctx) {
     const client = useQueryClient()
     const [confirmPrefix, setConfirmPrefix] = useState(null)
     const [pairing, setPairing] = useState(null)
+    const [desktopCompatibility, setDesktopCompatibility] = useState(false)
     const [copyError, setCopyError] = useState(null)
     const overviewKey = profileQueryKey(profile, 'overview')
     const sessionsKey = profileQueryKey(profile, 'sessions')
@@ -148,9 +162,10 @@ function createManagement(ctx) {
       void client.invalidateQueries({ queryKey: sessionsKey })
     }
     const pair = useMutation({
-      mutationFn: () => ctx.rest('/pairing', { method: 'POST', body: { mode: 'auto' } }),
-      onSuccess: result => {
+      mutationFn: options => ctx.rest('/pairing', { method: 'POST', body: pairingMintBody(options) }),
+      onSuccess: (result, options) => {
         setCopyError(null)
+        setDesktopCompatibility(options?.desktopCompatibility === true)
         setPairing(result)
       }
     })
@@ -181,8 +196,15 @@ function createManagement(ctx) {
               jsx(Button, {
                 size: 'sm',
                 disabled: pair.isPending,
-                onClick: () => pair.mutate(),
+                onClick: () => pair.mutate({ desktopCompatibility: false }),
                 children: pair.isPending ? 'Creating…' : t('action.pair')
+              }),
+              jsx(Button, {
+                size: 'sm',
+                variant: 'outline',
+                disabled: pair.isPending,
+                onClick: () => pair.mutate({ desktopCompatibility: true }),
+                children: t('action.pairDesktop')
               })
             ]
           })
@@ -220,6 +242,15 @@ function createManagement(ctx) {
                 pairing.code
                   ? jsx('div', { className: 'mt-3 font-mono text-xl tracking-widest', children: pairing.code })
                   : null,
+                desktopCompatibility
+                  ? jsx('p', {
+                      className: 'mt-2 text-[0.6875rem] text-(--ui-text-tertiary)',
+                      children: 'Includes an explicit direct Relay fallback for current Desktop clients. Keep that route deliberately reachable; Android pairing does not need it.'
+                    })
+                  : jsx('p', {
+                      className: 'mt-2 text-[0.6875rem] text-(--ui-text-tertiary)',
+                      children: 'Uses Dashboard-origin routes discovered by the server. Direct Relay port 8767 is not advertised.'
+                    }),
                 jsx('div', {
                   className: 'mt-2 select-all break-all font-mono text-[0.6875rem] text-(--ui-text-tertiary)',
                   children: pairing.pairing_url || pairing.qr_payload || 'Invite created'

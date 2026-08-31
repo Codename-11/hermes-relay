@@ -8,12 +8,12 @@ version = "1.10.0"
 description = "Hermes-Relay plugin — Android device control toolset, QR pairing CLI, and WSS relay server for hermes-agent"
 requires-python = ">=3.11"
 dependencies = [
-    "requests>=2.28.0",
+    "requests>=2.28.0,<3",
     "aiohttp>=3.14.1,<4",
-    "segno>=1.6.0",
-    "pyyaml>=6.0",
-    "httpx>=0.25.0",  # dashboard plugin proxy → relay loopback
-    "websocket-client>=1.8.0",  # realtime voice provider websockets
+    "segno>=1.6.0,<2",
+    "pyyaml>=6.0,<7",
+    "httpx>=0.25.0,<1",  # dashboard plugin proxy → relay loopback
+    "websocket-client>=1.8.0,<2",  # realtime voice provider websockets
 ]
 
 [project.optional-dependencies]

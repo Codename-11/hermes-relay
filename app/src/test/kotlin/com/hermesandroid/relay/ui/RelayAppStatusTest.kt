@@ -2,13 +2,16 @@ package com.hermesandroid.relay.ui
 
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.viewmodel.ChatConnectState
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.resolveChatConnectState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -16,6 +19,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayAppStatusTest {
+
+    @Test
+    fun `footer model omits provider and context window suffix`() {
+        assertEquals("gpt-5.6-sol", compactFooterModelLabel("openai/gpt-5.6-sol-900k"))
+        assertEquals("claude-opus", compactFooterModelLabel("claude-opus-1M"))
+    }
 
     @Test
     fun `pet roaming supports chat terminal and curated status chrome routes`() {
@@ -188,6 +197,87 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `committed pair target stays ready while public inventory catches up`() {
+        assertTrue(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "committed-draft",
+                authorizedHandoffId = null,
+                activeConnectionId = "committed-draft",
+                connectionIds = emptySet(),
+                draftConnectionId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `configured chat settles unavailable only from transport verdict`() {
+        assertTrue(
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = true,
+                runtimeStatus = ChatRuntimeStatus.Unavailable,
+            ),
+        )
+        assertFalse(
+            shouldSettleStartupUnreachable(
+                hasConfiguredChat = true,
+                runtimeStatus = ChatRuntimeStatus.Connecting,
+            ),
+        )
+    }
+
+    @Test
+    fun `startup shell releases after route narration without waiting for Gateway wake`() {
+        assertTrue(
+            startupShellCanRender(
+                appReady = true,
+                hasStartupConnection = true,
+                endpointSelected = true,
+                chatUp = false,
+                narrationStage = 2,
+                unreachableConfirmed = false,
+                timedOut = false,
+            ),
+        )
+        assertFalse(
+            startupShellCanRender(
+                appReady = true,
+                hasStartupConnection = true,
+                endpointSelected = false,
+                chatUp = false,
+                narrationStage = 2,
+                unreachableConfirmed = false,
+                timedOut = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `settled chat outage is unavailable instead of connecting forever`() {
+        val configured = connection(dashboardUrl = "https://host.ts.net:9119")
+        assertEquals(
+            ChatConnectState.Unavailable,
+            resolveChatConnectState(
+                hydrated = true,
+                connection = configured,
+                ready = false,
+                gatewayAvailability = GatewayAvailability.Unreachable,
+                apiHealth = ConnectionViewModel.HealthStatus.Unknown,
+            ),
+        )
+        assertEquals(
+            ChatConnectState.Connecting,
+            resolveChatConnectState(
+                hydrated = true,
+                connection = configured,
+                ready = false,
+                gatewayAvailability = GatewayAvailability.Unknown,
+                apiHealth = ConnectionViewModel.HealthStatus.Unknown,
+            ),
+        )
+    }
+
+    @Test
     fun `gateway footer derives Dashboard route without an API endpoint`() {
         val connection = connection(dashboardUrl = "https://host.ts.net:9119")
         val unrelatedApiRoute = EndpointCandidate(
@@ -211,8 +301,102 @@ class RelayAppStatusTest {
         assertNull(route?.api)
     }
 
+    @Test
+    fun `transient add draft is ready without a persisted fake connection`() {
+        assertTrue(
+            resolvePairSetupReady(
+                storeHydrated = true,
+                connectionId = "draft-id",
+                authorizedHandoffId = null,
+                activeConnectionId = "saved-id",
+                connectionIds = setOf("saved-id"),
+                draftConnectionId = "draft-id",
+            ),
+        )
+    }
+
+    @Test
+    fun `gateway footer calls the authenticated Dashboard origin HTTP`() {
+        val connection = connection(
+            dashboardUrl = "http://192.168.1.20:9119",
+            authenticatedDashboardOrigin = "https://hermes.example.com",
+        )
+        val status = connected(ChatTransportPath.Gateway)
+        val route = resolveFooterRouteCandidate(
+            runtimeStatus = status,
+            activeEndpoint = EndpointCandidate(
+                role = "lan",
+                dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+            ),
+            connection = connection,
+            effectiveDashboardUrl = connection.resolvedDashboardUrl,
+        )
+
+        assertEquals("HTTP", resolveFooterRouteLabel(status, route, fallbackLabel = "Hermes"))
+    }
+
+    @Test
+    fun `gateway footer preserves meaningful LAN and Tailscale labels`() {
+        assertEquals(
+            "LAN",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.Gateway),
+                route = EndpointCandidate(
+                    role = "lan",
+                    dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+        assertEquals(
+            "Tailscale",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.Gateway),
+                route = EndpointCandidate(
+                    role = "tailscale",
+                    dashboard = DashboardEndpoint("https://host.tailnet.ts.net"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    @Test
+    fun `offline footer omits stale route identity`() {
+        assertEquals(
+            "",
+            resolveFooterRouteLabel(
+                runtimeStatus = ChatRuntimeStatus.Unavailable,
+                route = EndpointCandidate(
+                    role = "lan",
+                    dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    @Test
+    fun `API fallback footer keeps its actual route label`() {
+        assertEquals(
+            "Tailscale",
+            resolveFooterRouteLabel(
+                runtimeStatus = connected(ChatTransportPath.ApiSse),
+                route = EndpointCandidate(
+                    role = "tailscale",
+                    api = ApiEndpoint("100.75.1.2", 8642, tls = true),
+                ),
+                fallbackLabel = "Hermes",
+            ),
+        )
+    }
+
+    private fun connected(path: ChatTransportPath) =
+        ChatRuntimeStatus.Connected(transport = path, fallback = path == ChatTransportPath.ApiSse)
+
     private fun connection(
         dashboardUrl: String? = null,
+        authenticatedDashboardOrigin: String? = null,
         apiServerUrl: String = "",
         relayUrl: String = "",
     ) = Connection(
@@ -222,5 +406,6 @@ class RelayAppStatusTest {
         relayUrl = relayUrl,
         tokenStoreKey = "hermes_auth_connection",
         dashboardUrl = dashboardUrl,
+        authenticatedDashboardOrigin = authenticatedDashboardOrigin,
     )
 }

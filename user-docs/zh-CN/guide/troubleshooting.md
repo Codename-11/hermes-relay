@@ -26,6 +26,8 @@ canonical_source: /guide/troubleshooting
 应用已检查所有保存的局域网、Tailscale 和公网路由，但均未收到响应。局域网地址
 只在同一 Wi-Fi 中可用。使用 Tailscale 时，手机和服务器都必须处于连接状态。
 `http://100.x.y.z:9119` 这样的 Dashboard 路由无需 API 服务器或 API 密钥即可测试。
+使用推荐 helper 时，请打开 `https://<tailnet-host>:10443/api/health`；tailnet
+HTTPS `:10443` 会代理到本地 Dashboard `:9119`。
 
 ## Chat 不流式显示
 

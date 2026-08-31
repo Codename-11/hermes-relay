@@ -152,9 +152,19 @@ class ProfileController(
     private val _dashboardProfiles = MutableStateFlow<List<Profile>>(emptyList())
     private val _gatewayProfiles = MutableStateFlow<List<Profile>>(emptyList())
     private val _gatewayRosterAuthoritative = MutableStateFlow(false)
+    private val dashboardScopeRefreshGeneration = AtomicLong(0L)
+    private val dashboardRosterRefreshGeneration = AtomicLong(0L)
     private val avatarRefreshGeneration = AtomicLong(0L)
     private val petRefreshGeneration = AtomicLong(0L)
     private val petGalleryGeneration = AtomicLong(0L)
+    private val sessionRestoreGeneration = AtomicLong(0L)
+    private val freshDraftScopes = ConcurrentHashMap.newKeySet<SessionScopeKey>()
+
+    private data class SessionScopeKey(
+        val connectionId: String,
+        val profileName: String?,
+        val transport: SessionTransport,
+    )
     private val petThumbnailRequests = ConcurrentHashMap.newKeySet<String>()
 
     val agentProfiles: StateFlow<List<Profile>> = combine(
@@ -185,11 +195,32 @@ class ProfileController(
         _serverDefaultProfileScope.asStateFlow()
     private val _serverDefaultProfileSettled = MutableStateFlow(false)
 
+    private fun pendingProfileNameForActiveConnection(): String? {
+        val pendingName = _pendingSelectedProfileName.value ?: return null
+        if (_pendingSelectedProfileConnectionId.value != activeConnectionId.value) return null
+        return pendingName.takeIf { it != AgentDisplay.SERVER_DEFAULT_PROFILE_KEY }
+    }
+
+    private val pendingSessionProfileName: StateFlow<String?> = combine(
+        activeConnectionId,
+        _pendingSelectedProfileConnectionId,
+        _pendingSelectedProfileName,
+    ) { connectionId, pendingConnectionId, pendingName ->
+        pendingName?.takeIf {
+            pendingConnectionId == connectionId &&
+                it != AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, null)
+
     val effectiveSessionProfileName: StateFlow<String?> = combine(
         selectedProfile,
         serverDefaultProfileScope,
-    ) { selected, serverDefault ->
-        AgentDisplay.effectiveSessionProfileName(selected?.name, serverDefault?.active)
+        pendingSessionProfileName,
+    ) { selected, serverDefault, pendingName ->
+        AgentDisplay.effectiveSessionProfileName(
+            selectedProfileName = selected?.name ?: pendingName,
+            serverDefaultProfileName = serverDefault?.active,
+        )
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Display identity resolved through the same sticky server default used by session routing. */
@@ -197,12 +228,18 @@ class ProfileController(
         selectedProfile,
         agentProfiles,
         serverDefaultProfileScope,
-    ) { selected, profiles, serverDefault ->
-        AgentDisplay.effectiveDisplayProfile(
-            selectedProfile = selected,
-            profiles = profiles,
-            serverDefaultProfileName = serverDefault?.active,
-        )
+        pendingSessionProfileName,
+    ) { selected, profiles, serverDefault, pendingName ->
+        if (selected == null && pendingName != null) {
+            profiles.firstOrNull { it.name == pendingName }
+                ?: Profile(name = pendingName, model = "")
+        } else {
+            AgentDisplay.effectiveDisplayProfile(
+                selectedProfile = selected,
+                profiles = profiles,
+                serverDefaultProfileName = serverDefault?.active,
+            )
+        }
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
     /**
@@ -214,27 +251,17 @@ class ProfileController(
      *  - the selection has resolved into [selectedProfile], or
      *  - Server default is selected and `/api/profiles/active` has resolved
      *    (or cleanly degraded to the launch-profile fallback), or
-     *  - the agent-profile list has arrived, so resolution has been ATTEMPTED —
-     *    a genuinely-missing profile then falls back to server default rather
-     *    than gating forever.
-     *
-     * False only in the cold-start window where a non-default profile name is
-     * persisted but the profile list hasn't landed yet to resolve it — exactly
-     * when an unscoped read would load the server-default profile by mistake.
+     * A persisted named profile is already an exact session namespace; roster
+     * metadata may resolve its full [Profile] object later. Server default is
+     * the only cold-start selection that waits for `/api/profiles/active`.
      */
-    private val profileResolutionInputs = combine(
-        agentProfiles,
-        _serverDefaultProfileSettled,
-    ) { profiles, serverDefaultSettled -> profiles to serverDefaultSettled }
-
     val selectionSettled: StateFlow<Boolean> = combine(
         activeConnectionId,
         selectedProfile,
         _pendingSelectedProfileConnectionId,
         _pendingSelectedProfileName,
-        profileResolutionInputs,
-    ) { connId, selected, pendingConnId, pendingName, resolution ->
-        val (profiles, serverDefaultSettled) = resolution
+        _serverDefaultProfileSettled,
+    ) { connId, selected, pendingConnId, pendingName, serverDefaultSettled ->
         when {
             connId == null -> true
             selected != null -> true
@@ -243,9 +270,10 @@ class ProfileController(
             pendingConnId != connId -> false
             pendingName == null || pendingName == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY ->
                 serverDefaultSettled
-            // Non-default name pending: settled once the profile list is present
-            // (resolution attempted), even if the name turns out to be gone.
-            else -> profiles.isNotEmpty()
+            // A persisted non-default name is already an exact session
+            // namespace. Metadata may arrive later; never block or mis-scope
+            // session REST behind the heavyweight profile inventory.
+            else -> true
         }
     }.stateIn(scope, SharingStarted.Eagerly, false)
 
@@ -449,7 +477,44 @@ class ProfileController(
      * the current list untouched on failure (e.g. dashboard not signed in).
      */
     fun refreshDashboardProfiles() {
+        refreshDashboardProfileScope()
+        refreshDeferredProfileMetadata()
+    }
+
+    /** Heavy roster/assets metadata, released only after directory success or explicit UI intent. */
+    fun refreshDeferredProfileMetadata() {
         val connectionId = activeConnectionId.value ?: return
+        val rosterGeneration = dashboardRosterRefreshGeneration.incrementAndGet()
+        val dashboardUrl = activeDashboardUrlProvider()
+            ?: return
+        // Gateway roster/assets and Dashboard metadata have independent
+        // transports. A cold or recovering /api/ws must not hold the REST
+        // default-profile/list path (and its cached avatar identity) hostage.
+        scope.launch {
+            refreshGatewayProfiles(connectionId)
+            refreshHermesPet(connectionId)
+        }
+        scope.launch {
+            val client = dashboardClientFactory(connectionId, dashboardUrl)
+            client.listProfiles().onSuccess { profiles ->
+                if (
+                    activeConnectionId.value == connectionId &&
+                    dashboardRosterRefreshGeneration.get() == rosterGeneration
+                ) {
+                    _dashboardProfiles.value = profiles
+                }
+            }
+        }
+    }
+
+    /**
+     * Lightweight cold-start identity scope. This is the only profile request
+     * allowed ahead of the session directory; `/api/profiles` roster/skills,
+     * Gateway avatars, and pet metadata hydrate after rows publish or on demand.
+     */
+    fun refreshDashboardProfileScope() {
+        val connectionId = activeConnectionId.value ?: return
+        val scopeGeneration = dashboardScopeRefreshGeneration.incrementAndGet()
         val dashboardUrl = activeDashboardUrlProvider()
         if (dashboardUrl == null) {
             _serverDefaultProfileScope.value = null
@@ -457,26 +522,22 @@ class ProfileController(
             return
         }
         scope.launch {
-            refreshGatewayProfiles(connectionId)
-            refreshHermesPet(connectionId)
-            val client = dashboardClientFactory(connectionId, dashboardUrl)
-            val defaultScope = client.getActiveProfileScope().getOrNull()
-            if (activeConnectionId.value != connectionId) return@launch
+            val defaultScope = dashboardClientFactory(connectionId, dashboardUrl)
+                .getActiveProfileScope()
+                .getOrNull()
+            if (
+                activeConnectionId.value != connectionId ||
+                dashboardScopeRefreshGeneration.get() != scopeGeneration
+            ) return@launch
 
             // Older dashboards may not expose this endpoint. Settle to null so
             // they retain the historical launch-profile behavior rather than
             // blocking chat indefinitely.
             _serverDefaultProfileScope.value = defaultScope
             _serverDefaultProfileSettled.value = true
-            if (_selectedProfile.value == null) {
+            if (selectionIdentityProfileName() == null) {
                 refreshLastSessionForProfile(connectionId, null)
                 rebuildChatApiClient()
-            }
-
-            client.listProfiles().onSuccess { profiles ->
-                if (activeConnectionId.value == connectionId) {
-                    _dashboardProfiles.value = profiles
-                }
             }
         }
     }
@@ -736,7 +797,7 @@ class ProfileController(
     /** Effective profile namespace for Gateway and profile-scoped session I/O. */
     fun resolveSessionProfileName(selectedProfileName: String? = _selectedProfile.value?.name): String? =
         AgentDisplay.effectiveSessionProfileName(
-            selectedProfileName = selectedProfileName,
+            selectedProfileName = selectedProfileName ?: pendingProfileNameForActiveConnection(),
             serverDefaultProfileName = _serverDefaultProfileScope.value?.active,
         )
 
@@ -753,11 +814,19 @@ class ProfileController(
     suspend fun listProfileScopedSessions(
         profileName: String?,
         limit: Int = 200,
+        offset: Int = 0,
+        excludeSources: Collection<String> = emptyList(),
     ): Result<List<SessionItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
         return dashboardClientFactory(connectionId, dashboardUrl)
-            .listSessions(profile = profileName, limit = limit, archived = "include")
+            .listSessions(
+                profile = profileName,
+                limit = limit,
+                offset = offset,
+                archived = "include",
+                excludeSources = excludeSources,
+            )
     }
 
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? {
@@ -1449,24 +1518,66 @@ class ProfileController(
     /**
      * Which transport's session slot to restore right now — or `null` when the
      * decision is still pending (the gateway probe hasn't landed). A manual
-     * streaming-endpoint override resolves immediately; under `"auto"` the slot
-     * follows the gateway probe, and we deliberately DEFER while it's [Unknown]
-     * rather than guess SSE.
+     * streaming-endpoint override resolves immediately; under `"auto"`, Unknown
+     * remains Gateway-owned because the transport resolver also chooses Gateway
+     * until a definitive fallback verdict exists.
      */
     fun activeSessionTransport(): SessionTransport? {
         val preference = streamingEndpointProvider()
         if (preference != "auto") return SessionTransport.forEndpoint(preference)
         return when (gatewayAvailabilityProvider()) {
             GatewayAvailability.Ready -> SessionTransport.GATEWAY
-            GatewayAvailability.Unknown -> null
+            GatewayAvailability.Unknown -> SessionTransport.GATEWAY
             else -> SessionTransport.SSE
         }
     }
+
+    /**
+     * Persist a user-requested empty draft for one exact conversation scope.
+     *
+     * The in-memory marker fences any stored-session read that was already in
+     * flight, while clearing the exact transport slot makes the draft survive a
+     * process restart. Other profiles, connections, transports, and the server's
+     * actual session/history rows are untouched.
+     */
+    fun markFreshDraft(
+        connectionId: String,
+        profileName: String?,
+        transport: SessionTransport,
+    ) {
+        val scopeKey = SessionScopeKey(connectionId, profileName, transport)
+        freshDraftScopes += scopeKey
+        sessionRestoreGeneration.incrementAndGet()
+        if (
+            activeConnectionId.value == connectionId &&
+            _selectedProfile.value?.name == profileName
+        ) {
+            setLastSessionId(null)
+        }
+        scope.launch {
+            profileSessionStore.setSessionId(connectionId, profileName, transport, null)
+        }
+    }
+
+    /** A real session supersedes the fresh-draft marker for its exact scope. */
+    fun markSessionPersisted(
+        connectionId: String,
+        profileName: String?,
+        transport: SessionTransport,
+    ) {
+        freshDraftScopes -= SessionScopeKey(connectionId, profileName, transport)
+        sessionRestoreGeneration.incrementAndGet()
+    }
+
+    /** Persisted UI selection identity, available before roster metadata. */
+    fun selectionIdentityProfileName(): String? =
+        _selectedProfile.value?.name ?: pendingProfileNameForActiveConnection()
 
     fun refreshLastSessionForProfile(
         connectionId: String?,
         profileName: String?,
     ) {
+        val generation = sessionRestoreGeneration.incrementAndGet()
         setLastSessionId(null)
         if (connectionId == null) return
         // Defer until the active transport is known — restoring an id the
@@ -1477,7 +1588,9 @@ class ProfileController(
         // Server default may currently route to a sticky profile named
         // `default` (or any other name), but its last-session slot must remain
         // distinct from explicitly selecting that named profile.
-        val sessionProfileName = profileName
+        val sessionProfileName = profileName ?: pendingProfileNameForActiveConnection()
+        val scopeKey = SessionScopeKey(connectionId, sessionProfileName, transport)
+        if (scopeKey in freshDraftScopes) return
         scope.launch {
             val profileScoped = profileSessionStore
                 .sessionIdFlow(connectionId, sessionProfileName, transport)
@@ -1493,8 +1606,10 @@ class ProfileController(
                 null
             }
             if (
+                sessionRestoreGeneration.get() == generation &&
+                scopeKey !in freshDraftScopes &&
                 activeConnectionId.value == connectionId &&
-                _selectedProfile.value?.name == profileName &&
+                selectionIdentityProfileName() == sessionProfileName &&
                 activeSessionTransport() == transport
             ) {
                 setLastSessionId(profileScoped ?: legacyDefault)
@@ -1517,6 +1632,8 @@ class ProfileController(
         _dashboardProfiles.value = emptyList()
         _gatewayProfiles.value = emptyList()
         _gatewayRosterAuthoritative.value = false
+        dashboardScopeRefreshGeneration.incrementAndGet()
+        dashboardRosterRefreshGeneration.incrementAndGet()
         avatarRefreshGeneration.incrementAndGet()
         petRefreshGeneration.incrementAndGet()
         petGalleryGeneration.incrementAndGet()
@@ -1530,6 +1647,8 @@ class ProfileController(
         _pendingSelectedProfileName.value = null
         _serverDefaultProfileScope.value = null
         _serverDefaultProfileSettled.value = false
+        dashboardScopeRefreshGeneration.incrementAndGet()
+        dashboardRosterRefreshGeneration.incrementAndGet()
         petRefreshGeneration.incrementAndGet()
         petGalleryGeneration.incrementAndGet()
         _hermesPetState.value = HermesPetState()

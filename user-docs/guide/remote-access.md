@@ -1,6 +1,6 @@
 # Remote Access
 
-Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The primary recommended path today is Tailscale Serve WSS/HTTPS because it works behind CGNAT, encrypts traffic end-to-end, keeps access inside your tailnet ACLs, and provides managed TLS. See [Is my connection secure?](../architecture/connection-security.md).
+Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailscale, a VPN, and a public reverse proxy. The primary recommended path today is Tailscale because it works behind CGNAT, encrypts traffic between tailnet devices, and keeps access inside your tailnet ACLs. Recommended setup exposes a dedicated HTTPS listener (`:10443` by default) and proxies local Dashboard `:9119`, avoiding conflicts with Traefik, Caddy, or nginx on `:443`. See [Is my connection secure?](../architecture/connection-security.md).
 
 ## What Uses Which Connection
 
@@ -26,29 +26,25 @@ hermes-relay-tailscale enable
 hermes pair --mode auto --prefer tailscale
 ```
 
-The Tailscale helper can publish the optional Relay and API services with TLS:
+The recommended Tailscale stack listens on dedicated HTTPS `:10443` and proxies the local
+Dashboard/Gateway on `:9119`, including the plugin's same-origin Relay
+transport. Port `8642` remains an optional API fallback. The Relay process
+still listens internally on `:8767`, but direct serving of that port is legacy
+compatibility for already-paired clients and is not part of new QRs.
 
-```bash
-tailscale serve --bg --https=8767 http://127.0.0.1:8767
-tailscale serve --bg --https=8642 http://127.0.0.1:8642
-```
-
-Port `8767` carries Relay WSS and HTTP routes. Port `8642` carries the optional
-API fallback and API-bearer Relay voice compatibility. Publish the primary
-Dashboard/Gateway on `:9119` separately; missing optional API does not break a
-healthy dashboard route.
-
-You can add and test a Tailscale Dashboard address without configuring either
-optional service. Use `http://100.x.y.z:9119` for a directly reachable dashboard,
-or the `https://host.ts.net` URL and port/path from your own Dashboard proxy.
+The helper advertises the detected `https://host.ts.net:10443` origin without local `:9119`;
+the phone must use the actual tailnet listener, not the proxy's local target.
+You can still manually add `http://100.x.y.z:9119` when Dashboard itself is
+deliberately reachable on the raw tailnet IP, but that is not the helper's
+recommended HTTPS mapping.
 Android probes the Dashboard itself and handles Dashboard sign-in; it does not
 look for `API_SERVER_KEY` on this path.
 
 ::: tip Two layers, both optional-to-stack
 Your tailnet is already encrypted by WireGuard, so even a plain `http://100.x.y.z` route is
 secure over Tailscale. `tailscale serve --https` adds a *separate* TLS layer on top, giving
-you a `wss://`/`https://` route fronted by a real certificate (the dashboard on `:9119` is
-not fronted by the helper — front it yourself if you want TLS there). See
+  you a `wss://`/`https://` route fronted by a real certificate. Recommended
+  setup uses dedicated HTTPS `:10443` → local Dashboard `:9119`. See
 [Is my connection secure?](../architecture/connection-security.md) for which the app reports
 as 🔒 TLS vs 🛡️ Tailscale (both secure).
 :::
@@ -70,7 +66,8 @@ hermes pair --mode auto
 It emits LAN when available, adds Tailscale when the helper detects a tailnet hostname, and adds a public route when you pass `--public-url`:
 
 ```bash
-hermes pair --mode auto --public-url https://hermes.example.com/relay
+hermes pair --mode auto --dashboard-url https://hermes.example.com \
+  --public-url https://hermes.example.com
 ```
 
 Use `--prefer tailscale` when you want the phone to try Tailscale first but still keep LAN as a fallback:
@@ -150,10 +147,13 @@ listeners require TLS. Plain development mode is loopback-only.
 
 ## Which URL Do I Enter?
 
-Normal connection and route fields use the **Dashboard/Gateway** address (port
-`9119` by convention). Advanced endpoint settings expose API fallback (`8642`)
-and Relay (`8767`) independently; do not substitute one service's port for
-another. The editor previews the exact URL before saving.
+Normal connection and route fields use the **Dashboard/Gateway** address. On
+LAN that is commonly local `:9119`; recommended Tailscale uses the external
+dedicated HTTPS `:10443` listener that proxies local `:9119`. Relay rides the selected
+Dashboard origin under the plugin transport path. Advanced endpoint settings
+expose optional API fallback (`8642`). Direct Relay (`8767`) is legacy-only; do
+not substitute it for a Dashboard or API address. The editor previews every
+resolved surface before saving.
 
 Pick the scheme by how the server is reached:
 
@@ -164,10 +164,9 @@ Pick the scheme by how the server is reached:
   plaintext on the wire** — WireGuard encrypts it end-to-end. It's secure
   transport, just not TLS (the app reports it as 🛡️ Tailscale, not ⚠️ Not
   encrypted).
-- **`*.ts.net` hostname** → use the exact `http://` or `https://` Dashboard URL
-  your operator published. `hermes-relay-tailscale enable` only fronts the
-  optional Relay and API ports; it does not automatically publish Dashboard
-  `:9119`. If you separately front the Dashboard with Tailscale HTTPS, its
+- **`*.ts.net` hostname** → use the exact HTTPS Dashboard URL the helper
+  published. Recommended setup listens on tailnet `:10443` and proxies local
+  Dashboard `:9119`; use the advertised dedicated port, not the local target. Its
   certificate is valid for the `.ts.net` name, not the raw `100.x` IP.
 - **LAN IP** → normally `http://host:9119`. Unlike a raw Tailscale route, plain
   LAN HTTP has no WireGuard transport layer.
@@ -205,11 +204,22 @@ route; the app keeps both sessions afterwards.
 
 ## Other Remote Paths
 
+::: tip OIDC callback behind a reverse proxy
+Register `<external Hermes Dashboard base>/auth/callback` as the allowed redirect
+in Authelia, Authentik, or another identity provider. This is the browser-facing
+Hermes Dashboard base, not the identity provider's issuer URL. Hermes normally
+reconstructs it from trusted `X-Forwarded-*` headers. Set upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when that
+reconstruction is unreliable, and include any path prefix. Android may still
+connect over LAN or Tailscale and does not require a second sign-in URL field.
+:::
+
 Reverse proxies should expose the standard Dashboard/Gateway and whichever
 optional capabilities you use:
 
 - Dashboard/Gateway: `https://...` to local `127.0.0.1:9119`
-- Relay: `wss://...` to local `127.0.0.1:8767`
+- Relay: the Dashboard origin's `/api/plugins/hermes-relay/transport` base,
+  which derives `/ws` and `/health` and proxies internally to `127.0.0.1:8767`
 - Optional API fallback: `https://...` to local `127.0.0.1:8642`
 
 Plain `ws://` and `http://` are acceptable only on a LAN or VPN you trust. The app requires explicit plain-transport consent before it uses those routes. Do not expose plain relay or API ports to the open internet.
@@ -221,8 +231,8 @@ optional endpoints you configured. The three URLs below are examples only; the
 Dashboard URL depends on how you published it:
 
 ```text
-https://<tailnet-host>.ts.net:9119
-https://<tailnet-host>.ts.net:8767/health
+https://<tailnet-host>.ts.net:10443/api/health
+https://<tailnet-host>.ts.net:10443/api/plugins/hermes-relay/transport/health
 https://<tailnet-host>.ts.net:8642/health
 ```
 

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -52,6 +53,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -68,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -98,7 +101,11 @@ private data class DisplayFile(
 /** First-class native Git workspace backed by the optional Relay contribution. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
+fun GitStateScreen(
+    viewModel: GitStateViewModel,
+    onScanningEnabledChange: (Boolean) -> Unit,
+    onBack: () -> Unit,
+) {
     val reposState by viewModel.repos.collectAsState()
     val detailState by viewModel.detail.collectAsState()
     val contentState by viewModel.content.collectAsState()
@@ -107,6 +114,7 @@ fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
     val stashNotice by viewModel.stashNotice.collectAsState()
     val hasGrant by viewModel.writeGrant.collectAsState()
     val selectedRepoId by viewModel.selectedRepoId.collectAsState()
+    val scanningEnabled by viewModel.scanningEnabled.collectAsState()
 
     // A path can be staged and modified at the same time. Keep the category in
     // the selection identity so selecting one row never silently selects the
@@ -121,6 +129,10 @@ fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
     var showOverflow by rememberSaveable { mutableStateOf(false) }
     var pushAfter by rememberSaveable { mutableStateOf(false) }
     var pendingConfirm by remember { mutableStateOf<ConfirmationRequest?>(null) }
+
+    LaunchedEffect(scanningEnabled) {
+        if (scanningEnabled) viewModel.loadRepos()
+    }
 
     val repos = (reposState as? GitStateUiState.Ready)?.repos.orEmpty()
     val selectedRepo = repos.firstOrNull { it.id == selectedRepoId }
@@ -190,21 +202,23 @@ fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { selectedRepo?.let { viewModel.selectRepo(it.id) } ?: viewModel.loadRepos() }) {
-                        Icon(Icons.Filled.Refresh, "Refresh Git workspace")
-                    }
-                    Box {
-                        IconButton(onClick = { showOverflow = true }) { Icon(Icons.Filled.MoreVert, "More Git actions") }
-                        DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
-                            DropdownMenuItem(text = { Text("Choose repository") }, onClick = { showOverflow = false; showRepos = true })
-                            DropdownMenuItem(text = { Text(stringResource(R.string.git_state_branches)) }, enabled = detail != null, onClick = { showOverflow = false; showBranches = true })
+                    if (scanningEnabled) {
+                        IconButton(onClick = { selectedRepo?.let { viewModel.selectRepo(it.id) } ?: viewModel.loadRepos() }) {
+                            Icon(Icons.Filled.Refresh, "Refresh Git workspace")
+                        }
+                        Box {
+                            IconButton(onClick = { showOverflow = true }) { Icon(Icons.Filled.MoreVert, "More Git actions") }
+                            DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
+                                DropdownMenuItem(text = { Text("Choose repository") }, onClick = { showOverflow = false; showRepos = true })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.git_state_branches)) }, enabled = detail != null, onClick = { showOverflow = false; showBranches = true })
+                            }
                         }
                     }
                 },
             )
         },
         bottomBar = {
-            if (detail != null) {
+            if (scanningEnabled && detail != null) {
                 Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
                     Column {
                         if (selection.isNotEmpty()) {
@@ -229,47 +243,55 @@ fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
             }
         },
     ) { padding ->
-        when (val state = reposState) {
-            GitStateUiState.Loading -> FullState(Modifier.padding(padding), true, "Finding repositories")
-            is GitStateUiState.Unavailable -> UnavailableState(Modifier.padding(padding), state.message, viewModel::loadRepos)
-            is GitStateUiState.Error -> UnavailableState(Modifier.padding(padding), state.message, viewModel::loadRepos)
-            is GitStateUiState.Ready -> when {
-                state.repos.isEmpty() -> FullState(Modifier.padding(padding), false, "No Git repositories found", "Add a repository to the host's configured Git roots, then refresh.")
-                selectedRepo == null -> RepositoryPrompt(Modifier.padding(padding), state.repos, viewModel::selectRepo)
-                else -> WorkspaceBody(
-                    modifier = Modifier.padding(padding),
-                    repo = selectedRepo,
-                    reposNotice = state.notice,
-                    detailState = detailState,
-                    mutation = mutation,
-                    stashNotice = stashNotice,
-                    hasGrant = hasGrant,
-                    filter = filter,
-                    onFilter = { filter = it },
-                    selection = selection,
-                    onToggleSelected = { file ->
-                        selection = if (file in selection) selection - file else selection + file
-                    },
-                    expandedPath = expandedPath,
-                    contentMode = contentMode,
-                    contentState = contentState,
-                    onOpen = { file, mode ->
-                        if (file.filter != FileFilter.Untracked) {
-                            val opening = expandedPath != file.path || contentMode != mode
-                            expandedPath = if (opening) file.path else null
-                            contentMode = mode
-                            if (opening) {
-                                if (mode == ContentMode.File) viewModel.loadFile(file.path)
-                                else viewModel.loadDiff(file.path, if (file.filter == FileFilter.Staged) "staged" else "unstaged")
-                            }
-                        }
-                    },
-                    onFetch = viewModel::fetch,
-                    onPull = viewModel::pull,
-                    onPush = { viewModel.currentTarget()?.let { pendingConfirm = ConfirmationRequest.Push(it) } },
-                    onClearMutation = viewModel::clearMutationError,
-                    onRetry = { viewModel.selectRepo(selectedRepo.id) },
-                )
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            GitScanningConsentCard(
+                enabled = scanningEnabled,
+                onEnabledChange = onScanningEnabledChange,
+            )
+            if (scanningEnabled) {
+                when (val state = reposState) {
+                    GitStateUiState.Loading -> FullState(Modifier.weight(1f), true, "Finding repositories")
+                    is GitStateUiState.Unavailable -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
+                    is GitStateUiState.Error -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
+                    is GitStateUiState.Ready -> when {
+                        state.repos.isEmpty() -> FullState(Modifier.weight(1f), false, "No Git repositories found", "Add a repository to the host's configured Git roots, then refresh.")
+                        selectedRepo == null -> RepositoryPrompt(Modifier.weight(1f), state.repos, viewModel::selectRepo)
+                        else -> WorkspaceBody(
+                            modifier = Modifier.weight(1f),
+                            repo = selectedRepo,
+                            reposNotice = state.notice,
+                            detailState = detailState,
+                            mutation = mutation,
+                            stashNotice = stashNotice,
+                            hasGrant = hasGrant,
+                            filter = filter,
+                            onFilter = { filter = it },
+                            selection = selection,
+                            onToggleSelected = { file ->
+                                selection = if (file in selection) selection - file else selection + file
+                            },
+                            expandedPath = expandedPath,
+                            contentMode = contentMode,
+                            contentState = contentState,
+                            onOpen = { file, mode ->
+                                if (file.filter != FileFilter.Untracked) {
+                                    val opening = expandedPath != file.path || contentMode != mode
+                                    expandedPath = if (opening) file.path else null
+                                    contentMode = mode
+                                    if (opening) {
+                                        if (mode == ContentMode.File) viewModel.loadFile(file.path)
+                                        else viewModel.loadDiff(file.path, if (file.filter == FileFilter.Staged) "staged" else "unstaged")
+                                    }
+                                }
+                            },
+                            onFetch = viewModel::fetch,
+                            onPull = viewModel::pull,
+                            onPush = { viewModel.currentTarget()?.let { pendingConfirm = ConfirmationRequest.Push(it) } },
+                            onClearMutation = viewModel::clearMutationError,
+                            onRetry = { viewModel.selectRepo(selectedRepo.id) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -314,6 +336,51 @@ fun GitStateScreen(viewModel: GitStateViewModel, onBack: () -> Unit) {
             onPush = { target -> pendingConfirm = null; viewModel.push(GitConfirmationStrings.PUSH, expectedTarget = target) },
             onCheckout = { ref, target -> pendingConfirm = null; viewModel.checkout(ref, GitConfirmationStrings.DIRTY_CHECKOUT, expectedTarget = target) },
         )
+    }
+}
+
+@Composable
+private fun GitScanningConsentCard(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .toggleable(
+                value = enabled,
+                role = Role.Switch,
+                onValueChange = onEnabledChange,
+            ),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.AccountTree, contentDescription = null)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = stringResource(R.string.git_state_host_scanning),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = stringResource(
+                        if (enabled) {
+                            R.string.git_state_host_scanning_on_desc
+                        } else {
+                            R.string.git_state_host_scanning_off_desc
+                        },
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = null)
+        }
     }
 }
 

@@ -13,6 +13,16 @@ import {
   mintPairingWithMode,
 } from "../lib/api.js";
 import { relativeTime } from "../lib/formatters.js";
+import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
+import { pairingQrRenderOptions } from "../lib/pairing-qr.mjs";
+import {
+  classifyPublicRouteInput,
+  dashboardServeState,
+  pairingEndpointReceipt,
+  pairingProbeKey,
+  pairingProbeStatus,
+  pairingSurfaceProbes,
+} from "../lib/pairing-receipt.mjs";
 import {
   Alert,
   AlertTitle,
@@ -62,41 +72,33 @@ function toneForReachable(reachable) {
   return "muted";
 }
 
-function candidateUrlsFrom(endpoints) {
-  // Build probe URLs from a ``build_endpoint_candidates`` list. We
-  // prefer the relay URL (with the /health suffix elided — the backend
-  // adds it) since that's what the phone actually opens over WSS.
-  if (!Array.isArray(endpoints)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const ep of endpoints) {
-    const api = (ep && ep.api) || {};
-    if (!api.host) continue;
-    const scheme = api.tls ? "https" : "http";
-    const host = api.host;
-    const port = Number(api.port);
-    const portPart =
-      (api.tls && port === 443) || (!api.tls && port === 80) || !port
-        ? ""
-        : `:${port}`;
-    const url = `${scheme}://${host}${portPart}`;
-    if (!seen.has(url)) {
-      seen.add(url);
-      out.push({ role: ep.role || "?", url, priority: ep.priority });
-    }
-  }
-  return out;
-}
-
 function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
   const available = !!(status && status.available);
   const servePorts = (status && status.serve_ports) || [];
-  const relayServing = servePorts.includes(8767);
-  const apiServing = servePorts.includes(8642);
-  const serving = relayServing && apiServing;
+  const services = (status && status.serve_services) || {};
+  const dashboardService = services.dashboard || {};
+  const recommendedListenerPort = Number.isInteger(status && status.recommended_listener_port)
+    ? status.recommended_listener_port
+    : 10443;
+  const dashboardState = dashboardServeState(dashboardService, recommendedListenerPort);
+  const apiService = services.api || {};
+  const legacyRelayService = services.legacy_relay || {};
+  const dashboardServing = dashboardState.active;
+  const recommendedDashboardServing = dashboardState.recommendedActive;
+  const migration443Serving = dashboardState.migration443;
+  const migration9119Serving = dashboardState.migration9119;
+  const apiServing = apiService.active === true;
+  const legacyRelayServing = legacyRelayService.active === true;
+  const serving = recommendedDashboardServing;
   const hostname = (status && status.hostname) || null;
   const ip = (status && status.tailscale_ip) || null;
   const reason = status && status.reason;
+  const listenerLabel = (service) => {
+    const ports = Array.isArray(service && service.listen_ports)
+      ? service.listen_ports.filter((port) => Number.isInteger(port))
+      : [];
+    return ports.length > 0 ? `tailnet ${ports.map((port) => `:${port}`).join(", ")}` : "tailnet";
+  };
 
   return (
     <Card>
@@ -108,8 +110,12 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
         </div>
         <CardDescription>
           The easiest supported way to reach this self-hosted Hermes installation
-          away from home. Tailscale supplies private routing, ACLs, and managed TLS;
-          Hermes authentication and access controls still apply.
+          away from home. Tailscale supplies private routing, WireGuard encryption,
+          and ACLs. Raw tailnet HTTP/WS has no application TLS, but traffic remains
+          encrypted between tailnet devices; Hermes authentication still applies.
+          Recommended setup maps dedicated tailnet HTTPS :{dashboardState.recommendedPort}
+          to local Dashboard :9119, avoiding conflicts with Traefik, Caddy, nginx,
+          or another service that already owns :443.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -119,12 +125,42 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
             <span>CLI: {available ? "installed" : "not installed"}</span>
           </div>
           <div className="flex items-center gap-2">
-            <Dot tone={relayServing ? "ok" : available ? "warn" : "muted"} />
-            <span>Relay: {relayServing ? "active" : "off"}</span>
+            <Dot tone={recommendedDashboardServing ? "ok" : available ? "warn" : "muted"} />
+            <span>
+              Dashboard → host :9119: {recommendedDashboardServing
+                ? `HTTPS :${dashboardState.recommendedPort} active · recommended`
+                : migration443Serving || migration9119Serving
+                  ? `HTTPS :${dashboardState.recommendedPort} off · old listeners do not satisfy recommended setup`
+                  : "off"}
+            </span>
+          </div>
+          {migration443Serving ? (
+            <div className="flex items-center gap-2">
+              <Dot tone="warn" />
+              <span>Shared HTTPS listener :443: active · migration or explicit route</span>
+            </div>
+          ) : null}
+          {migration9119Serving ? (
+            <div className="flex items-center gap-2">
+              <Dot tone="warn" />
+              <span>Old Dashboard listener :9119: active · migration compatibility</span>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Dot tone={apiServing ? "ok" : "muted"} />
+            <span>
+              API fallback → host :8642: {apiServing
+                ? `active on ${listenerLabel(apiService)} · optional`
+                : "off"}
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <Dot tone={apiServing ? "ok" : available ? "warn" : "muted"} />
-            <span>API: {apiServing ? "active" : "off"}</span>
+            <Dot tone={legacyRelayServing ? "warn" : "muted"} />
+            <span>
+              Direct Relay → host :8767: {legacyRelayServing
+                ? `active on ${listenerLabel(legacyRelayService)} · legacy compatibility`
+                : "off"}
+            </span>
           </div>
         </div>
 
@@ -155,19 +191,66 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
           </div>
         ) : null}
 
-        <div className="flex gap-2">
-          <Button size="sm" disabled={busy || !available || serving} onClick={onEnable}>
-            {busy === "enable" ? "Enabling…" : "Enable recommended setup"}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={busy || !available || serving} onClick={() => onEnable()}>
+            {busy === "enable" ? "Enabling…" : `Enable HTTPS :${dashboardState.recommendedPort} ingress`}
           </Button>
+          {recommendedDashboardServing && !apiServing ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onEnable(8642)}
+            >
+              Enable optional API :8642
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="outline"
-            disabled={busy || !available || (!relayServing && !apiServing)}
-            onClick={onDisable}
+            disabled={busy || !available || (!dashboardServing && !apiServing && !legacyRelayServing)}
+            onClick={() => onDisable()}
           >
-            {busy === "disable" ? "Disabling…" : "Disable"}
+            {busy === "disable" ? "Disabling…" : "Disable managed routes"}
           </Button>
+          {legacyRelayServing ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onDisable(8767)}
+            >
+              Disable legacy :8767 after re-pairing
+            </Button>
+          ) : null}
+          {migration443Serving ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onDisable(443)}
+            >
+              Disable old :443 listener after re-pairing
+            </Button>
+          ) : null}
+          {migration9119Serving ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || !available}
+              onClick={() => onDisable(9119)}
+            >
+              Disable old :9119 listener after re-pairing
+            </Button>
+          ) : null}
         </div>
+
+        <p className="text-xs text-muted-foreground">
+          New pairing invites use the classified tailnet listener above — normally
+          HTTPS :{dashboardState.recommendedPort} — which proxies local Dashboard
+          :9119 and its same-origin Relay path. Keep old :443, :9119, and :8767
+          listeners only until affected devices have re-paired.
+        </p>
 
         {resultMessage ? (
           <div className="text-xs text-muted-foreground whitespace-pre-wrap">
@@ -259,6 +342,12 @@ function PublicUrlCard({ initialUrl, onSaved }) {
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [probeState, setProbeState] = useState({ reachable: null, status: null, latency_ms: null, error: null, at: null });
   const [probing, setProbing] = useState(false);
+  const classification = useMemo(() => classifyPublicRouteInput(draft), [draft]);
+  const inputIssue = classification.kind === "invalid"
+    ? "Enter a complete HTTP(S) URL without credentials, query parameters, or a fragment."
+    : classification.url && !classification.url.startsWith("https://")
+      ? "Public routes must use HTTPS."
+      : null;
 
   useEffect(() => {
     setDraft(initialUrl || "");
@@ -269,8 +358,14 @@ function PublicUrlCard({ initialUrl, onSaved }) {
     setSaving(true);
     try {
       const trimmed = draft.trim();
+      if (trimmed && inputIssue) {
+        setError(inputIssue);
+        return;
+      }
       const body = trimmed === "" ? null : trimmed;
-      const data = await putPublicUrl(body);
+      const data = await putPublicUrl(body, {
+        legacyDirectRelay: classification.kind === "legacy-relay-path",
+      });
       setLastSavedAt(Date.now());
       if (onSaved) onSaved(data && data.url ? data.url : null);
     } catch (err) {
@@ -278,14 +373,19 @@ function PublicUrlCard({ initialUrl, onSaved }) {
     } finally {
       setSaving(false);
     }
-  }, [draft, onSaved]);
+  }, [classification.kind, draft, inputIssue, onSaved]);
 
   const probe = useCallback(async () => {
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    if (!trimmed || inputIssue) return;
     setProbing(true);
     try {
-      const data = await probeEndpoints([trimmed]);
+      const data = await probeEndpoints([{
+        role: "public",
+        priority: 0,
+        surface: classification.kind === "legacy-relay-path" ? "relay" : "dashboard",
+        url: trimmed,
+      }]);
       const r = (data && Array.isArray(data.results) && data.results[0]) || {};
       setProbeState({
         reachable: r.reachable == null ? null : !!r.reachable,
@@ -305,31 +405,45 @@ function PublicUrlCard({ initialUrl, onSaved }) {
     } finally {
       setProbing(false);
     }
-  }, [draft]);
+  }, [classification.kind, draft, inputIssue]);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Public URL</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>Public Dashboard origin</CardTitle>
+          {classification.kind === "legacy-relay-path" ? (
+            <Badge variant="outline" className="text-xs">Legacy Relay proxy path</Badge>
+          ) : null}
+        </div>
         <CardDescription>
-          Reverse-proxy or tunnel hostname (e.g. Cloudflare Tunnel). Embedded into
-          the next pairing QR as a <code className="font-mono">role=public</code> endpoint.
+          HTTPS origin for the Dashboard, Gateway, and same-origin Hermes-Relay
+          transport (for example a reverse proxy or Cloudflare Tunnel). This becomes
+          the next pairing QR's <code className="font-mono">role=public</code> route.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-1">
-          <Label htmlFor="public-url">URL</Label>
+          <Label htmlFor="public-url">Dashboard origin</Label>
           <Input
             id="public-url"
             value={draft}
-            placeholder="https://relay.example.com"
+            placeholder="https://hermes.example.com"
             onChange={(e) => setDraft(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            Leave empty to clear. Must start with <code className="font-mono">http://</code> or{" "}
-            <code className="font-mono">https://</code>.
+            Leave empty to clear. Use an HTTPS Dashboard origin for new setups. An
+            explicit path ending in the Relay transport is recognized as legacy
+            reverse-proxy compatibility, not as a Dashboard origin. Direct port
+            <code className="font-mono"> :8767</code> is not advertised for new pairing.
           </p>
         </div>
+
+        {inputIssue ? (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">
+            {inputIssue}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">
@@ -338,16 +452,16 @@ function PublicUrlCard({ initialUrl, onSaved }) {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={save} disabled={saving}>
+          <Button size="sm" onClick={save} disabled={saving || !!inputIssue}>
             {saving ? "Saving…" : "Save"}
           </Button>
           <Button
             size="sm"
             variant="outline"
             onClick={probe}
-            disabled={probing || !draft.trim()}
+            disabled={probing || !draft.trim() || !!inputIssue}
           >
-            {probing ? "Probing…" : "Probe /health"}
+            {probing ? "Probing…" : "Probe route"}
           </Button>
           {lastSavedAt ? (
             <span className="text-xs text-muted-foreground">
@@ -385,22 +499,22 @@ function PublicUrlCard({ initialUrl, onSaved }) {
   );
 }
 
-function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload, pairingUrl, preferRole, onPreferChange }) {
+function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, busy, qrPayload, pairingUrl, preferRole, onPreferChange, blockingIssues }) {
   const canvasRef = useRef(null);
   const [copyStatus, setCopyStatus] = useState("");
 
   useEffect(() => {
     if (!qrPayload || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, qrPayload, {
-      width: 260,
-      margin: 2,
-      errorCorrectionLevel: "M",
-    }).catch(() => { /* non-fatal */ });
+    QRCode.toCanvas(
+      canvasRef.current,
+      qrPayload,
+      pairingQrRenderOptions(),
+    ).catch(() => { /* non-fatal */ });
   }, [qrPayload]);
 
   const reachabilityByUrl = useMemo(() => {
     const m = new Map();
-    (reachability || []).forEach((r) => { m.set(r.url, r); });
+    (reachability || []).forEach((r) => { m.set(pairingProbeKey(r), r); });
     return m;
   }, [reachability]);
 
@@ -425,6 +539,16 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {blockingIssues && blockingIssues.length > 0 ? (
+          <Alert variant="destructive">
+            <AlertTitle>Unsafe pairing route blocked</AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc pl-4 text-xs space-y-1">
+                {blockingIssues.map((issue) => <li key={issue}>{issue}</li>)}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {endpoints.length === 0 ? (
           <div className="text-sm text-muted-foreground">
             No candidates detected. Enable Tailscale and/or pin a public URL above.
@@ -434,32 +558,31 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
             <TableHeader>
               <TableRow>
                 <TableHead>Role</TableHead>
-                <TableHead>URL</TableHead>
+                <TableHead>Surface</TableHead>
+                <TableHead>Resolved URL</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Reachable</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {endpoints.map((ep) => {
-                const r = reachabilityByUrl.get(ep.url);
+                const r = reachabilityByUrl.get(pairingProbeKey(ep));
+                const probe = pairingProbeStatus(r);
                 return (
-                  <TableRow key={ep.url}>
+                  <TableRow key={pairingProbeKey(ep)}>
                     <TableCell>
                       <Badge variant="outline" className="text-xs capitalize">
                         {ep.role}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-xs capitalize">{ep.surface}</TableCell>
                     <TableCell className="font-mono text-xs">{ep.url}</TableCell>
                     <TableCell className="text-xs">{ep.priority ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Dot tone={toneForReachable(r ? r.reachable : null)} />
+                        <Dot tone={toneForReachable(probe.healthy)} />
                         <span className="text-xs">
-                          {r && r.reachable === true
-                            ? `${r.status} · ${r.latency_ms}ms`
-                            : r && r.reachable === false
-                            ? r.error || `HTTP ${r.status ?? "?"}`
-                            : "—"}
+                          {r ? probe.label : "—"}
                         </span>
                       </div>
                     </TableCell>
@@ -471,7 +594,12 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
         )}
 
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onProbe} disabled={busy || endpoints.length === 0}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onProbe}
+            disabled={busy || endpoints.length === 0 || (blockingIssues && blockingIssues.length > 0)}
+          >
             {busy === "probe" ? "Probing…" : "Probe all"}
           </Button>
           <Button size="sm" onClick={onRegenerate} disabled={busy}>
@@ -487,7 +615,7 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
             value={preferRole || ""}
             onChange={(e) => onPreferChange && onPreferChange(e.target.value || null)}
           >
-            <option value="">(natural order — LAN → Tailscale → Public)</option>
+            <option value="">(natural order — Tailscale → Public → LAN)</option>
             <option value="lan">lan → priority 0</option>
             <option value="tailscale">tailscale → priority 0</option>
             <option value="public">public → priority 0</option>
@@ -495,8 +623,8 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
           <span className="whitespace-nowrap">Applies on the next "Regenerate QR".</span>
         </div>
 
-        {qrPayload ? (
-          <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-white p-3">
+        {qrPayload && (!blockingIssues || blockingIssues.length === 0) ? (
+          <div className="hr-qr-frame hr-pairing-qr flex flex-col items-center gap-2">
             <canvas ref={canvasRef} className="block" />
             <p className="text-xs text-muted-foreground">
               Scan from the Hermes-Relay Android app. Fresh payload, signed with the
@@ -504,7 +632,7 @@ function EndpointPreviewCard({ endpoints, reachability, onProbe, onRegenerate, b
             </p>
           </div>
         ) : null}
-        {pairingUrl ? (
+        {pairingUrl && (!blockingIssues || blockingIssues.length === 0) ? (
           <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs space-y-2">
             <div className="uppercase tracking-wider text-muted-foreground">
               Copy/paste invite
@@ -560,11 +688,11 @@ export default function RemoteAccess({ autoRefresh }) {
     return () => clearInterval(id);
   }, [autoRefresh, load]);
 
-  const onEnable = useCallback(async () => {
+  const onEnable = useCallback(async (port) => {
     setBusy("enable");
     setHelperMessage(null);
     try {
-      const res = await enableTailscale();
+      const res = await enableTailscale(port);
       setHelperMessage(
         `${res && res.ok ? "Enabled" : "Failed"}: ${res && res.message ? res.message : "(no message)"}`
       );
@@ -576,11 +704,11 @@ export default function RemoteAccess({ autoRefresh }) {
     }
   }, [load]);
 
-  const onDisable = useCallback(async () => {
+  const onDisable = useCallback(async (port) => {
     setBusy("disable");
     setHelperMessage(null);
     try {
-      const res = await disableTailscale();
+      const res = await disableTailscale(port);
       setHelperMessage(
         `${res && res.ok ? "Disabled" : "Failed"}: ${res && res.message ? res.message : "(no message)"}`
       );
@@ -600,9 +728,16 @@ export default function RemoteAccess({ autoRefresh }) {
     setBusy("mint");
     setMintResult(null);
     try {
+      const dashboardUrl = canonicalDashboardOrigin(window.location);
+      if (!dashboardUrl) {
+        throw new Error("This Dashboard does not have a valid HTTP(S) origin for pairing.");
+      }
       const data = await mintPairingWithMode({
         mode: "auto",
         prefer: preferRole || undefined,
+        dashboard_url: dashboardUrl,
+        legacy_direct_relay:
+          classifyPublicRouteInput(publicUrl || "").kind === "legacy-relay-path",
       });
       setMintResult(data || null);
     } catch (err) {
@@ -610,23 +745,27 @@ export default function RemoteAccess({ autoRefresh }) {
     } finally {
       setBusy(null);
     }
-  }, [preferRole]);
+  }, [preferRole, publicUrl]);
 
-  const previewEndpoints = useMemo(() => {
-    if (!mintResult || !mintResult.qr_payload) return [];
+  const previewReceipt = useMemo(() => {
+    if (!mintResult || !mintResult.qr_payload) return { routes: [], blockingIssues: [] };
     try {
       const parsed = JSON.parse(mintResult.qr_payload);
-      return candidateUrlsFrom(parsed.endpoints);
+      return pairingEndpointReceipt(parsed);
     } catch (_err) {
-      return [];
+      return { routes: [], blockingIssues: ["Pairing payload is not valid JSON"] };
     }
   }, [mintResult]);
+  const previewEndpoints = useMemo(
+    () => previewReceipt && previewReceipt.routes ? pairingSurfaceProbes(previewReceipt) : [],
+    [previewReceipt],
+  );
 
   const onProbeAll = useCallback(async () => {
     if (previewEndpoints.length === 0) return;
     setBusy("probe");
     try {
-      const data = await probeEndpoints(previewEndpoints.map((e) => e.url));
+      const data = await probeEndpoints(previewEndpoints);
       setReachability((data && data.results) || []);
     } catch (err) {
       setReachability(previewEndpoints.map((e) => ({
@@ -713,6 +852,7 @@ export default function RemoteAccess({ autoRefresh }) {
         pairingUrl={mintResult && mintResult.pairing_url ? mintResult.pairing_url : null}
         preferRole={preferRole}
         onPreferChange={setPreferRole}
+        blockingIssues={previewReceipt && previewReceipt.blockingIssues ? previewReceipt.blockingIssues : []}
       />
 
       {mintResult && mintResult.error ? (

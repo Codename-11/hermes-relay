@@ -4,8 +4,10 @@ const { useState, useEffect, useCallback } = SDK.hooks;
 
 import {
   getAgentContext,
+  getBridgeActivity,
   getOverview,
   getPhoneConfig,
+  getRemoteAccessStatus,
   getSessions,
   getUpdateCheck,
   putEnvSetting,
@@ -23,12 +25,6 @@ import {
   Button,
   Badge,
   Switch,
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
 } from "../lib/ui-shims.jsx";
 
 const {
@@ -38,7 +34,11 @@ const {
   CardContent,
   Input,
   Label,
+  ConfirmDialog,
+  Toast,
 } = SDK.components;
+
+const useToast = SDK.hooks.useToast;
 
 const AGENT_CONTEXT_MASTER_KEY = "RELAY_AGENT_CONTEXT_ENABLED";
 const AGENT_CONTEXT_MEDIA_KEY = "RELAY_CONTEXT_MEDIA_SENSITIVITY";
@@ -267,7 +267,7 @@ function AgentContextCard({ data, saving, onToggle }) {
       <CardHeader>
         <CardTitle>Agent context</CardTitle>
         <CardDescription>
-          On by default for relay installs — injects an instruction into the agent's system
+          On by default for Hermes-Relay installs — injects an instruction into the agent's system
           prompt (server-side) so it can mark sensitive media. Turn off to opt out; removable
           by uninstalling the relay plugin.
         </CardDescription>
@@ -276,7 +276,7 @@ function AgentContextCard({ data, saving, onToggle }) {
         <ToggleRow
           id="relay-agent-context-enabled"
           title="Enable Agent context injection"
-          description="Master toggle for relay-owned server-side prompt blocks."
+          description="Master toggle for Hermes-Relay-owned server-side prompt blocks."
           checked={masterEnabled}
           disabled={saving === AGENT_CONTEXT_MASTER_KEY}
           onChange={(value) => onToggle(AGENT_CONTEXT_MASTER_KEY, value)}
@@ -289,17 +289,24 @@ function AgentContextCard({ data, saving, onToggle }) {
           disabled={saving === AGENT_CONTEXT_MEDIA_KEY}
           onChange={(value) => onToggle(AGENT_CONTEXT_MEDIA_KEY, value)}
         />
-        <div className="rounded-md border border-border/70 p-3">
-          <div className="text-sm font-medium">Server-side audit</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {injected.enabled ? "Context injection enabled." : "Context injection disabled."}
-          </div>
+        <details className="hr-audit-details">
+          <summary>
+            <span>
+              <span className="text-sm font-medium">Server-side audit</span>
+              <span className="block text-xs text-muted-foreground">
+                {injected.enabled ? "Context injection enabled." : "Context injection disabled."}
+              </span>
+            </span>
+            <Badge variant={injected.enabled ? "success" : "outline"} className="text-xs">
+              {blocks.length} {blocks.length === 1 ? "block" : "blocks"} active
+            </Badge>
+          </summary>
           {blocks.length === 0 ? (
-            <div className="mt-2 text-xs text-muted-foreground">
+            <div className="hr-audit-empty text-xs text-muted-foreground">
               No blocks would be injected on the next turn.
             </div>
           ) : (
-            <div className="mt-2 space-y-2">
+            <div className="hr-audit-blocks space-y-2">
               {blocks.map((block) => (
                 <div key={block.name} className="rounded-md bg-muted/40 p-2">
                   <div className="text-xs font-medium">{block.name}</div>
@@ -310,7 +317,7 @@ function AgentContextCard({ data, saving, onToggle }) {
               ))}
             </div>
           )}
-        </div>
+        </details>
       </CardContent>
     </Card>
   );
@@ -350,7 +357,10 @@ function HomeChannelCard({ config, onSaved }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Home channel</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>Home channel</CardTitle>
+          <Badge variant="warning" className="text-xs">Restart required</Badge>
+        </div>
         <CardDescription>
           Where Hermes delivers proactive pushes, cron results, and
           cross-platform messages when no specific Thread is named. The phone is
@@ -470,342 +480,617 @@ function UpdateCheckCard({ info, onRefresh }) {
   );
 }
 
-export default function RelayManagement({ autoRefresh }) {
+function sessionList(data) {
+  return Array.isArray(data) ? data : (data && data.sessions) || [];
+}
+
+function errorMessage(error) {
+  return error && error.message ? error.message : String(error);
+}
+
+function SessionCard({ session, compact = false, copied, revoking, onCopy, onRevoke }) {
+  const tokenPrefix = sessionTokenPrefix(session);
+  const label =
+    session.device_name ||
+    session.device_label ||
+    session.client_name ||
+    session.label ||
+    shortToken(tokenPrefix) ||
+    "Unnamed device";
+  const lastSeen =
+    session.last_seen ||
+    session.last_activity ||
+    session.last_seen_at ||
+    session.last_activity_at ||
+    session.updated_at ||
+    session.paired_at;
+  const expiresAt = session.expires_at ?? session.expiresAt ?? session.expires;
+  const expiry = formatSessionExpiry(expiresAt);
+  const grants = extractGrants(session);
+  const type = classifySession(session, grants);
+  const transport = sessionTransport(session);
+  const supervised = supervisedSessionDisplay(session);
+  const deviceDetail = [session.device_model, session.device_platform]
+    .filter((value) => value && value !== "unknown")
+    .join(" · ");
+
+  return (
+    <div className={`hr-device-card ${compact ? "hr-device-card-compact" : ""}`}>
+      <div className="hr-device-main">
+        <div className="hr-device-title-row">
+          <span className="hr-status-dot hr-status-dot-success" aria-label="Paired" />
+          <span className="font-medium">{label}</span>
+          <Badge variant="outline" className="text-xs">{type}</Badge>
+          {supervised ? <Badge variant="secondary" className="text-xs">Supervised</Badge> : null}
+        </div>
+        <div className="hr-device-meta text-xs text-muted-foreground">
+          {deviceDetail ? <span>{deviceDetail}</span> : null}
+          {transport ? <span>{transport}</span> : null}
+          <span>Seen {relativeTime(lastSeen)}</span>
+          <Badge
+            variant={expiry.expired ? "destructive" : "secondary"}
+            className="text-xs"
+            title={expiry.exact ? `Expires ${expiry.exact}` : undefined}
+          >
+            {expiry.label}
+          </Badge>
+        </div>
+        {supervised && supervised.profileLabel ? (
+          <div className="text-xs text-muted-foreground">
+            Pinned profile: {supervised.profileLabel}
+          </div>
+        ) : null}
+        {!compact ? (
+          <div className="hr-grant-list">
+            {grants.length === 0 ? (
+              <span className="text-xs text-muted-foreground">No grants reported</span>
+            ) : (
+              grants.map((grant) => (
+                <Badge key={`${grant.name}:${grant.detail}`} variant="secondary" className="text-xs">
+                  {grant.detail
+                    ? `${formatGrantName(grant.name)} ${grant.detail}`
+                    : formatGrantName(grant.name)}
+                </Badge>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+      {!compact ? (
+        <div className="hr-device-actions">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!tokenPrefix}
+            onClick={() => onCopy(tokenPrefix)}
+          >
+            {copied === tokenPrefix ? "Copied" : "Copy prefix"}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={revoking === tokenPrefix || !tokenPrefix}
+            onClick={() => onRevoke({ prefix: tokenPrefix, label })}
+          >
+            {revoking === tokenPrefix ? "Revoking…" : "Revoke"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function primaryRemoteRoute(status) {
+  if (!status) return { value: "—", hint: "Checking routes" };
+  const services = (status.tailscale && status.tailscale.serve_services) || {};
+  if (services.dashboard && services.dashboard.active === true) {
+    return { value: "Tailscale", hint: "Private Dashboard route active" };
+  }
+  if (services.legacy_relay && services.legacy_relay.active === true) {
+    return { value: "Tailscale", hint: "Legacy direct Relay route active" };
+  }
+  if (status.secure_link && status.secure_link.enabled) {
+    return { value: "Secure Link", hint: "Pinned TLS route active" };
+  }
+  if (status.public && status.public.url) return { value: "Public HTTPS", hint: "Pinned Dashboard origin" };
+  return { value: "LAN only", hint: "No remote route configured" };
+}
+
+function decisionVariant(decision) {
+  const normalized = String(decision || "pending").toLowerCase();
+  if (normalized === "executed" || normalized === "confirmed") return "success";
+  if (normalized === "blocked" || normalized === "error") return "destructive";
+  if (normalized === "timeout") return "warning";
+  return "outline";
+}
+
+function RecentActivity({ rows, error, onOpenActivity }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle>Recent Bridge activity</CardTitle>
+          <CardDescription>Latest commands routed through Hermes-Relay.</CardDescription>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onOpenActivity}>View all</Button>
+      </CardHeader>
+      <CardContent>
+        {error && rows.length === 0 ? (
+          <div className="text-xs text-destructive">{error}</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-muted-foreground">No Bridge activity recorded yet.</div>
+        ) : (
+          <div className="hr-activity-list">
+            {rows.slice(0, 4).map((row, index) => (
+              <div className="hr-activity-row" key={row.request_id || `${row.sent_at}-${index}`}>
+                <div className="min-w-0">
+                  <div className="font-mono text-xs hr-activity-method">
+                    {row.method || "COMMAND"} {row.path || ""}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {relativeTime(row.sent_at)}
+                  </div>
+                </div>
+                <Badge variant={decisionVariant(row.decision)} className="text-xs capitalize">
+                  {row.decision || "pending"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function RelayOverview({ autoRefresh, onConnectMobile, onNavigate }) {
   const [overview, setOverview] = useState(null);
-  const [sessions, setSessions] = useState(null);
-  const [agentContext, setAgentContext] = useState(null);
-  const [phoneConfig, setPhoneConfig] = useState(null);
+  const [overviewError, setOverviewError] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [sessionsError, setSessionsError] = useState(null);
+  const [remoteStatus, setRemoteStatus] = useState(null);
+  const [remoteError, setRemoteError] = useState(null);
+  const [activity, setActivity] = useState([]);
+  const [activityError, setActivityError] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [pairOpen, setPairOpen] = useState(false);
+
+  const loadOverview = useCallback(async () => {
+    try {
+      setOverview(await getOverview());
+      setOverviewError(null);
+    } catch (error) {
+      setOverviewError(errorMessage(error));
+    }
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      setSessions(sessionList(await getSessions()));
+      setSessionsError(null);
+    } catch (error) {
+      setSessionsError(errorMessage(error));
+    }
+  }, []);
+
+  const loadRemote = useCallback(async () => {
+    try {
+      setRemoteStatus(await getRemoteAccessStatus());
+      setRemoteError(null);
+    } catch (error) {
+      setRemoteError(errorMessage(error));
+    }
+  }, []);
+
+  const loadActivity = useCallback(async () => {
+    try {
+      const data = await getBridgeActivity(5);
+      setActivity(Array.isArray(data) ? data : (data && data.activity) || []);
+      setActivityError(null);
+    } catch (error) {
+      setActivityError(errorMessage(error));
+    }
+  }, []);
+
+  const loadUpdate = useCallback(async (refresh = false) => {
+    try {
+      setUpdateInfo(await getUpdateCheck({ refresh }));
+    } catch (error) {
+      setUpdateInfo({ error: errorMessage(error) });
+    }
+  }, []);
+
+  const loadAll = useCallback(() => {
+    loadOverview();
+    loadSessions();
+    loadRemote();
+    loadActivity();
+  }, [loadOverview, loadSessions, loadRemote, loadActivity]);
+
+  useEffect(() => {
+    loadAll();
+    loadUpdate(false);
+  }, [loadAll, loadUpdate]);
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const id = setInterval(loadAll, 10000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadAll]);
+
+  const ov = overview || {};
+  const route = primaryRemoteRoute(remoteStatus);
+  const lastActivity = activity[0];
+  const healthLabel = overviewError
+    ? overview ? "Stale" : "Unavailable"
+    : overview ? ov.health || "Healthy" : "Checking";
+  const healthVariant = overviewError ? "warning" : overview ? "success" : "outline";
+
+  return (
+    <div className="space-y-4">
+      <Card className="hr-service-card">
+        <CardHeader className="hr-service-header">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle>Service status</CardTitle>
+              <Badge variant={healthVariant} className="text-xs">
+                {healthLabel}
+              </Badge>
+            </div>
+            <CardDescription>
+              Hermes-Relay service health and installed plugin version.
+            </CardDescription>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => loadUpdate(true)}>
+            Check for updates
+          </Button>
+        </CardHeader>
+        <CardContent className="hr-service-details">
+          <div><span>Version</span><strong>{ov.version || "—"}</strong></div>
+          <div><span>Uptime</span><strong>{uptime(ov.uptime_seconds)}</strong></div>
+          <div><span>Refresh</span><strong>{autoRefresh ? "Live" : "Paused"}</strong></div>
+          {updateInfo && updateInfo.update_available ? (
+            <Badge variant="warning" className="text-xs">
+              {updateInfo.latest} available
+            </Badge>
+          ) : null}
+        </CardContent>
+        {overviewError ? (
+          <div className="hr-inline-error text-xs text-destructive">{overviewError}</div>
+        ) : null}
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          label="Paired devices"
+          value={overview ? (ov.paired_device_count ?? ov.session_count ?? sessions.length) : "—"}
+          hint={sessionsError || "Hermes-Relay sessions"}
+        />
+        <StatCard
+          label="Remote access"
+          value={route.value}
+          hint={remoteError || route.hint}
+        />
+        <StatCard
+          label="Last Bridge event"
+          value={lastActivity ? relativeTime(lastActivity.sent_at) : "—"}
+          hint={activityError || (lastActivity ? lastActivity.decision || "Recorded" : "No recent activity")}
+        />
+      </div>
+
+      <div className="hr-overview-grid">
+        <Card>
+          <CardHeader>
+            <CardTitle>Quick actions</CardTitle>
+            <CardDescription>Connect the standard Dashboard first, then add Hermes-Relay capabilities.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button className="w-full" onClick={() => setPairOpen(true)}>Pair new device</Button>
+            <Button className="w-full" variant="outline" onClick={onConnectMobile}>Connect mobile app</Button>
+            {sessions.length > 0 ? (
+              <div className="hr-overview-device">
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">Most recently paired</div>
+                <SessionCard session={sessions[0]} compact />
+              </div>
+            ) : null}
+            <Button size="sm" variant="ghost" onClick={() => onNavigate("devices")}>Manage devices</Button>
+          </CardContent>
+        </Card>
+        <RecentActivity
+          rows={activity}
+          error={activityError}
+          onOpenActivity={() => onNavigate("activity")}
+        />
+      </div>
+
+      {!autoRefresh ? (
+        <Button size="sm" variant="outline" onClick={loadAll}>Refresh overview</Button>
+      ) : null}
+      <PairDialog open={pairOpen} onClose={() => { setPairOpen(false); loadSessions(); loadOverview(); }} />
+    </div>
+  );
+}
+
+export default function RelayDevices({ autoRefresh, onConnectMobile }) {
+  const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [revoking, setRevoking] = useState(null);
   const [copied, setCopied] = useState(null);
-  const [contextSaving, setContextSaving] = useState(null);
+  const [pendingRevoke, setPendingRevoke] = useState(null);
+  const { toast, showToast } = useToast();
 
   const load = useCallback(async () => {
-    setError(null);
     try {
-      const [ov, se, ctx, phone] = await Promise.all([
-        getOverview(),
-        getSessions(),
-        getAgentContext(),
-        getPhoneConfig(),
-      ]);
-      setOverview(ov || null);
-      // Relay /sessions returns either {sessions:[...]} or [...] — handle both.
-      const list = Array.isArray(se) ? se : (se && se.sessions) || [];
-      setSessions(list);
-      setAgentContext(ctx || null);
-      setPhoneConfig(phone || null);
-    } catch (err) {
-      setError(err && err.message ? err.message : String(err));
+      setSessions(sessionList(await getSessions()));
+      setError(null);
+    } catch (loadError) {
+      setError(errorMessage(loadError));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Update check runs independently of the main load — a GitHub round-trip
-  // shouldn't block (or fail) the management tab. Cached server-side for an
-  // hour; the "Check" button forces a refresh.
-  const loadUpdate = useCallback(async (refresh = false) => {
-    try {
-      setUpdateInfo(await getUpdateCheck({ refresh }));
-    } catch (err) {
-      setUpdateInfo({ error: err && err.message ? err.message : String(err) });
-    }
-  }, []);
-
-  useEffect(() => {
-    loadUpdate(false);
-  }, [loadUpdate]);
-
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!autoRefresh) return undefined;
     const id = setInterval(load, 10000);
     return () => clearInterval(id);
   }, [autoRefresh, load]);
 
-  const onRevoke = useCallback(async (prefix, label) => {
-    if (!window.confirm(
-      `Revoke paired device${label ? ` "${label}"` : ""}?\n\n` +
-      `Token prefix: ${prefix}\n\n` +
-      "The phone will need to re-pair. This cannot be undone."
-    )) return;
-    setRevoking(prefix);
-    try {
-      await revokeSession(prefix);
-      await load();
-    } catch (err) {
-      window.alert(`Revoke failed: ${err && err.message ? err.message : err}`);
-    } finally {
-      setRevoking(null);
-    }
-  }, [load]);
-
   const onCopyPrefix = useCallback(async (prefix) => {
     if (!prefix) return;
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(prefix);
-      } else {
-        window.prompt("Copy token prefix", prefix);
-      }
+      await navigator.clipboard.writeText(prefix);
       setCopied(prefix);
+      showToast("Token prefix copied", "success");
       window.setTimeout(() => setCopied(null), 1500);
-    } catch (_err) {
-      window.prompt("Copy token prefix", prefix);
+    } catch (_error) {
+      showToast("Could not copy token prefix", "error");
+    }
+  }, [showToast]);
+
+  const confirmRevoke = useCallback(async () => {
+    if (!pendingRevoke) return;
+    setRevoking(pendingRevoke.prefix);
+    try {
+      await revokeSession(pendingRevoke.prefix);
+      showToast(`${pendingRevoke.label} revoked`, "success");
+      setPendingRevoke(null);
+      await load();
+    } catch (revokeError) {
+      showToast(`Revoke failed: ${errorMessage(revokeError)}`, "error");
+    } finally {
+      setRevoking(null);
+    }
+  }, [pendingRevoke, load, showToast]);
+
+  const hasSupervisedSession = sessions.some((session) => supervisedSessionDisplay(session));
+
+  return (
+    <div className="space-y-4">
+      <Toast toast={toast} />
+      <div className="hr-connection-choice-grid">
+        <Card>
+          <CardHeader>
+            <CardTitle>Connect mobile app</CardTitle>
+            <CardDescription>Standard Hermes Dashboard connection for Chat, Manage, sessions, and voice.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button size="sm" variant="outline" onClick={onConnectMobile}>Show setup QR</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Pair with Hermes-Relay</CardTitle>
+            <CardDescription>Add Terminal, Bridge, media, remote-access, and extended voice grants.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button size="sm" onClick={() => setPairOpen(true)}>Pair new device</Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Paired devices</CardTitle>
+            <CardDescription>Clients currently authorized against Hermes-Relay.</CardDescription>
+          </div>
+          {!autoRefresh ? <Button size="sm" variant="outline" onClick={load}>Refresh</Button> : null}
+        </CardHeader>
+        <CardContent>
+          {hasSupervisedSession ? (
+            <div className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Supervised Mode is reported and enforced by Hermes-Relay Android, not by the plugin service.
+            </div>
+          ) : null}
+          {error && sessions.length === 0 ? (
+            <Alert variant="destructive">
+              <AlertTitle>Paired devices unavailable</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : loading ? (
+            <div className="text-sm text-muted-foreground">Loading paired devices…</div>
+          ) : sessions.length === 0 ? (
+            <div className="hr-empty-state">
+              <div className="font-medium">No Hermes-Relay devices paired</div>
+              <div className="text-sm text-muted-foreground">Pair a device to enable Hermes-Relay capabilities.</div>
+            </div>
+          ) : (
+            <div className="hr-device-list">
+              {sessions.map((session, index) => (
+                <SessionCard
+                  key={sessionTokenPrefix(session) || index}
+                  session={session}
+                  copied={copied}
+                  revoking={revoking}
+                  onCopy={onCopyPrefix}
+                  onRevoke={setPendingRevoke}
+                />
+              ))}
+            </div>
+          )}
+          {error && sessions.length > 0 ? (
+            <div className="mt-3 text-xs text-destructive">Refresh failed: {error}</div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <ConfirmDialog
+        open={!!pendingRevoke}
+        title="Revoke Hermes-Relay device"
+        description={pendingRevoke
+          ? `${pendingRevoke.label} will lose Hermes-Relay access and must pair again.`
+          : "This device will lose Hermes-Relay access."}
+        confirmLabel="Revoke"
+        destructive
+        loading={!!revoking}
+        onCancel={() => setPendingRevoke(null)}
+        onConfirm={confirmRevoke}
+      />
+      <PairDialog open={pairOpen} onClose={() => { setPairOpen(false); load(); }} />
+    </div>
+  );
+}
+
+export function RelaySettings({ autoRefresh }) {
+  const [category, setCategory] = useState("general");
+  const [agentContext, setAgentContext] = useState(null);
+  const [contextError, setContextError] = useState(null);
+  const [contextSaving, setContextSaving] = useState(null);
+  const [phoneConfig, setPhoneConfig] = useState(null);
+  const [phoneError, setPhoneError] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const { toast, showToast } = useToast();
+
+  const loadContext = useCallback(async () => {
+    try {
+      setAgentContext(await getAgentContext());
+      setContextError(null);
+    } catch (error) {
+      setContextError(errorMessage(error));
     }
   }, []);
+
+  const loadPhone = useCallback(async () => {
+    try {
+      setPhoneConfig(await getPhoneConfig());
+      setPhoneError(null);
+    } catch (error) {
+      setPhoneError(errorMessage(error));
+    }
+  }, []);
+
+  const loadUpdate = useCallback(async (refresh = false) => {
+    try {
+      setUpdateInfo(await getUpdateCheck({ refresh }));
+    } catch (error) {
+      setUpdateInfo({ error: errorMessage(error) });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadContext();
+    loadPhone();
+    loadUpdate(false);
+  }, [loadContext, loadPhone, loadUpdate]);
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const id = setInterval(() => {
+      loadContext();
+      loadPhone();
+    }, 15000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadContext, loadPhone]);
 
   const onToggleAgentContext = useCallback(async (key, checked) => {
     setContextSaving(key);
     try {
       await putEnvSetting(key, checked ? "1" : "0");
-      const ctx = await getAgentContext();
-      setAgentContext(ctx || null);
-    } catch (err) {
-      window.alert(`Agent context update failed: ${err && err.message ? err.message : err}`);
+      await loadContext();
+      showToast("Hermes-Relay Agent Context updated", "success");
+    } catch (error) {
+      showToast(`Agent Context update failed: ${errorMessage(error)}`, "error");
     } finally {
       setContextSaving(null);
     }
-  }, []);
+  }, [loadContext, showToast]);
 
-  if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading overview…</div>;
-  }
-
-  if (error) {
-    return (
-      <Alert variant="destructive">
-        <AlertTitle>Relay unreachable</AlertTitle>
-        <AlertDescription>
-          <pre className="whitespace-pre-wrap text-xs">{error}</pre>
-          {!autoRefresh ? (
-            <Button className="mt-2" size="sm" variant="outline" onClick={load}>
-              Retry
-            </Button>
-          ) : null}
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  const ov = overview || {};
-  const list = sessions || [];
-  const hasSupervisedSession = list.some((session) => supervisedSessionDisplay(session));
+  const categories = [
+    { key: "general", label: "General" },
+    { key: "context", label: "Agent Context" },
+    { key: "maintenance", label: "Maintenance" },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Version" value={ov.version || "—"} hint={ov.health ? `health: ${ov.health}` : null} />
-        <StatCard label="Uptime" value={uptime(ov.uptime_seconds)} />
-        <StatCard
-          label="Paired devices"
-          value={ov.paired_device_count ?? ov.session_count ?? 0}
-          hint={ov.session_count != null ? `${ov.session_count} session(s)` : null}
-        />
-        <StatCard
-          label="Pending / media"
-          value={`${ov.pending_commands ?? 0} / ${ov.media_entry_count ?? 0}`}
-          hint="pending commands / media tokens"
-        />
-      </div>
+    <div className="hr-settings-layout">
+      <Toast toast={toast} />
+      <aside className="hr-settings-nav" aria-label="Hermes-Relay settings sections">
+        <div className="hr-settings-nav-label">Settings</div>
+        {categories.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={`hr-settings-nav-item ${category === item.key ? "active" : ""}`}
+            aria-current={category === item.key ? "page" : undefined}
+            onClick={() => setCategory(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </aside>
 
-      <UpdateCheckCard info={updateInfo} onRefresh={loadUpdate} />
-
-      <AgentContextCard
-        data={agentContext}
-        saving={contextSaving}
-        onToggle={onToggleAgentContext}
-      />
-
-      {phoneConfig && phoneConfig.enabled ? (
-        <HomeChannelCard
-          key={phoneConfig.home_channel_name || "phone"}
-          config={phoneConfig}
-          onSaved={load}
-        />
-      ) : null}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle>Paired sessions</CardTitle>
-            <CardDescription>
-              Devices currently authorized against the relay.
-            </CardDescription>
-          </div>
-          <Button size="sm" onClick={() => setPairOpen(true)}>
-            Pair new device
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {hasSupervisedSession ? (
-            <div className="mb-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-              Supervised mode is reported and enforced by the Android client, not by Relay. Relay
-              shows the client&apos;s reported settings here so a paired device can be identified and
-              revoked.
-            </div>
-          ) : null}
-          {!autoRefresh ? (
-            <div className="mb-3">
-              <Button size="sm" variant="outline" onClick={load}>
-                Refresh
-              </Button>
-            </div>
-          ) : null}
-          {list.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No paired sessions.</div>
+      <div className="hr-settings-content">
+        {category === "general" ? (
+          phoneError && !phoneConfig ? (
+            <Alert variant="destructive">
+              <AlertTitle>General settings unavailable</AlertTitle>
+              <AlertDescription>{phoneError}</AlertDescription>
+            </Alert>
+          ) : phoneConfig && phoneConfig.enabled ? (
+            <HomeChannelCard
+              key={phoneConfig.home_channel_name || "phone"}
+              config={phoneConfig}
+              onSaved={loadPhone}
+            />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Device</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Last seen</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead>Grants</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {list.map((s, idx) => {
-                  const tokenPrefix = sessionTokenPrefix(s);
-                  const label =
-                    s.device_name ||
-                    s.device_label ||
-                    s.client_name ||
-                    s.label ||
-                    shortToken(tokenPrefix);
-                  const lastSeen =
-                    s.last_seen ||
-                    s.last_activity ||
-                    s.last_seen_at ||
-                    s.last_activity_at ||
-                    s.updated_at ||
-                    s.paired_at;
-                  const expiresAt = s.expires_at ?? s.expiresAt ?? s.expires;
-                  const expiry = formatSessionExpiry(expiresAt);
-                  const grants = extractGrants(s);
-                  const type = classifySession(s, grants);
-                  const transport = sessionTransport(s);
-                  const supervised = supervisedSessionDisplay(s);
-                  const deviceDetail = [s.device_model, s.device_platform]
-                    .filter((value) => value && value !== "unknown")
-                    .join(" · ");
-                  return (
-                    <TableRow key={tokenPrefix || idx}>
-                      <TableCell className="font-medium">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span>{label}</span>
-                          {supervised ? (
-                            <Badge variant="secondary" className="w-fit text-xs">
-                              Supervised
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <div className="font-mono text-xs font-normal text-muted-foreground">
-                          {tokenPrefix ? shortToken(tokenPrefix, 12) : "no token prefix"}
-                        </div>
-                        {deviceDetail ? (
-                          <div className="text-xs font-normal text-muted-foreground">
-                            {deviceDetail}
-                          </div>
-                        ) : null}
-                        {supervised && supervised.profileLabel ? (
-                          <div className="text-xs font-normal text-muted-foreground">
-                            Pinned profile: {supervised.profileLabel}
-                          </div>
-                        ) : null}
-                        {supervised && supervised.visibleCapabilities.length > 0 ? (
-                          <div
-                            className="max-w-xs text-xs font-normal text-muted-foreground"
-                            title="Capabilities reported by the Android client"
-                          >
-                            Client allows: {supervised.visibleCapabilities.join(" · ")}
-                            {supervised.remainingCapabilityCount > 0
-                              ? ` · +${supervised.remainingCapabilityCount} more`
-                              : ""}
-                          </div>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <Badge variant="outline" className="w-fit text-xs">
-                            {type}
-                          </Badge>
-                          {transport ? (
-                            <span className="text-xs text-muted-foreground">{transport}</span>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>{relativeTime(lastSeen)}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-col items-start gap-1">
-                          <Badge
-                            variant={expiry.expired ? "destructive" : "secondary"}
-                            className="whitespace-nowrap text-xs"
-                            title={expiry.exact ? `Expires ${expiry.exact}` : undefined}
-                          >
-                            {expiry.label}
-                          </Badge>
-                          {expiry.exact ? (
-                            <span className="whitespace-nowrap text-xs text-muted-foreground">
-                              {expiry.exact}
-                            </span>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {grants.length === 0 ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            grants.map((g) => (
-                              <Badge key={`${g.name}:${g.detail}`} variant="secondary" className="text-xs">
-                                {g.detail ? `${formatGrantName(g.name)} ${g.detail}` : formatGrantName(g.name)}
-                              </Badge>
-                            ))
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!tokenPrefix}
-                            onClick={() => onCopyPrefix(tokenPrefix)}
-                          >
-                            {copied === tokenPrefix ? "Copied" : "Copy prefix"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={revoking === tokenPrefix || !tokenPrefix}
-                            onClick={() => onRevoke(tokenPrefix, label)}
-                          >
-                            {revoking === tokenPrefix ? "Revoking…" : "Revoke"}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-      <PairDialog
-        open={pairOpen}
-        onClose={() => { setPairOpen(false); load(); }}
-      />
+            <Card>
+              <CardHeader>
+                <CardTitle>General</CardTitle>
+                <CardDescription>Phone Home Channel is not enabled for this Hermes-Relay installation.</CardDescription>
+              </CardHeader>
+            </Card>
+          )
+        ) : null}
+
+        {category === "context" ? (
+          contextError && !agentContext ? (
+            <Alert variant="destructive">
+              <AlertTitle>Agent Context unavailable</AlertTitle>
+              <AlertDescription>{contextError}</AlertDescription>
+            </Alert>
+          ) : agentContext ? (
+            <AgentContextCard
+              data={agentContext}
+              saving={contextSaving}
+              onToggle={onToggleAgentContext}
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">Loading Agent Context…</div>
+          )
+        ) : null}
+
+        {category === "maintenance" ? (
+          updateInfo ? (
+            <UpdateCheckCard info={updateInfo} onRefresh={loadUpdate} />
+          ) : (
+            <div className="text-sm text-muted-foreground">Checking Hermes-Relay version…</div>
+          )
+        ) : null}
+      </div>
     </div>
   );
 }

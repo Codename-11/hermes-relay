@@ -82,6 +82,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -122,6 +123,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 internal enum class SessionDrawerFilter {
     All,
@@ -196,6 +199,12 @@ internal fun resolveSessionDrawerFilter(
     else -> filter
 }
 
+internal enum class SessionDrawerLoadPresentation {
+    Loading,
+    Unavailable,
+    Content,
+}
+
 @Composable
 fun SessionDrawerContent(
     sessions: List<ChatSession>,
@@ -204,6 +213,10 @@ fun SessionDrawerContent(
     scopeSubtitle: String? = null,
     activeProfileName: String = "default",
     isLoading: Boolean = false,
+    loadFailed: Boolean = false,
+    isLoadingMore: Boolean = false,
+    hasMore: Boolean = false,
+    loadMoreFailed: Boolean = false,
     isOpen: Boolean = true,
     activityStates: Map<String, SessionActivityState> = emptyMap(),
     animationEnabled: Boolean = true,
@@ -212,10 +225,11 @@ fun SessionDrawerContent(
     supervisedSessionActions: SupervisedSessionActions? = null,
     newChatEnabled: Boolean = true,
     onRefresh: (() -> Unit)? = null,
+    onLoadMore: (() -> Unit)? = null,
+    onRetryLoadMore: (() -> Unit)? = null,
     /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
     onOpenBotMode: (() -> Unit)? = null,
     onNewChat: () -> Unit,
-    onNewDefaultChat: (() -> Unit)? = null,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (String, String) -> Unit,
@@ -237,6 +251,8 @@ fun SessionDrawerContent(
     onNewThread: ((String) -> Unit)? = null,
     provisionalThreads: List<ProvisionalThreadRow> = emptyList(),
     onSelectProvisionalThread: ((String) -> Unit)? = null,
+    /** Deletes only the local provisional inbox row; never a server session. */
+    onDeleteProvisionalThread: ((String) -> Unit)? = null,
     /** Gateway sources currently hidden from the drawer (default: cron+webhook). */
     hiddenSources: Set<String> = emptySet(),
     /** Toggle a source's visibility (persisted). Null hides the source filter. */
@@ -244,6 +260,7 @@ fun SessionDrawerContent(
     allProfilesSupported: Boolean = false,
     allProfileSessions: List<ProfileSessionRow> = emptyList(),
     allProfileSessionsLoading: Boolean = false,
+    allProfileSessionsLoadFailed: Boolean = false,
     profileColors: Map<String, String> = emptyMap(),
     onProfileColorChange: ((String, String?) -> Unit)? = null,
     onRefreshAllProfiles: (() -> Unit)? = null,
@@ -297,8 +314,10 @@ fun SessionDrawerContent(
     val activeFilter = resolveSessionDrawerFilter(filter, showThreads, effectiveArchiveSupported)
     // External gateway sources present (discord/telegram/cron/…) for the source
     // filter dropdown. Own chats (tui/api_server) + phone Threads aren't listed.
-    val presentSources = sourceSessions
-        .mapNotNull { it.source?.trim()?.lowercase()?.takeIf { s -> s.isNotBlank() } }
+    val presentSources = (
+        sourceSessions.mapNotNull { it.source?.trim()?.lowercase()?.takeIf { s -> s.isNotBlank() } } +
+            hiddenSources
+        )
         .distinct()
         .filter { sourceBadge(it) != null }
         .sorted()
@@ -336,6 +355,29 @@ fun SessionDrawerContent(
         .toList()
     val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, scopedActivityStates)
     val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, scopedActivityStates)
+    LaunchedEffect(
+        listState,
+        isOpen,
+        showAllProfiles,
+        hasMore,
+        isLoadingMore,
+        loadMoreFailed,
+        visibleRows.size,
+        onLoadMore,
+    ) {
+        if (!isOpen || showAllProfiles || !hasMore || loadMoreFailed || onLoadMore == null) {
+            return@LaunchedEffect
+        }
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+            layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - 5
+        }
+            .distinctUntilChanged()
+            .collect { nearEnd ->
+                if (nearEnd && !isLoadingMore) onLoadMore()
+            }
+    }
     val drawerNowMillis = rememberDrawerClock(
         isEnabled = isOpen && (
             viewOptions.showUpdated || viewOptions.grouping == SessionDrawerGrouping.Project
@@ -535,13 +577,7 @@ fun SessionDrawerContent(
 
             // New Chat button
             Button(
-                onClick = {
-                    if (showAllProfiles) {
-                        onNewDefaultChat?.invoke() ?: onNewChat()
-                    } else {
-                        onNewChat()
-                    }
-                },
+                onClick = onNewChat,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = newChatEnabled,
             ) {
@@ -692,16 +728,23 @@ fun SessionDrawerContent(
 
         // Crossfade the loading→content transition so the list fades in rather
         // than the spinner snapping straight to rows.
+        val loadPresentation = when {
+            showAllProfiles && allProfileSessionsLoading && allProfileSessions.isEmpty() ->
+                SessionDrawerLoadPresentation.Loading
+            !showAllProfiles && isLoading && sessions.isEmpty() ->
+                SessionDrawerLoadPresentation.Loading
+            showAllProfiles && allProfileSessionsLoadFailed && sourceRows.isEmpty() ->
+                SessionDrawerLoadPresentation.Unavailable
+            !showAllProfiles && loadFailed && sourceRows.isEmpty() ->
+                SessionDrawerLoadPresentation.Unavailable
+            else -> SessionDrawerLoadPresentation.Content
+        }
         Crossfade(
-            targetState = if (showAllProfiles) {
-                allProfileSessionsLoading && allProfileSessions.isEmpty()
-            } else {
-                isLoading && sessions.isEmpty()
-            },
+            targetState = loadPresentation,
             animationSpec = tween(220),
             label = "drawerSessions",
-        ) { loading ->
-        if (loading) {
+        ) { presentation ->
+        if (presentation == SessionDrawerLoadPresentation.Loading) {
             // First load (or a profile switch) — show a quiet spinner instead of
             // flashing "No sessions yet" before the list arrives.
             Column(
@@ -720,6 +763,26 @@ fun SessionDrawerContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        } else if (presentation == SessionDrawerLoadPresentation.Unavailable) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.drawer_activity_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val refresh = if (showAllProfiles) onRefreshAllProfiles else onRefresh
+                refresh?.let {
+                    TextButton(onClick = it) {
+                        Text(stringResource(R.string.drawer_refresh_sessions))
+                    }
+                }
             }
         } else if (visibleRows.isEmpty()) {
             Column(
@@ -744,6 +807,28 @@ fun SessionDrawerContent(
                 state = listState,
                 modifier = Modifier.testTag(SESSION_DRAWER_LIST_TAG),
             ) {
+                if (!showAllProfiles && loadFailed && sourceRows.isNotEmpty()) {
+                    item(key = "sessions-stale") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.drawer_activity_unavailable),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            onRefresh?.let { refresh ->
+                                TextButton(onClick = refresh) {
+                                    Text(stringResource(R.string.drawer_refresh_sessions))
+                                }
+                            }
+                        }
+                    }
+                }
                 groupedRows.forEach { group ->
                     val isProjectGroup = viewOptions.grouping == SessionDrawerGrouping.Project
                     val expanded = !isProjectGroup || group.key in expandedProjectGroups
@@ -789,13 +874,17 @@ fun SessionDrawerContent(
                             showTokens = viewOptions.showTokens,
                             showCost = viewOptions.showCost,
                             nowMillis = drawerNowMillis,
-                            actionsEnabled = !provisional && (
+                            actionsEnabled = if (provisional) {
+                                onDeleteProvisionalThread != null &&
+                                    supervisedSessionActions?.delete != false
+                            } else {
                                 supervisedSessionActions == null ||
                                     supervisedSessionActions.pin ||
                                     supervisedSessionActions.rename ||
                                     supervisedSessionActions.delete ||
                                     (supervisedSessionActions.archive && archiveSupported)
-                                ),
+                            },
+                            provisional = provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
                             animationEnabled = animationEnabled && isOpen,
@@ -840,6 +929,32 @@ fun SessionDrawerContent(
                             onCopySessionId = { onCopySessionId?.invoke(session.sessionId) },
                             onDelete = { deleteDialogTarget = row to showAllProfiles },
                         )
+                    }
+                }
+                if (!showAllProfiles && isLoadingMore) {
+                    item(key = "sessions-loading-more") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                        }
+                    }
+                }
+                if (!showAllProfiles && loadMoreFailed && onRetryLoadMore != null) {
+                    item(key = "sessions-load-more-retry") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TextButton(onClick = onRetryLoadMore) {
+                                Text(stringResource(R.string.chat_retry))
+                            }
+                        }
                     }
                 }
             }
@@ -934,15 +1049,38 @@ fun SessionDrawerContent(
     // Delete confirmation dialog
     deleteDialogTarget?.let { (row, allProfiles) ->
         val session = row.session
+        val provisional = session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)
         AlertDialog(
             onDismissRequest = { deleteDialogTarget = null },
-            title = { Text(stringResource(R.string.drawer_delete_session_title)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (provisional) {
+                            R.string.drawer_remove_provisional_thread_title
+                        } else {
+                            R.string.drawer_delete_session_title
+                        },
+                    ),
+                )
+            },
             text = {
-                Text(stringResource(R.string.drawer_delete_session_prefix) + (session.title ?: stringResource(R.string.drawer_untitled)) + stringResource(R.string.drawer_delete_session_suffix))
+                val title = session.title ?: stringResource(R.string.drawer_untitled)
+                Text(
+                    if (provisional) {
+                        stringResource(R.string.drawer_remove_provisional_thread_message, title)
+                    } else {
+                        stringResource(R.string.drawer_delete_session_prefix) + title +
+                            stringResource(R.string.drawer_delete_session_suffix)
+                    },
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (allProfiles) {
+                    if (session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)) {
+                        onDeleteProvisionalThread?.invoke(
+                            session.sessionId.removePrefix(PROVISIONAL_THREAD_PREFIX),
+                        )
+                    } else if (allProfiles) {
                         onDeleteProfileSession?.invoke(row.profile, session.sessionId)
                     } else {
                         onDeleteSession(session.sessionId)
@@ -1358,6 +1496,7 @@ private fun SessionItem(
     showCost: Boolean,
     nowMillis: Long,
     actionsEnabled: Boolean,
+    provisional: Boolean,
     isActive: Boolean,
     activityState: SessionActivityState?,
     animationEnabled: Boolean,
@@ -1528,7 +1667,7 @@ private fun SessionItem(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
-                if (supervisedSessionActions?.pin != false) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions?.pin != false) DropdownMenuItem(
                     text = {
                         Text(
                             if (pinned) {
@@ -1554,7 +1693,7 @@ private fun SessionItem(
                         onTogglePinned()
                     },
                 )
-                if (supervisedSessionActions == null) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions == null) DropdownMenuItem(
                     text = { Text(stringResource(R.string.chat_copy_session_id)) },
                     leadingIcon = {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
@@ -1564,7 +1703,7 @@ private fun SessionItem(
                         onCopySessionId()
                     },
                 )
-                if (supervisedSessionActions?.rename != false) DropdownMenuItem(
+                if (!provisional && supervisedSessionActions?.rename != false) DropdownMenuItem(
                     text = { Text(stringResource(R.string.drawer_rename)) },
                     leadingIcon = {
                         Icon(Icons.Filled.Edit, contentDescription = null)
@@ -1574,7 +1713,7 @@ private fun SessionItem(
                         onRename()
                     },
                 )
-                if (archiveSupported && supervisedSessionActions?.archive != false) {
+                if (!provisional && archiveSupported && supervisedSessionActions?.archive != false) {
                     DropdownMenuItem(
                         text = { Text(if (archived) stringResource(R.string.drawer_restore) else stringResource(R.string.drawer_archive)) },
                         leadingIcon = {

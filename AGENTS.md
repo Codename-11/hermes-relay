@@ -84,6 +84,11 @@ PR; never resolve those cases by choosing a side automatically.
   production tags are cut only from `main`.
 - **Android:** Jetpack Compose only (no XML), kotlinx.serialization (no Gson),
   OkHttp (no Ktor), `wss://` only. Run `./gradlew lint` before pushing Kotlin.
+  For interactive device-review loops, run focused tests plus the affected
+  assemble/install task; run the full affected-variant lint once when the
+  combined candidate is final, or earlier only for lint-sensitive resource,
+  manifest, dependency, or build-configuration changes. Do not repeat full
+  variant lint after every small Kotlin iteration.
 - **Plugin (Python 3.11+):** aiohttp + asyncio (no threading), type hints
   everywhere, structured `logging` (no `print`). **Desktop CLI (Node ≥21):**
   zero runtime deps, strict TS + ES modules, ship compiled `dist/`. Full

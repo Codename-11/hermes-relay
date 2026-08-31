@@ -11,17 +11,23 @@ import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
 import com.hermesandroid.relay.data.ChatTurnToolCheckpoint
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.HermesCard
 import com.hermesandroid.relay.data.HermesCardDispatch
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.ProactiveInboxEntry
+import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.network.relay.ProactiveMessage
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardHttpException
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayClientHarness
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
+import com.hermesandroid.relay.network.upstream.GatewayReconnectDisposition
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.SessionItem
@@ -146,6 +152,37 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun ordinaryProfileSwitchDoesNotInitializeModelCatalogAheadOfSessions() {
+        val modelOptionsBefore = gatewayHarness.rpcLog.count { it.first == "model.options" }
+
+        viewModel.activateGatewayProfile(
+            Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel"),
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            modelOptionsBefore,
+            gatewayHarness.rpcLog.count { it.first == "model.options" },
+        )
+        assertEquals("gpt-5.6-sol", viewModel.gatewayCurrentModel.value)
+    }
+
+    @Test
+    fun attachingReadyGatewayDoesNotHydrateControlStateAheadOfSessions() {
+        viewModel.updateGatewayClient(null)
+        val eagerMethods = setOf("model.options", "commands.catalog", "config.get")
+        val callsBefore = gatewayHarness.rpcLog.count { it.first in eagerMethods }
+
+        viewModel.updateGatewayClient(gatewayClient)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            callsBefore,
+            gatewayHarness.rpcLog.count { it.first in eagerMethods },
+        )
+    }
+
+    @Test
     fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
         DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
@@ -245,6 +282,59 @@ class ChatViewModelGatewayInboundTurnTest {
         assertFalse(failure?.recoverable ?: true)
         assertTrue(failure?.rawError.orEmpty().contains("failed-switch-session"))
         assertEquals("failed-switch-session", handler.currentSessionId.value)
+    }
+
+    @Test
+    fun successfulExactHistoryRetryClearsOnlyItsStaleFailure() {
+        viewModel.setProfileMessageLoaderWithMode { _, _, _ ->
+            Result.failure(java.io.InterruptedIOException("history timed out"))
+        }
+        viewModel.switchSession("recovered-history-session")
+        awaitCondition {
+            viewModel.chatFailure.value?.turnId == "history-recovered-history-session"
+        }
+
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "recovered-row",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Recovered"),
+                    ),
+                ),
+            )
+        }
+        viewModel.switchSession("recovered-history-session")
+
+        awaitCondition { handler.messages.value.any { it.content == "Recovered" } }
+        assertNull(viewModel.chatFailure.value)
+    }
+
+    @Test
+    fun dashboardHistoryLoadsWhileGatewaySocketRouteIsUnavailable() {
+        val dashboardLoad = CompletableDeferred<Unit>()
+        viewModel.streamingEndpoint = "sessions"
+        viewModel.setProfileMessageLoaderWithMode { _, sessionId, _ ->
+            dashboardLoad.complete(Unit)
+            Result.success(
+                listOf(
+                    MessageItem(
+                        id = "dashboard-answer",
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = JsonPrimitive("Readable without a Gateway socket"),
+                    ),
+                ),
+            )
+        }
+
+        viewModel.switchSession("dashboard-session")
+
+        awaitCondition { dashboardLoad.isCompleted && !viewModel.isLoadingHistory.value }
+        assertEquals("Readable without a Gateway socket", handler.messages.value.single().content)
+        assertEquals(0, apiMessageRequestCount.get())
     }
 
     @Test
@@ -431,8 +521,17 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
 
         viewModel.createNewChat()
-        assertFalse(viewModel.conversationBinding.value.hasExplicitOwner)
-        assertEquals(global.name, gatewayClient.sessionProfileProvider())
+        assertTrue(viewModel.conversationBinding.value.hasExplicitOwner)
+        assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertEquals(owner.name, gatewayClient.sessionProfileProvider())
+
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", owner.name),
+            sessionId = "x-bot-session",
+        )
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertNull(handler.currentSessionId.value)
     }
 
     @Test
@@ -531,6 +630,561 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.switchSession("x-bot-sibling")
         assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals("x-bot-sibling", persistedSession)
+    }
+
+    @Test
+    fun dashboardSessionListLoadsWhileGatewaySocketRouteIsUnavailable() {
+        var listed = false
+        viewModel.streamingEndpoint = "sessions"
+        viewModel.setProfileSessionLister {
+            listed = true
+            Result.success(emptyList())
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition { listed && !viewModel.isLoadingSessions.value }
+        assertFalse(viewModel.sessionListUnavailable.value)
+    }
+
+    @Test
+    fun emptySessionRefreshMarksDrawerLoadingBeforeFetchCoroutineRuns() {
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            releaseLoad.await()
+            Result.success(emptyList())
+        }
+
+        viewModel.refreshSessions()
+
+        assertTrue(viewModel.isLoadingSessions.value)
+        releaseLoad.complete(Unit)
+        awaitCondition { !viewModel.isLoadingSessions.value }
+    }
+
+    @Test
+    fun profileContextSwitchKeepsClearedDrawerInLoadingState() {
+        viewModel.switchProfileContext(
+            contextKey = AgentDisplay.profileContextKey("connection-a", "sentinel"),
+            sessionId = null,
+        )
+
+        assertTrue(handler.sessions.value.isEmpty())
+        assertTrue(viewModel.isLoadingSessions.value)
+        assertFalse(viewModel.sessionListUnavailable.value)
+    }
+
+    @Test
+    fun automaticProfileRestoreWaitsForExactDirectorySuccessBeforePassiveObservation() {
+        val profile = Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel")
+        val contextKey = AgentDisplay.profileContextKey("connection-a", profile.name)
+        val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
+        val directoryStarted = CompletableDeferred<Unit>()
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.setProfileSessionLister { profileName ->
+            assertEquals(profile.name, profileName)
+            directoryStarted.complete(Unit)
+            directoryResult.await()
+        }
+        val ownershipMethods = setOf("session.resume", "session.activate", "session.interrupt")
+        val ownershipBefore = ownershipMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val activeListsBefore = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
+
+        viewModel.activateGatewayProfile(profile)
+        viewModel.setChatVisible(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+        viewModel.switchProfileContext(contextKey, "sentinel-session")
+        viewModel.refreshSessions()
+
+        awaitCondition { directoryStarted.isCompleted }
+        shadowOf(Looper.getMainLooper()).idle()
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+
+        directoryResult.complete(Result.failure(java.io.InterruptedIOException("timeout")))
+        awaitCondition { viewModel.sessionListUnavailable.value }
+        ownershipMethods.forEach { method ->
+            assertEquals(ownershipBefore.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+
+        viewModel.setProfileSessionLister {
+            Result.success(listOf(SessionItem(id = "sentinel-session", title = "Sentinel session")))
+        }
+        serverWs.send(gatewayHarness.eventFrame("sessions.changed", buildJsonObject {}, null))
+
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" } > activeListsBefore
+        }
+        ownershipMethods.forEach { method ->
+            assertEquals(
+                "directory release sent $method",
+                ownershipBefore.getValue(method),
+                gatewayHarness.rpcLog.count { it.first == method },
+            )
+        }
+    }
+
+    @Test
+    fun coldVisibleFreshDraftWaitsForDirectoryBeforeGatewayPrewarm() {
+        val profile = Profile(name = "sentinel", model = "gpt-5.6-sol", description = "Sentinel")
+        val contextKey = AgentDisplay.profileContextKey("connection-a", profile.name)
+        val directoryStarted = CompletableDeferred<Unit>()
+        val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.setProfileSessionLister {
+            directoryStarted.complete(Unit)
+            directoryResult.await()
+        }
+        handler.setSessionId(null)
+        serverWs.close(1012, "cold start")
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
+        val mintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(mintsBefore, gatewayHarness.ticketMints.get())
+        viewModel.switchProfileContext(contextKey, sessionId = null)
+        viewModel.refreshSessions()
+        awaitCondition { directoryStarted.isCompleted }
+        assertEquals(mintsBefore, gatewayHarness.ticketMints.get())
+
+        directoryResult.complete(Result.success(emptyList()))
+
+        awaitCondition { gatewayHarness.ticketMints.get() == mintsBefore + 1 }
+        gatewayHarness.awaitServerSocket()
+    }
+
+    @Test
+    fun failedSessionListIsUnavailableInsteadOfAuthoritativeEmpty() {
+        viewModel.setProfileSessionLister {
+            Result.failure(IllegalStateException("temporary dashboard failure"))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertTrue(handler.sessions.value.isEmpty())
+    }
+
+    @Test
+    fun sessionListSignInFailureDoesNotPublishGenericChatToast() {
+        viewModel.setProfileSessionLister {
+            Result.failure(
+                DashboardHttpException(
+                    401,
+                    "Session failed - HTTP 401: {\"reason\":\"no_cookie\"}",
+                ),
+            )
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertNull(viewModel.chatFailure.value)
+        assertNull(viewModel.error.value)
+    }
+
+    @Test
+    fun repeatedDrawerRefreshCoalescesWithOneTrailingRequest() {
+        val calls = AtomicInteger(0)
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() == 1) {
+                releaseLoad.await()
+                Result.success(emptyList())
+            } else {
+                Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() == 1 }
+        assertEquals(1, calls.get())
+        releaseLoad.complete(Unit)
+        awaitCondition {
+            calls.get() == 2 && handler.sessions.value.singleOrNull()?.sessionId == "fresh"
+        }
+        assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun coalescedTrailingSuccessClearsTheInitialFailure() {
+        val calls = AtomicInteger(0)
+        val releaseFirst = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() == 1) {
+                releaseFirst.await()
+                Result.failure(java.io.InterruptedIOException("timeout"))
+            } else {
+                Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() == 1 }
+        assertTrue(viewModel.isLoadingSessions.value)
+        assertFalse(viewModel.sessionListUnavailable.value)
+        releaseFirst.complete(Unit)
+        awaitCondition {
+            calls.get() == 2 &&
+                handler.sessions.value.singleOrNull()?.sessionId == "fresh" &&
+                !viewModel.isLoadingSessions.value &&
+                !viewModel.sessionListUnavailable.value
+        }
+    }
+
+    @Test
+    fun drawerFreshnessGateDoesNotQueueDuplicateStartupRead() {
+        val calls = AtomicInteger(0)
+        val releaseLoad = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            releaseLoad.await()
+            Result.success(listOf(SessionItem(id = "fresh", title = "Fresh session")))
+        }
+
+        viewModel.refreshSessions()
+        viewModel.refreshSessionsIfStale()
+        awaitCondition { calls.get() == 1 }
+        releaseLoad.complete(Unit)
+        awaitCondition {
+            handler.sessions.value.singleOrNull()?.sessionId == "fresh" &&
+                !viewModel.isLoadingSessions.value
+        }
+
+        viewModel.refreshSessionsIfStale()
+        Thread.sleep(100)
+
+        assertEquals(1, calls.get())
+    }
+
+    @Test
+    fun sessionDirectoryLoadsAdditionalPagesProgressively() {
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, offset, limit ->
+            assertEquals(SESSION_DIRECTORY_PAGE_SIZE, offset)
+            assertEquals(SESSION_DIRECTORY_PAGE_SIZE, limit)
+            Result.success(
+                listOf(
+                    SessionItem(id = "older-1", title = "Older 1"),
+                    SessionItem(id = "older-2", title = "Older 2"),
+                ),
+            )
+        }
+
+        viewModel.refreshSessions()
+        awaitCondition {
+            handler.sessions.value.size == SESSION_DIRECTORY_PAGE_SIZE &&
+                viewModel.hasMoreSessions.value
+        }
+
+        viewModel.loadMoreSessions()
+
+        awaitCondition {
+            handler.sessions.value.size == SESSION_DIRECTORY_PAGE_SIZE + 2 &&
+                !viewModel.isLoadingMoreSessions.value &&
+                !viewModel.hasMoreSessions.value
+        }
+        assertEquals(52, handler.sessions.value.map { it.sessionId }.distinct().size)
+    }
+
+    @Test
+    fun staleSessionPageCannotAppendAfterProfileSwitch() {
+        var activeProfile = "alpha"
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "alpha-$index", title = "Alpha $index")
+        }
+        val pageStarted = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            pageStarted.complete(Unit)
+            releasePage.await()
+            Result.success(listOf(SessionItem(id = "stale-page", title = "Stale")))
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        runBlocking { pageStarted.await() }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        releasePage.complete(Unit)
+        Thread.sleep(100)
+
+        assertTrue(handler.sessions.value.none { it.sessionId == "stale-page" })
+        assertFalse(viewModel.isLoadingMoreSessions.value)
+    }
+
+    @Test
+    fun failedSessionPageWaitsForExplicitRetry() {
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        val pageCalls = AtomicInteger(0)
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            if (pageCalls.incrementAndGet() == 1) {
+                Result.failure(java.io.InterruptedIOException("timeout"))
+            } else {
+                Result.success(listOf(SessionItem(id = "older", title = "Older")))
+            }
+        }
+
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        awaitCondition { viewModel.sessionPageLoadFailed.value }
+
+        viewModel.loadMoreSessions()
+        Thread.sleep(100)
+        assertEquals(1, pageCalls.get())
+
+        viewModel.retryLoadMoreSessions()
+        awaitCondition {
+            pageCalls.get() == 2 &&
+                handler.sessions.value.any { it.sessionId == "older" } &&
+                !viewModel.sessionPageLoadFailed.value
+        }
+    }
+
+    @Test
+    fun connectionSwitchFullyResetsDeferredSessionPageState() {
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        val firstPage = (0 until SESSION_DIRECTORY_PAGE_SIZE).map { index ->
+            SessionItem(id = "recent-$index", title = "Recent $index")
+        }
+        val pageStarted = CompletableDeferred<Unit>()
+        val releasePage = CompletableDeferred<Unit>()
+        viewModel.setProfileSessionLister { Result.success(firstPage) }
+        viewModel.setProfileSessionPageLister { _, _, _ ->
+            pageStarted.complete(Unit)
+            releasePage.await()
+            Result.success(listOf(SessionItem(id = "stale", title = "Stale")))
+        }
+        viewModel.observeConnectionSwitches(switches)
+
+        viewModel.refreshSessions()
+        awaitCondition { viewModel.hasMoreSessions.value }
+        viewModel.loadMoreSessions()
+        runBlocking { pageStarted.await() }
+        switches.tryEmit("connection-b")
+
+        awaitCondition {
+            !viewModel.isLoadingMoreSessions.value &&
+                !viewModel.hasMoreSessions.value &&
+                !viewModel.sessionPageLoadFailed.value
+        }
+        releasePage.complete(Unit)
+        Thread.sleep(100)
+        assertTrue(handler.sessions.value.none { it.sessionId == "stale" })
+    }
+
+    @Test
+    fun transientProfileRouteFailureRetriesUntilReadinessSettles() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            if (calls.incrementAndGet() <= 2) {
+                Result.failure(IllegalStateException("dashboard route still settling"))
+            } else {
+                Result.success(listOf(SessionItem(id = "recent", title = "Recent session")))
+            }
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            calls.get() == 3 &&
+                handler.sessions.value.singleOrNull()?.sessionId == "recent" &&
+                !viewModel.sessionListUnavailable.value
+        }
+        assertEquals(3, calls.get())
+    }
+
+    @Test
+    fun failedProfileRequestDoesNotStartAnotherLongRead() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            Result.failure(java.io.InterruptedIOException("timeout"))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            calls.get() == 1 &&
+                viewModel.sessionListUnavailable.value &&
+                !viewModel.isLoadingSessions.value
+        }
+        Thread.sleep(2_500)
+        assertEquals(1, calls.get())
+    }
+
+    @Test
+    fun supersededProfileRefreshCannotPublishIntoTheNewProfile() {
+        var activeProfile = "alpha"
+        val alphaStarted = CompletableDeferred<Unit>()
+        val releaseAlpha = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { profileName ->
+            if (profileName == "alpha") {
+                alphaStarted.complete(Unit)
+                releaseAlpha.await()
+                Result.success(listOf(SessionItem(id = "alpha-row", title = "Alpha")))
+            } else {
+                Result.success(listOf(SessionItem(id = "beta-row", title = "Beta")))
+            }
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        runBlocking { alphaStarted.await() }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        releaseAlpha.complete(Unit)
+
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "beta-row" }
+        assertTrue(handler.sessions.value.none { it.sessionId == "alpha-row" })
+    }
+
+    @Test
+    fun returningToProfileRestoresRecentSessionsBeforeRevalidation() {
+        var activeProfile = "alpha"
+        viewModel.setSessionProfileNameProvider { activeProfile }
+        viewModel.setProfileSessionLister { profileName ->
+            Result.success(
+                listOf(SessionItem(id = "$profileName-row", title = "$profileName session")),
+            )
+        }
+
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "alpha-row" }
+
+        activeProfile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.sessionId == "beta-row" }
+
+        activeProfile = "alpha"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+
+        assertEquals("alpha-row", handler.sessions.value.singleOrNull()?.sessionId)
+        assertFalse(viewModel.isLoadingSessions.value)
+    }
+
+    @Test
+    fun renameFencesOlderListAndRevalidatesAuthoritativeTitle() {
+        val calls = AtomicInteger(0)
+        val staleStarted = CompletableDeferred<Unit>()
+        val releaseStale = CompletableDeferred<Unit>()
+        viewModel.setSessionProfileNameProvider { "alpha" }
+        viewModel.setProfileSessionLister {
+            when (calls.incrementAndGet()) {
+                1 -> Result.success(listOf(SessionItem(id = "row", title = "Old title")))
+                2 -> {
+                    staleStarted.complete(Unit)
+                    releaseStale.await()
+                    Result.success(listOf(SessionItem(id = "row", title = "Old title")))
+                }
+                else -> Result.success(listOf(SessionItem(id = "row", title = "New title")))
+            }
+        }
+        viewModel.profileSessionRenamer = { _, _, _, _ -> true }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "alpha"),
+            sessionId = null,
+        )
+        viewModel.refreshSessions()
+        awaitCondition { handler.sessions.value.singleOrNull()?.title == "Old title" }
+
+        viewModel.refreshSessions()
+        runBlocking { staleStarted.await() }
+        viewModel.renameSession("row", "New title")
+        releaseStale.complete(Unit)
+
+        awaitCondition {
+            calls.get() >= 3 && handler.sessions.value.singleOrNull()?.title == "New title"
+        }
+        assertEquals("New title", handler.sessions.value.singleOrNull()?.title)
+    }
+
+    @Test
+    fun thrownSessionListFailureIsUnavailableInsteadOfAuthoritativeEmpty() {
+        viewModel.setProfileSessionLister {
+            throw IllegalStateException("temporary dashboard failure")
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertTrue(handler.sessions.value.isEmpty())
+    }
+
+    @Test
+    fun thrownSessionListSignInFailureDoesNotPublishGenericChatToast() {
+        viewModel.setProfileSessionLister {
+            throw DashboardHttpException(
+                401,
+                "Session failed - HTTP 401: {\"reason\":\"no_cookie\"}",
+            )
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition {
+            !viewModel.isLoadingSessions.value && viewModel.sessionListUnavailable.value
+        }
+        assertNull(viewModel.chatFailure.value)
+        assertNull(viewModel.error.value)
     }
 
     @Test
@@ -647,7 +1301,258 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
         assertEquals("Hermes", handler.activeAgentName)
-        assertEquals("unchanged", persistedSession)
+        assertEquals("cleared", persistedSession)
+    }
+
+    @Test
+    fun freshDraftTransferKeepsNullableServerDefaultAndRejectsOldSessionRestore() {
+        val named = Profile(name = "x-bot", model = "grok-4.3", description = "X Bot")
+        var selected: Profile? = named
+        var persistedDraft: Pair<String?, SessionTransport>? = null
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onFreshDraftSelected = { profileName, transport ->
+            persistedDraft = profileName to transport
+        }
+
+        assertTrue(
+            viewModel.createProfileChat(
+                profileName = null,
+                profile = null,
+                contextKey = AgentDisplay.profileContextKey("connection-a", null),
+            ),
+        )
+
+        assertNull(selected)
+        assertTrue(viewModel.conversationBinding.value.hasExplicitOwner)
+        assertNull(viewModel.conversationBinding.value.profileName)
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertEquals(null to SessionTransport.GATEWAY, persistedDraft)
+        assertNull(gatewayClient.sessionProfileProvider())
+
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", null),
+            sessionId = "old-default-session",
+        )
+        assertNull(viewModel.conversationBinding.value.sessionId)
+        assertNull(handler.currentSessionId.value)
+    }
+
+    @Test
+    fun freshDraftTransferToNamedProfileCreatesInsteadOfResumingItsOldSession() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        var persistedDraft: Pair<String?, SessionTransport>? = null
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onFreshDraftSelected = { profileName, transport ->
+            persistedDraft = profileName to transport
+        }
+
+        viewModel.openProfileSession(
+            profileName = alpha.name,
+            profile = alpha,
+            contextKey = AgentDisplay.profileContextKey("connection-a", alpha.name),
+            sessionId = "alpha-session",
+        )
+        viewModel.createNewChat()
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+
+        assertEquals(beta, selected)
+        assertEquals(beta.name to SessionTransport.GATEWAY, persistedDraft)
+        viewModel.reconcileProfileContext(
+            AgentDisplay.profileContextKey("connection-a", beta.name),
+            sessionId = "beta-old-session",
+        )
+        assertNull(handler.currentSessionId.value)
+
+        gatewayHarness.createdSessionProfileName = beta.name
+        val resumeCountBeforeFreshSend = gatewayHarness.rpcLog.count {
+            it.first == "session.resume"
+        }
+        viewModel.sendMessage("Fresh beta turn")
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertEquals(
+            resumeCountBeforeFreshSend,
+            gatewayHarness.rpcLog.count { it.first == "session.resume" },
+        )
+    }
+
+    @Test
+    fun headerProfileSwitchExitsProvisionalThreadBeforeFreshProfileSend() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        val proactiveChatIds = mutableListOf<String?>()
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, chatId, _, _ -> proactiveChatIds += chatId }
+
+        viewModel.openProactiveThread(
+            chatId = "old-phone-chat",
+            entries = listOf(
+                ProactiveInboxEntry(
+                    id = "inbox-1",
+                    title = "Old phone thread",
+                    text = "Continue here",
+                    receivedAt = 1L,
+                    chatId = "old-phone-chat",
+                    connectionId = "connection-a",
+                ),
+            ),
+        )
+        assertNull(handler.currentSessionId.value)
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        viewModel.sendMessage("Fresh beta turn")
+
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertTrue(proactiveChatIds.isEmpty())
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
+    }
+
+    @Test
+    fun headerProfileSwitchExitsPromotedPhoneSessionWithoutReusingItsChatId() {
+        val alpha = Profile(name = "alpha", model = "model-a", description = "Alpha")
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = alpha
+        val proactiveChatIds = mutableListOf<String?>()
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, chatId, _, _ -> proactiveChatIds += chatId }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "promoted-phone-session",
+                title = "Promoted thread",
+                model = null,
+                source = "phone",
+            ),
+        )
+        handler.setSessionId("promoted-phone-session")
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        assertNull(handler.currentSessionId.value)
+        viewModel.sendMessage("Fresh beta after Thread")
+
+        val create = gatewayHarness.awaitRpc("session.create")
+        assertEquals(beta.name, (create["profile"] as JsonPrimitive).content)
+        assertTrue(proactiveChatIds.isEmpty())
+    }
+
+    @Test
+    fun newChatAndConnectionSwitchRetireProvisionalThreadRouting() {
+        val entry = ProactiveInboxEntry(
+            id = "inbox-1",
+            title = "Old phone thread",
+            text = "Continue here",
+            receivedAt = 1L,
+            chatId = "old-phone-chat",
+            connectionId = "connection-a",
+        )
+        val inbound = ProactiveMessage(
+            messageId = "late-1",
+            chatId = "old-phone-chat",
+            text = "Late old-thread message",
+            title = "Old phone thread",
+            surfacing = "thread",
+            sentAt = 2L,
+        )
+
+        viewModel.openProactiveThread("old-phone-chat", listOf(entry))
+        viewModel.createNewChat()
+        assertFalse(viewModel.injectThreadMessage(inbound))
+
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        viewModel.observeConnectionSwitches(switches)
+        viewModel.openProactiveThread("old-phone-chat", listOf(entry))
+        switches.tryEmit("connection-b")
+        awaitCondition { handler.messages.value.isEmpty() }
+        assertFalse(viewModel.injectThreadMessage(inbound))
+    }
+
+    @Test
+    fun staleThreadPromotionCannotReplaceTransferredProfileDraft() {
+        val beta = Profile(name = "beta", model = "model-b", description = "Beta")
+        var selected: Profile? = Profile(name = "alpha", model = "model-a")
+        viewModel.setSelectedProfileProvider { selected }
+        viewModel.setSessionProfileNameProvider { selected?.name }
+        viewModel.setProfileSelectionHandler { profile ->
+            selected = profile
+            true
+        }
+        viewModel.onProactiveReply = { _, _, _, _ -> }
+        viewModel.openProactiveThread(
+            "old-phone-chat",
+            listOf(
+                ProactiveInboxEntry(
+                    id = "inbox-1",
+                    title = "Old phone thread",
+                    text = "Continue here",
+                    receivedAt = 1L,
+                    chatId = "old-phone-chat",
+                    connectionId = "connection-a",
+                ),
+            ),
+        )
+        viewModel.sendMessage("Promote the old Thread")
+
+        assertTrue(
+            viewModel.selectProfileFromHeader(
+                profileName = beta.name,
+                profile = beta,
+                contextKey = AgentDisplay.profileContextKey("connection-a", beta.name),
+            ),
+        )
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "late-promoted-thread",
+                title = "Late promoted thread",
+                model = null,
+                source = "phone",
+            ),
+        )
+        shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+        Thread.sleep(100)
+
+        assertNull(handler.currentSessionId.value)
+        assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
     }
 
     @Test
@@ -992,11 +1897,12 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { handler.messages.value.any { it.content == "Partial A" } }
 
         viewModel.switchSession(secondSession)
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
         assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
 
         viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("session.resume", 2)
         gatewayHarness.awaitRpcCount("prompt.submit", 2)
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -1047,6 +1953,69 @@ class ChatViewModelGatewayInboundTurnTest {
         )
         awaitCondition { !handler.isStreaming.value && !gatewayClient.hasActiveTurn() }
         assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun detachedClarifyExpiryCannotRestoreAStaleCardAfterNavigation() {
+        val secondSession = "stored-session-b"
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        val checkpointStore = MemoryCheckpointStore()
+        gatewayHarness.resumeLiveSessionIds[secondSession] = "live-b"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.sendMessage("Ask before continuing")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.request",
+                buildJsonObject {
+                    put("request_id", "clarify-detached")
+                    put("question", "Which rollout?")
+                    put("choices", buildJsonArray {
+                        add(JsonPrimitive("canary"))
+                        add(JsonPrimitive("all at once"))
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.pendingAsk.value?.ask?.requestId == "clarify-detached" }
+
+        viewModel.switchSession(secondSession)
+        awaitCondition { handler.currentSessionId.value == secondSession }
+        assertEquals(
+            "passive navigation must not resume and claim the second session",
+            1,
+            gatewayHarness.rpcLog.count { it.first == "session.resume" },
+        )
+        awaitCondition { checkpointStore.checkpoint?.pendingAsk?.requestId == "clarify-detached" }
+
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "clarify.expire",
+                buildJsonObject { put("request_id", "clarify-detached") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition {
+            checkpointStore.checkpoint != null && checkpointStore.checkpoint?.pendingAsk == null
+        }
+
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Waiting for rollout choice"
+        viewModel.switchSession(STORED_SESSION_ID)
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.currentSessionId.value == STORED_SESSION_ID && handler.isStreaming.value
+        }
+
+        assertNull(viewModel.pendingAsk.value)
+        assertTrue(
+            handler.messages.value.flatMap { it.cards }
+                .none { it.type == HermesCard.BuiltInTypes.ASK_CLARIFY },
+        )
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "clarify.respond" })
     }
 
     @Test
@@ -1295,6 +2264,120 @@ class ChatViewModelGatewayInboundTurnTest {
             handler.messages.value.single { it.id == "ask-approval-1" }
                 .cardDispatches.single().actionValue,
         )
+    }
+
+    @Test
+    fun recoveredServerDefaultSubagentWatchOmitsProfileOverride() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-a", null),
+            persistedProfileKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+            expectedProfile = null,
+        )
+    }
+
+    @Test
+    fun recoveredLiteralDefaultSubagentWatchKeepsExplicitProfile() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-a", "default"),
+            persistedProfileKey = "default",
+            expectedProfile = "default",
+        )
+    }
+
+    @Test
+    fun recoveredNamedSubagentWatchKeepsOwningProfileAcrossConnectionScope() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = AgentDisplay.profileContextKey("connection-b", "team::writer"),
+            persistedProfileKey = "team::writer",
+            expectedProfile = "team::writer",
+        )
+    }
+
+    @Test
+    fun recoveredLegacyCheckpointFailsClosedWithoutInventingProfile() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = "connection-a/profile-default",
+            persistedProfileKey = null,
+            expectedProfile = null,
+        )
+    }
+
+    @Test
+    fun currentServerDefaultCheckpointPersistsExplicitSentinel() {
+        assertCurrentCheckpointProfileKey(
+            profileName = null,
+            effectiveSessionProfileName = "victor",
+            expectedProfileKey = AgentDisplay.SERVER_DEFAULT_PROFILE_KEY,
+        )
+    }
+
+    @Test
+    fun currentLiteralDefaultCheckpointPersistsNamedProfile() {
+        assertCurrentCheckpointProfileKey(
+            profileName = "default",
+            effectiveSessionProfileName = "default",
+            expectedProfileKey = "default",
+        )
+    }
+
+    @Test
+    fun explicitConversationOwnerWinsAmbientSelectorInCurrentCheckpoint() {
+        val checkpointStore = MemoryCheckpointStore()
+        val global = Profile(name = "global", model = "global-model")
+        val writer = Profile(name = "writer", model = "writer-model")
+        viewModel.setSelectedProfileProvider { global }
+        viewModel.setSessionProfileNameProvider { global.name }
+        viewModel.setProfileMessageLoader { Result.success(emptyList()) }
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+
+        assertTrue(
+            viewModel.openProfileSession(
+                profileName = writer.name,
+                profile = writer,
+                contextKey = AgentDisplay.profileContextKey("connection-a", writer.name),
+                sessionId = STORED_SESSION_ID,
+            ),
+        )
+        awaitCondition { viewModel.conversationBinding.value.hasExplicitOwner }
+
+        viewModel.sendMessage("Persist explicit owner")
+
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { checkpointStore.checkpoint?.profileKey == writer.name }
+        assertEquals(writer.name, checkpointStore.checkpoint?.profileKey)
+    }
+
+    @Test
+    fun liveNonRecoveredSubagentWatchKeepsLiteralDefaultProfile() {
+        val profile = Profile(name = "default", model = "model")
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { profile.name }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", profile.name),
+            STORED_SESSION_ID,
+        )
+        gatewayHarness.resumeLiveSessionIds["live-child-stored"] = "live-child"
+
+        viewModel.sendMessage("Delegate live work")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "subagent.start",
+                buildJsonObject {
+                    put("goal", "Inspect live path")
+                    put("task_index", 0)
+                    put("task_count", 1)
+                    put("subagent_id", "live-child-agent")
+                    put("child_session_id", "live-child-stored")
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.subagentActivities.value.size == 1 }
+        viewModel.openSubagentChildPreview(viewModel.subagentActivities.value.single().stableKey)
+
+        val resume = gatewayHarness.awaitRpcCount("session.resume", 2).last()
+        assertEquals(JsonPrimitive("default"), resume["profile"])
     }
 
     @Test
@@ -1824,11 +2907,12 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { viewModel.queuedMessages.value == listOf("Follow up A") }
 
         viewModel.switchSession(secondSession)
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition { handler.currentSessionId.value == secondSession && !handler.isStreaming.value }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
         assertTrue("session B must not show A's queue", viewModel.queuedMessages.value.isEmpty())
 
         viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("session.resume", 2)
         gatewayHarness.awaitRpcCount("prompt.submit", 2)
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -2031,13 +3115,16 @@ class ChatViewModelGatewayInboundTurnTest {
         serverWs.close(1012, "test disconnect")
         awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
 
+        viewModel.setChatVisible(true)
         viewModel.prewarmGateway()
         gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
 
         awaitCondition {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
         }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
     }
 
@@ -2048,17 +3135,61 @@ class ChatViewModelGatewayInboundTurnTest {
 
         // Foreground arrives while OkHttp still reports the old socket ready,
         // so the one-shot prewarm is an intentional no-op. The delayed close
-        // callback must itself trigger an exact-session reattach.
+        // callback must itself restore the observation socket and catch up
+        // history without attaching the live session.
         viewModel.prewarmGateway()
         serverWs.close(1012, "late background close")
 
         awaitCondition { gatewayHarness.ticketMints.get() >= 2 }
         serverWs = gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
         awaitCondition {
             handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
         }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun profileSwitchCancelsCooldownReconnectOwnedByOldSession() {
+        gatewayHarness.ticketResponseDelayMs = 500L
+        val delayedClient = replaceGatewayClient(ticketTimeoutMs = 75L)
+        val baselineMints = gatewayHarness.ticketMints.get()
+        var profile = "alpha"
+        viewModel.setSessionProfileNameProvider { profile }
+        viewModel.setChatVisible(true)
+        awaitCondition {
+            gatewayHarness.ticketMints.get() >= baselineMints + 2 &&
+                delayedClient.reconnectDisposition.value ==
+                GatewayReconnectDisposition.Retryable
+        }
+        val mintsAfterFailure = gatewayHarness.ticketMints.get()
+
+        profile = "beta"
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", "beta"),
+            sessionId = null,
+        )
+        gatewayHarness.ticketResponseDelayMs = 0L
+        shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+
+        assertEquals(mintsAfterFailure, gatewayHarness.ticketMints.get())
+    }
+
+    @Test
+    fun visibleChatDoesNotPrewarmTerminalGatewayFailure() {
+        gatewayHarness.malformedTicketMint = true
+        val terminalClient = replaceGatewayClient(ticketTimeoutMs = 75L)
+        val baselineMints = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        awaitCondition {
+            terminalClient.reconnectDisposition.value == GatewayReconnectDisposition.Terminal
+        }
+        shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+
+        assertEquals(baselineMints + 1, gatewayHarness.ticketMints.get())
     }
 
     @Test
@@ -2366,34 +3497,187 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun reconnectAfterMissedStartRecoversOnExactSessionCompletion() {
+    fun reconnectCatchupClosesCompletionBetweenFirstReadAndIdleSnapshot() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        val firstReadStarted = CompletableDeferred<Unit>()
+        val releaseFirstRead = CompletableDeferred<Unit>()
+        val readCount = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            if (readCount.incrementAndGet() == 1) {
+                firstReadStarted.complete(Unit)
+                releaseFirstRead.await()
+                Result.success(emptyList())
+            } else {
+                Result.success(persistedHistory)
+            }
+        }
         serverWs.close(1012, "missed start")
         awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Idle }
+        viewModel.setChatVisible(true)
         viewModel.prewarmGateway()
         serverWs = gatewayHarness.awaitServerSocket()
-        gatewayHarness.awaitRpcCount("session.resume", 2)
-
-        // Reconnected midway through the synthetic turn: no message.start is
-        // replayed, so the delta is intentionally ignored and completion drives
-        // authoritative history recovery.
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.delta",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
+        awaitCondition { firstReadStarted.isCompleted }
+        // Completion persists after the reconnect's first catch-up read began,
+        // while the first active-list snapshot is already empty/idle. The
+        // pending final-read marker must close this exact ordering window.
         persistedHistory = persistedAnswerHistory()
-        serverWs.send(
-            gatewayHarness.eventFrame(
-                "message.complete",
-                buildJsonObject { put("text", BACKGROUND_ANSWER) },
-                "live-resumed",
-            ),
-        )
+        releaseFirstRead.complete(Unit)
 
         awaitCondition { handler.messages.value.any { it.content == BACKGROUND_ANSWER } }
+        assertEquals(1, gatewayHarness.rpcLog.count { it.first == "session.resume" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+        assertEquals(0, gatewayHarness.rpcLog.count { it.first == "session.interrupt" })
         assertFalse(handler.isStreaming.value)
+    }
+
+    @Test
+    fun passiveForegroundObservationNeverClaimsOrInterruptsDesktopTurn() {
+        val observerProfile = Profile(
+            name = "observer",
+            model = "model-a",
+            description = "Observer",
+        )
+        viewModel.setSelectedProfileProvider { observerProfile }
+        viewModel.setSessionProfileNameProvider { observerProfile.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            assertEquals(STORED_SESSION_ID, sessionId)
+            Result.success(
+                if (profileName == observerProfile.name) {
+                    persistedHistory
+                } else {
+                    listOf(
+                        MessageItem(
+                            id = "wrong-profile",
+                            sessionId = STORED_SESSION_ID,
+                            role = "assistant",
+                            content = JsonPrimitive("Wrong profile history"),
+                        ),
+                    )
+                },
+            )
+        }
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", observerProfile.name),
+            STORED_SESSION_ID,
+        )
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val ownershipMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "session.interrupt",
+            "prompt.submit",
+        )
+        val baseline = ownershipMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val baselineActiveList = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("working")
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+        )
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.updateGatewayClient(gatewayClient)
+
+        viewModel.setChatVisible(true)
+        viewModel.prewarmGateway()
+        awaitCondition {
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" } > baselineActiveList
+        }
+        persistedHistory = listOf(
+            MessageItem(
+                id = "desktop-answer",
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive("Desktop completed without Android attachment."),
+            ),
+        )
+        awaitCondition {
+            handler.messages.value.singleOrNull()?.content ==
+                "Desktop completed without Android attachment."
+        }
+        ownershipMethods.forEach { method ->
+            assertEquals(
+                "passive foreground sent $method",
+                baseline.getValue(method),
+                gatewayHarness.rpcLog.count { it.first == method },
+            )
+        }
+
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        assertEquals(
+            "observer teardown interrupted the Desktop turn",
+            baseline.getValue("session.interrupt"),
+            gatewayHarness.rpcLog.count { it.first == "session.interrupt" },
+        )
+    }
+
+    @Test
+    fun observerReadyAfterChatHidesCannotRestartPassiveWork() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val historyReads = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            historyReads.incrementAndGet()
+            Result.success(persistedHistory)
+        }
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "session.interrupt",
+            "prompt.submit",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val baselineActiveList = gatewayHarness.rpcLog.count { it.first == "session.active_list" }
+        gatewayHarness.suppressGatewayReady = true
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+        )
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.updateGatewayClient(gatewayClient)
+
+        viewModel.setChatVisible(true)
+        val delayedSocket = gatewayHarness.awaitServerSocket()
+        viewModel.setChatVisible(false)
+        gatewayHarness.sendGatewayReady(delayedSocket)
+        shadowOf(Looper.getMainLooper()).idleFor(500, TimeUnit.MILLISECONDS)
+        Thread.sleep(100)
+
+        assertEquals(0, historyReads.get())
+        assertEquals(
+            baselineActiveList,
+            gatewayHarness.rpcLog.count { it.first == "session.active_list" },
+        )
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
     }
 
     @Test
@@ -2465,6 +3749,88 @@ class ChatViewModelGatewayInboundTurnTest {
         )
     }
 
+    private fun assertRecoveredSubagentWatchProfile(
+        contextKey: String,
+        persistedProfileKey: String?,
+        expectedProfile: String?,
+    ) {
+        val now = System.currentTimeMillis()
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = contextKey,
+                profileKey = persistedProfileKey,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("pending-user", "Delegate this", now - 2_000L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "pending-assistant",
+                    content = "Partial",
+                    timestamp = now - 1_900L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = now - 1_900L,
+                updatedAt = now,
+            ),
+        )
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Partial"
+        gatewayHarness.resumeLiveSessionIds["child-stored"] = "child-live"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition { handler.isStreaming.value }
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "subagent.start",
+                buildJsonObject {
+                    put("goal", "Inspect recovery")
+                    put("task_index", 0)
+                    put("task_count", 1)
+                    put("subagent_id", "child-agent")
+                    put("child_session_id", "child-stored")
+                },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { viewModel.subagentActivities.value.size == 1 }
+        viewModel.openSubagentChildPreview(viewModel.subagentActivities.value.single().stableKey)
+
+        val resume = gatewayHarness.awaitRpcCount("session.resume", 2).last()
+        if (expectedProfile == null) {
+            assertFalse(resume.containsKey("profile"))
+        } else {
+            assertEquals(JsonPrimitive(expectedProfile), resume["profile"])
+        }
+    }
+
+    private fun assertCurrentCheckpointProfileKey(
+        profileName: String?,
+        effectiveSessionProfileName: String?,
+        expectedProfileKey: String,
+    ) {
+        val checkpointStore = MemoryCheckpointStore()
+        val profile = profileName?.let { Profile(name = it, model = "model") }
+        viewModel.setSelectedProfileProvider { profile }
+        viewModel.setSessionProfileNameProvider { effectiveSessionProfileName }
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("connection-a", profileName),
+            STORED_SESSION_ID,
+        )
+
+        viewModel.sendMessage("Persist profile identity")
+
+        gatewayHarness.awaitRpc("prompt.submit")
+        awaitCondition { checkpointStore.checkpoint?.profileKey == expectedProfileKey }
+        assertEquals(expectedProfileKey, checkpointStore.checkpoint?.profileKey)
+    }
+
     private fun activeSessionPayload(status: String) = buildJsonObject {
         put("sessions", buildJsonArray {
             add(buildJsonObject {
@@ -2487,6 +3853,28 @@ class ChatViewModelGatewayInboundTurnTest {
             content = JsonPrimitive(answer),
         ),
     )
+
+    private fun replaceGatewayClient(ticketTimeoutMs: Long): GatewayChatClient {
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = gatewayHarness.server.url("/").toString().trimEnd('/'),
+                okHttpClient = OkHttpClient(),
+                controlReadTimeoutMillis = ticketTimeoutMs,
+            ),
+            okHttpClient = OkHttpClient(),
+            callbackDispatcher = { block ->
+                Handler(Looper.getMainLooper()).post(block)
+            },
+            scope = gatewayScope,
+            reconnectJitterUnit = { Math.nextDown(1.0) },
+        )
+        viewModel.updateGatewayClient(gatewayClient)
+        return gatewayClient
+    }
 
     private fun awaitCondition(condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)

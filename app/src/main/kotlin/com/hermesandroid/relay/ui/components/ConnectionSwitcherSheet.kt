@@ -31,7 +31,7 @@ import com.hermesandroid.relay.data.Connection
 
 /**
  * Bottom sheet chooser for switching between Hermes connections. Driven by
- * the top-bar [ConnectionChip] tap and the Settings → Connections row.
+ * the top-bar [ConnectionChip] tap and the Settings → Gateways row.
  * Each row is a radio selection — tapping commits immediately and dismisses
  * the sheet so the swap kicks off before the user's finger is off the screen.
  *

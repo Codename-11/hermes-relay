@@ -100,7 +100,7 @@ export default function BridgeActivity({ autoRefresh }) {
   if (error) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>Relay unreachable</AlertTitle>
+        <AlertTitle>Hermes-Relay unreachable</AlertTitle>
         <AlertDescription>
           <pre className="whitespace-pre-wrap text-xs">{error}</pre>
           {!autoRefresh ? (
@@ -118,7 +118,7 @@ export default function BridgeActivity({ autoRefresh }) {
       <CardHeader>
         <CardTitle>Bridge activity</CardTitle>
         <CardDescription>
-          Most recent bridge commands routed through the relay. Newest first; capped at 100.
+          Most recent Bridge commands routed through Hermes-Relay. Newest first; capped at 100.
         </CardDescription>
       </CardHeader>
       <CardContent>

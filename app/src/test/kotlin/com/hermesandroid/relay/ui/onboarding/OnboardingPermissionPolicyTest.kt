@@ -2,9 +2,33 @@ package com.hermesandroid.relay.ui.onboarding
 
 import android.os.Build
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OnboardingPermissionPolicyTest {
+
+    @Test
+    fun chatAlertsDefaultTracksRuntimeNotificationAuthority() {
+        assertTrue(
+            com.hermesandroid.relay.viewmodel.defaultChatAlertsEnabled(
+                sdkInt = 32,
+                notificationsPermitted = false,
+            ),
+        )
+        assertFalse(
+            com.hermesandroid.relay.viewmodel.defaultChatAlertsEnabled(
+                sdkInt = 33,
+                notificationsPermitted = false,
+            ),
+        )
+        assertTrue(
+            com.hermesandroid.relay.viewmodel.defaultChatAlertsEnabled(
+                sdkInt = 33,
+                notificationsPermitted = true,
+            ),
+        )
+    }
 
     @Test
     fun permissionSetup_followsSuccessfulConnection() {

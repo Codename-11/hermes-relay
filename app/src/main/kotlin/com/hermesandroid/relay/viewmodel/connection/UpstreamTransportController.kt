@@ -7,9 +7,11 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardBearerAuth
 import com.hermesandroid.relay.network.upstream.EncryptedNativeDashboardTokenStore
+import com.hermesandroid.relay.network.upstream.NativeDashboardTokenStore
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardAuthClient
 import com.hermesandroid.relay.network.upstream.clearNativeDashboardTokens
@@ -23,6 +25,24 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+internal fun reconcileGatewayAvailability(
+    current: GatewayAvailability,
+    probed: GatewayAvailability,
+    liveState: GatewayConnectionState?,
+    liveRouteMatches: Boolean = true,
+): GatewayAvailability = when {
+    liveRouteMatches && liveState == GatewayConnectionState.Ready -> GatewayAvailability.Ready
+    current == GatewayAvailability.Unsupported &&
+        (probed == GatewayAvailability.Ready || probed == GatewayAvailability.Unknown) -> current
+    else -> probed
+}
+
+internal fun isCurrentGatewayClientCallback(
+    connectionId: String,
+    client: GatewayChatClient,
+    cached: Triple<String, String, GatewayChatClient>?,
+): Boolean = cached?.first == connectionId && cached.third === client
 
 /**
  * Owns the **upstream dashboard/gateway transport clients** and the
@@ -82,6 +102,8 @@ class UpstreamTransportController(
     private val tokenStoreKeyProvider: (String) -> String? = { null },
     /** Exact trusted Dashboard base for any saved connection, active or not. */
     private val trustedDashboardUrlProvider: (String) -> String? = { null },
+    /** False when the host's advertised auth topology requires cookie compatibility mode. */
+    private val nativeDashboardBearerEligibleProvider: (String) -> Boolean = { true },
     /** Applies pairing-bound TLS to a standard authenticated client when needed. */
     private val pinnedClientProvider: (String, okhttp3.OkHttpClient) -> okhttp3.OkHttpClient? =
         { _, _ -> null },
@@ -89,17 +111,33 @@ class UpstreamTransportController(
         (DashboardCookieStore, DashboardBearerAuth?) -> okhttp3.OkHttpClient = { cookieStore, bearerAuth ->
             DashboardApiClient.defaultClient(cookieStore, bearerAuth)
         },
+    private val dashboardTokenStoreFactory: (String) -> NativeDashboardTokenStore = { tokenStoreKey ->
+        EncryptedNativeDashboardTokenStore(context, tokenStoreKey)
+    },
+    private val dashboardCookieStoreFactory: (String, String?) -> DashboardCookieStore =
+        { connectionId, tokenStoreKey ->
+            EncryptedDashboardCookieStore(
+                context = context,
+                connectionId = connectionId,
+                tokenStoreKey = tokenStoreKey,
+            )
+        },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
 
     /** Per-connection encrypted cookie stores, cached to avoid Keystore churn. */
     private val dashboardCookieStores =
-        ConcurrentHashMap<String, EncryptedDashboardCookieStore>()
+        ConcurrentHashMap<String, DashboardCookieStore>()
     private val dashboardTokenStores =
-        ConcurrentHashMap<String, EncryptedNativeDashboardTokenStore>()
+        ConcurrentHashMap<String, NativeDashboardTokenStore>()
+    /** Shared authenticated transport per exact connection + Dashboard route. */
+    private val dashboardRestHttpClients =
+        mutableMapOf<Pair<String, String>, okhttp3.OkHttpClient>()
     private var dashboardHttpClientCache:
         Triple<String, String, okhttp3.OkHttpClient>? = null
+    private var dashboardSessionClientCache:
+        Triple<String, String, DashboardApiClient>? = null
     private data class RouteGatewayEntry(
         var dashboardUrl: String,
         var dashboardClient: DashboardApiClient,
@@ -131,11 +169,7 @@ class UpstreamTransportController(
      */
     fun dashboardCookieStoreFor(connectionId: String): DashboardCookieStore =
         dashboardCookieStores.getOrPut(connectionId) {
-            EncryptedDashboardCookieStore(
-                context = context,
-                connectionId = connectionId,
-                tokenStoreKey = tokenStoreKeyProvider(connectionId),
-            )
+            dashboardCookieStoreFactory(connectionId, tokenStoreKeyProvider(connectionId))
         }
 
     /**
@@ -148,11 +182,11 @@ class UpstreamTransportController(
         return dashboardCookieStoreFor(connectionId)
     }
 
-    private fun dashboardTokenStoreFor(connectionId: String): EncryptedNativeDashboardTokenStore {
+    private fun dashboardTokenStoreFor(connectionId: String): NativeDashboardTokenStore {
         val key = tokenStoreKeyProvider(connectionId)
             ?: com.hermesandroid.relay.data.Connection.buildTokenStoreKey(connectionId)
         return dashboardTokenStores.getOrPut(connectionId) {
-            EncryptedNativeDashboardTokenStore(context, key)
+            dashboardTokenStoreFactory(key)
         }
     }
 
@@ -160,6 +194,7 @@ class UpstreamTransportController(
         connectionId: String,
         dashboardUrl: String,
     ): DashboardBearerAuth? {
+        if (!nativeDashboardBearerEligibleProvider(connectionId)) return null
         if (!isNativeDashboardTransportEligible(dashboardUrl)) return null
         val trustedDashboardUrl = trustedDashboardUrlProvider(connectionId)
             ?: (if (activeConnectionIdProvider() == connectionId) dashboardUrlProvider() else null)
@@ -179,15 +214,42 @@ class UpstreamTransportController(
      * factory the dashboard-surface callers (profile lists, session/message
      * scoping, the gateway client, standard-API setup probe) route through.
      */
+    @Synchronized
     fun dashboardClientFor(connectionId: String, dashboardUrl: String): DashboardApiClient {
-        val base = dashboardHttpClientFactory(
-            dashboardCookieStoreFor(connectionId),
-            bearerAuthForTrustedDashboard(connectionId, dashboardUrl),
-        )
+        val normalizedUrl = dashboardUrl.trim().trimEnd('/')
+        val key = connectionId to normalizedUrl
+        val sharedClient = dashboardRestHttpClients.getOrPut(key) {
+            val base = dashboardHttpClientFactory(
+                dashboardCookieStoreFor(connectionId),
+                bearerAuthForTrustedDashboard(connectionId, normalizedUrl),
+            )
+            pinnedClientProvider(normalizedUrl, base) ?: base
+        }
         return DashboardApiClient(
-            baseUrl = dashboardUrl,
-            okHttpClient = pinnedClientProvider(dashboardUrl, base) ?: base,
+            baseUrl = normalizedUrl,
+            okHttpClient = sharedClient,
+            ownsHttpClient = false,
         )
+    }
+
+    /**
+     * Reuse one authenticated REST client for profile/session directory work.
+     * Exact connection + route identity owns the warm TLS/HTTP connection and
+     * its retirement, matching Desktop's shared HTTP-stack behavior.
+     */
+    @Synchronized
+    fun dashboardSessionClientFor(
+        connectionId: String,
+        dashboardUrl: String,
+    ): DashboardApiClient {
+        dashboardSessionClientCache?.let { (cachedConnection, cachedUrl, client) ->
+            if (cachedConnection == connectionId && cachedUrl == dashboardUrl) return client
+            client.shutdown()
+            dashboardSessionClientCache = null
+        }
+        return dashboardClientFor(connectionId, dashboardUrl).also { client ->
+            dashboardSessionClientCache = Triple(connectionId, dashboardUrl, client)
+        }
     }
 
     /**
@@ -201,6 +263,21 @@ class UpstreamTransportController(
             activeConnectionIdProvider()?.let {
                 bearerAuthForTrustedDashboard(it, dashboardUrl)
             },
+        )
+        return DashboardApiClient(
+            baseUrl = dashboardUrl,
+            okHttpClient = pinnedClientProvider(dashboardUrl, base) ?: base,
+        )
+    }
+
+    /**
+     * Cookie-only client for proving a newly imported WebView session. A saved
+     * native bearer must not override the cookie provider during that proof.
+     */
+    fun dashboardCookieClientForActive(dashboardUrl: String): DashboardApiClient {
+        val base = dashboardHttpClientFactory(
+            activeDashboardCookieStore() ?: InMemoryDashboardCookieStore(),
+            null,
         )
         return DashboardApiClient(
             baseUrl = dashboardUrl,
@@ -261,6 +338,16 @@ class UpstreamTransportController(
     @Synchronized
     fun clearDashboardAuthentication(connectionId: String) {
         dashboardCookieStoreFor(connectionId).clear()
+        retireNativeDashboardAuthentication(connectionId)
+    }
+
+    /**
+     * Transfers credential ownership to a verified cookie flow. This retires
+     * only native PKCE tokens and clients that may have captured their bearer;
+     * newly imported Dashboard cookies remain intact.
+     */
+    @Synchronized
+    fun retireNativeDashboardAuthentication(connectionId: String) {
         clearNativeDashboardTokens(dashboardTokenStoreFor(connectionId))
         dashboardHttpClientCache
             ?.takeIf { it.first == connectionId }
@@ -306,14 +393,37 @@ class UpstreamTransportController(
     /** Probe-driven update that respects the sticky [markGatewayUnsupported] verdict. */
     fun updateGatewayAvailability(probed: GatewayAvailability) {
         val current = _gatewayAvailability.value
-        if (current == GatewayAvailability.Unsupported && probed == GatewayAvailability.Ready) return
-        _gatewayAvailability.value = probed
+        val live = synchronized(this) { gatewayClientCache }
+        val activeConnectionId = activeConnectionIdProvider()
+        val activeDashboardUrl = dashboardUrlProvider()?.trim()?.trimEnd('/')
+        val liveRouteMatches = live != null && activeConnectionId != null &&
+            live.first == activeConnectionId &&
+            live.second.trim().trimEnd('/') == activeDashboardUrl
+        val liveState = live?.third?.connectionState?.value
+        _gatewayAvailability.value = reconcileGatewayAvailability(
+            current,
+            probed,
+            liveState,
+            liveRouteMatches,
+        )
     }
 
     // --- Gateway chat client -----------------------------------------------
 
     /** Cached gateway client, keyed by connection + resolved dashboard URL. */
     private var gatewayClientCache: Triple<String, String, GatewayChatClient>? = null
+
+    @Synchronized
+    private fun updateGatewayAvailabilityIfCurrent(
+        connectionId: String,
+        client: GatewayChatClient,
+        availability: GatewayAvailability,
+    ) {
+        val current = gatewayClientCache
+        if (isCurrentGatewayClientCallback(connectionId, client, current)) {
+            updateGatewayAvailability(availability)
+        }
+    }
 
     /**
      * Gateway chat client for the active connection — built lazily, rebuilt
@@ -347,9 +457,37 @@ class UpstreamTransportController(
             }
         }
         gatewayClientCache?.third?.shutdown()
-        val client = GatewayChatClient(
+        lateinit var client: GatewayChatClient
+        client = GatewayChatClient(
             initialDashboardClient = dashboardClientFor(connectionId, dashboardUrl),
-            onGatewayUnsupported = { markGatewayUnsupported() },
+            onGatewayUnsupported = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Unsupported,
+                )
+            },
+            onGatewaySignInRequired = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.SignInRequired,
+                )
+            },
+            onGatewayUnreachable = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Unreachable,
+                )
+            },
+            onGatewayReady = {
+                updateGatewayAvailabilityIfCurrent(
+                    connectionId,
+                    client,
+                    GatewayAvailability.Ready,
+                )
+            },
         )
         // Carry the current keep-alive preference onto the fresh client so a
         // connection/route switch doesn't lose the no-background-close flag.
@@ -436,6 +574,18 @@ class UpstreamTransportController(
 
     @Synchronized
     fun disposeConnectionRouteClients(connectionId: String) {
+        dashboardSessionClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.shutdown()
+        if (dashboardSessionClientCache?.first == connectionId) {
+            dashboardSessionClientCache = null
+        }
+        dashboardRestHttpClients.keys
+            .filter { it.first == connectionId }
+            .forEach { key ->
+                dashboardRestHttpClients.remove(key)?.let(::disposeDashboardHttpClient)
+            }
         routeGatewayClients.entries
             .filter { it.key.connectionId == connectionId }
             .forEach { (key, entry) ->
@@ -447,6 +597,10 @@ class UpstreamTransportController(
 
     @Synchronized
     fun disposeAllRouteClients() {
+        dashboardSessionClientCache?.third?.shutdown()
+        dashboardSessionClientCache = null
+        dashboardRestHttpClients.values.forEach(::disposeDashboardHttpClient)
+        dashboardRestHttpClients.clear()
         routeGatewayClients.values.forEach(::shutdownRouteEntry)
         routeGatewayClients.clear()
     }
@@ -476,6 +630,8 @@ class UpstreamTransportController(
             gatewayClientCache = null
             dashboardHttpClientCache?.third?.let(::disposeDashboardHttpClient)
             dashboardHttpClientCache = null
+            dashboardSessionClientCache?.third?.shutdown()
+            dashboardSessionClientCache = null
         }
     }
 

@@ -20,13 +20,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -39,9 +43,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
@@ -56,6 +65,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.GatewayProcess
+import com.hermesandroid.relay.viewmodel.SubagentActivity
+import com.hermesandroid.relay.viewmodel.SubagentActivityPhase
+import com.hermesandroid.relay.viewmodel.SubagentChildPreview
+import kotlinx.coroutines.launch
 
 /**
  * Composer-adjacent summary of upstream Hermes processes for the active chat.
@@ -63,8 +76,10 @@ import com.hermesandroid.relay.network.upstream.GatewayProcess
  * in the global session/navigation drawer.
  */
 @Composable
-fun GatewayBackgroundProcessStrip(
+internal fun GatewayBackgroundProcessStrip(
     processes: List<GatewayProcess>,
+    subagentActivities: List<SubagentActivity>,
+    subagentPreviewVisibility: SubagentPreviewVisibility,
     loading: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -72,16 +87,26 @@ fun GatewayBackgroundProcessStrip(
     // Initial/switch refreshes are silent. The strip appears only after the
     // session actually owns a process, avoiding a transient "Checking" row on
     // every ordinary chat open.
-    if (processes.isEmpty()) return
+    val visibleActivities = subagentActivities.takeIf { subagentPreviewVisibility.showLifecycle }.orEmpty()
+    if (processes.isEmpty() && visibleActivities.isEmpty()) return
 
     val running = processes.count { it.isRunning }
+    val runningAgents = visibleActivities.count { !it.isTerminal }
     val failed = processes.count { !it.isRunning && (it.exitCode ?: 0) != 0 }
-    val displayedCount = if (running > 0) running else processes.size
+    val failedAgents = visibleActivities.count { it.phase == SubagentActivityPhase.FAILED }
+    val interruptedAgents = visibleActivities.count {
+        it.phase == SubagentActivityPhase.INTERRUPTED ||
+            it.phase == SubagentActivityPhase.ENDED_WITH_PARENT
+    }
+    val failureCount = failed + failedAgents
     val status = when {
+        runningAgents > 0 -> stringResource(R.string.subagent_lane_running_count, runningAgents)
         running > 0 -> "$running ${stringResource(R.string.bg_processes_running)}"
-        failed > 0 -> "$failed ${stringResource(R.string.task_status_failed)}"
+        failureCount > 0 -> "$failureCount ${stringResource(R.string.task_status_failed)}"
+        interruptedAgents > 0 -> stringResource(R.string.agent_activity_status_interrupted)
         else -> stringResource(R.string.task_status_complete)
     }
+    val openDescription = stringResource(R.string.current_chat_activity_open)
 
     Surface(
         modifier = modifier
@@ -90,11 +115,11 @@ fun GatewayBackgroundProcessStrip(
             .heightIn(min = 48.dp)
             .semantics {
                 contentDescription =
-                    "Background processes, $status. Open current chat activity."
+                    "$openDescription, $status"
                 stateDescription = status
             }
             .clickable(
-                onClickLabel = stringResource(R.string.bg_processes_open),
+                onClickLabel = openDescription,
                 onClick = onClick,
             ),
         shape = RoundedCornerShape(14.dp),
@@ -105,37 +130,41 @@ fun GatewayBackgroundProcessStrip(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (running > 0 || loading) {
+            if (running > 0 || runningAgents > 0 || loading) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             } else {
                 Icon(
-                    imageVector = if (failed > 0) Icons.Filled.ErrorOutline else Icons.Filled.CheckCircle,
+                    imageVector = when {
+                        failureCount > 0 -> Icons.Filled.ErrorOutline
+                        interruptedAgents > 0 -> Icons.Filled.PauseCircleOutline
+                        else -> Icons.Filled.CheckCircle
+                    },
                     contentDescription = null,
                     modifier = Modifier.size(17.dp),
-                    tint = if (failed > 0) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
+                    tint = when {
+                        failureCount > 0 -> MaterialTheme.colorScheme.error
+                        interruptedAgents > 0 -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.primary
                     },
                 )
             }
             Spacer(Modifier.width(9.dp))
             Text(
-                text = stringResource(R.string.background_process_count, displayedCount),
+                text = stringResource(R.string.current_chat_activity_title),
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
             Text(
                 text = status,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (failed > 0 && running == 0) {
+                color = if (failureCount > 0 && running == 0) {
                     MaterialTheme.colorScheme.error
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
             )
             Icon(
-                imageVector = Icons.Filled.ExpandLess,
+                imageVector = Icons.Filled.Visibility,
                 contentDescription = null,
                 modifier = Modifier
                     .padding(start = 6.dp)
@@ -149,18 +178,56 @@ fun GatewayBackgroundProcessStrip(
 /** Mobile analogue of Hermes Desktop's composer process stack + terminal viewer. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GatewayBackgroundProcessSheet(
+internal fun GatewayBackgroundProcessSheet(
     processes: List<GatewayProcess>,
+    subagentActivities: List<SubagentActivity>,
+    subagentChildPreview: SubagentChildPreview?,
+    subagentPreviewVisibility: SubagentPreviewVisibility,
     loading: Boolean,
     stoppingProcessIds: Set<String>,
     onRefresh: () -> Unit,
     onStop: (String) -> Unit,
     onDismissProcess: (String) -> Unit,
+    onOpenSubagentChild: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var expandedAgentKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     val running = processes.filter { it.isRunning }
     val recent = processes.filterNot { it.isRunning }
+    val visibleActivities = subagentActivities.takeIf { subagentPreviewVisibility.showLifecycle }.orEmpty()
+    val followTarget = subagentActivityFollowTarget(
+        visibleActivities,
+        expandedAgentKeys,
+        subagentPreviewVisibility,
+        subagentChildPreview,
+    )
+    val activityRevision = visibleActivities.sumOf { it.revision } +
+        subagentChildPreview?.messages.orEmpty().sumOf { message ->
+            message.content.length + message.thinkingContent.length +
+                message.toolCalls.sumOf { (it.args?.length ?: 0) + it.name.length }
+        }
+    val nearActivityTail by remember(followTarget, listState) {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            followTarget >= 0 && last in maxOf(0, followTarget - 2)..followTarget
+        }
+    }
+    var followAgentTail by remember { mutableStateOf(true) }
+
+    LaunchedEffect(listState, followTarget) {
+        snapshotFlow { listState.isScrollInProgress to nearActivityTail }.collect { (scrolling, nearTail) ->
+            if (scrolling) followAgentTail = nearTail
+            else if (nearTail) followAgentTail = true
+        }
+    }
+    LaunchedEffect(activityRevision, followTarget) {
+        if (followAgentTail && followTarget >= 0) {
+            listState.scrollToItem(followTarget)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -178,23 +245,48 @@ fun GatewayBackgroundProcessSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.background_processes_title), style = MaterialTheme.typography.titleLarge)
                     Text(
-                        stringResource(R.string.background_processes_subtitle),
+                        stringResource(R.string.current_chat_activity_title),
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Text(
+                        stringResource(R.string.current_chat_activity_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = onRefresh, enabled = !loading) {
+                if (processes.isNotEmpty()) IconButton(onClick = onRefresh, enabled = !loading) {
                     if (loading) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.background_processes_refresh_a11y))
                     }
                 }
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.current_chat_activity_close),
+                    )
+                }
+            }
+            if (!followAgentTail && followTarget >= 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = {
+                        followAgentTail = true
+                        scope.launch { listState.animateScrollToItem(followTarget) }
+                    }) {
+                        Text(stringResource(R.string.current_chat_activity_latest))
+                    }
+                }
             }
 
-            if (processes.isEmpty() && !loading) {
+            if (processes.isEmpty() && visibleActivities.isEmpty() && !loading) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -202,23 +294,47 @@ fun GatewayBackgroundProcessSheet(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Icon(
-                        Icons.Filled.Terminal,
+                        Icons.Filled.AccountTree,
                         contentDescription = null,
                         modifier = Modifier.size(30.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        stringResource(R.string.bg_processes_empty),
+                        stringResource(R.string.current_chat_activity_empty),
                         modifier = Modifier.padding(top = 12.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 560.dp),
                 ) {
+                    subagentActivityItems(
+                        activities = visibleActivities,
+                        expandedKeys = expandedAgentKeys,
+                        visibility = subagentPreviewVisibility,
+                        childPreview = subagentChildPreview,
+                        onToggle = { key ->
+                            expandedAgentKeys = if (key in expandedAgentKeys) {
+                                expandedAgentKeys - key
+                            } else {
+                                expandedAgentKeys + key
+                            }
+                        },
+                        onOpenChild = onOpenSubagentChild,
+                    )
+                    if (visibleActivities.isNotEmpty() && processes.isNotEmpty()) {
+                        item { HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp)) }
+                        item {
+                            ProcessSectionLabel(
+                                stringResource(R.string.background_processes_title),
+                                processes.size,
+                            )
+                        }
+                    }
                     if (running.isNotEmpty()) {
                         item { ProcessSectionLabel(stringResource(R.string.bg_processes_running), running.size) }
                         items(running, key = { it.id }) { process ->

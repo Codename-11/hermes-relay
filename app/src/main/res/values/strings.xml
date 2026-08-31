@@ -6,7 +6,7 @@
     <string name="notification_companion_label">Hermes-Relay notification companion</string>
 
     <string name="onboarding_skip_setup_title">Skip setup?</string>
-    <string name="onboarding_skip_setup_text">No problem — you can explore the demo to see how Hermes-Relay works, and connect your own Hermes server anytime from Settings → Connections. Relay pairing for power tools can be added later too.</string>
+    <string name="onboarding_skip_setup_text">No problem — you can explore the demo to see how Hermes-Relay works, and add your own Hermes Gateway anytime from Settings → Gateways. Relay pairing for power tools can be added later too.</string>
     <string name="onboarding_skip_for_now">Skip for now</string>
     <string name="onboarding_go_back">Go back</string>
     <string name="onboarding_skip">Skip</string>
@@ -154,7 +154,7 @@
     <string name="chat_editing_notice">Editing — will rewind the conversation</string>
     <string name="chat_mic_perm_needed">Microphone permission needed</string>
     <string name="chat_mic_perm_body">Tap Open Settings and grant Microphone access to use voice mode.</string>
-    <string name="chat_manage_connections">Manage connections</string>
+    <string name="chat_manage_connections">Manage gateways</string>
     <string name="chat_no_clipboard_image">No image on the clipboard</string>
     <string name="chat_copied_to_clipboard">Copied to clipboard</string>
     <string name="chat_camera_open_failed">Couldn\'t open the camera</string>
@@ -217,7 +217,7 @@
     <string name="dashboard_component_connected">connected</string>
     <string name="dashboard_component_server_errors_5m">server errors / 5m</string>
     <string name="conn_label_connect">Connect</string>
-    <string name="conn_label_connections">Connections</string>
+    <string name="conn_label_connections">Gateways</string>
     <string name="conn_detail_add_connection">Add a Vanilla Hermes API/dashboard connection</string>
     <string name="conn_detail_waiting_network">Waiting for Android to report an internet route</string>
     <string name="conn_detail_chat_unavailable">Chat and profile calls may not be available</string>
@@ -303,19 +303,19 @@
     <string name="error_classify_open_settings">Open Settings</string>
 
     <!-- Connection wizard — Connect page essentials -->
-    <string name="cw_connect_to_hermes">Connect to Hermes</string>
+    <string name="cw_connect_to_hermes">Add gateway</string>
     <string name="cw_nearby_description">We’ll look for Hermes on this network. Dashboard and Gateway provide the standard Chat, Manage, and Voice connection.</string>
-    <string name="cw_connection_chooser_description">Choose the setup you have. Hermes Relay is optional.</string>
+    <string name="cw_connection_chooser_description">A gateway is one Hermes installation. Choose how this phone can reach it.</string>
     <string name="cw_scan_setup_qr_title">Scan Hermes setup QR</string>
     <string name="cw_scan_setup_qr_subtitle">Configure local, remote, and available Relay routes</string>
     <string name="cw_recommended">Recommended</string>
-    <string name="cw_other_ways_to_connect">Other ways to connect</string>
+    <string name="cw_other_ways_to_connect">Choose a gateway</string>
     <string name="cw_advanced">Advanced</string>
     <string name="cw_cloud_title">Nous-hosted Hermes</string>
     <string name="cw_cloud_subtitle">Connect to your hosted agent</string>
-    <string name="cw_server_vps_title">Server or VPS</string>
-    <string name="cw_server_vps_subtitle">Enter a secure Dashboard address</string>
-    <string name="cw_relay_optional_note">Standard Chat, Manage, and Voice work without Relay. Compatible setup QRs add Relay power features when available.</string>
+    <string name="cw_server_vps_title">Remote gateway</string>
+    <string name="cw_server_vps_subtitle">Enter its Dashboard address</string>
+    <string name="cw_relay_optional_note">Private LAN and Tailscale addresses may use HTTP or HTTPS. Public addresses require HTTPS. Relay and API fallback are optional.</string>
     <string name="cw_cloud_entry_title">Connect to Nous-hosted Hermes</string>
     <string name="cw_cloud_entry_description">Enter the agent address shown in Nous Portal. You’ll sign in securely after Hermes is found.</string>
     <string name="cw_cloud_agent_name">Agent address</string>
@@ -349,7 +349,7 @@
     <string name="cw_relay_pair_qr">Pair Hermes Relay</string>
     <string name="cw_relay_pair_qr_desc">Scan a Relay setup QR</string>
     <string name="cw_relay_enter_code">Enter a Relay pairing code</string>
-    <string name="cw_manual_hermes_title">Enter your Hermes address</string>
+    <string name="cw_manual_hermes_title">Enter gateway address</string>
     <string name="cw_manual_hermes_description">Enter the Dashboard address you open in a browser. If it does not open on this phone, start hermes dashboard and check Wi-Fi or Tailscale.</string>
     <string name="cw_hermes_address">Hermes address</string>
     <string name="cw_hermes_address_placeholder">192.168.1.10 or hermes.example.com</string>
@@ -485,12 +485,16 @@
     <string name="cw_insecure_relay_warning">This relay uses plain ws:// — traffic is not encrypted.</string>
     <string name="cw_insecure_relay_trust">Only continue if you trust the network on any connection (LAN, Tailscale, VPN).</string>
     <string name="cw_insecure_ack">I understand this pairing sends traffic in plain text — visible to anyone on the network.</string>
-    <string name="cw_mixed_route_plain">%1$s is plain ws:// — fine at home or the office, not on public Wi-Fi.</string>
-    <string name="cw_mixed_route_secure">%1$s is encrypted (wss://) and the app uses it automatically when %2$s is unreachable.</string>
-    <string name="cw_mixed_safe">You\'re safe on any network.</string>
+    <string name="cw_mixed_route_plain">%1$s uses plain HTTP/WS. Use it only on a trusted private network or through a VPN you control.</string>
+    <string name="cw_mixed_route_secure">%1$s uses HTTPS/WSS with transport encryption.</string>
+    <string name="cw_mixed_safe">The app probes these routes and selects an available one. You can change the preferred route later.</string>
     <string name="cw_connecting_to_hermes">Connecting to Hermes</string>
     <string name="cw_connecting_detail">Checking the API server, saved key, and dashboard.</string>
     <string name="cw_pairing_title">Pairing…</string>
+    <string name="cw_pair_in_progress">Working…</string>
+    <string name="cw_pair_status_preparing_gateway">Preparing gateway…</string>
+    <string name="cw_pair_status_opening_sign_in">Opening secure sign-in…</string>
+    <string name="cw_pair_status_pairing_relay">Pairing Relay…</string>
     <string name="cw_pairing_failed">Pairing failed</string>
     <string name="cw_negotiating_relay">Negotiating with the relay…</string>
     <string name="cw_paired_opening_chat">Paired — opening chat…</string>
@@ -513,7 +517,7 @@
     <string name="cw_voice_after_connect">Checked after connecting</string>
     <string name="cw_remote">Remote</string>
     <string name="cw_remote_fallback_ready">Fallback route ready for use away from home</string>
-    <string name="cw_remote_lan_only">LAN only — add a Tailscale or public route in Settings → Connections → Routes</string>
+    <string name="cw_remote_lan_only">LAN only — add a Tailscale or public route in Settings → Gateways → Routes</string>
     <string name="cw_relay">Relay</string>
     <string name="cw_relay_paired">Power tools paired</string>
     <string name="cw_relay_optional">Optional for Terminal and Bridge</string>
@@ -532,7 +536,18 @@
     <string name="endpoints_manual_until_disconnect">Manual — until disconnect</string>
     <string name="endpoints_preferred">Preferred</string>
     <string name="endpoints_automatic">Automatic</string>
-    <string name="endpoints_current_route">Current route: %1$s (%2$s)</string>
+    <string name="endpoints_current_route">Selected candidate: %1$s · %2$s</string>
+    <string name="endpoints_no_active_fallback">No fallback route is currently selected.</string>
+    <string name="endpoints_selection_reason">Priority %1$d (0 is highest) · %2$s</string>
+    <string name="endpoints_reachable_now">Reachable now</string>
+    <string name="endpoints_last_check_failed">Last check failed</string>
+    <string name="endpoints_reachability_not_checked">Reachability not checked</string>
+    <string name="endpoints_security_application_tls">Application TLS</string>
+    <string name="endpoints_security_tailscale_overlay">Encrypted by Tailscale · no application TLS</string>
+    <string name="endpoints_security_wireguard_overlay">Encrypted by WireGuard · no application TLS</string>
+    <string name="endpoints_security_secure_link">Encrypted by Hermes Secure Link</string>
+    <string name="endpoints_security_private_plain">Private network · no application TLS</string>
+    <string name="endpoints_security_public_plain">Public route is not encrypted</string>
     <string name="endpoints_cancel_manual_switch">Cancel manual switch — back to %1$s</string>
     <string name="endpoints_stop_preferring">Stop preferring — back to automatic</string>
     <string name="endpoints_checking">Checking…</string>
@@ -567,6 +582,13 @@
     <string name="endpoints_save">Save</string>
     <string name="endpoints_close">Close</string>
     <string name="endpoints_actions">Endpoint actions</string>
+    <string name="dashboard_address_editor_title">Gateway address</string>
+    <string name="dashboard_address_editor_body">Set the Dashboard and Gateway address this phone should use. Private LAN and Tailscale routes may use HTTP or HTTPS; public routes require HTTPS.</string>
+    <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
+    <string name="dashboard_address_placeholder">https://hermes.example.com</string>
+    <string name="dashboard_address_required">Enter your Hermes Gateway address</string>
+    <string name="dashboard_address_preview">Will use: %1$s</string>
+    <string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
 
     <!-- BridgeMasterToggle -->
     <string name="bmt_agent_control">Agent Control</string>
@@ -714,8 +736,8 @@
     <string name="relay_state_needs_repair">Needs re-pair</string>
     <string name="settings_no_connection">No connection</string>
     <string name="settings_server_default">Server default</string>
-    <string name="settings_connections">Connections</string>
-    <string name="settings_connections_desc">API, dashboard, relay pairing, and routes</string>
+    <string name="settings_connections">Gateways</string>
+    <string name="settings_connections_desc">Hermes installations, routes, sign-in, and extensions</string>
     <string name="settings_hermes">Hermes</string>
     <string name="settings_hermes_management">Hermes management</string>
     <string name="settings_hermes_management_desc">Dashboard features: skills, cron, MCP, profiles, models</string>
@@ -805,7 +827,7 @@
     <string name="chat_settings_large_pastes">Convert large pastes to attachments</string>
     <string name="chat_settings_large_pastes_desc">Turn pastes of 5,000 or more characters into reviewable text attachments. On by default.</string>
     <string name="chat_settings_show_git_workspace">Show Git workspace in Chat</string>
-    <string name="chat_settings_show_git_workspace_desc">Show the Git status entry and changes rail in Chat. The full Git workspace remains available when this is off.</string>
+    <string name="chat_settings_show_git_workspace_desc">Show the Git status entry and changes rail in Chat when host repository scanning is enabled. The full Git workspace remains available when this is off.</string>
     <string name="chat_git_open_workspace">Open Git workspace</string>
     <string name="chat_git_branch">Git branch %1$s</string>
     <string name="chat_git_additions">%1$d additions</string>
@@ -864,16 +886,36 @@
     <string name="chat_settings_8k">8K</string>
     <string name="chat_settings_16k">16K</string>
     <string name="chat_settings_gateway_needs_signin">Gateway needs Manage sign-in</string>
-    <string name="chat_settings_gateway_needs_signin_desc">Sign in once from the Manage tab to unlock live thinking over /api/ws.</string>
+    <string name="chat_settings_gateway_needs_signin_desc">Sign in once to unlock Chat, sessions, Manage, and standard voice for this Hermes connection.</string>
     <string name="chat_settings_completions">Completions</string>
     <string name="chat_settings_offline">offline</string>
 
     <!-- P0: ConnectionsSettingsScreen -->
     <string name="conn_back">Back</string>
-    <string name="conn_title">Connections</string>
-    <string name="conn_add_connection">Add connection</string>
-    <string name="conn_no_connections">No connections yet</string>
-    <string name="conn_no_connections_desc">Tap Add connection to connect to Hermes.</string>
+    <string name="conn_title">Gateways</string>
+    <string name="conn_add_connection">Add gateway</string>
+    <string name="conn_no_connections">No gateways yet</string>
+    <string name="conn_no_connections_desc">Tap Add gateway to connect to Hermes.</string>
+    <string name="gateways_title">Gateways</string>
+    <plurals name="gateway_count">
+        <item quantity="one">%d gateway</item>
+        <item quantity="other">%d gateways</item>
+    </plurals>
+    <string name="gateway_add">Add gateway</string>
+    <string name="gateways_empty_title">No gateways yet</string>
+    <string name="gateways_empty_body">Add a gateway to connect this phone to Hermes.</string>
+    <string name="gateway_route_not_configured">No route configured</string>
+    <string name="gateway_status_online">Gateway online</string>
+    <string name="gateway_status_sign_in_required">Sign-in required</string>
+    <string name="gateway_status_offline">Gateway offline</string>
+    <string name="gateway_status_checking">Checking gateway…</string>
+    <string name="gateway_status_not_checked">Gateway not checked</string>
+    <string name="gateway_status_last_check_sign_in_required">Last check: sign-in required</string>
+    <string name="gateway_status_last_check_succeeded">Last check succeeded</string>
+    <string name="gateway_status_last_check_failed">Last check failed</string>
+    <string name="gateway_status_no_route">No gateway route</string>
+    <string name="gateway_status_unavailable">Gateway unavailable</string>
+    <string name="conn_add_requires_parent_access">Unlock parent access before adding a gateway.</string>
     <string name="conn_active">Active</string>
     <string name="conn_connected">Connected</string>
     <string name="conn_standard_not_paired">Standard · Relay not paired</string>
@@ -954,6 +996,8 @@
     <string name="detail_tab_routes">Routes</string>
     <string name="detail_tab_advanced">Advanced</string>
     <string name="detail_tab_security">Security</string>
+    <string name="detail_tab_access">Access</string>
+    <string name="detail_current_route">Current route</string>
     <string name="conn_startup_title">On app start</string>
     <string name="conn_startup_last_used">Last used</string>
     <string name="conn_startup_recommended">Recommended</string>
@@ -972,6 +1016,29 @@
     <string name="conn_dashboard_only_route">Dashboard only</string>
     <string name="conn_no_routes">No routes configured</string>
     <string name="active_section_primary_dashboard">Primary Dashboard</string>
+    <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
+    <string name="current_surface_paths_title">Current paths</string>
+    <string name="api_fallback_title">API fallback</string>
+    <string name="active_section_in_use">In use</string>
+    <string name="active_section_available_fallback">Available fallback</string>
+    <string name="dashboard_gateway_configured">Configured address</string>
+    <string name="dashboard_gateway_secure_origin">Authenticated Dashboard address</string>
+    <string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
+    <string name="network_routes_title">Network routes</string>
+    <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. API fallback and Relay extensions are optional.</string>
+    <string name="network_routes_empty">No additional network routes</string>
+    <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
+    <string name="active_section_using_now">Using now</string>
+    <string name="active_section_fallbacks">Fallbacks</string>
+    <string name="active_section_configured_not_probed">Network routes are configured; Routes shows their latest reachability.</string>
+    <string name="active_section_relay_ownership">Relay owns extension tools only; standard Hermes stays independent.</string>
+    <string name="active_section_no_sign_in_required">No sign-in required</string>
+    <string name="active_section_use_selected_route">Use selected route</string>
+    <string name="active_section_use_selected_route_failed">Couldn’t switch Dashboard sign-in back to the selected route.</string>
+    <string name="active_section_forget_sign_in_origin">Forget sign-in origin</string>
+    <string name="active_section_unavailable">Unavailable</string>
+    <string name="detail_inactive_badge">Not active</string>
+    <string name="detail_overview_clarity_summary">What works now, the path this phone is using, and what can take over if it becomes unavailable.</string>
     <string name="active_section_dashboard_reachable_signed_in">Reachable · Signed in</string>
     <string name="active_section_dashboard_reachable">Reachable</string>
     <string name="active_section_dashboard_not_checked">Not checked yet</string>
@@ -1009,7 +1076,7 @@
     <string name="active_section_relay_optional_bridge">Optional bridge features and remote access</string>
     <string name="active_section_configure_relay">Configure Relay</string>
     <string name="active_section_scan_relay_qr">Scan Relay QR</string>
-    <string name="active_section_other_relay_methods">Other pairing methods</string>
+    <string name="active_section_direct_relay_endpoint">Direct Relay endpoint</string>
     <string name="active_section_pair_device_using_code">Pair this device using a code from the server.</string>
     <string name="active_section_enter_pairing_code">Enter pairing code</string>
     <string name="active_section_done">Done</string>
@@ -1026,9 +1093,16 @@
     <string name="active_section_session_activity">Session activity</string>
     <string name="active_section_last_checked_just_now">Last checked just now</string>
     <string name="active_section_protected">Protected</string>
+    <string name="active_section_mixed_protection">Mixed protection</string>
     <string name="active_section_not_encrypted">Not encrypted</string>
+    <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_no_security_issues">No security issues detected</string>
+    <string name="active_section_mixed_protection_summary">Active surfaces use different protection</string>
     <string name="active_section_unencrypted_transport">This connection uses an unencrypted transport</string>
+    <string name="active_section_no_active_surfaces">No configured surface is currently in use</string>
+    <string name="active_section_in_use_mechanism">In use · %1$s</string>
+    <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
+    <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="active_section_actions">Actions</string>
     <string name="active_section_revoke_relay">Revoke Relay pairing</string>
 
@@ -1090,6 +1164,8 @@
     <string name="drawer_delete_session_title">Delete Session?</string>
     <string name="drawer_delete_session_prefix">This will permanently delete \"</string>
     <string name="drawer_delete_session_suffix">\" and its message history.</string>
+    <string name="drawer_remove_provisional_thread_title">Remove Thread?</string>
+    <string name="drawer_remove_provisional_thread_message">This removes \"%1$s\" from this device. It does not delete promoted or server history.</string>
     <string name="drawer_untitled">Untitled</string>
     <string name="drawer_delete">Delete</string>
     <string name="drawer_thread">Thread</string>
@@ -1120,7 +1196,7 @@
     <string name="bridge_relay_label">relay</string>
     <string name="bridge_safety_label">safety</string>
     <string name="bridge_not_connected_title">Relay not connected</string>
-    <string name="bridge_not_connected_body">Bridge commands travel over the relay. Pair a relay in Settings → Connections for the bridge to actually do anything.</string>
+    <string name="bridge_not_connected_body">Bridge commands travel over Relay. Pair Relay in Settings → Gateways for the bridge to actually do anything.</string>
     <string name="bridge_accessibility_needed">Accessibility Service must be enabled first.</string>
     <string name="bridge_open_settings">Open Settings</string>
     <string name="bridge_allow_agent_control">Allow Agent Control</string>
@@ -1157,8 +1233,8 @@
     <string name="bridge_core_relay_body">Bridge Core uses the same paired relay session as terminal, notification, media, and voice features.</string>
     <string name="bridge_core_surface_title">Bridge Surface</string>
     <string name="bridge_core_surface_meta">not hidden in settings</string>
-    <string name="bridge_core_connections">Connections</string>
-    <string name="bridge_core_connections_sub">Pair, switch, and verify relay routes</string>
+    <string name="bridge_core_connections">Gateways</string>
+    <string name="bridge_core_connections_sub">Pair Relay, switch gateways, and verify routes</string>
     <string name="bridge_core_terminal_tile">Terminal</string>
     <string name="bridge_core_terminal_sub">Attach to your Hermes relay terminal</string>
     <string name="bridge_core_voice">Voice</string>
@@ -1599,7 +1675,7 @@
     <string name="proactive_let_hermes_message_me">Let Hermes message me</string>
     <string name="proactive_allow_proactive_messages">Allow proactive messages</string>
     <string name="proactive_allow_proactive_messages_desc">Your agent can reach out on its own — reminders, finished jobs, alerts. Its messages appear as Threads in Chat, where you can reply.</string>
-    <string name="proactive_not_paired_warning">Not paired yet — pair with your Hermes server under Settings → Connections to start receiving messages.</string>
+    <string name="proactive_not_paired_warning">Not paired yet — pair Relay under Settings → Gateways to start receiving messages.</string>
     <string name="proactive_your_threads">Your Threads</string>
     <string name="proactive_your_threads_desc">Each conversation your agent starts shows as a Thread in Chat — open the session list, filter to Threads, and reply right there.</string>
     <string name="proactive_open_chat">Open Chat</string>
@@ -1789,7 +1865,7 @@
     <string name="voice_settings_engine_realtime">Realtime Agent</string>
     <string name="voice_settings_engine_realtime_desc">A live provider session handles listening and speaking with its own voice model and voice. Hermes still handles tools, memory, and confirmations. Requires a paired Relay.</string>
     <string name="voice_settings_experimental">Experimental</string>
-    <string name="voice_settings_realtime_no_relay">No Relay is configured for this connection, so the Realtime Agent can\'t start. Pair Relay in Settings → Connections, or switch back to Hermes Chat + Voice Output.</string>
+    <string name="voice_settings_realtime_no_relay">No Relay is configured for this gateway, so the Realtime Agent can\'t start. Pair Relay in Settings → Gateways, or switch back to Hermes Chat + Voice Output.</string>
     <string name="voice_settings_route_label">STT/TTS route</string>
     <string name="voice_settings_status_ready">Ready</string>
     <string name="voice_settings_status_sign_in_required">Dashboard sign-in required</string>
@@ -2033,8 +2109,8 @@
     <string name="dashboard_tile_config_sub">Schema and runtime options</string>
 
     <!-- Nav tiles -->
-    <string name="dashboard_nav_connections_title">Connections</string>
-    <string name="dashboard_nav_connections_sub">Pair, switch, verify routes</string>
+    <string name="dashboard_nav_connections_title">Gateways</string>
+    <string name="dashboard_nav_connections_sub">Sign in, pair Relay, switch, and verify routes</string>
 
     <!-- Hub header -->
     <string name="dashboard_hub_title">Relay Hub</string>
@@ -2070,7 +2146,7 @@
 
     <!-- Sign-in card -->
     <string name="dashboard_signin_required_title">Dashboard sign-in required</string>
-    <string name="dashboard_signin_required_body">Manage uses the Hermes dashboard session at %1$s.</string>
+    <string name="dashboard_signin_required_body">Sign in to Hermes at %1$s for Chat, sessions, Manage, and standard voice.</string>
     <string name="dashboard_signin_route_hint">The saved dashboard session could not be reused on the %1$s route. Sign in again to refresh it across this connection\'s trusted routes.</string>
     <string name="dashboard_signin_with_provider">Sign in with %1$s</string>
     <string name="dashboard_username_password">Username &amp; Password</string>
@@ -2079,25 +2155,34 @@
     <string name="dashboard_sign_in">Sign in</string>
     <string name="dashboard_signing_in">Signing in…</string>
     <string name="dashboard_no_supported_provider">This dashboard did not advertise a supported Android sign-in provider.</string>
+    <string name="dashboard_signin_provider_unavailable_choose">Your saved sign-in provider is unavailable. Choose another configured provider or try again later.</string>
 
     <!-- OAuth sign-in dialog -->
     <string name="dashboard_oauth_initial_status">Complete sign-in in the secure dashboard page.</string>
+    <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
+    <string name="dashboard_oauth_origin_confirm_title">Use this sign-in address?</string>
+    <string name="dashboard_oauth_origin_confirm_body">The identity provider returned to a different Hermes Dashboard address. Review it before Android uses it for Dashboard and Gateway.</string>
+    <string name="dashboard_oauth_origin_identity_missing">This Hermes version does not expose an installation ID, so Android cannot automatically prove that both addresses reach the same installation.</string>
+    <string name="dashboard_oauth_origin_install_mismatch">The sign-in address belongs to a different Hermes installation and was not saved.</string>
+    <string name="dashboard_oauth_origin_use_button">Use address</string>
     <string name="dashboard_oauth_verifying">Verifying dashboard session…</string>
     <string name="dashboard_oauth_not_accepted">Sign-in was not accepted yet. Finish the dashboard flow to continue.</string>
     <string name="dashboard_oauth_verify_failed">Dashboard sign-in verification failed</string>
-    <string name="dashboard_native_signin_opening">Complete sign-in in your browser, then return here.</string>
+    <string name="dashboard_native_signin_opening">Complete sign-in in your browser. If your provider signs you in without returning, come back and tap Continue sign-in.</string>
+    <string name="dashboard_native_signin_continue">Continue sign-in</string>
     <string name="dashboard_native_signin_cancelled">Browser sign-in cancelled.</string>
     <string name="dashboard_native_signin_requires_https">Secure browser sign-in requires an HTTPS dashboard address.</string>
     <string name="dashboard_native_signin_unavailable">Secure browser sign-in is unavailable for this connection. Refresh the connection and try again.</string>
+    <string name="dashboard_native_signin_embedded_fallback">Secure browser sign-in was unavailable, so Hermes opened its compatible in-app sign-in.</string>
     <string name="dashboard_native_signin_transport_retry">The secure connection was interrupted. Tap the sign-in button to try again.</string>
     <string name="dashboard_native_signin_callback_rejected">The provider did not approve this sign-in. If you cancelled, no action is needed; otherwise start a fresh sign-in attempt.</string>
-    <string name="dashboard_native_signin_code_rejected">Google sign-in finished, but hosted Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
-    <string name="dashboard_native_signin_gateway_rejected">Hosted Hermes refused the session exchange. Check that the hosted agent is current, then start sign-in again.</string>
-    <string name="dashboard_native_signin_rate_limited">Hosted Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
-    <string name="dashboard_native_signin_gateway_unavailable">Google sign-in finished, but the hosted Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
-    <string name="dashboard_native_signin_response_unsupported">Hosted Hermes returned a sign-in response this app could not use. Check for Hermes Relay and hosted agent updates.</string>
+    <string name="dashboard_native_signin_code_rejected">Browser sign-in finished, but Hermes rejected the one-time callback code before it could create a session. Start a fresh sign-in attempt.</string>
+    <string name="dashboard_native_signin_gateway_rejected">Hermes refused the session exchange. Check that the Dashboard is current, then start sign-in again.</string>
+    <string name="dashboard_native_signin_rate_limited">Hermes received too many sign-in attempts. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_gateway_unavailable">Browser sign-in finished, but the Hermes sign-in service is unavailable. Wait a moment, then try again.</string>
+    <string name="dashboard_native_signin_response_unsupported">Hermes returned a sign-in response this app could not use. Check for app and Dashboard updates.</string>
     <string name="dashboard_native_signin_attempt_inactive">This sign-in attempt was cancelled or replaced. Close the old browser tab and start again.</string>
-    <string name="dashboard_native_signin_storage_failed">Google sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
+    <string name="dashboard_native_signin_storage_failed">Browser sign-in finished, but Android could not securely save the Hermes session. Try again; if it repeats, open Diagnostics for the failure stage.</string>
     <string name="dashboard_close_signin">Close sign-in</string>
 
     <!-- Error body -->
@@ -2591,8 +2676,11 @@
     <string name="active_section_no_response_from_relay">No response from relay</string>
     <string name="active_section_no_route_reachable">No route reachable</string>
     <string name="active_section_no_routes_answered_probe">No routes answered the probe</string>
+    <string name="active_section_no_reachable_route_title">No reachable Gateway route</string>
+    <string name="active_section_no_reachable_route_body">None of the configured Gateway routes responded. Turn on Tailscale, Wi-Fi, or mobile data, then recheck. Expand a route below for Dashboard, API, and Relay results.</string>
     <string name="active_section_not_advertised">Not advertised</string>
     <string name="active_section_not_checked">Not checked</string>
+    <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_not_configured">Not configured</string>
     <string name="active_section_offline">Offline</string>
     <string name="active_section_open_tailscale">Open Tailscale</string>
@@ -2733,7 +2821,7 @@
     <string name="conn_info_loading_profiles">Loading profiles…</string>
     <string name="conn_info_local_display_name">Local display name</string>
     <string name="conn_info_locked_to">Locked to %1$s</string>
-    <string name="conn_info_manage_connections">Manage connections</string>
+    <string name="conn_info_manage_connections">Manage gateways</string>
     <string name="conn_info_manage_profiles">Manage profile display</string>
     <string name="conn_info_manage_profiles_hint">Reorder profiles or hide ones you do not use. The active profile stays visible.</string>
     <string name="conn_info_move_profile_up">Move %1$s up</string>
@@ -3022,8 +3110,8 @@
 
     <!-- ConnectionSwitcherSheet -->
     <string name="conn_switcher_title">Switch connection</string>
-    <string name="conn_switcher_empty">No connections yet</string>
-    <string name="conn_switcher_manage">Manage connections&#8230;</string>
+    <string name="conn_switcher_empty">No gateways yet</string>
+    <string name="conn_switcher_manage">Manage gateways&#8230;</string>
 
     <!-- DiagnosticsLogPanel -->
     <string name="diagnostics_title">Recent activity</string>
@@ -3197,7 +3285,7 @@
     <string name="transport_badge_insecure_lan_only">Plain (LAN only)</string>
     <string name="transport_badge_encrypted_tls">Encrypted &#183; TLS</string>
     <string name="transport_badge_encrypted_tailscale">Encrypted &#183; Tailscale</string>
-    <string name="transport_badge_mixed_routes">Mixed routes</string>
+    <string name="transport_badge_mixed_routes">Mixed protection</string>
     <string name="transport_badge_not_encrypted">Not encrypted</string>
     <string name="transport_badge_checking">Checking&#8230;</string>
     <string name="transport_badge_glyph_tls">Encrypted (TLS)</string>
@@ -3420,7 +3508,7 @@
     <string name="screen_bridge_label">Bridge</string>
     <string name="screen_manage_label">Manage</string>
     <string name="screen_settings_label">Settings</string>
-    <string name="screen_connections_label">Connections</string>
+    <string name="screen_connections_label">Gateways</string>
     <string name="screen_connection_label">Connection</string>
     <string name="screen_voice_label">Voice</string>
     <string name="screen_notification_companion_label">Notification companion</string>
@@ -3506,7 +3594,7 @@
     <string name="cw_hint_chat">Chat</string>
     <string name="cw_hint_manage">Manage</string>
     <string name="cw_http_url_field_label">URL</string>
-    <string name="cw_http_url_scheme_error">%1$s expects http:// or https:// (bare hosts get http://)</string>
+    <string name="cw_http_url_scheme_error">%1$s expects http:// or https:// (bare private hosts use http://; bare public hosts use https://)</string>
     <string name="cw_label_api_key">API Key</string>
     <string name="cw_label_api_server">API Server</string>
     <string name="cw_label_dashboard">Dashboard</string>
@@ -3559,7 +3647,7 @@
     <string name="cw_step_3_3">Step 3 of 3</string>
     <string name="cw_tailscale_placeholder">http://100.x.x.x:8642</string>
     <string name="cw_tailscale_supporting_detected">Tailscale network detected</string>
-    <string name="cw_tailscale_supporting_other">When away from the server network, manually switch timeout, address, API port (8642) and http:// defaults can be changed in Settings → Connections → Routes.</string>
+    <string name="cw_tailscale_supporting_other">When away from the server network, manually switch timeout, address, API port (8642), and http:// defaults can be changed in Settings → Gateways → Routes.</string>
     <string name="cw_value_derived">Auto-detected</string>
     <string name="cw_value_included">Included</string>
     <string name="cw_value_not_included">Not included</string>
@@ -3659,13 +3747,15 @@
     <string name="relay_app_reconnecting">Reconnecting…</string>
     <string name="relay_app_rename_failed">Rename failed</string>
     <string name="relay_app_revoke_only_active">Revoke</string>
-    <string name="security_sheet_explain_mixed">Mixed security — some connections use TLS, some don\u0027t</string>
+    <string name="security_sheet_explain_mixed">Active surfaces use different protection. Unavailable fallbacks are not included in this verdict.</string>
     <string name="security_sheet_explain_overlay">Overlay connection uses Wi-Fi peer-to-peer</string>
     <string name="security_sheet_explain_plain">No encryption — plain HTTP connection</string>
     <string name="security_sheet_explain_tls">Encrypted — TLS connection</string>
     <string name="security_sheet_learn_more">Learn about connection security →</string>
     <string name="security_sheet_no_route">No route configured</string>
     <string name="security_sheet_title">Connection security</string>
+    <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>
+    <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="subagent_lane_a11y">%1$s %2$s</string>
     <string name="subagent_lane_label_fallback">Agent</string>
     <string name="subagent_lane_running_count">%d running</string>
@@ -3735,6 +3825,40 @@
     <string name="tool_failed_a11y">Failed</string>
     <string name="background_process_count">Background · %1$d</string>
     <string name="background_processes_title">Background processes</string>
+    <string name="current_chat_activity_title">Current chat activity</string>
+    <string name="current_chat_activity_subtitle">Read-only live details from this chat</string>
+    <string name="current_chat_activity_open">Preview current chat activity</string>
+    <string name="current_chat_activity_summary">%1$d agents · %2$d processes</string>
+    <string name="current_chat_activity_close">Close activity preview</string>
+    <string name="current_chat_activity_empty">No current activity in this chat</string>
+    <string name="current_chat_activity_latest">Latest</string>
+    <string name="agent_activity_section">Live agent activity</string>
+    <string name="agent_activity_disclosure">Updates received by this chat. Full child history may be unavailable.</string>
+    <string name="agent_activity_fallback">Agent %d</string>
+    <string name="agent_activity_task_position">%1$d of %2$d · %3$s</string>
+    <string name="agent_activity_lane_a11y">%1$s, %2$s, agent %3$d of %4$d</string>
+    <string name="agent_activity_duration">%1$.1fs</string>
+    <string name="agent_activity_older_omitted">Older activity omitted</string>
+    <string name="agent_activity_partial">Live updates resumed. Activity while offline may be missing.</string>
+    <string name="agent_activity_event_started">Started</string>
+    <string name="agent_activity_event_update">Update</string>
+    <string name="agent_activity_event_tool">Tool preview</string>
+    <string name="agent_activity_status_started">Starting</string>
+    <string name="agent_activity_status_thinking">Thinking</string>
+    <string name="agent_activity_status_tool">Using a tool</string>
+    <string name="agent_activity_status_progress">Working</string>
+    <string name="agent_activity_status_completed">Completed</string>
+    <string name="agent_activity_status_failed">Failed</string>
+    <string name="agent_activity_status_interrupted">Interrupted</string>
+    <string name="agent_activity_status_unavailable">Final state unavailable</string>
+    <string name="agent_activity_child_loading">Opening read-only child history…</string>
+    <string name="agent_activity_child_unavailable">Child transcript unavailable on this Hermes version or route. Parent-session activity is shown above.</string>
+    <string name="agent_activity_child_live">Child history · live updates</string>
+    <string name="agent_activity_child_history">Child history · read only</string>
+    <string name="agent_activity_child_truncated">Recent child activity shown · older or oversized details omitted</string>
+    <string name="agent_activity_child_role_task">Task</string>
+    <string name="agent_activity_child_role_agent">Agent</string>
+    <string name="agent_activity_child_role_system">System</string>
     <string name="background_processes_refresh_a11y">Refresh processes</string>
     <string name="background_processes_subtitle">Current chat · live output and recent results</string>
     <string name="background_processes_stop">Stop</string>
@@ -3754,6 +3878,7 @@
     <string name="card_send_answer_a11y">Send answer</string>
     <string name="card_submit">Submit</string>
     <string name="card_answer_placeholder">Type an answer…</string>
+    <string name="card_other_answer_placeholder">Other (type your answer)…</string>
     <string name="session_ttl_title">Keep this pairing for…</string>
     <string name="session_ttl_intro">Your phone will reconnect automatically during this window. You can revoke the pairing at any time.</string>
     <string name="session_ttl_stays_paired">This device will stay paired until you revoke it.</string>
@@ -4228,6 +4353,9 @@
     <string name="plugins_remove">Remove</string>
     <string name="plugins_remove_confirm">Remove “%1$s”? This plugin page will no longer appear on connected Android devices.</string>
     <string name="git_state_title">Git</string>
+    <string name="git_state_host_scanning">Host repository scanning</string>
+    <string name="git_state_host_scanning_on_desc">On for this gateway · Git writes remain separately permissioned.</string>
+    <string name="git_state_host_scanning_off_desc">Let this phone ask this gateway to scan its configured Git roots for repositories, branches, and change status. Git writes require separate permission.</string>
     <string name="git_state_back">Back</string>
     <string name="git_state_staged">Staged</string>
     <string name="git_state_modified">Modified</string>
@@ -4274,7 +4402,7 @@
 
     <string name="support_bundle_review">Review support information</string>
     <string name="support_bundle_title">Support information</string>
-    <string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains up to %1$d recent reports.</string>
+<string name="support_bundle_privacy">Nothing is uploaded automatically. Review the exact local export below. It contains %1$d recent reports and diagnostics.</string>
     <string name="support_bundle_copied">Support information copied</string>
     <string name="support_bundle_no_share">Support information copied — no app found to share to</string>
     <string name="support_bundle_share_title">Share Hermes-Relay support information</string>
@@ -4450,4 +4578,5 @@
     <string name="provider_usage_capability_basic_body">Install or update the Relay plugin for credential pools, structured Nous balances, and OpenCode Go.</string>
     <string name="settings_git_workspace">Git workspace</string>
     <string name="settings_git_workspace_desc">Review changes, branches, commits, and remotes</string>
+    <string name="settings_git_workspace_off_desc">Off · Host repository scanning is opt-in</string>
 </resources>

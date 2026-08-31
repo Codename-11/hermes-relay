@@ -12,7 +12,8 @@ import {
   __daemonStatusIsReadyForTests as daemonStatusIsReady,
   __quoteWindowsArgumentForTests as quoteWindowsArgument,
   __readDetachedStartupFailureForTests as readDetachedStartupFailure,
-  __waitForDetachedStartupForTests as waitForDetachedStartup
+  __waitForDetachedStartupForTests as waitForDetachedStartup,
+  daemonCommand
 } from '../src/commands/daemon.js'
 import type { ParsedArgs } from '../src/cli.js'
 
@@ -176,6 +177,19 @@ test('daemon child argv forwards runtime options without lifecycle privilege fla
     'wss://relay.example.test/path with space',
     '--no-voice'
   ])
+})
+
+test('daemon rejects an explicit Dashboard Relay ingress before starting', async () => {
+  const result = await daemonCommand({
+    command: 'daemon',
+    positional: [],
+    flags: {
+      remote: 'wss://dashboard.example.test/api/plugins/hermes-relay/transport',
+      'no-color': true,
+    },
+  })
+
+  assert.equal(result, 1)
 })
 
 test('Windows argument quoting preserves spaces, quotes, and trailing slashes', () => {

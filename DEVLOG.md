@@ -30,6 +30,56 @@ turn every surface into a mandatory test lane, does not replace CI or maintainer
 review, and keeps normal work targeting `dev` while preserving the documented
 release/hotfix exceptions.
 
+## 2026-08-26 — Android OIDC origin continuity and route latency
+
+Dashboard authentication now follows upstream `/api/status.auth_flows`:
+interactive redirect and password providers use native PKCE when advertised,
+with exact-host cookies retained only for older gateways or client-local native
+failure. A different provider-declared callback is fenced by installation
+identity and explicit review before becoming the authenticated Dashboard/Gateway
+origin. Public origins require HTTPS; reviewed literal LAN, Tailscale, and
+loopback HTTP retains upstream compatibility. Cookies are never copied between
+hosts, API and Relay ownership remain separate, unsafe callbacks are rejected,
+and third-party cookies are enabled only for the short-lived compatibility
+WebView.
+
+The saved authenticated origin is now modeled as connection-level
+Dashboard/Gateway state rather than as a synthetic network candidate. The
+Routes screen presents a dedicated Dashboard & Gateway card with edit and
+re-check actions, keeps LAN, Tailscale, API, and Relay under Network routes, and
+does not expose internal role keys or describe arbitrary routes as VPNs. Changing
+the Dashboard origin clears origin-bound cookies and bearer state before the new
+address is verified. The compact footer shows the active surface and transport
+without allowing long model or profile names to displace the route label.
+
+For self-hosted OIDC, authorization and callback use one exact Dashboard
+address. Split DNS remains the preferred public-HTTPS/local-performance shape,
+but a second public URL is not a universal onboarding field. Android does not
+treat the identity origin as ownership of optional API or Relay paths.
+
+Optional API discovery no longer blocks a healthy Dashboard/Gateway route.
+Concurrent probes are shared, negative results are cached for a bounded window,
+same-priority routes race by completion, and connection generations prevent a
+late old route from overwriting a new one. Invalidated probes cannot publish a
+stale unreachable result or diagnostic. Dashboard session and message reads
+now cancel with their coroutine, one bounded budget covers the complete session
+list, WebSocket-ticket minting is bounded, and optional pull-request decoration
+falls off the critical path while preserving exact profile-scoped rows.
+Gateway ticket/auth failures receive one bounded classified attempt rather than
+two serialized waits. A pre-ready WebSocket close settles immediately, while
+optional API and Relay work remains background capability discovery.
+
+Focused auth, Dashboard, resolver, route, and native-sign-in coverage passed
+135 tests on the final `origin/dev` merge, followed by Android lint and sideload
+assembly. The matching Android 16 sideload was installed in place with app data
+preserved. Cold-route evidence showed Dashboard selection completing in hundreds
+of milliseconds, unavailable API fallback work continuing in the background,
+and unauthenticated ticket failures returning immediately instead of stalling.
+An upstream-compatible live-writer certification separately kept five full
+profile-roster RPCs below one second while concurrent ticket mints stayed in
+single-digit milliseconds. Final interactive provider consent/callback remains
+a human gate because the test device was locked after deployment.
+
 ## 2026-08-26 — Bounded public issue triage contract
 
 New GitHub issues may receive one clearly identified Hermes-Relay automated

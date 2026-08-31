@@ -43,7 +43,14 @@ Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 C
 不要将未加密的 Dashboard、API 或 Relay 端口直接暴露到互联网；远程访问应使用 Tailscale、VPN 或 HTTPS。
 :::
 
-Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立，不能用于 Dashboard 登录。
+Dashboard 登录在当前 Gateway 上使用原生 bearer，在兼容 Gateway 上使用精确
+origin Cookie，并配合短期 Gateway ticket。API 密钥与其独立。
+
+Android 保存的路由可以是 LAN、Tailscale 或公共地址。OIDC 仍需要一个可访问的
+HTTPS 回调：`<公共-dashboard-origin>/auth/callback`。Hermes 通常从受信任的代理
+标头重建该 origin；只有在重建不可靠时，才设置 upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL`。Android 会在保存前验证
+不同的登录 origin。
 
 ## 3. 连接并开始对话
 
@@ -54,7 +61,9 @@ Dashboard 登录使用 Cookie 和短期 Gateway ticket。API 密钥与其独立�
 5. 在 **完成设置** 中，如需后台聊天提醒，请启用 Android 通知。相机、麦克风和其他功能仍为可选，并可逐项设置；选择 **暂不** 可直接继续。
 6. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
 
-可以添加并测试 `http://100.x.y.z:9119` 这样的 Tailscale Dashboard 地址，或单独发布的 `.ts.net` 地址；无需配置 API 服务器或 API 密钥。
+`hermes-relay-tailscale enable` 会在 tailnet 的专用 `:10443` 发布
+`https://host.ts.net:10443`，并将它连同同源 Relay 路径代理到本地 Dashboard
+`:9119`。也可以使用有意直接开放的 `http://100.x.y.z:9119` 路由，但它没有应用层 TLS。
 
 同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 API fallback 不可用都是正常状态。
 

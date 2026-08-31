@@ -48,8 +48,16 @@ No expongas directamente a Internet un puerto de Dashboard, API o Relay sin
 cifrar; para el acceso remoto utiliza Tailscale, una VPN o HTTPS.
 :::
 
-El inicio de sesión del dashboard usa cookies y tickets efímeros del Gateway.
-La clave de API es independiente y no inicia sesión en el dashboard.
+El inicio de sesión del dashboard usa un bearer nativo en gateways actuales o
+cookies del origen exacto en gateways de compatibilidad, junto con tickets
+efímeros del Gateway. La clave de API es independiente.
+
+La ruta guardada en Android puede ser una dirección LAN, Tailscale o pública.
+OIDC todavía necesita un callback HTTPS accesible en
+`<origen-publico-del-dashboard>/auth/callback`. Hermes normalmente obtiene ese
+origen de cabeceras de proxy confiables. Configura upstream
+`dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` solo si esa detección no
+es fiable; Android verifica un origen de inicio de sesión distinto antes de guardarlo.
 
 ## 3. Conecta y conversa
 
@@ -60,8 +68,10 @@ La clave de API es independiente y no inicia sesión en el dashboard.
 5. En **Finalizar configuración**, activa las notificaciones de Android si quieres alertas de chat en segundo plano. La cámara, el micrófono y las demás funciones siguen siendo opcionales y se configuran una a una; pulsa **Ahora no** para continuar directamente.
 6. Añade API fallback, Relay o rutas remotas después desde **Advanced** si lo necesitas.
 
-Puedes añadir y probar una dirección Dashboard de Tailscale como
-`http://100.x.y.z:9119`, o una dirección `.ts.net` publicada por separado, sin configurar el servidor API ni una clave API.
+`hermes-relay-tailscale enable` publica `https://host.ts.net:10443` en un puerto
+dedicado del tailnet y lo redirige al Dashboard local `:9119` con su ruta Relay
+del mismo origen. Una ruta deliberadamente directa como
+`http://100.x.y.z:9119` también funciona, pero no tiene TLS de aplicación.
 
 La misma sesión habilita Chat, sesiones, Manage y Voice. Es normal que Relay
 esté sin emparejar y que API fallback no esté disponible.

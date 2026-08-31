@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -71,6 +71,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -172,26 +173,26 @@ fun HermesCardBubble(
         ),
         shape = appearanceRoundedCornerShape(12.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
             // Accent stripe — runs full card height so tall cards keep the
             // color tie. Using the SAME tertiary accent strategy as the
             // voice/phone-action bubble marker in MessageBubble.kt so the
             // visual language stays consistent.
             Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .fillMaxHeight()
-                    .background(accentColor),
-            )
+                modifier = Modifier.matchParentSize(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .fillMaxHeight()
+                        .background(accentColor),
+                )
+            }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(start = 15.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
             ) {
                 // Header
                 Row(
@@ -426,6 +427,19 @@ private fun CardInputSlot(
                 input.kind != HermesCardInput.Kinds.CONFIRM)
         )
 
+    val submitFreeText = {
+        val customAnswer = answerText.trim()
+        if (customAnswer.isNotEmpty()) {
+            onSubmit(
+                if (isMultiSelect) {
+                    encodeClarifyMultiSelectAnswer(selectedChoices + customAnswer)
+                } else {
+                    customAnswer
+                },
+            )
+        }
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         // Choice chips
         if (input.choices.isNotEmpty()) {
@@ -515,11 +529,16 @@ private fun CardInputSlot(
                 InlineAnswerField(
                     value = answerText,
                     onValueChange = { answerText = it },
+                    placeholder = stringResource(
+                        if (input.choices.isNotEmpty()) R.string.card_other_answer_placeholder
+                        else R.string.card_answer_placeholder,
+                    ),
+                    onSubmit = submitFreeText,
                     modifier = Modifier.weight(1f),
                 )
                 if (!isMultiSelect) {
                     IconButton(
-                        onClick = { onSubmit(answerText.trim()) },
+                        onClick = submitFreeText,
                         enabled = answerText.isNotBlank(),
                     ) {
                         Icon(
@@ -593,6 +612,8 @@ private fun CardInputSlot(
 private fun InlineAnswerField(
     value: String,
     onValueChange: (String) -> Unit,
+    placeholder: String,
+    onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val shape = appearanceRoundedCornerShape(16.dp)
@@ -605,7 +626,7 @@ private fun InlineAnswerField(
     ) {
         if (value.isEmpty()) {
             Text(
-                text = stringResource(R.string.card_answer_placeholder),
+                text = placeholder,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             )
@@ -617,8 +638,12 @@ private fun InlineAnswerField(
                 color = MaterialTheme.colorScheme.onSurface,
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { onSubmit() }),
             maxLines = 3,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = placeholder },
         )
     }
 }

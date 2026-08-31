@@ -48,6 +48,11 @@ Use `--no-ssl` only on a trusted LAN or VPN. For away-from-home access,
 Refresh or restart the Dashboard/Gateway plugin catalog after installation; a
 **Relay** page should appear before you continue.
 
+Relay still runs as its own supervised loopback service, but current Android
+pairing normally reaches it through the Dashboard's existing address. Port
+`8767` is therefore an internal/advanced compatibility detail rather than a
+second address most users must configure.
+
 ### 3. Add the standard Hermes connection by QR
 
 1. Open the Hermes Web Dashboard in a browser.
@@ -69,8 +74,9 @@ Back in the Web Dashboard's **Relay** page:
 2. In Android, open **Settings → Connections → Pair Hermes Relay → Scan QR**.
 3. Scan the one-time QR and confirm the routes and session duration.
 
-The QR is single-use and can carry LAN, Tailscale, and public candidates so the
-phone can choose the best reachable route. Pairing unlocks Terminal/TUI,
+The QR is single-use and normally advertises the Dashboard-origin Relay ingress,
+plus any configured direct compatibility routes. It can carry LAN, Tailscale,
+and public candidates so the phone can choose the best reachable route. Pairing unlocks Terminal/TUI,
 notifications, media handoff, Relay sessions, enhanced voice, desktop-tool
 handoff, and—on the Sideload build—Device Control.
 

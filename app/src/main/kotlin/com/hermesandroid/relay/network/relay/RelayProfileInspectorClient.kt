@@ -10,6 +10,7 @@ import com.hermesandroid.relay.data.ProfileMemoryUpdateResponse
 import com.hermesandroid.relay.data.LegacyProfileInspectorClient
 import com.hermesandroid.relay.data.RelaySkillToggleResult
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -51,10 +52,18 @@ class RelayProfileInspectorClient(
     private val okHttpClient: OkHttpClient,
     private val relayUrlProvider: () -> String?,
     private val sessionTokenProvider: suspend () -> String?,
+    private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
 ) : LegacyProfileInspectorClient {
 
     private fun relayHttpBaseOrNull(url: String): String? =
         RelayEndpointContract.parseOrNull(url)?.httpBaseUrl
+
+    private fun callClient(relayUrl: String): OkHttpClient =
+        if (isDashboardRelayIngressUrl(relayUrl)) {
+            dashboardHttpClientProvider?.invoke(relayUrl) ?: okHttpClient
+        } else {
+            okHttpClient
+        }
 
     companion object {
         private const val TAG = "RelayProfileInspector"
@@ -211,12 +220,12 @@ class RelayProfileInspectorClient(
         val request = Request.Builder()
             .url(url)
             .put(body.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
                         400 -> {
@@ -314,12 +323,12 @@ class RelayProfileInspectorClient(
         val request = Request.Builder()
             .url(url)
             .put(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 when (response.code) {
                     in 200..299 -> Result.success(RelaySkillToggleResult.Ok)
                     501 -> Result.success(RelaySkillToggleResult.NotImplemented)
@@ -374,11 +383,11 @@ class RelayProfileInspectorClient(
         val request = Request.Builder()
             .url(url)
             .method("OPTIONS", null)
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 when (response.code) {
                     501 -> false
                     404, 405 -> false
@@ -464,12 +473,12 @@ class RelayProfileInspectorClient(
         val request = Request.Builder()
             .url(url)
             .get()
-            .header("Authorization", "Bearer $sessionToken")
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
             .header("Accept", "application/json")
             .build()
 
         try {
-            okHttpClient.newCall(request).execute().use { response ->
+            callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
                         401, 403 -> "Unauthorized — re-pair with the relay"

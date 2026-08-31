@@ -31,23 +31,54 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.diagnostics.DiagnosticLogEntry
+import com.hermesandroid.relay.diagnostics.DiagnosticsLog
+import com.hermesandroid.relay.reliability.ReliabilityEnvironment
+import com.hermesandroid.relay.reliability.ReliabilityRedactor
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.reliability.ReliabilityReport
 import com.hermesandroid.relay.reliability.SupportBundleBuilder
 import com.hermesandroid.relay.util.IssueReport
 
 data class SupportReviewState(
-    val reportCount: Int,
+    val recordCount: Int,
     val text: String,
     val shareEnabled: Boolean,
 )
 
-internal fun buildSupportReviewState(reports: List<ReliabilityReport>): SupportReviewState =
-    SupportReviewState(
-        reportCount = reports.takeLast(SupportBundleBuilder.MAX_REPORTS).size,
-        text = SupportBundleBuilder.build(reports),
-        shareEnabled = reports.isNotEmpty(),
+internal fun buildSupportReviewState(
+    reports: List<ReliabilityReport>,
+    diagnostics: List<DiagnosticLogEntry> = emptyList(),
+    environment: ReliabilityEnvironment? = reports.lastOrNull()?.environment,
+): SupportReviewState {
+    val reportCount = reports.takeLast(SupportBundleBuilder.MAX_REPORTS).size
+    val diagnosticCount = diagnostics.takeLast(DiagnosticsLog.SUPPORT_ENTRY_LIMIT).size
+    val diagnosticText = DiagnosticsLog.supportText(diagnostics)
+    val combined = buildString {
+        append(SupportBundleBuilder.build(reports))
+        environment?.let {
+            appendLine()
+            appendLine()
+            appendLine("Current environment")
+            appendLine("App: ${it.versionName} (code ${it.versionCode}) ${it.flavor}")
+            append(
+                "Device: ${it.manufacturer} ${it.model} — " +
+                    "Android ${it.androidRelease} (SDK ${it.sdkInt})",
+            )
+        }
+        if (diagnosticText.isNotBlank()) {
+            appendLine()
+            appendLine()
+            append(diagnosticText)
+        }
+    }
+    val recordCount = reportCount + diagnosticCount
+    return SupportReviewState(
+        recordCount = recordCount,
+        text = ReliabilityRedactor.redact(combined, 64_000),
+        shareEnabled = recordCount > 0,
     )
+}
 
 /** Exact review surface for the local text handed to clipboard/share. */
 @Composable
@@ -70,7 +101,7 @@ fun SupportBundleDialog(state: SupportReviewState, onDismiss: () -> Unit) {
                 Text(stringResource(R.string.support_bundle_title), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    stringResource(R.string.support_bundle_privacy, state.reportCount),
+                    stringResource(R.string.support_bundle_privacy, state.recordCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

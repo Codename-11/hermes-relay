@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.util.Log
+import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -25,9 +27,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticSeverity
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
@@ -57,22 +62,119 @@ import com.hermesandroid.relay.network.upstream.DashboardAuthProvider
 import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieStore
 import com.hermesandroid.relay.network.upstream.DashboardRedirectAuthMode
+import com.hermesandroid.relay.network.upstream.DASHBOARD_SESSION_COOKIE_VARIANT_NAMES
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinator
 import com.hermesandroid.relay.network.upstream.androidDashboardRedirectAuthMode
+import com.hermesandroid.relay.network.upstream.clearDashboardSessionCookiesForRequest
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
+import com.hermesandroid.relay.network.upstream.isDashboardAuthProviderUnavailable
 import com.hermesandroid.relay.network.upstream.isNativeDashboardTransportEligible
-import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureDiagnostic
 import com.hermesandroid.relay.network.upstream.nativeDashboardSignInFailureStage
+import com.hermesandroid.relay.network.upstream.nativeDashboardAuthorizationProvider
+import com.hermesandroid.relay.network.upstream.sameDashboardBase
+import com.hermesandroid.relay.network.upstream.canonicalDashboardBaseFromProviderRedirect
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import com.hermesandroid.relay.viewmodel.DashboardInstallIdentityDecision
+import com.hermesandroid.relay.viewmodel.dashboardInstallIdentityDecision
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.CookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import kotlin.coroutines.resume
 
 private const val NATIVE_DASHBOARD_AUTH_LOG_TAG = "HermesNativeAuth"
+
+internal fun nativeDashboardDiagnosticProviderKind(providerName: String?): String =
+    when (providerName?.trim()?.lowercase()) {
+        "nous" -> "nous"
+        "basic", "password" -> "password"
+        "self-hosted", "oidc" -> "self_hosted_oidc"
+        null, "" -> "gateway_selected"
+        else -> "custom"
+    }
+
+internal fun nativeDashboardAuthDiagnosticDetail(
+    stage: String,
+    attempt: Int,
+    providerKind: String,
+    failureStage: String? = null,
+    authorizationOrigin: String? = null,
+): String = buildString {
+    append("stage=").append(stage)
+    append(" attempt=").append(attempt)
+    append(" provider=").append(providerKind)
+    failureStage?.let { append(" failure=").append(it) }
+    authorizationOrigin?.let { append(" authorization_origin=").append(it) }
+}
+
+private fun recordNativeDashboardAuthDiagnostic(
+    stage: String,
+    attempt: Int,
+    providerKind: String,
+    dashboardUrl: String,
+    startedAtElapsedMs: Long,
+    severity: DiagnosticSeverity = DiagnosticSeverity.Info,
+    failureStage: String? = null,
+    authorizationOrigin: String? = null,
+    suggestion: String? = null,
+    error: Throwable? = null,
+) {
+    val detail = nativeDashboardAuthDiagnosticDetail(
+        stage = stage,
+        attempt = attempt,
+        providerKind = providerKind,
+        failureStage = failureStage,
+        authorizationOrigin = authorizationOrigin,
+    )
+    val elapsedMs = (SystemClock.elapsedRealtime() - startedAtElapsedMs).coerceAtLeast(0L)
+    val endpointRole = Connection.inferRouteRole(dashboardUrl)
+    if (error != null) {
+        DiagnosticsLog.recordError(
+            category = DiagnosticCategory.Auth,
+            title = "Dashboard browser sign-in",
+            detail = detail,
+            throwable = error,
+            operation = "dashboard_native_pkce",
+            endpointRole = endpointRole,
+            configuredUrl = dashboardUrl,
+            suggestion = suggestion,
+            elapsedMs = elapsedMs,
+            reliabilityContext = "dashboard_native_pkce",
+        )
+    } else {
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Auth,
+            severity = severity,
+            title = "Dashboard browser sign-in",
+            detail = detail,
+            operation = "dashboard_native_pkce",
+            endpointRole = endpointRole,
+            configuredUrl = dashboardUrl,
+            suggestion = suggestion,
+            elapsedMs = elapsedMs,
+        )
+    }
+    when (severity) {
+        DiagnosticSeverity.Error -> Log.w(NATIVE_DASHBOARD_AUTH_LOG_TAG, "$detail elapsed_ms=$elapsedMs")
+        DiagnosticSeverity.Warning -> Log.w(NATIVE_DASHBOARD_AUTH_LOG_TAG, "$detail elapsed_ms=$elapsedMs")
+        DiagnosticSeverity.Info -> Log.i(NATIVE_DASHBOARD_AUTH_LOG_TAG, "$detail elapsed_ms=$elapsedMs")
+    }
+}
 
 /**
  * Connection-level Dashboard authentication flow. It is deliberately outside
@@ -84,6 +186,7 @@ private const val NATIVE_DASHBOARD_AUTH_LOG_TAG = "HermesNativeAuth"
 fun DashboardSignInScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
+    onAuthenticationReady: (suspend () -> Result<Unit>)? = null,
     onAuthenticated: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -102,11 +205,27 @@ fun DashboardSignInScreen(
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var actionIsError by remember { mutableStateOf(false) }
     var oauthProvider by remember { mutableStateOf<DashboardAuthProvider?>(null) }
+    var embeddedFallbackFromNative by remember { mutableStateOf(false) }
+    var pendingOriginPromotion by remember {
+        mutableStateOf<PendingDashboardOriginPromotion?>(null)
+    }
     var authFlows by remember(dashboardUrl, connectionId) {
         mutableStateOf<List<String>>(emptyList())
     }
     var nativeSignInJob by remember(dashboardUrl, connectionId) { mutableStateOf<Job?>(null) }
+    var nativeSignInProvider by remember(dashboardUrl, connectionId) {
+        mutableStateOf<DashboardAuthProvider?>(null)
+    }
+    var nativeRestartInFlight by remember(dashboardUrl, connectionId) { mutableStateOf(false) }
+    var nativeAttemptSequence by remember(dashboardUrl, connectionId) { mutableStateOf(0) }
+    var nativeAttemptStartedAtElapsedMs by remember(dashboardUrl, connectionId) {
+        mutableStateOf(0L)
+    }
+    var nativeAttemptProviderKind by remember(dashboardUrl, connectionId) {
+        mutableStateOf("gateway_selected")
+    }
     var authenticationComplete by remember { mutableStateOf(false) }
+    var finishingAuthentication by remember { mutableStateOf(false) }
 
     val cookieStoreFactory = remember(appContext, connectionId) {
         {
@@ -114,8 +233,11 @@ fun DashboardSignInScreen(
                 ?: EncryptedDashboardCookieStore(appContext, connectionId)
         }
     }
-    val clientFactory = remember(dashboardUrl, connectionViewModel) {
-        { connectionViewModel.dashboardClientForActive(dashboardUrl) }
+    val clientFactory = remember(connectionViewModel) {
+        { baseUrl: String -> connectionViewModel.dashboardClientForActive(baseUrl) }
+    }
+    val cookieClientFactory = remember(connectionViewModel) {
+        { baseUrl: String -> connectionViewModel.dashboardCookieClientForActive(baseUrl) }
     }
 
     suspend fun verifyAndRecord(client: DashboardApiClient): DashboardAuthSession? {
@@ -132,15 +254,33 @@ fun DashboardSignInScreen(
             reachable = status != null,
             gatewayTicketAvailable = ticketAvailable,
         )
-        return session
+        return session?.takeIf { dashboardAuthenticationReady(it, ticketAvailable) }
     }
 
     fun finishAuthentication() {
+        if (authenticationComplete || finishingAuthentication) return
+        finishingAuthentication = true
         scope.launch {
-            invalidateDashboardManageCache(appContext.cacheDir)
-            connectionViewModel.refreshStandardVoice()
-            connectionViewModel.refreshDashboardProfiles()
-            authenticationComplete = true
+            try {
+                invalidateDashboardManageCache(appContext.cacheDir)
+                connectionViewModel.refreshStandardVoice()
+                connectionViewModel.refreshDashboardProfiles()
+                val ready = onAuthenticationReady?.invoke() ?: Result.success(Unit)
+                ready.fold(
+                    onSuccess = {
+                        actionMessage = null
+                        actionIsError = false
+                        authenticationComplete = true
+                    },
+                    onFailure = { error ->
+                        actionMessage = error.message
+                            ?: resources.getString(R.string.cw_pairing_did_not_complete)
+                        actionIsError = true
+                    },
+                )
+            } finally {
+                finishingAuthentication = false
+            }
         }
     }
 
@@ -150,25 +290,78 @@ fun DashboardSignInScreen(
             actionMessage = resources.getString(R.string.dashboard_no_url_configured)
             return@LaunchedEffect
         }
-        val client = clientFactory()
+        val client = clientFactory(dashboardUrl)
         try {
-            val status = client.getStatus().getOrElse {
-                actionMessage = it.message ?: resources.getString(R.string.dashboard_request_failed)
-                actionIsError = true
+            val status = client.getStatus().getOrElse { error ->
+                if (error.isDashboardAuthProviderUnavailable()) {
+                    providers = activeConnection?.dashboardAuthProviders.orEmpty().map { name ->
+                        DashboardAuthProvider(
+                            name = name,
+                            supportsPassword = name.equals("basic", ignoreCase = true) ||
+                                name.equals("password", ignoreCase = true),
+                        )
+                    }
+                    authFlows = emptyList()
+                    actionMessage = resources.getString(
+                        R.string.dashboard_signin_provider_unavailable_choose,
+                    )
+                    actionIsError = false
+                } else {
+                    actionMessage = error.message
+                        ?: resources.getString(R.string.dashboard_request_failed)
+                    actionIsError = true
+                }
                 return@LaunchedEffect
             }
             providers = client.getAuthProviders().getOrNull()
                 ?.takeIf { it.isNotEmpty() }
                 ?: status.authProviderDetails
             authFlows = status.authFlows
-            val session = if (status.authRequired) client.currentSession().getOrNull() else null
+            var session = if (status.authRequired) client.currentSession().getOrNull() else null
+            var ticketAvailable = if (session?.authenticated == true) {
+                client.requestWsTicket().isSuccess
+            } else {
+                null
+            }
+            // Recover a persisted cookie session that an older native bearer
+            // masks. Proof is cookie-only; retirement preserves the cookie and
+            // removes the stale provider credential for subsequent clients.
+            if (
+                status.authRequired &&
+                session?.let { dashboardAuthenticationReady(it, ticketAvailable) } != true
+            ) {
+                val cookieClient = cookieClientFactory(dashboardUrl)
+                try {
+                    val cookieSession = cookieClient.currentSession().getOrNull()
+                    val cookieTicketAvailable = if (cookieSession?.authenticated == true) {
+                        cookieClient.requestWsTicket().isSuccess
+                    } else {
+                        null
+                    }
+                    if (
+                        cookieSession != null &&
+                        dashboardAuthenticationReady(cookieSession, cookieTicketAvailable)
+                    ) {
+                        withContext(Dispatchers.IO) {
+                            connectionViewModel.retireNativeDashboardAuthentication(connectionId)
+                        }
+                        session = cookieSession
+                        ticketAvailable = true
+                    }
+                } finally {
+                    cookieClient.shutdown()
+                }
+            }
             connectionViewModel.recordDashboardStatus(
                 status = status,
                 session = session,
                 reachable = true,
-                gatewayTicketAvailable = null,
+                gatewayTicketAvailable = ticketAvailable,
             )
-            if (!status.authRequired || session?.authenticated == true) {
+            if (
+                !status.authRequired ||
+                session?.let { dashboardAuthenticationReady(it, ticketAvailable) } == true
+            ) {
                 finishAuthentication()
             }
         } finally {
@@ -183,12 +376,31 @@ fun DashboardSignInScreen(
         actionMessage = null
         actionIsError = false
         scope.launch {
-            val client = clientFactory()
+            val client = cookieClientFactory(dashboardUrl)
             try {
+                prepareDashboardCookieSignIn(
+                    baseUrl = dashboardUrl,
+                    cookieStore = cookieStoreFactory(),
+                    cookieManager = CookieManager.getInstance(),
+                )
                 val result = client.loginPassword(provider, username, password)
-                val session = if (result.isSuccess) verifyAndRecord(client) else null
-                if (result.isSuccess && session?.authenticated == true) {
-                    finishAuthentication()
+                val cookieSession = if (result.isSuccess) verifyAndRecord(client) else null
+                if (cookieSession != null) {
+                    withContext(Dispatchers.IO) {
+                        connectionViewModel.retireNativeDashboardAuthentication(connectionId)
+                    }
+                    val verificationClient = clientFactory(dashboardUrl)
+                    val verifiedSession = try {
+                        verifyAndRecord(verificationClient)
+                    } finally {
+                        verificationClient.shutdown()
+                    }
+                    if (verifiedSession != null) {
+                        finishAuthentication()
+                    } else {
+                        actionMessage = resources.getString(R.string.dashboard_signin_no_session)
+                        actionIsError = true
+                    }
                 } else {
                     actionMessage = result.exceptionOrNull()?.message
                         ?: resources.getString(R.string.dashboard_signin_no_session)
@@ -206,95 +418,194 @@ fun DashboardSignInScreen(
 
     fun startRedirectSignIn(provider: DashboardAuthProvider) {
         if (actionInFlight || dashboardUrl.isBlank()) return
+        val competingRedirectProviders = if (provider.supportsPassword) {
+            1
+        } else {
+            providers.count { !it.supportsPassword }
+        }
         if (
-            androidDashboardRedirectAuthMode(provider.name, authFlows) ==
+            androidDashboardRedirectAuthMode(
+                provider.name,
+                authFlows,
+                competingRedirectProviders,
+            ) ==
             DashboardRedirectAuthMode.WebView
         ) {
+            embeddedFallbackFromNative = false
             oauthProvider = provider
             return
         }
         if (!isNativeDashboardTransportEligible(dashboardUrl)) {
-            actionMessage = resources.getString(R.string.dashboard_native_signin_requires_https)
-            actionIsError = true
+            embeddedFallbackFromNative = true
+            oauthProvider = provider
             return
         }
         val authClient = connectionViewModel.nativeDashboardAuthClientForActive(dashboardUrl)
         if (authClient == null) {
-            actionMessage = resources.getString(R.string.dashboard_native_signin_unavailable)
-            actionIsError = true
+            embeddedFallbackFromNative = true
+            oauthProvider = provider
             return
         }
 
         actionInFlight = true
         actionIsError = false
         actionMessage = resources.getString(R.string.dashboard_native_signin_opening)
+        nativeSignInProvider = provider
+        nativeAttemptSequence += 1
+        val attemptNumber = nativeAttemptSequence
+        val attemptProviderKind = nativeDashboardDiagnosticProviderKind(provider.name)
+        val attemptStartedAtElapsedMs = SystemClock.elapsedRealtime()
+        nativeAttemptStartedAtElapsedMs = attemptStartedAtElapsedMs
+        nativeAttemptProviderKind = attemptProviderKind
+        recordNativeDashboardAuthDiagnostic(
+            stage = "started",
+            attempt = attemptNumber,
+            providerKind = attemptProviderKind,
+            dashboardUrl = dashboardUrl,
+            startedAtElapsedMs = attemptStartedAtElapsedMs,
+        )
         nativeSignInJob = scope.launch {
             try {
-                NativeDashboardSignInCoordinator(authClient).signIn(provider.name) { authorizationUrl ->
+                val authorizationProvider = nativeDashboardAuthorizationProvider(
+                    providerName = provider.name,
+                    competingRedirectProviders = competingRedirectProviders,
+                )
+                NativeDashboardSignInCoordinator(authClient).signIn(
+                    provider = authorizationProvider,
+                    onAuthorizationPrepared = { usesAlternateOrigin ->
+                        recordNativeDashboardAuthDiagnostic(
+                            stage = "authorization_prepared",
+                            attempt = attemptNumber,
+                            providerKind = attemptProviderKind,
+                            dashboardUrl = dashboardUrl,
+                            startedAtElapsedMs = attemptStartedAtElapsedMs,
+                            authorizationOrigin = if (usesAlternateOrigin) {
+                                "alternate"
+                            } else {
+                                "configured"
+                            },
+                        )
+                    },
+                    onCallbackValidated = {
+                        recordNativeDashboardAuthDiagnostic(
+                            stage = "callback_validated",
+                            attempt = attemptNumber,
+                            providerKind = attemptProviderKind,
+                            dashboardUrl = dashboardUrl,
+                            startedAtElapsedMs = attemptStartedAtElapsedMs,
+                        )
+                    },
+                ) { authorizationUrl ->
                     withContext(Dispatchers.Main.immediate) {
                         launchNativeDashboardAuthorization(context, authorizationUrl)
                     }
+                    recordNativeDashboardAuthDiagnostic(
+                        stage = "browser_launched",
+                        attempt = attemptNumber,
+                        providerKind = attemptProviderKind,
+                        dashboardUrl = dashboardUrl,
+                        startedAtElapsedMs = attemptStartedAtElapsedMs,
+                    )
                 }
-                val client = clientFactory()
+                val client = clientFactory(dashboardUrl)
                 val session = try {
                     verifyAndRecord(client)
                 } finally {
                     client.shutdown()
                 }
                 if (session?.authenticated == true) {
+                    recordNativeDashboardAuthDiagnostic(
+                        stage = "completed",
+                        attempt = attemptNumber,
+                        providerKind = attemptProviderKind,
+                        dashboardUrl = dashboardUrl,
+                        startedAtElapsedMs = attemptStartedAtElapsedMs,
+                    )
                     actionMessage = session.provider?.let {
                         resources.getString(R.string.dashboard_signed_in_with, it)
                     } ?: resources.getString(R.string.dashboard_signed_in)
                     actionIsError = false
                     finishAuthentication()
                 } else {
-                    actionMessage = resources.getString(R.string.dashboard_signin_no_session)
+                    val message = resources.getString(R.string.dashboard_signin_no_session)
+                    recordNativeDashboardAuthDiagnostic(
+                        stage = "session_verification_failed",
+                        attempt = attemptNumber,
+                        providerKind = attemptProviderKind,
+                        dashboardUrl = dashboardUrl,
+                        startedAtElapsedMs = attemptStartedAtElapsedMs,
+                        severity = DiagnosticSeverity.Error,
+                        suggestion = message,
+                        error = IOException("Dashboard session verification failed after native sign-in"),
+                    )
+                    actionMessage = message
                     actionIsError = true
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 val failureStage = nativeDashboardSignInFailureStage(error)
-                val failureDetail = nativeDashboardSignInFailureDiagnostic(error)
-                DiagnosticsLog.record(
-                    category = DiagnosticCategory.Auth,
-                    severity = DiagnosticSeverity.Error,
-                    title = resources.getString(R.string.dashboard_signin_failed),
-                    detail = failureDetail,
-                    operation = "dashboard_native_pkce",
-                )
-                Log.w(NATIVE_DASHBOARD_AUTH_LOG_TAG, failureDetail)
-                actionMessage = when (nativeDashboardSignInMessageKind(failureStage)) {
-                    NativeDashboardSignInMessageKind.CallbackRejected -> resources.getString(
+                val messageKind = nativeDashboardSignInMessageKind(failureStage)
+                val canUseEmbeddedFallback = nativeDashboardSignInCanUseEmbeddedFallback(messageKind)
+                val message = when {
+                    canUseEmbeddedFallback -> resources.getString(
+                        R.string.dashboard_native_signin_embedded_fallback,
+                    )
+                    messageKind == NativeDashboardSignInMessageKind.CallbackRejected -> resources.getString(
                         R.string.dashboard_native_signin_callback_rejected,
                     )
-                    NativeDashboardSignInMessageKind.CodeRejected -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.CodeRejected -> resources.getString(
                         R.string.dashboard_native_signin_code_rejected,
                     )
-                    NativeDashboardSignInMessageKind.GatewayRejected -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.GatewayRejected -> resources.getString(
                         R.string.dashboard_native_signin_gateway_rejected,
                     )
-                    NativeDashboardSignInMessageKind.RateLimited -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.RateLimited -> resources.getString(
                         R.string.dashboard_native_signin_rate_limited,
                     )
-                    NativeDashboardSignInMessageKind.GatewayUnavailable -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.GatewayUnavailable -> resources.getString(
                         R.string.dashboard_native_signin_gateway_unavailable,
                     )
-                    NativeDashboardSignInMessageKind.ResponseUnsupported -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.ResponseUnsupported -> resources.getString(
                         R.string.dashboard_native_signin_response_unsupported,
                     )
-                    NativeDashboardSignInMessageKind.AttemptInactive -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.AttemptInactive -> resources.getString(
                         R.string.dashboard_native_signin_attempt_inactive,
                     )
-                    NativeDashboardSignInMessageKind.SecureStorage -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.SecureStorage -> resources.getString(
                         R.string.dashboard_native_signin_storage_failed,
                     )
-                    NativeDashboardSignInMessageKind.Transport -> resources.getString(
+                    messageKind == NativeDashboardSignInMessageKind.Transport -> resources.getString(
                         R.string.dashboard_native_signin_transport_retry,
                     )
-                    NativeDashboardSignInMessageKind.Generic -> error.message
-                        ?: resources.getString(R.string.dashboard_signin_failed)
+                    else -> resources.getString(R.string.dashboard_signin_failed)
                 }
+                recordNativeDashboardAuthDiagnostic(
+                    stage = "failed",
+                    attempt = attemptNumber,
+                    providerKind = attemptProviderKind,
+                    dashboardUrl = dashboardUrl,
+                    startedAtElapsedMs = attemptStartedAtElapsedMs,
+                    severity = DiagnosticSeverity.Error,
+                    failureStage = failureStage,
+                    suggestion = message,
+                    error = error,
+                )
+                if (canUseEmbeddedFallback) {
+                    embeddedFallbackFromNative = true
+                    oauthProvider = provider
+                    recordNativeDashboardAuthDiagnostic(
+                        stage = "embedded_fallback_opened",
+                        attempt = attemptNumber,
+                        providerKind = attemptProviderKind,
+                        dashboardUrl = dashboardUrl,
+                        startedAtElapsedMs = attemptStartedAtElapsedMs,
+                    )
+                    actionMessage = message
+                    actionIsError = false
+                    return@launch
+                }
+                actionMessage = message
                 actionIsError = true
             } finally {
                 actionInFlight = false
@@ -303,30 +614,98 @@ fun DashboardSignInScreen(
         }
     }
 
+    fun continueNativeSignIn() {
+        val provider = nativeSignInProvider ?: return
+        val previousAttempt = nativeSignInJob ?: return
+        if (nativeRestartInFlight) return
+        nativeRestartInFlight = true
+        recordNativeDashboardAuthDiagnostic(
+            stage = "continue_requested",
+            attempt = nativeAttemptSequence,
+            providerKind = nativeAttemptProviderKind,
+            dashboardUrl = dashboardUrl,
+            startedAtElapsedMs = nativeAttemptStartedAtElapsedMs,
+            severity = DiagnosticSeverity.Warning,
+        )
+        scope.launch {
+            previousAttempt.cancelAndJoin()
+            actionInFlight = false
+            nativeRestartInFlight = false
+            startRedirectSignIn(provider)
+        }
+    }
+
     DisposableEffect(dashboardUrl, connectionId) {
         onDispose { nativeSignInJob?.cancel() }
     }
 
     oauthProvider?.let { provider ->
+        val redirectProbeClient = remember(dashboardUrl, connectionViewModel) {
+            connectionViewModel.dashboardHttpClientForActive(dashboardUrl)
+        }
         DashboardOAuthScreen(
             dashboardUrl = dashboardUrl,
             provider = provider,
             cookieStoreFactory = cookieStoreFactory,
-            clientFactory = clientFactory,
-            onDismiss = { oauthProvider = null },
-            onAuthenticated = { session ->
+            clientFactory = cookieClientFactory,
+            redirectProbeClient = redirectProbeClient,
+            fallbackFromNative = embeddedFallbackFromNative,
+            onDismiss = {
                 oauthProvider = null
-                scope.launch {
-                    val client = clientFactory()
-                    try {
+                embeddedFallbackFromNative = false
+            },
+            onAuthenticated = { _, authBaseUrl ->
+                if (dashboardOriginRequiresConfirmation(dashboardUrl, authBaseUrl)) {
+                    val enteredClient = clientFactory(dashboardUrl)
+                    val canonicalClient = clientFactory(authBaseUrl)
+                    val identityDecision = try {
+                        dashboardInstallIdentityDecision(
+                            enteredClient.getStatus().getOrNull()?.installId,
+                            canonicalClient.getStatus().getOrNull()?.installId,
+                        )
+                    } finally {
+                        enteredClient.shutdown()
+                        canonicalClient.shutdown()
+                    }
+                    oauthProvider = null
+                    embeddedFallbackFromNative = false
+                    if (identityDecision == DashboardInstallIdentityDecision.Mismatch) {
+                        actionMessage = resources.getString(
+                            R.string.dashboard_oauth_origin_install_mismatch,
+                        )
+                        actionIsError = true
+                        false
+                    } else {
+                        pendingOriginPromotion = PendingDashboardOriginPromotion(
+                            origin = authBaseUrl,
+                            identityDecision = identityDecision,
+                        )
+                        true
+                    }
+                } else {
+                    withContext(Dispatchers.IO) {
+                        connectionViewModel.retireNativeDashboardAuthentication(connectionId)
+                    }
+                    val client = clientFactory(authBaseUrl)
+                    val verifiedSession = try {
                         verifyAndRecord(client)
                     } finally {
                         client.shutdown()
                     }
-                    actionMessage = session.provider?.let {
-                        resources.getString(R.string.dashboard_signed_in_with, it)
-                    } ?: resources.getString(R.string.dashboard_signed_in)
-                    finishAuthentication()
+                    if (verifiedSession == null) {
+                        actionMessage = resources.getString(R.string.dashboard_signin_no_session)
+                        actionIsError = true
+                        false
+                    } else {
+                        oauthProvider = null
+                        embeddedFallbackFromNative = false
+                        actionMessage = verifiedSession.provider?.let {
+                            resources.getString(R.string.dashboard_signed_in_with, it)
+                        } ?: resources.getString(R.string.dashboard_signed_in)
+                        actionIsError = false
+                        finishAuthentication()
+                        true
+                    }
                 }
             },
             onError = {
@@ -337,12 +716,102 @@ fun DashboardSignInScreen(
         return
     }
 
+    pendingOriginPromotion?.let { pending ->
+        AlertDialog(
+            onDismissRequest = {
+                if (!actionInFlight) pendingOriginPromotion = null
+            },
+            title = { Text(stringResource(R.string.dashboard_oauth_origin_confirm_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.dashboard_oauth_origin_confirm_body))
+                    Text(
+                        text = pending.origin,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (pending.identityDecision == DashboardInstallIdentityDecision.Missing) {
+                        Text(
+                            text = stringResource(R.string.dashboard_oauth_origin_identity_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !actionInFlight,
+                    onClick = {
+                        actionInFlight = true
+                        scope.launch {
+                            val routeReady = connectionViewModel.promoteAuthenticatedDashboardOrigin(
+                                origin = pending.origin,
+                                allowMissingInstallIdentity = pending.identityDecision ==
+                                    DashboardInstallIdentityDecision.Missing,
+                            )
+                            if (routeReady) {
+                                withContext(Dispatchers.IO) {
+                                    connectionViewModel.retireNativeDashboardAuthentication(connectionId)
+                                }
+                                val client = clientFactory(pending.origin)
+                                val verified = try {
+                                    verifyAndRecord(client)
+                                } finally {
+                                    client.shutdown()
+                                }
+                                if (verified != null) {
+                                    pendingOriginPromotion = null
+                                    actionIsError = false
+                                    finishAuthentication()
+                                } else {
+                                    pendingOriginPromotion = null
+                                    actionMessage = resources.getString(R.string.dashboard_signin_no_session)
+                                    actionIsError = true
+                                }
+                            } else {
+                                pendingOriginPromotion = null
+                                actionMessage = resources.getString(R.string.dashboard_signin_failed)
+                                actionIsError = true
+                            }
+                            actionInFlight = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.dashboard_oauth_origin_use_button))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !actionInFlight,
+                    onClick = { pendingOriginPromotion = null },
+                ) {
+                    Text(stringResource(R.string.dashboard_cancel))
+                }
+            },
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.dashboard_sign_in)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = {
+                            if (nativeSignInJob != null) {
+                                recordNativeDashboardAuthDiagnostic(
+                                    stage = "screen_closed",
+                                    attempt = nativeAttemptSequence,
+                                    providerKind = nativeAttemptProviderKind,
+                                    dashboardUrl = dashboardUrl,
+                                    startedAtElapsedMs = nativeAttemptStartedAtElapsedMs,
+                                )
+                            }
+                            onBack()
+                        },
+                    ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.dashboard_back),
@@ -361,20 +830,38 @@ fun DashboardSignInScreen(
         ) {
             if (authenticationComplete) {
                 DashboardAuthenticationComplete(onContinue = onAuthenticated)
-            } else if (loading) {
-                CircularProgressIndicator()
+            } else if (loading || finishingAuthentication) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator()
+                    if (finishingAuthentication) {
+                        Text(stringResource(R.string.cw_negotiating_relay))
+                    }
+                }
             } else {
                 DashboardSignInForm(
                     dashboardUrl = dashboardUrl,
                     routeHint = routeHint,
                     providers = providers,
+                    authFlows = authFlows,
                     actionInFlight = actionInFlight,
                     actionMessage = actionMessage,
                     actionIsError = actionIsError,
                     nativeSignInInFlight = nativeSignInJob != null,
+                    nativeRestartInFlight = nativeRestartInFlight,
                     onSignIn = ::submitPassword,
                     onOAuthSignIn = ::startRedirectSignIn,
+                    onContinueNativeSignIn = ::continueNativeSignIn,
                     onCancelNativeSignIn = {
+                        recordNativeDashboardAuthDiagnostic(
+                            stage = "cancel_requested",
+                            attempt = nativeAttemptSequence,
+                            providerKind = nativeAttemptProviderKind,
+                            dashboardUrl = dashboardUrl,
+                            startedAtElapsedMs = nativeAttemptStartedAtElapsedMs,
+                        )
                         actionMessage = resources.getString(R.string.dashboard_native_signin_cancelled)
                         actionIsError = false
                         nativeSignInJob?.cancel()
@@ -384,6 +871,22 @@ fun DashboardSignInScreen(
         }
     }
 }
+
+internal fun dashboardAuthenticationReady(
+    session: DashboardAuthSession,
+    @Suppress("UNUSED_PARAMETER")
+    gatewayTicketAvailable: Boolean?,
+): Boolean = session.authenticated
+
+internal data class PendingDashboardOriginPromotion(
+    val origin: String,
+    val identityDecision: DashboardInstallIdentityDecision,
+)
+
+internal fun dashboardOriginRequiresConfirmation(
+    enteredOrigin: String,
+    callbackOrigin: String,
+): Boolean = !sameDashboardBase(enteredOrigin, callbackOrigin)
 
 internal enum class NativeDashboardSignInMessageKind {
     CallbackRejected,
@@ -412,6 +915,20 @@ internal fun nativeDashboardSignInMessageKind(failureStage: String): NativeDashb
         failureStage.startsWith("token_transport") -> NativeDashboardSignInMessageKind.Transport
         else -> NativeDashboardSignInMessageKind.Generic
     }
+
+/**
+ * Upstream explicitly retains cookie sign-in as the compatibility fallback
+ * when native PKCE fails for a client-local reason. Server rejection, rate
+ * limiting, and an explicit provider denial stay visible instead of silently
+ * starting a second authorization attempt.
+ */
+internal fun nativeDashboardSignInCanUseEmbeddedFallback(
+    messageKind: NativeDashboardSignInMessageKind,
+): Boolean = messageKind in setOf(
+    NativeDashboardSignInMessageKind.ResponseUnsupported,
+    NativeDashboardSignInMessageKind.SecureStorage,
+    NativeDashboardSignInMessageKind.Transport,
+)
 
 @Composable
 private fun DashboardAuthenticationComplete(onContinue: () -> Unit) {
@@ -469,18 +986,25 @@ private fun DashboardSignInForm(
     dashboardUrl: String,
     routeHint: String?,
     providers: List<DashboardAuthProvider>,
+    authFlows: List<String>,
     actionInFlight: Boolean,
     actionMessage: String?,
     actionIsError: Boolean,
     nativeSignInInFlight: Boolean,
+    nativeRestartInFlight: Boolean,
     onSignIn: (String, String, String) -> Unit,
     onOAuthSignIn: (DashboardAuthProvider) -> Unit,
+    onContinueNativeSignIn: () -> Unit,
     onCancelNativeSignIn: () -> Unit,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    val passwordProvider = providers.firstOrNull { it.supportsPassword }
-    val redirectProviders = providers.filter { it.isRedirectProvider }
+    val browserProviders = providers.filter {
+        dashboardProviderEntryMode(it, authFlows) != DashboardProviderEntryMode.Password
+    }
+    val passwordProvider = providers.firstOrNull {
+        dashboardProviderEntryMode(it, authFlows) == DashboardProviderEntryMode.Password
+    }
 
     Text(
         text = stringResource(R.string.dashboard_signin_required_title),
@@ -498,7 +1022,7 @@ private fun DashboardSignInForm(
             color = MaterialTheme.colorScheme.onTertiaryContainer,
         )
     }
-    redirectProviders.forEach { provider ->
+    browserProviders.forEach { provider ->
         Button(
             onClick = { onOAuthSignIn(provider) },
             enabled = !actionInFlight,
@@ -508,15 +1032,23 @@ private fun DashboardSignInForm(
         }
     }
     if (nativeSignInInFlight) {
-        Button(
+        OutlinedButton(
+            onClick = onContinueNativeSignIn,
+            enabled = !nativeRestartInFlight,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.dashboard_native_signin_continue))
+        }
+        TextButton(
             onClick = onCancelNativeSignIn,
+            enabled = !nativeRestartInFlight,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.dashboard_cancel))
         }
     }
     if (passwordProvider != null || providers.isEmpty()) {
-        if (redirectProviders.isNotEmpty()) HorizontalDivider()
+        if (browserProviders.isNotEmpty()) HorizontalDivider()
         OutlinedTextField(
             value = username,
             onValueChange = { username = it },
@@ -553,20 +1085,39 @@ private fun DashboardSignInForm(
     }
 }
 
+internal enum class DashboardProviderEntryMode { NativeBrowser, EmbeddedBrowser, Password }
+
+/** Provider names and UI shapes never override the server-advertised native capability. */
+internal fun dashboardProviderEntryMode(
+    provider: DashboardAuthProvider,
+    authFlows: List<String>,
+): DashboardProviderEntryMode = when {
+    androidDashboardRedirectAuthMode(provider.name, authFlows) ==
+        DashboardRedirectAuthMode.NativePkce -> DashboardProviderEntryMode.NativeBrowser
+    provider.supportsPassword -> DashboardProviderEntryMode.Password
+    else -> DashboardProviderEntryMode.EmbeddedBrowser
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DashboardOAuthScreen(
     dashboardUrl: String,
     provider: DashboardAuthProvider,
     cookieStoreFactory: () -> DashboardCookieStore,
-    clientFactory: () -> DashboardApiClient,
+    clientFactory: (String) -> DashboardApiClient,
+    redirectProbeClient: OkHttpClient,
+    fallbackFromNative: Boolean,
     onDismiss: () -> Unit,
-    onAuthenticated: (DashboardAuthSession) -> Unit,
+    onAuthenticated: suspend (DashboardAuthSession, String) -> Boolean,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
-    val initialStatus = stringResource(R.string.dashboard_oauth_initial_status)
+    val initialStatus = stringResource(
+        if (fallbackFromNative) R.string.dashboard_native_signin_embedded_fallback
+        else R.string.dashboard_oauth_initial_status,
+    )
     val verifyingStatus = stringResource(R.string.dashboard_oauth_verifying)
     val notAcceptedStatus = stringResource(R.string.dashboard_oauth_not_accepted)
     val verifyFailedStatus = stringResource(R.string.dashboard_oauth_verify_failed)
@@ -574,17 +1125,43 @@ private fun DashboardOAuthScreen(
     var checking by remember { mutableStateOf(false) }
     var pageProgress by remember { mutableStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
-    val loginUrl = remember(dashboardUrl, provider.name) {
+    var authBaseUrl by remember(dashboardUrl, provider.name) { mutableStateOf<String?>(null) }
+    val loginUrl = remember(authBaseUrl, provider.name) {
+        val resolvedBase = authBaseUrl ?: return@remember null
         DashboardApiClient.authLoginUrl(
-            baseUrl = dashboardUrl,
+            baseUrl = resolvedBase,
             provider = provider.name,
-            next = DashboardApiClient.authLandingPath(dashboardUrl),
+            next = DashboardApiClient.authLandingPath(resolvedBase),
         )
+    }
+
+    LaunchedEffect(dashboardUrl, provider.name, redirectProbeClient) {
+        val resolvedBase = resolveDashboardWebViewAuthBase(
+            dashboardUrl = dashboardUrl,
+            provider = provider.name,
+            client = redirectProbeClient,
+        )
+        try {
+            prepareDashboardCookieSignIn(
+                baseUrl = resolvedBase,
+                cookieStore = cookieStoreFactory(),
+                cookieManager = CookieManager.getInstance(),
+            )
+        } catch (error: Exception) {
+            statusText = verifyFailedStatus
+            onError(error.message ?: verifyFailedStatus)
+            return@LaunchedEffect
+        }
+        authBaseUrl = resolvedBase
+        if (!sameDashboardBase(resolvedBase, dashboardUrl)) {
+            statusText = resources.getString(R.string.dashboard_oauth_canonical_origin, resolvedBase)
+        }
     }
 
     fun handleNavigation(url: String?) {
         val loadedUrl = url?.takeIf { it.isNotBlank() } ?: return
-        when (dashboardWebViewAuthNavigation(dashboardUrl, loadedUrl)) {
+        val resolvedBase = authBaseUrl ?: return
+        when (dashboardWebViewAuthNavigation(resolvedBase, loadedUrl)) {
             DashboardWebViewAuthNavigation.Continue -> return
             DashboardWebViewAuthNavigation.RejectLoopbackCallback -> {
                 statusText = notAcceptedStatus
@@ -604,10 +1181,19 @@ private fun DashboardOAuthScreen(
         checking = true
         statusText = verifyingStatus
         scope.launch {
-            val client = clientFactory()
+            val client = clientFactory(resolvedBase)
             try {
                 val session = client.currentSession().getOrNull()
-                if (session?.authenticated == true) onAuthenticated(session) else {
+                val ticketAvailable = if (session?.authenticated == true) {
+                    client.requestWsTicket().isSuccess
+                } else {
+                    null
+                }
+                val accepted = session?.takeIf {
+                    dashboardAuthenticationReady(it, ticketAvailable)
+                }
+                    ?.let { onAuthenticated(it, resolvedBase) } == true
+                if (!accepted) {
                     checking = false
                     statusText = notAcceptedStatus
                 }
@@ -674,15 +1260,19 @@ private fun DashboardOAuthScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            if (loginUrl == null) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+                return@Column
+            }
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 factory = { viewContext ->
-                    CookieManager.getInstance().setAcceptCookie(true)
                     WebView(viewContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
+                        configureDashboardAuthWebView(this)
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView, newProgress: Int) {
                                 pageProgress = newProgress
@@ -695,7 +1285,7 @@ private fun DashboardOAuthScreen(
                             ): Boolean {
                                 val target = request.url.toString()
                                 if (
-                                    dashboardWebViewAuthNavigation(dashboardUrl, target) ==
+                                    dashboardWebViewAuthNavigation(authBaseUrl ?: dashboardUrl, target) ==
                                     DashboardWebViewAuthNavigation.RejectLoopbackCallback
                                 ) {
                                     handleNavigation(target)
@@ -731,6 +1321,160 @@ private fun DashboardOAuthScreen(
             )
         }
     }
+}
+
+/**
+ * Resolve the dashboard origin that owns the cookie-based OIDC transaction.
+ * Upstream declares that origin in the provider authorization redirect's
+ * `redirect_uri`; probing the selected private route before opening WebView
+ * prevents Hermes' temporary PKCE cookie from being scoped to a LAN host while
+ * the provider returns to a public host.
+ */
+internal suspend fun resolveDashboardWebViewAuthBase(
+    dashboardUrl: String,
+    provider: String,
+    client: OkHttpClient,
+): String {
+    val selected = dashboardUrl.trim().trimEnd('/').toHttpUrlOrNull()
+        ?: return dashboardUrl
+    val loginUrl = DashboardApiClient.authLoginUrl(
+        baseUrl = selected.toString().trimEnd('/'),
+        provider = provider,
+        next = DashboardApiClient.authLandingPath(selected.toString()),
+    )
+    val probeClient = client.newBuilder()
+        .cookieJar(CookieJar.NO_COOKIES)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .callTimeout(5, TimeUnit.SECONDS)
+        .build()
+    val request = Request.Builder().url(loginUrl).get().build()
+    val location = suspendCancellableCoroutine { continuation ->
+        val call = probeClient.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runCatching {
+                    if (continuation.isActive) continuation.resume(null)
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val redirect = if (it.code in 300..399) it.header("Location") else null
+                    runCatching {
+                        if (continuation.isActive) continuation.resume(redirect)
+                    }
+                }
+            }
+        })
+    }
+    return canonicalDashboardWebViewAuthBase(dashboardUrl, location)
+}
+
+internal fun canonicalDashboardWebViewAuthBase(
+    dashboardUrl: String,
+    redirectLocation: String?,
+): String = canonicalDashboardBaseFromProviderRedirect(dashboardUrl, redirectLocation)
+
+/**
+ * Dashboard OIDC crosses from the configured dashboard to its identity
+ * provider and back. Modern Android targets reject third-party cookies by
+ * default, which can leave federated provider pages without the temporary
+ * state they need to render or complete sign-in. Keep that compatibility
+ * exception scoped to this short-lived authentication WebView.
+ */
+internal fun configureDashboardAuthWebView(webView: WebView) {
+    CookieManager.getInstance().apply {
+        setAcceptCookie(true)
+        setAcceptThirdPartyCookies(webView, true)
+    }
+    webView.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+    }
+}
+
+internal data class DashboardWebViewCookieDeletion(
+    val url: String,
+    val header: String,
+)
+
+internal fun dashboardWebViewSessionCookieDeletions(
+    baseUrl: String,
+): List<DashboardWebViewCookieDeletion> {
+    val parsed = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return emptyList()
+    val basePath = parsed.encodedPath.trimEnd('/').ifBlank { "/" }
+    val ordinaryPaths = linkedSetOf("/", basePath)
+    return DASHBOARD_SESSION_COOKIE_VARIANT_NAMES.flatMap { name ->
+        val paths = if (name.startsWith("__Host-", ignoreCase = true)) {
+            listOf("/")
+        } else {
+            ordinaryPaths
+        }
+        paths.map { path ->
+            val target = parsed.newBuilder()
+                .encodedPath(path)
+                .query(null)
+                .fragment(null)
+                .build()
+            val secure = parsed.isHttps || name.startsWith("__", ignoreCase = true)
+            DashboardWebViewCookieDeletion(
+                url = target.toString(),
+                header = buildString {
+                    append(name)
+                    append("=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=")
+                    append(path)
+                    if (secure) append("; Secure")
+                },
+            )
+        }
+    }.distinct()
+}
+
+internal suspend fun expireDashboardWebViewSessionCookies(
+    baseUrl: String,
+    setCookie: (url: String, header: String, callback: (Boolean) -> Unit) -> Unit,
+    flush: () -> Unit,
+): Boolean {
+    val deletions = dashboardWebViewSessionCookieDeletions(baseUrl)
+    if (deletions.isEmpty()) return false
+    val results = deletions.map { deletion ->
+        CompletableDeferred<Unit>().also { completion ->
+            runCatching {
+                setCookie(deletion.url, deletion.header) {
+                    completion.complete(Unit)
+                }
+            }.onFailure { completion.completeExceptionally(it) }
+        }
+    }.awaitAll()
+    flush()
+    return results.size == deletions.size
+}
+
+internal suspend fun prepareDashboardCookieSignIn(
+    baseUrl: String,
+    cookieStore: DashboardCookieStore,
+    cookieManager: CookieManager,
+) {
+    val loginUrl = DashboardApiClient.authLoginUrl(
+        baseUrl = baseUrl,
+        provider = "",
+        next = DashboardApiClient.authLandingPath(baseUrl),
+    )
+    withContext(Dispatchers.IO) {
+        clearDashboardSessionCookiesForRequest(cookieStore, loginUrl)
+    }
+    val cleared = withContext(Dispatchers.Main.immediate) {
+        expireDashboardWebViewSessionCookies(
+            baseUrl = baseUrl,
+            setCookie = { url, header, callback ->
+                cookieManager.setCookie(url, header, callback)
+            },
+            flush = cookieManager::flush,
+        )
+    }
+    if (!cleared) throw IOException("Could not prepare Dashboard sign-in cookies")
 }
 
 internal enum class DashboardWebViewAuthNavigation {

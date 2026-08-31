@@ -102,6 +102,18 @@ internal class ConversationBindingController {
         )
     }
 
+    /** A user-requested draft keeps its owner and fences persisted-session reconciliation. */
+    fun startFreshDraft() {
+        val current = _state.value
+        if (!current.isBound) return
+        if (current.sessionId == null && current.hasExplicitOwner) return
+        _state.value = current.copy(
+            sessionId = null,
+            origin = ConversationBindingOrigin.ExplicitSession,
+            revision = current.revision + 1,
+        )
+    }
+
     fun releaseExplicitOwner() {
         if (!_state.value.hasExplicitOwner) return
         reset()

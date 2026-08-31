@@ -11,7 +11,7 @@ detail.
 
 | Feature | Relay required? | Auth path |
 |---------|-----------------|-----------|
-| Chat | No | Hermes API key direct to API server |
+| Chat | No | Dashboard/Gateway session; API bearer only for optional fallback |
 | Vanilla Hermes Voice Mode | No | Dashboard session from Manage |
 | Relay voice extras | Yes for relay TTS/STT/realtime endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
 | Realtime Agent voice engine | Yes; experimental `/voice/realtime-agent/*` broker | Hermes API bearer or relay session with `voice:realtime` |
@@ -94,6 +94,25 @@ can be removed with `hermes relay compat remove`.
 
 Pairing/setup QRs can include top-level `dashboard_url`; Android uses it for
 Manage and Vanilla Hermes dashboard voice instead of deriving same-host `:9119`.
+Current pairing also advertises the Dashboard plugin's same-origin Relay base at
+`/api/plugins/hermes-relay/transport`. API fields are omitted when the upstream
+API server is disabled; existing API-only and direct-Relay records remain valid.
+
+### Dashboard same-origin ingress
+
+The normal Android route uses the Dashboard's existing origin for both upstream
+Hermes and Relay-owned capabilities. The Dashboard plugin exposes only a fixed
+client-safe route allowlist and forwards it to `127.0.0.1:8767`; it is not a
+general reverse proxy and never exposes loopback pairing/admin, bridge-control,
+or desktop-dispatch routes.
+
+HTTP calls must satisfy Dashboard authentication and carry the independently
+paired Relay session in `X-Hermes-Relay-Session`. WebSocket calls first consume
+a fresh Dashboard ticket and pass the Dashboard Host/Origin checks, then Relay
+still requires its normal first-frame pairing/session authentication and grants.
+Disabling the plugin closes its long-lived ingress sockets. Backend Python routes
+mount at Dashboard startup, so restart the Dashboard after installing or updating
+the plugin.
 
 ### Legacy cleanup ownership
 
@@ -159,7 +178,7 @@ All settings via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RELAY_HOST` | `0.0.0.0` | Bind address |
-| `RELAY_PORT` | `8767` | Listen port |
+| `RELAY_PORT` | `8767` | Internal/direct compatibility listener. Normal Android pairing prefers the Dashboard-origin plugin ingress. |
 | `RELAY_SSL_CERT` | — | TLS certificate path |
 | `RELAY_SSL_KEY` | — | TLS private key path |
 | `RELAY_WEBAPI_URL` | `http://localhost:8642` | Hermes API Server URL |
@@ -207,7 +226,7 @@ only after supported routes are unavailable. The broker credential file stores
 only base64url SHA-256 host-token digests under opaque host IDs; public
 listeners require TLS, while plaintext development mode is loopback-only.
 
-Voice endpoints accept either a Relay session token or the existing Hermes API bearer token. The Hermes API bearer path is limited to `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*`; pairing is still required for terminal, bridge, TUI, sessions, media, clipboard, profile writes, and Android control routes. Android derives a default Relay URL from the API URL by swapping `http(s)` to `ws(s)` and using port `8767`, then probes `/voice/config`; custom Relay URLs are still supported as an override. Non-loopback API-bearer voice calls require HTTPS by default. For temporary plain-LAN phone testing, run `hermes relay insecure-api-key on` or `hermes-relay insecure-api-key on` on the relay host; disable it with the matching `off` command.
+Voice endpoints accept either a Relay session token or the existing Hermes API bearer token. The Hermes API bearer path is limited to `/voice/config`, `/voice/transcribe`, `/voice/synthesize`, `/voice/output/*`, `/voice/realtime/*`, and `/voice/realtime-agent/*`; pairing is still required for terminal, bridge, TUI, sessions, media, clipboard, profile writes, and Android control routes. Current Android pairing prefers the Dashboard-origin plugin ingress and retains direct `:8767` derivation only for legacy/advanced compatibility. Custom Relay URLs remain supported. Non-loopback API-bearer voice calls require HTTPS by default. For temporary plain-LAN phone testing, run `hermes relay insecure-api-key on` or `hermes-relay insecure-api-key on` on the relay host; disable it with the matching `off` command.
 
 ## CLI Flags
 

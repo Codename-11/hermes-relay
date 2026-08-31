@@ -1,10 +1,19 @@
 package com.hermesandroid.relay.ui.screens
 
+import android.webkit.CookieManager
+import android.webkit.WebView
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.DashboardAuthSession
 import com.hermesandroid.relay.network.upstream.DashboardCookieJar
 import com.hermesandroid.relay.network.upstream.InMemoryDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -26,6 +35,7 @@ class DashboardWebViewAuthPolicyTest {
 
     @After
     fun tearDown() {
+        unmockkStatic(CookieManager::class)
         server.shutdown()
     }
 
@@ -47,6 +57,153 @@ class DashboardWebViewAuthPolicyTest {
     }
 
     @Test
+    fun privateDashboard_usesCanonicalHttpsCallbackOriginAdvertisedByUpstream() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(302)
+                .setHeader(
+                    "Location",
+                    "https://login.example.test/api/oidc/authorization" +
+                        "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+                ),
+        )
+        val selected = server.url("/").toString().trimEnd('/')
+
+        val resolved = resolveDashboardWebViewAuthBase(
+            dashboardUrl = selected,
+            provider = "self-hosted",
+            client = OkHttpClient(),
+        )
+
+        assertEquals("https://hermes.example.test", resolved)
+        assertEquals(
+            "/auth/login?provider=self-hosted&next=%2F",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun tailscaleHttpsDashboard_usesCanonicalPublicCallbackOrigin() {
+        assertEquals(
+            "https://hermes.example.test",
+            canonicalDashboardWebViewAuthBase(
+                "https://100.71.8.56:9119",
+                "https://login.example.test/authorize" +
+                    "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+            ),
+        )
+    }
+
+    @Test
+    fun sameOriginCallback_keepsSelectedDashboardBase() {
+        val selected = "https://hermes.example.test/gateway"
+        val location = "https://login.example.test/authorize" +
+            "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fgateway%2Fauth%2Fcallback"
+
+        assertEquals(selected, canonicalDashboardWebViewAuthBase(selected, location))
+    }
+
+    @Test
+    fun foreignCallback_allowsPrivateHttpButRejectsInsecureProviderOrPublicCleartext() {
+        val selected = "http://172.16.24.250:9119"
+
+        assertEquals(
+            selected,
+            canonicalDashboardWebViewAuthBase(
+                selected,
+                "http://login.example.test/authorize" +
+                    "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+            ),
+        )
+        assertEquals(
+            "http://100.71.8.56:9119",
+            canonicalDashboardWebViewAuthBase(
+                selected,
+                "https://login.example.test/authorize" +
+                    "?redirect_uri=http%3A%2F%2F100.71.8.56%3A9119%2Fauth%2Fcallback",
+            ),
+        )
+        assertEquals(
+            selected,
+            canonicalDashboardWebViewAuthBase(
+                selected,
+                "https://login.example.test/authorize" +
+                    "?redirect_uri=http%3A%2F%2Fpublic.example.test%2Fauth%2Fcallback",
+            ),
+        )
+    }
+
+    @Test
+    fun canonicalCallback_rejectsCredentialsMalformedUrlsAndWrongCallbackPath() {
+        val selected = "http://172.16.24.250:9119"
+        listOf(
+            "not a redirect",
+            "https://user:pass@login.example.test/authorize" +
+                "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback",
+            "https://login.example.test/authorize" +
+                "?redirect_uri=https%3A%2F%2Fuser%3Apass%40hermes.example.test%2Fauth%2Fcallback",
+            "https://login.example.test/authorize" +
+                "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fcallback",
+            "https://login.example.test/authorize?redirect_uri=%2Fauth%2Fcallback",
+            "https://login.example.test/authorize" +
+                "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback%3Fevil%3D1",
+        ).forEach { location ->
+            assertEquals(selected, canonicalDashboardWebViewAuthBase(selected, location))
+        }
+    }
+
+    @Test
+    fun selfHostedOidcWebView_acceptsFederatedCookiesAndRequiredBrowserStorage() {
+        val manager = mockk<CookieManager>(relaxed = true)
+        val webView = mockk<WebView>(relaxed = true)
+        mockkStatic(CookieManager::class)
+        every { CookieManager.getInstance() } returns manager
+        val settings = webView.settings
+
+        configureDashboardAuthWebView(webView)
+
+        verify(exactly = 1) { manager.setAcceptCookie(true) }
+        verify(exactly = 1) { manager.setAcceptThirdPartyCookies(webView, true) }
+        verify(exactly = 1) { settings.javaScriptEnabled = true }
+        verify(exactly = 1) { settings.domStorageEnabled = true }
+    }
+
+    @Test
+    fun explicitSignInExpiryCompletesBeforeLoginCanContinue() = runTest {
+        val callbacks = mutableListOf<(Boolean) -> Unit>()
+        var flushed = false
+
+        val expiry = async {
+            expireDashboardWebViewSessionCookies(
+                baseUrl = "https://hermes.example.test/base",
+                setCookie = { _, _, callback -> callbacks += callback },
+                flush = { flushed = true },
+            )
+        }
+        testScheduler.runCurrent()
+
+        assertFalse(expiry.isCompleted)
+        assertTrue(callbacks.isNotEmpty())
+        callbacks.forEach { it(true) }
+
+        assertTrue(expiry.await())
+        assertTrue(flushed)
+    }
+
+    @Test
+    fun cookieExpiryPlanTargetsSessionVariantsAndReverseProxyPathsOnly() {
+        val deletions = dashboardWebViewSessionCookieDeletions(
+            "https://hermes.example.test/base",
+        )
+
+        assertTrue(deletions.any { it.header.startsWith("hermes_session=") && "Path=/base" in it.header })
+        assertTrue(deletions.any { it.header.startsWith("__Host-hermes_session_at=") && "Path=/" in it.header })
+        assertTrue(deletions.any { it.header.startsWith("__Secure-hermes_session_provider=") })
+        assertTrue(deletions.all { it.url.startsWith("https://hermes.example.test/") })
+        assertTrue(deletions.none { "theme=" in it.header })
+    }
+
+    @Test
     fun publicDashboardCallback_importsCookieAndVerifiesAuthenticatedSession() = runTest {
         assertEquals(
             DashboardWebViewAuthNavigation.ImportAndVerify,
@@ -62,6 +219,11 @@ class DashboardWebViewAuthPolicyTest {
                 .setBody(
                     """{"authenticated":true,"username":"operator","provider":"self-hosted"}""",
                 ),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"ticket":"cookie-ticket","ttl_seconds":30}"""),
         )
         val store = InMemoryDashboardCookieStore()
         val callbackUrl = server.url("/auth/callback?code=public-code").toString()
@@ -81,12 +243,46 @@ class DashboardWebViewAuthPolicyTest {
         )
 
         val session = client.currentSession().getOrThrow()
+        val ticket = client.requestWsTicket().getOrThrow()
 
         assertTrue(session.authenticated)
-        val request = server.takeRequest()
-        assertEquals("/api/auth/me", request.path)
-        assertEquals("hermes_session=authenticated", request.getHeader("Cookie"))
+        assertEquals("cookie-ticket", ticket.ticket)
+        val sessionRequest = server.takeRequest()
+        assertEquals("/api/auth/me", sessionRequest.path)
+        assertEquals("hermes_session=authenticated", sessionRequest.getHeader("Cookie"))
+        assertEquals(null, sessionRequest.getHeader("Authorization"))
+        val ticketRequest = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", ticketRequest.path)
+        assertEquals("hermes_session=authenticated", ticketRequest.getHeader("Cookie"))
+        assertEquals(null, ticketRequest.getHeader("Authorization"))
         client.shutdown()
+    }
+
+    @Test
+    fun authenticatedSessionRemainsSignedInWhileGatewayTicketIsUnavailable() {
+        val authenticated = DashboardAuthSession(authenticated = true)
+        val anonymous = DashboardAuthSession(authenticated = false)
+
+        assertTrue(dashboardAuthenticationReady(authenticated, true))
+        assertTrue(dashboardAuthenticationReady(authenticated, false))
+        assertTrue(dashboardAuthenticationReady(authenticated, null))
+        assertFalse(dashboardAuthenticationReady(anonymous, true))
+    }
+
+    @Test
+    fun foreignCallbackOriginAlwaysRequiresExplicitReview() {
+        assertFalse(
+            dashboardOriginRequiresConfirmation(
+                "http://192.168.1.20:9119",
+                "http://192.168.1.20:9119/",
+            ),
+        )
+        assertTrue(
+            dashboardOriginRequiresConfirmation(
+                "http://192.168.1.20:9119",
+                "https://hermes.example.test",
+            ),
+        )
     }
 
     @Test

@@ -95,7 +95,7 @@ class OnboardingFlowTest {
         composeTestRule.onNodeWithText("Connect").performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("Connect to Hermes").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Add gateway").assertIsDisplayed()
     }
 
     @Test
@@ -121,16 +121,22 @@ class OnboardingFlowTest {
     }
 
     @Test
-    fun connectPage_recommendsGeneralSetupQr() {
+    fun addGatewayPage_leadsWithStandardGatewayMethods() {
         setOnboardingContent()
         navigateToPage(4)
 
+        composeTestRule
+            .onNodeWithText("Hermes nearby")
+            .assertIsDisplayed()
+        composeTestRule
+            .onNodeWithText("Remote gateway")
+            .assertIsDisplayed()
         composeTestRule
             .onNodeWithText("Scan Hermes setup QR")
             .assertIsDisplayed()
         composeTestRule
             .onNodeWithText("Recommended")
-            .assertIsDisplayed()
+            .assertDoesNotExist()
     }
 
     @Test
@@ -138,7 +144,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Server or VPS").performClick()
+        composeTestRule.onNodeWithText("Remote gateway").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -151,7 +157,7 @@ class OnboardingFlowTest {
         setOnboardingContent()
         navigateToPage(4)
 
-        composeTestRule.onNodeWithText("Server or VPS").performClick()
+        composeTestRule.onNodeWithText("Remote gateway").performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule
@@ -176,7 +182,7 @@ class OnboardingFlowTest {
     }
 
     @Test
-    fun connectPage_keepsPairingOptional() {
+    fun addGatewayPage_keepsPairingOptional() {
         setOnboardingContent()
         navigateToPage(4)
 
@@ -203,7 +209,7 @@ class OnboardingFlowTest {
     }
 
     @Test
-    fun skipButton_visibleOnIntroPages_andWizardSkipOnConnectPage() {
+    fun skipButton_visibleOnIntroPages_andWizardSkipOnAddGatewayPage() {
         setOnboardingContent()
 
         repeat(4) {

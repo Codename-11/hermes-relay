@@ -64,7 +64,7 @@ class NativeDashboardAuthTest {
         val client = NativeDashboardAuthClient(server.url("/prefix").toString(), store)
         val authorization = client.beginAuthorization(
             redirectUri = "http://127.0.0.1:43123/callback",
-            provider = "nous",
+            provider = null,
         )
         val url = java.net.URI(authorization.authorizationUrl)
         val query = url.rawQuery.split("&").associate {
@@ -74,6 +74,7 @@ class NativeDashboardAuthTest {
         }
 
         assertEquals("/prefix/auth/native/authorize", url.path)
+        assertFalse(authorization.usesAlternateOrigin)
         assertEquals("S256", query["code_challenge_method"])
         assertEquals("http://127.0.0.1:43123/callback", query["redirect_uri"])
         assertEquals(null, query["provider"])
@@ -84,22 +85,24 @@ class NativeDashboardAuthTest {
     }
 
     @Test
-    fun beginAuthorization_keepsExplicitSelectorForNonNousProviders() {
+    fun beginAuthorization_keepsExplicitProviderSelector() {
         val client = NativeDashboardAuthClient(server.url("/").toString(), store)
 
-        val authorization = client.beginAuthorization(
-            redirectUri = "http://127.0.0.1:43123/callback",
-            provider = "oidc",
-        )
+        listOf("oidc", "nous").forEach { provider ->
+            val authorization = client.beginAuthorization(
+                redirectUri = "http://127.0.0.1:43123/callback",
+                provider = provider,
+            )
 
-        val query = java.net.URI(authorization.authorizationUrl).rawQuery
-            .split("&")
-            .associate {
-                val pair = it.split("=", limit = 2)
-                java.net.URLDecoder.decode(pair[0], "UTF-8") to
-                    java.net.URLDecoder.decode(pair[1], "UTF-8")
-            }
-        assertEquals("oidc", query["provider"])
+            val query = java.net.URI(authorization.authorizationUrl).rawQuery
+                .split("&")
+                .associate {
+                    val pair = it.split("=", limit = 2)
+                    java.net.URLDecoder.decode(pair[0], "UTF-8") to
+                        java.net.URLDecoder.decode(pair[1], "UTF-8")
+                }
+            assertEquals(provider, query["provider"])
+        }
     }
 
     @Test
@@ -127,6 +130,38 @@ class NativeDashboardAuthTest {
         )
     }
 
+    @Test
+    fun canonicalProviderCallback_supportsSelfHostedPublicAndPrivateOriginsSafely() {
+        val selfHostedPublic = "https://id.example.test/authorize" +
+            "?redirect_uri=https%3A%2F%2Fhermes.example.test%2Fauth%2Fcallback"
+        val privateOverlay = "https://id.example.test/authorize" +
+            "?redirect_uri=http%3A%2F%2F100.71.8.99%3A9119%2Fauth%2Fcallback"
+        val publicCleartext = "https://id.example.test/authorize" +
+            "?redirect_uri=http%3A%2F%2Fpublic.example.test%2Fauth%2Fcallback"
+
+        assertEquals(
+            "https://hermes.example.test",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                selfHostedPublic,
+            ),
+        )
+        assertEquals(
+            "http://100.71.8.99:9119",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                privateOverlay,
+            ),
+        )
+        assertEquals(
+            "http://192.168.1.20:9119",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.20:9119",
+                publicCleartext,
+            ),
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun beginAuthorization_rejectsHostnameLoopback() {
         NativeDashboardAuthClient(server.url("/").toString(), store)
@@ -145,6 +180,7 @@ class NativeDashboardAuthTest {
         val tokens = client.exchangeCallback(
             authorization,
             "/callback?code=one-time-code&state=${authorization.state}",
+            onValidated = { error("diagnostic observer failure") },
         )
 
         assertEquals("access", tokens.accessToken)
@@ -298,6 +334,290 @@ class NativeDashboardAuthTest {
     }
 
     @Test
+    fun persistedNousBearerIsRotatedBeforeItsFirstAuthenticatedRequest() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "old-signing-key-access",
+                refreshToken = "current-refresh",
+                expiresAt = 3000,
+                provider = "nous",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"access_token":"current-key-access","refresh_token":"rotated-refresh","expires_at":4000,"provider":"nous","user_id":"u"}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"ticket":"ticket","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val ticket = kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+
+        assertEquals("ticket", ticket.ticket)
+        val refresh = server.takeRequest()
+        val ticketRequest = server.takeRequest()
+        assertEquals("/auth/native/refresh", refresh.path)
+        assertEquals(null, refresh.getHeader("Authorization"))
+        assertEquals("Bearer current-key-access", ticketRequest.getHeader("Authorization"))
+    }
+
+    @Test
+    fun failedNousBootstrapQuarantinesBearerForTheProcess() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "stale-signing-key-access",
+                refreshToken = "unavailable-refresh",
+                expiresAt = 3000,
+                provider = "nous",
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("""{"auth_required":true}"""))
+        server.enqueue(MockResponse().setBody("""{"auth_required":true}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        kotlinx.coroutines.runBlocking {
+            client.getStatus().getOrThrow()
+            client.getStatus().getOrThrow()
+        }
+
+        val refresh = server.takeRequest()
+        val firstStatus = server.takeRequest()
+        val secondStatus = server.takeRequest()
+        assertEquals("/auth/native/refresh", refresh.path)
+        assertEquals("/api/status", firstStatus.path)
+        assertEquals("/api/status", secondStatus.path)
+        assertEquals(null, firstStatus.getHeader("Authorization"))
+        assertEquals(null, secondStatus.getHeader("Authorization"))
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun dashboardCookieIsPreferredOverPersistedNativeBearer() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "stale-nous-access",
+                refreshToken = "stale-nous-refresh",
+                expiresAt = 3000,
+                provider = "nous",
+            ),
+        )
+        val cookieStore = InMemoryDashboardCookieStore().apply {
+            save(
+                listOf(
+                    StoredDashboardCookie(
+                        name = "hermes_session",
+                        value = "authelia-cookie",
+                        expiresAt = Long.MAX_VALUE,
+                        domain = server.hostName,
+                        path = "/",
+                        secure = false,
+                        httpOnly = true,
+                        hostOnly = true,
+                        persistent = true,
+                    ),
+                ),
+            )
+        }
+        server.enqueue(MockResponse().setBody("""{"ticket":"cookie-ticket","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                cookieStore = cookieStore,
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val ticket = kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+
+        assertEquals("cookie-ticket", ticket.ticket)
+        val request = server.takeRequest()
+        assertEquals("hermes_session=authelia-cookie", request.getHeader("Cookie"))
+        assertEquals(null, request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun rejectedDashboardCookieFallsBackToNativeBearerOnce() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "valid-native-access",
+                refreshToken = "valid-native-refresh",
+                expiresAt = 3000,
+                provider = "self-hosted",
+            ),
+        )
+        val cookieStore = InMemoryDashboardCookieStore().apply {
+            save(
+                listOf(
+                    StoredDashboardCookie(
+                        name = "hermes_session",
+                        value = "expired-cookie",
+                        expiresAt = Long.MAX_VALUE,
+                        domain = server.hostName,
+                        path = "/",
+                        secure = false,
+                        httpOnly = true,
+                        hostOnly = true,
+                        persistent = true,
+                    ),
+                ),
+            )
+        }
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody("""{"ticket":"bearer-ticket","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                cookieStore = cookieStore,
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val ticket = kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+
+        assertEquals("bearer-ticket", ticket.ticket)
+        val cookieRequest = server.takeRequest()
+        val bearerRequest = server.takeRequest()
+        assertEquals(null, cookieRequest.getHeader("Authorization"))
+        assertEquals("Bearer valid-native-access", bearerRequest.getHeader("Authorization"))
+    }
+
+    @Test
+    fun unreachableCookieProviderFallsBackToProvenBearerForLaterRequests() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "valid-native-access",
+                refreshToken = "valid-native-refresh",
+                expiresAt = 3000,
+                provider = "self-hosted",
+            ),
+        )
+        val cookieStore = InMemoryDashboardCookieStore().apply {
+            save(
+                listOf(
+                    StoredDashboardCookie(
+                        name = "hermes_session_at",
+                        value = "stale-nous-cookie",
+                        expiresAt = Long.MAX_VALUE,
+                        domain = server.hostName,
+                        path = "/",
+                        secure = false,
+                        httpOnly = true,
+                        hostOnly = true,
+                        persistent = true,
+                    ),
+                ),
+            )
+        }
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setBody("""{"detail":"Auth provider 'nous' unreachable"}"""),
+        )
+        server.enqueue(MockResponse().setBody("""{"ticket":"first","ttl_seconds":30}"""))
+        server.enqueue(MockResponse().setBody("""{"ticket":"second","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                cookieStore = cookieStore,
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val tickets = kotlinx.coroutines.runBlocking {
+            listOf(
+                client.requestWsTicket().getOrThrow().ticket,
+                client.requestWsTicket().getOrThrow().ticket,
+            )
+        }
+
+        assertEquals(listOf("first", "second"), tickets)
+        val strandedCookieRequest = server.takeRequest()
+        val fallbackBearerRequest = server.takeRequest()
+        val laterBearerRequest = server.takeRequest()
+        assertEquals(null, strandedCookieRequest.getHeader("Authorization"))
+        assertEquals("Bearer valid-native-access", fallbackBearerRequest.getHeader("Authorization"))
+        assertEquals("Bearer valid-native-access", laterBearerRequest.getHeader("Authorization"))
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun bearerAuth_refreshesOnceWhenTicketMintMasksExpiryAsProviderUnavailable() {
+        store.save(
+            NativeDashboardTokens(
+                accessToken = "expired-access",
+                refreshToken = "current-refresh",
+                expiresAt = 3000,
+                provider = "self-hosted",
+            ),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setBody("""{"detail":"Auth provider 'nous' unreachable"}"""),
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"access_token":"new-access","refresh_token":"new-refresh","expires_at":4000,"provider":"self-hosted","user_id":"u"}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"ticket":"ticket","ttl_seconds":30}"""))
+        val client = DashboardApiClient(
+            server.url("/").toString(),
+            DashboardApiClient.defaultClient(
+                bearerAuth = DashboardBearerAuth(
+                    server.url("/").toString(),
+                    store,
+                    clockSeconds = { 1000 },
+                ),
+            ),
+        )
+
+        val result = kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }
+
+        assertEquals("ticket", result.ticket)
+        val failedTicket = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", failedTicket.path)
+        assertEquals("Bearer expired-access", failedTicket.getHeader("Authorization"))
+        val refresh = server.takeRequest()
+        assertEquals("/auth/native/refresh", refresh.path)
+        val recoveredTicket = server.takeRequest()
+        assertEquals("/api/auth/ws-ticket", recoveredTicket.path)
+        assertEquals("Bearer new-access", recoveredTicket.getHeader("Authorization"))
+        assertEquals("new-access", store.load()?.accessToken)
+    }
+
+    @Test
     fun hostileSetupOrigin_neverReceivesActiveConnectionBearer() {
         store.save(
             NativeDashboardTokens(
@@ -407,6 +727,10 @@ class NativeDashboardAuthTest {
         assertEquals(
             "token_transport",
             nativeDashboardSignInFailureStage(IOException("connection reset")),
+        )
+        assertEquals(
+            "token_transport_timeout",
+            nativeDashboardSignInFailureStage(NativeDashboardSignInTimeoutException()),
         )
         assertEquals(
             "token_store",

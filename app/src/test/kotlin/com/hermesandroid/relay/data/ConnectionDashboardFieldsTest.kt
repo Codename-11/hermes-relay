@@ -68,6 +68,43 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun resolvedDashboardUrl_prefersAuthenticatedOriginWithoutReplacingConfiguredRoute() {
+        val connection = sampleConnection(
+            dashboardUrl = "http://192.168.1.20:9119",
+        ).copy(authenticatedDashboardOrigin = "https://hermes.example.com")
+
+        assertEquals("https://hermes.example.com", connection.resolvedDashboardUrl)
+        assertEquals("http://192.168.1.20:9119", connection.configuredDashboardUrl)
+        assertEquals("http://192.168.1.20:9119", connection.dashboardUrl)
+    }
+
+    @Test
+    fun privateHttpAuthenticatedOrigin_survivesResolutionAndReload() {
+        listOf(
+            "http://100.75.1.2:9119",
+            "http://127.0.0.1:9119",
+            "http://[::1]:9119",
+        ).forEach { origin ->
+            val stored = sampleConnection(dashboardUrl = "http://192.168.1.20:9119")
+                .copy(authenticatedDashboardOrigin = origin)
+
+            assertEquals(origin, stored.resolvedDashboardUrl)
+            assertEquals(origin, stored.withDashboardDefaults().authenticatedDashboardOrigin)
+            assertEquals(
+                origin,
+                json.decodeFromString<Connection>(
+                    json.encodeToString(Connection.serializer(), stored),
+                ).withDashboardDefaults().resolvedDashboardUrl,
+            )
+        }
+        assertNull(
+            sampleConnection().copy(
+                authenticatedDashboardOrigin = "http://public.example.test:9119",
+            ).withDashboardDefaults().authenticatedDashboardOrigin,
+        )
+    }
+
+    @Test
     fun resolvedDashboardUrl_derivesWhenMissing() {
         val connection = sampleConnection(dashboardUrl = null)
 
@@ -92,6 +129,19 @@ class ConnectionDashboardFieldsTest {
         assertEquals("http://localhost:9119", connection.resolvedDashboardUrl)
         assertTrue(Connection.isAutoManagedDashboardUrl(connection.dashboardUrl, connection.apiServerUrl))
         assertEquals(0, connection.routeCandidates.size)
+        assertEquals(false, connection.gitRepoScanningEnabled)
+    }
+
+    @Test
+    fun gitRepoScanningConsent_roundTripsPerConnection() {
+        val enabled = sampleConnection().copy(gitRepoScanningEnabled = true)
+
+        val decoded = json.decodeFromString<Connection>(
+            json.encodeToString(Connection.serializer(), enabled),
+        )
+
+        assertTrue(decoded.gitRepoScanningEnabled)
+        assertEquals(false, sampleConnection().gitRepoScanningEnabled)
     }
 
     @Test
@@ -181,6 +231,57 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun legacyAuthenticatedDashboardRoute_migratesToIndependentOrigin() {
+        val lan = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            api = ApiEndpoint("192.168.1.20", 8642),
+            relay = RelayEndpoint("ws://192.168.1.20:8767"),
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+        )
+        val legacyAuthenticationRoute = EndpointCandidate(
+            role = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+            priority = 0,
+            dashboard = DashboardEndpoint("https://hermes.example.com/"),
+        )
+        val stored = sampleConnection(dashboardUrl = "https://hermes.example.com").copy(
+            routeCandidates = listOf(lan, legacyAuthenticationRoute),
+            preferredRouteRole = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+        )
+
+        val migrated = stored.withDashboardDefaults()
+
+        assertEquals("https://hermes.example.com", migrated.authenticatedDashboardOrigin)
+        assertEquals(listOf(lan), migrated.routeCandidates)
+        assertNull(migrated.preferredRouteRole)
+        assertEquals(migrated, migrated.withDashboardDefaults())
+    }
+
+    @Test
+    fun migration_preservesUnrelatedPreferredRouteAndRejectsCleartextOrigin() {
+        val lan = EndpointCandidate(
+            role = "lan",
+            priority = 0,
+            dashboard = DashboardEndpoint("http://192.168.1.20:9119"),
+        )
+        val unsafeLegacyAuthenticationRoute = EndpointCandidate(
+            role = LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE,
+            priority = 0,
+            dashboard = DashboardEndpoint("http://hermes.example.com"),
+        )
+        val stored = sampleConnection(dashboardUrl = "http://192.168.1.20:9119").copy(
+            routeCandidates = listOf(lan, unsafeLegacyAuthenticationRoute),
+            preferredRouteRole = "lan",
+        )
+
+        val migrated = stored.withDashboardDefaults()
+
+        assertNull(migrated.authenticatedDashboardOrigin)
+        assertEquals(listOf(lan), migrated.routeCandidates)
+        assertEquals("lan", migrated.preferredRouteRole)
+    }
+
+    @Test
     fun dashboardRouteBuilder_acceptsBareTailscaleHostWithoutOptionalSurfaces() {
         val route = Connection.endpointCandidateFromDashboardUrl(
             role = "",
@@ -212,7 +313,20 @@ class ConnectionDashboardFieldsTest {
     fun inferRouteRole_detectsTailscaleCgnat() {
         assertEquals("tailscale", Connection.inferRouteRole("https://100.75.1.2:8642"))
         assertEquals("lan", Connection.inferRouteRole("http://10.0.0.5:8642"))
+        assertEquals("lan", Connection.inferRouteRole("http://homelab.lan:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://hermes-box:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://[fd00::10]:9119"))
+        assertEquals("lan", Connection.inferRouteRole("http://[fe80::10]:9119"))
+        assertEquals("tailscale", Connection.inferRouteRole("http://[fd7a:115c:a1e0::10]:9119"))
+        assertEquals("public", Connection.inferRouteRole("https://[2001:4860:4860::8888]:9119"))
         assertEquals("public", Connection.inferRouteRole("https://hermes.example.com:8642"))
+    }
+
+    @Test
+    fun normalizeDashboardUrlInput_usesHttpsForBarePublicHosts() {
+        assertEquals("https://hermes.example.com", Connection.normalizeDashboardUrlInput("hermes.example.com"))
+        assertEquals("http://homelab.lan:9119", Connection.normalizeDashboardUrlInput("homelab.lan"))
+        assertEquals("http://100.75.1.2:9119", Connection.normalizeDashboardUrlInput("100.75.1.2"))
     }
 
     @Test

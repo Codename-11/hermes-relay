@@ -240,6 +240,25 @@ class HermesProcessRuntime internal constructor(
         }
     }
 
+    fun republishAssistantSnapshot(activationId: String) {
+        val snapshot = synchronized(activationLock) {
+            if (currentActivationId != activationId ||
+                _initializationState.value != HermesRuntimeInitializationState.Ready
+            ) {
+                null
+            } else {
+                binder.assistantSnapshot.value
+            }
+        } ?: return
+        if (snapshot.phase != com.hermesandroid.relay.assistant.AssistantSessionPhase.Closed) {
+            com.hermesandroid.relay.assistant.AssistantSessionProtocol.publish(
+                application,
+                activationId,
+                snapshot,
+            )
+        }
+    }
+
     fun recordAssistantHeartbeat(
         activationId: String,
         nowElapsedMs: Long = SystemClock.elapsedRealtime(),

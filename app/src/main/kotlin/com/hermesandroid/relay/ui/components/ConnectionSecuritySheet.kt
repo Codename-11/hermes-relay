@@ -14,6 +14,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.data.ConnectionSecurity
 import com.hermesandroid.relay.data.ConnectionSecurityLevel
 import com.hermesandroid.relay.data.SurfaceSecurity
+import com.hermesandroid.relay.data.SurfaceUseState
 
 private const val LEARN_MORE_URL =
     "https://hermes-relay.dev/docs/architecture/connection-security.html"
@@ -128,7 +132,23 @@ private fun SurfaceSecurityRow(surface: SurfaceSecurity) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SurfaceSecurityGlyph(kind = surface.kind, modifier = Modifier.size(16.dp))
+        if (surface.useState == SurfaceUseState.Unavailable) {
+            Icon(
+                imageVector = Icons.Filled.LinkOff,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+        } else if (surface.useState == SurfaceUseState.Available) {
+            Icon(
+                imageVector = Icons.Filled.Shield,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+        } else {
+            SurfaceSecurityGlyph(kind = surface.kind, modifier = Modifier.size(16.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = surface.label,
@@ -142,7 +162,17 @@ private fun SurfaceSecurityRow(surface: SurfaceSecurity) {
             )
         }
         Text(
-            text = surface.mechanism,
+            text = when (surface.useState) {
+                SurfaceUseState.InUse -> surface.mechanism
+                SurfaceUseState.Available -> stringResource(
+                    R.string.security_sheet_available_mechanism,
+                    surface.mechanism,
+                )
+                SurfaceUseState.Unavailable -> stringResource(
+                    R.string.security_sheet_unavailable_mechanism,
+                    surface.mechanism,
+                )
+            },
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -19,12 +19,133 @@ import org.junit.Test
  *    ADR's backward-compat path doesn't distinguish the two.
  *  - v3 QRs (`hermes: 3`, explicit `endpoints`) round-trip the list
  *    verbatim — priority order preserved, role case preserved, unknown
- *    roles tolerated so operators can label custom VPNs.
+ *    roles tolerated so operators can label custom network routes.
  *
  * Pure parser test — no Android Context, no DataStore, no coroutines. The
  * parser is library code that does no I/O, so this file stays plain JUnit.
  */
 class HermesPairingPayloadTest {
+
+    @Test
+    fun integralFloatDurations_doNotDowngradeStructuredRelayPayload() {
+        val raw = """
+            {
+              "hermes": 3,
+              "host": "172.16.24.250",
+              "port": 8642,
+              "key": "api-key",
+              "tls": false,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "ws://172.16.24.250:8767",
+                "code": "ABC123",
+                "ttl_seconds": 2592000.0,
+                "grants": { "terminal": 604800.0 },
+                "transport_hint": "ws"
+              },
+              "endpoints": [
+                {
+                  "role": "https",
+                  "priority": 0,
+                  "dashboard": { "url": "https://dashboard.example.test" },
+                  "relay": {
+                    "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport",
+                    "transport_hint": "wss"
+                  }
+                },
+                {
+                  "role": "lan",
+                  "priority": 1,
+                  "relay": { "url": "ws://172.16.24.250:8767", "transport_hint": "ws" }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertNotNull(payload!!.relay)
+        assertEquals(2592000L, payload.relay?.ttlSeconds)
+        assertEquals(604800L, payload.relay?.grants?.get("terminal"))
+        assertEquals(2, payload.endpoints?.size)
+        assertNotNull(payload.endpoints?.first()?.relay)
+    }
+
+    @Test
+    fun malformedStructuredRelayPayload_failsClosedInsteadOfBecomingDashboardOnly() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport",
+                "code": "ABC123",
+                "ttl_seconds": 1.5
+              }
+            }
+        """.trimIndent()
+
+        assertNull(parseHermesPairingQr(raw))
+    }
+
+    @Test
+    fun apiLessDashboardRelayPayload_isAccepted() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                "code": "ABC123",
+                "transport_hint": "wss"
+              },
+              "endpoints": [
+                {
+                  "role": "https",
+                  "priority": 0,
+                  "dashboard": { "url": "https://dashboard.example.test" },
+                  "relay": {
+                    "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                    "transport_hint": "wss"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertFalse(payload!!.hasApiServer)
+        assertEquals("", payload.serverUrl)
+        assertEquals("https", payload.endpoints!!.single().role)
+        assertNull(payload.endpoints!!.single().api)
+        assertEquals(
+            "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+            payload.endpoints!!.single().relay?.url,
+        )
+    }
+
+    @Test
+    fun apiLessDashboardRelayPayload_withoutEndpoints_synthesizesIngressCandidate() {
+        val raw = """
+            {
+              "hermes": 3,
+              "dashboard_url": "https://dashboard.example.test",
+              "relay": {
+                "url": "wss://dashboard.example.test/api/plugins/hermes-relay/transport/ws",
+                "code": "ABC123"
+              }
+            }
+        """.trimIndent()
+
+        val payload = parseHermesPairingQr(raw)
+
+        assertNotNull(payload)
+        assertEquals("https://dashboard.example.test", payload!!.endpoints!!.single().dashboard?.url)
+        assertNull(payload.endpoints!!.single().api)
+    }
 
     @Test
     fun multilineApiCredentialIsRejectedAcrossPairingQrShapes() {
@@ -251,7 +372,7 @@ class HermesPairingPayloadTest {
     fun unknownRole_parsesAndDisplaysGenericLabel() {
         // Open-string role contract: operators can label any mesh VPN.
         // Parser must accept it unchanged; displayLabel() must fall
-        // through to the "Custom VPN (<role>)" path.
+        // through to the "Custom route (<role>)" path.
         val raw = """
             {
               "hermes": 3,
@@ -274,7 +395,7 @@ class HermesPairingPayloadTest {
         val ep = payload!!.endpoints!![0]
         assertEquals("wireguard-eu", ep.role)
         assertFalse("unknown role must NOT be flagged as known", ep.isKnownRole())
-        assertEquals("Custom VPN (wireguard-eu)", ep.displayLabel())
+        assertEquals("Custom route (wireguard-eu)", ep.displayLabel())
     }
 
     @Test

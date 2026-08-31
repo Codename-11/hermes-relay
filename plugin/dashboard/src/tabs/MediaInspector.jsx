@@ -72,7 +72,7 @@ export default function MediaInspector({ autoRefresh }) {
   if (error) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>Relay unreachable</AlertTitle>
+        <AlertTitle>Hermes-Relay unreachable</AlertTitle>
         <AlertDescription>
           <pre className="whitespace-pre-wrap text-xs">{error}</pre>
           {!autoRefresh ? (
@@ -90,9 +90,9 @@ export default function MediaInspector({ autoRefresh }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Media inspector</CardTitle>
+        <CardTitle>Media tokens</CardTitle>
         <CardDescription>
-          Active MediaRegistry tokens. Expired entries are hidden by default.
+          Diagnostic view of token-backed Hermes-Relay media. Bare-path deliveries are not included.
         </CardDescription>
       </CardHeader>
       <CardContent>

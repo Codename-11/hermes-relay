@@ -10,6 +10,16 @@ package com.hermesandroid.relay.data
  */
 object AgentDisplay {
     const val SERVER_DEFAULT_PROFILE_KEY: String = "__server_default__"
+    private const val PROFILE_CONTEXT_SEPARATOR = "::"
+
+    data class ProfileContextIdentity(
+        val connectionId: String,
+        val profileKey: String,
+    ) {
+        /** Null means the upstream request must inherit Server Default. */
+        val requestProfileName: String?
+            get() = profileRequestName(profileKey)
+    }
     private val GENERIC_MODEL_ALIASES = setOf(
         "hermes-agent",
         "hermes_agent",
@@ -163,7 +173,25 @@ object AgentDisplay {
         profileRequestName(profileName) ?: SERVER_DEFAULT_PROFILE_KEY
 
     fun profileContextKey(connectionId: String?, profileName: String?): String =
-        "${connectionId.orEmpty()}::${profileSessionKey(profileName)}"
+        "${connectionId.orEmpty()}$PROFILE_CONTEXT_SEPARATOR${profileSessionKey(profileName)}"
+
+    /**
+     * Parse the canonical profile/context identity used by persisted chat state.
+     *
+     * Legacy or malformed opaque keys deliberately return null: recovery may
+     * still use the exact key for ownership, but must not invent an upstream
+     * profile override from it. The first separator is authoritative so legal
+     * profile names containing `::` remain round-trippable.
+     */
+    fun parseProfileContextKey(contextKey: String?): ProfileContextIdentity? {
+        val raw = contextKey?.trim().orEmpty()
+        val separator = raw.indexOf(PROFILE_CONTEXT_SEPARATOR)
+        if (separator <= 0 || separator + PROFILE_CONTEXT_SEPARATOR.length >= raw.length) return null
+        val connectionId = raw.substring(0, separator).trim()
+        val profileKey = raw.substring(separator + PROFILE_CONTEXT_SEPARATOR.length).trim()
+        if (connectionId.isEmpty() || profileKey.isEmpty()) return null
+        return ProfileContextIdentity(connectionId, profileKey)
+    }
 
     fun localDisplayAlias(value: String?): String? =
         value

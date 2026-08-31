@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.ReliabilityRedactor
+import java.time.Instant
 
 enum class DiagnosticCategory(val label: String) {
     Api("API"),
@@ -83,6 +84,8 @@ data class StatusCheck(
 object DiagnosticsLog {
     private const val MAX_ENTRIES = 200
     private const val MAX_TEXT_LENGTH = 180
+    const val SUPPORT_ENTRY_LIMIT = 80
+    private const val MAX_SUPPORT_TEXT_LENGTH = 32_000
 
     /** Cap for the full stacktrace kept on an error entry — a few KB is plenty. */
     private const val MAX_TRACE_LENGTH = 8000
@@ -202,6 +205,46 @@ object DiagnosticsLog {
         synchronized(lock) {
             _entries.value = emptyList()
         }
+    }
+
+    /**
+     * Exact, bounded diagnostics section used by the review-before-sharing
+     * support export. Entries were already sanitized at record time; the final
+     * redaction pass protects legacy entries and keeps this safe to compose with
+     * persistent reliability reports.
+     */
+    fun supportText(entries: List<DiagnosticLogEntry>): String {
+        val selected = entries.takeLast(SUPPORT_ENTRY_LIMIT)
+        if (selected.isEmpty()) return ""
+        return ReliabilityRedactor.redact(
+            buildString {
+                appendLine("Recent in-app diagnostics")
+                appendLine("Diagnostics: ${selected.size}")
+                selected.forEachIndexed { index, entry ->
+                    appendLine()
+                    appendLine("===== Diagnostic ${index + 1} =====")
+                    appendLine("Time:     ${Instant.ofEpochMilli(entry.timestampMs)}")
+                    appendLine("Category: ${entry.category.label}")
+                    appendLine("Severity: ${entry.severity.name}")
+                    appendLine("Title:    ${entry.title}")
+                    entry.operation?.let { appendLine("Operation: $it") }
+                    entry.endpointRole?.let { appendLine("Route:    $it") }
+                    entry.configuredUrl?.let { appendLine("Configured URL: $it") }
+                    entry.requestUrl?.let { appendLine("Request:  $it") }
+                    if (entry.configuredUrl == null && entry.requestUrl == null) {
+                        entry.url?.let { appendLine("URL:      $it") }
+                    }
+                    entry.elapsedMs?.let { appendLine("Elapsed:  ${it}ms") }
+                    entry.detail?.let { appendLine("Detail:   $it") }
+                    entry.suggestion?.let { appendLine("Next:     $it") }
+                    entry.stacktrace?.let {
+                        appendLine("Technical detail (redacted)")
+                        appendLine(it)
+                    }
+                }
+            },
+            MAX_SUPPORT_TEXT_LENGTH,
+        )
     }
 
     fun sanitizeUrl(value: String?): String? {
