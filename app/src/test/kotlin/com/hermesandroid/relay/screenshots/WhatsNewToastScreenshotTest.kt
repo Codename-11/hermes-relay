@@ -61,9 +61,9 @@ class WhatsNewToastScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText("Supervised Mode").assertExists()
-        compose.onNodeWithText("Also: 2 fixes").assertExists()
-        compose.onNodeWithText("Accurate activity, safer return…").assertExists()
+        compose.onNodeWithText("Reliable routes").assertExists()
+        compose.onNodeWithText("Also: 2 features · 10 fixes").assertExists()
+        compose.onNodeWithText("delegated-agent previews, safer voice and sessions…").assertExists()
         compose.onNodeWithText("View all").assertExists()
         compose.onNodeWithContentDescription("Close").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/whats-new-toast-large-text.png")
@@ -84,7 +84,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Supervised Mode").performClick()
+        compose.onNodeWithText("Reliable routes").performClick()
         expanded = false
         compose.onNodeWithText("View all").performClick()
         compose.onNodeWithContentDescription("Close").performClick()
@@ -106,7 +106,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
         compose.mainClock.advanceTimeBy(300L)
-        compose.onNodeWithText("Supervised Mode").performTouchInput { swipeLeft(durationMillis = 300L) }
+        compose.onNodeWithText("Reliable routes").performTouchInput { swipeLeft(durationMillis = 300L) }
         compose.mainClock.advanceTimeBy(300L)
 
         assertTrue(dismissed)

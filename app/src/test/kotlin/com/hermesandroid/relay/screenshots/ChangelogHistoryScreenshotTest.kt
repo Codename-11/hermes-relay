@@ -25,7 +25,7 @@ class ChangelogHistoryScreenshotTest {
                 ChangelogScreen(onClose = {})
             }
         }
-        compose.onNodeWithText("Supervised Mode").assertExists()
+        compose.onNodeWithText("Reliable routes").assertExists()
         compose.onNodeWithText("Installed").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/changelog-history.png")
     }

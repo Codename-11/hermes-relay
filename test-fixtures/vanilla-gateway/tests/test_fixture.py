@@ -77,6 +77,29 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         await rejected.release()
         await ws.close()
 
+    async def test_initial_history_is_available_before_session_resume(self) -> None:
+        fixture, base_url = await self.start("initial_history_bind")
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+            params={"profile": "research", "limit": 500, "offset": 0, "order": "asc"},
+        ) as response:
+            history = await response.json()
+        self.assertEqual(
+            ["Open the durable Bot Chat.", "Durable Bot Chat history is ready."],
+            [row["content"] for row in history["messages"]],
+        )
+
+        ws, _ = await self.connect(base_url)
+        await self.rpc(
+            ws,
+            1,
+            "session.resume",
+            {"session_id": fixture.scenario.stored_session_id, "profile": "research"},
+        )
+        resumed = (await ws.receive_json())["result"]
+        self.assertEqual(fixture.scenario.live_session_id, resumed["session_id"])
+        self.assertEqual(fixture.scenario.stored_session_id, resumed["stored_session_id"])
+
     async def test_ordinary_turn_persists_authoritative_history(self) -> None:
         fixture, base_url = await self.start("ordinary_turn")
         ws, _ = await self.connect(base_url)
@@ -307,6 +330,7 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_profile_scope",
             "active_status_unsupported",
             "cross_client_observation",
+            "initial_history_bind",
             "ordinary_turn",
             "rapid_tools_interims",
             "subagent_child_preview",
@@ -334,7 +358,11 @@ class ScenarioTestCase(unittest.TestCase):
             from vanilla_gateway.scenario import Scenario
             Scenario.from_dict(scenario)
 
-    def test_terminal_gap_manifests_select_upstream_contracts(self) -> None:
+    def test_contract_manifests_select_upstream_contracts(self) -> None:
+        self.assertEqual(
+            ("gateway.session_resume_durable",),
+            load_scenario("initial_history_bind").contract_requirements,
+        )
         self.assertEqual(
             (
                 "gateway.message_complete",
