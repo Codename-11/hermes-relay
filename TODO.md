@@ -6,6 +6,19 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Consider hosted Android emulator execution
+
+The local API 36 Gradle Managed Device lanes are intentionally on demand and
+individually selected. The current Android On-Demand workflow covers hosted
+source, unit, lint, and build verification only; it does not run emulators. If
+local emulator capacity becomes a recurring constraint, evaluate a separately
+approved hosted-emulator design with explicit cost, concurrency, artifact
+retention, and trigger policy. Do not schedule the full form-factor matrix or
+add a device farm until that policy is approved; keep live-server mutation tests
+outside any automatic matrix.
+
+---
+
 ## Upstream a public Dashboard plugin WebSocket admission seam
 
 The same-origin Relay ingress follows current upstream's bundled Dashboard
