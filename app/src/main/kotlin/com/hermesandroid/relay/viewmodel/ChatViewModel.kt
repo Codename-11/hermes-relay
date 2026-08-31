@@ -3849,6 +3849,12 @@ class ChatViewModel : ViewModel() {
         profileSessionPageLister = lister
     }
 
+    private var dashboardSignInRequiredHandler: (() -> Unit)? = null
+
+    fun setDashboardSignInRequiredHandler(handler: () -> Unit) {
+        dashboardSignInRequiredHandler = handler
+    }
+
     /**
      * Deletes a session scoped to the active profile on gateway connections
      * (dashboard `DELETE /api/sessions/{id}?profile=`). The write twin of
@@ -4237,7 +4243,19 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun publishHistoryLoadFailure(sessionId: String, error: Throwable) {
-        if (error.isDashboardSignInRequiredFailure()) return
+        if (error.isDashboardSignInRequiredFailure()) {
+            dashboardSignInRequiredHandler?.invoke()
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = "Dashboard sign-in required for chat history",
+                detail = "stored_session=$sessionId; dashboard_auth=required",
+                operation = "load chat history",
+                endpointRole = "gateway",
+                suggestion = "Sign in to Dashboard on the active route, then retry this conversation.",
+            )
+            return
+        }
         val rawError = error.message?.takeIf { it.isNotBlank() }
             ?: "The active profile's conversation history could not be reached."
         _chatFailure.value = ChatFailureNotice(
@@ -7824,13 +7842,28 @@ class ChatViewModel : ViewModel() {
                     if (!queuedSuccessorPending.get()) {
                         val expectedSessionId = checkpoint.sessionId
                         viewModelScope.launch {
-                            val history = loadSessionHistory(expectedSessionId)
-                            if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
-                                handler.loadMessageHistory(history)
-                                refreshSessions()
-                                scheduleTitleReconcile(expectedSessionId)
+                            try {
+                                val history = loadSessionHistory(expectedSessionId)
+                                if (
+                                    handler.currentSessionId.value == expectedSessionId &&
+                                    history.isNotEmpty()
+                                ) {
+                                    handler.loadMessageHistory(history)
+                                    clearMatchingHistoryLoadFailure(expectedSessionId)
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                if (handler.currentSessionId.value == expectedSessionId) {
+                                    publishHistoryLoadFailure(expectedSessionId, e)
+                                }
+                            } finally {
+                                if (handler.currentSessionId.value == expectedSessionId) {
+                                    refreshSessions()
+                                    scheduleTitleReconcile(expectedSessionId)
+                                }
+                                drainQueue()
                             }
-                            drainQueue()
                         }
                     }
                 }
@@ -9712,34 +9745,44 @@ class ChatViewModel : ViewModel() {
                     )
                 }
                 viewModelScope.launch {
-                    if (!turnErrored && !gatewayHistoryReconcileRequired) {
-                        // Profile-aware read: a gateway turn on a non-default profile
-                        // persists into THAT profile's own state.db, so the bare
-                        // api_server `/api/sessions/{id}/messages` 404s → emptyList()
-                        // → a silent wipe of the just-finished turn. loadSessionHistory
-                        // prefers the `?profile=` dashboard loader on gateway connections.
-                        val serverMessages = loadSessionHistory(sid)
-                        val missingPersistedToolActivity =
-                            completedTransport == "gateway" &&
-                                handler.hasMissingPersistedToolActivity(serverMessages)
-                        if (shouldReloadHistoryAfterSuccessfulTurn(
-                                actualTransport = completedTransport,
-                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
-                                missingPersistedToolActivity = missingPersistedToolActivity,
-                            )
-                        ) {
-                            handler.loadMessageHistory(serverMessages)
+                    try {
+                        if (!turnErrored && !gatewayHistoryReconcileRequired) {
+                            // Profile-aware read: a gateway turn on a non-default profile
+                            // persists into THAT profile's own state.db, so the bare
+                            // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                            // → a silent wipe of the just-finished turn. loadSessionHistory
+                            // prefers the `?profile=` dashboard loader on gateway connections.
+                            val serverMessages = loadSessionHistory(sid)
+                            val missingPersistedToolActivity =
+                                completedTransport == "gateway" &&
+                                    handler.hasMissingPersistedToolActivity(serverMessages)
+                            if (shouldReloadHistoryAfterSuccessfulTurn(
+                                    actualTransport = completedTransport,
+                                    gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                    missingPersistedToolActivity = missingPersistedToolActivity,
+                                )
+                            ) {
+                                handler.loadMessageHistory(serverMessages)
+                                clearMatchingHistoryLoadFailure(sid)
+                            }
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (handler.currentSessionId.value == sid) {
+                            publishHistoryLoadFailure(sid, e)
+                        }
+                    } finally {
+                        // Re-sync the drawer now that the turn is persisted server-side.
+                        // The only other auto-refresh fires ~160ms after session creation
+                        // (RelayApp) — mid-stream, BEFORE the new session's first message
+                        // is persisted, so a brand-new chat would otherwise stay missing
+                        // from the drawer (carried only by the optimistic row) until a
+                        // manual reload. By message.complete the dashboard list includes it.
+                        refreshSessions()
+                        scheduleTitleReconcile(sid)
+                        drainQueue()
                     }
-                    // Re-sync the drawer now that the turn is persisted server-side.
-                    // The only other auto-refresh fires ~160ms after session creation
-                    // (RelayApp) — mid-stream, BEFORE the new session's first message
-                    // is persisted, so a brand-new chat would otherwise stay missing
-                    // from the drawer (carried only by the optimistic row) until a
-                    // manual reload. By message.complete the dashboard list includes it.
-                    refreshSessions()
-                    scheduleTitleReconcile(sid)
-                    drainQueue()
                 }
                 Unit
             } else {
