@@ -239,6 +239,63 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun normalCompletionUnauthorizedHistoryPreservesTranscriptAndRunsCleanup() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val owner = Profile(name = "owner", model = "model-a", description = "Owner")
+        val requestedProfiles = mutableListOf<String?>()
+        val sessionRefreshes = AtomicInteger(0)
+        val signInRequests = AtomicInteger(0)
+        viewModel.setSelectedProfileProvider { owner }
+        viewModel.setSessionProfileNameProvider { owner.name }
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            requestedProfiles += profileName
+            assertEquals(STORED_SESSION_ID, sessionId)
+            Result.failure(
+                DashboardHttpException(401, "Session failed - HTTP 401: Unauthorized"),
+            )
+        }
+        viewModel.setProfileSessionLister { profileName ->
+            assertEquals(owner.name, profileName)
+            sessionRefreshes.incrementAndGet()
+            Result.success(emptyList())
+        }
+        viewModel.setDashboardSignInRequiredHandler { signInRequests.incrementAndGet() }
+
+        viewModel.sendMessage("Keep this local prompt")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Keep this local answer") },
+                "live-resumed",
+            ),
+        )
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Keep this local answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            !handler.isStreaming.value &&
+                signInRequests.get() == 1 &&
+                sessionRefreshes.get() >= 1
+        }
+        assertTrue(handler.messages.value.any { it.content == "Keep this local prompt" })
+        assertTrue(handler.messages.value.any { it.content == "Keep this local answer" })
+        assertEquals(listOf(owner.name), requestedProfiles)
+        assertEquals(0, apiMessageRequestCount.get())
+        assertFalse(viewModel.steerableTurn.value)
+        assertNull(viewModel.chatFailure.value)
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Auth), 1).single()
+        assertEquals("Dashboard sign-in required for chat history", diagnostic.title)
+        assertTrue(diagnostic.suggestion.orEmpty().contains("Sign in to Dashboard"))
+    }
+
+    @Test
     fun missingRequiredProfileHistoryLoaderFailsClosedWithoutApiRead() {
         DiagnosticsLog.clear()
         apiMessageRequestCount.set(0)
@@ -2777,6 +2834,92 @@ class ChatViewModelGatewayInboundTurnTest {
                 it.role == MessageRole.ASSISTANT && it.content == "Second answer"
             },
         )
+    }
+
+    @Test
+    fun recoveredCompletionUnauthorizedHistoryPreservesTranscriptAndRunsCleanup() {
+        DiagnosticsLog.clear()
+        apiMessageRequestCount.set(0)
+        val checkpointStore = MemoryCheckpointStore(
+            ChatTurnCheckpoint(
+                contextKey = PROFILE_CONTEXT,
+                sessionId = STORED_SESSION_ID,
+                liveSessionId = "live-resumed",
+                transport = "gateway",
+                user = ChatTurnUserCheckpoint("prior-user", "Recovered prompt", 1L),
+                assistant = ChatTurnAssistantCheckpoint(
+                    id = "prior-assistant",
+                    content = "Recovered partial",
+                    timestamp = 2L,
+                ),
+                priorUserMessageCount = 0,
+                baselineAssistantCount = 0,
+                startedAt = 2L,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+        val requestedProfiles = mutableListOf<String?>()
+        val sessionRefreshes = AtomicInteger(0)
+        val signInRequests = AtomicInteger(0)
+        var failHistory = false
+        viewModel.setProfileMessageLoaderWithMode { profileName, sessionId, _ ->
+            requestedProfiles += profileName
+            assertEquals(STORED_SESSION_ID, sessionId)
+            if (failHistory) {
+                Result.failure(
+                    DashboardHttpException(
+                        401,
+                        "Session failed - HTTP 401: {\"reason\":\"session_expired\"}",
+                    ),
+                )
+            } else {
+                Result.success(emptyList())
+            }
+        }
+        viewModel.setProfileSessionLister { profileName ->
+            assertNull(profileName)
+            sessionRefreshes.incrementAndGet()
+            Result.success(emptyList())
+        }
+        viewModel.setDashboardSignInRequiredHandler { signInRequests.incrementAndGet() }
+        gatewayHarness.recoveryRunning = true
+        gatewayHarness.recoveryAssistant = "Recovered partial"
+        viewModel.setChatTurnCheckpointStore(checkpointStore)
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.prewarmGateway()
+        gatewayHarness.awaitRpc("session.activate")
+        awaitCondition {
+            handler.messages.value.any { it.id == "prior-assistant" && it.isStreaming }
+        }
+        failHistory = true
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "Recovered answer") },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            !handler.isStreaming.value &&
+                signInRequests.get() == 1 &&
+                sessionRefreshes.get() >= 1
+        }
+        assertTrue(handler.messages.value.any {
+            it.id == "prior-assistant" &&
+                it.content.contains("Recovered answer") &&
+                !it.isStreaming
+        })
+        assertTrue(requestedProfiles.isNotEmpty())
+        assertTrue(requestedProfiles.all { it == null })
+        assertEquals(0, apiMessageRequestCount.get())
+        assertFalse(viewModel.steerableTurn.value)
+        awaitCondition { checkpointStore.checkpoint == null }
+        assertNull(viewModel.chatFailure.value)
+        val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Auth), 1).single()
+        assertEquals("Dashboard sign-in required for chat history", diagnostic.title)
     }
 
     @Test
