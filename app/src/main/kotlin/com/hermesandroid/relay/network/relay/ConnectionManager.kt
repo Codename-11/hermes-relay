@@ -141,6 +141,12 @@ class ConnectionManager(
      */
     private val endpointCandidatesProvider: (suspend () -> List<EndpointCandidate>)? = null,
     /**
+     * Dynamic ownership fence for Relay-only resolution. Production uses it
+     * to keep Dashboard ingress on the exact origin that owns Dashboard auth,
+     * while direct Relay and proxy routes remain independently eligible.
+     */
+    private val relayCandidateEligibility: (EndpointCandidate) -> Boolean = { true },
+    /**
      * Suspending supplier for the active device id. Used to key into
      * [PairingPreferences.getDeviceEndpoints] during resolution. `null`
      * disables multi-endpoint resolution even when [endpointResolver] is
@@ -383,7 +389,7 @@ class ConnectionManager(
             val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
                 ?: resolveLegacyStandardFallbackSafe()
             scheduleApiResolution()
-            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            val relayResolved = resolveBestRelayEndpointSafe()
             val resolvedRelayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
             val targetUrl = resolvedRelayUrl ?: url.takeIf { it.isNotBlank() }
             _activeRelayEndpoint.value = relayResolved
@@ -667,6 +673,13 @@ class ConnectionManager(
         return resolver.resolve(eligibleEndpoints, surface)
     }
 
+    /** Every Relay selection path must apply the same live ownership fence. */
+    private suspend fun resolveBestRelayEndpointSafe(): EndpointCandidate? =
+        resolveBestEndpointSafe(
+            surface = EndpointSurface.Relay,
+            candidateFilter = relayCandidateEligibility,
+        )
+
     /**
      * Discover the optional API fallback without holding up the standard
      * Dashboard/Gateway route. A single manager-level job coalesces lifecycle
@@ -735,7 +748,7 @@ class ConnectionManager(
         val resolved = resolveBestEndpointSafe(EndpointSurface.Dashboard)
             ?: resolveLegacyStandardFallbackSafe()
         scheduleApiResolution()
-        val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+        val relayResolved = resolveBestRelayEndpointSafe()
         if (resolved == null && _connectionState.value == ConnectionState.Connected) {
             // Transient probe miss while the relay socket is demonstrably up
             // — keep the live route published rather than downgrading every
@@ -832,7 +845,7 @@ class ConnectionManager(
         val failedUrl = failed.relayWebSocketUrl()?.let(::normalizeRelayUrl)
         if (failedUrl != normalizeRelayUrl(url)) return false
         endpointResolver?.markUnreachable(failed, EndpointSurface.Relay) ?: return false
-        val replacement = resolveBestEndpointSafe(EndpointSurface.Relay) ?: return false
+        val replacement = resolveBestRelayEndpointSafe() ?: return false
         val replacementUrl = replacement.relayWebSocketUrl()?.takeIf(String::isNotBlank) ?: return false
         if (normalizeRelayUrl(replacementUrl) == normalizeRelayUrl(url)) return false
         _activeRelayEndpoint.value = replacement
@@ -921,7 +934,7 @@ class ConnectionManager(
             // (connectToUrlOnMainPath force-sets shouldReconnect = true, so
             // the swap path never re-checked it.)
             if (!shouldReconnect) return@launch
-            val relayResolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+            val relayResolved = resolveBestRelayEndpointSafe()
             if (relayResolved != null) _activeRelayEndpoint.value = relayResolved
             val relayUrl = relayResolved?.relayWebSocketUrl()?.takeIf { it.isNotBlank() }
                 ?: return@launch
@@ -1172,7 +1185,11 @@ class ConnectionManager(
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
                 severity = DiagnosticSeverity.Error,
-                title = "Invalid relay URL",
+                title = if (isDashboardRelayIngressUrl(url)) {
+                    "Dashboard Relay authorization unavailable"
+                } else {
+                    "Invalid relay URL"
+                },
                 detail = if (isDashboardRelayIngressUrl(url)) {
                     "Dashboard authorization could not prepare the Relay WebSocket request."
                 } else {
@@ -1184,7 +1201,11 @@ class ConnectionManager(
                     "Build Relay WebSocket request"
                 },
                 configuredUrl = url,
-                suggestion = "Edit or re-pair the Relay route to replace the invalid address.",
+                suggestion = if (isDashboardRelayIngressUrl(url)) {
+                    "Sign in to the matching Dashboard route, then recheck Relay routes."
+                } else {
+                    "Edit or re-pair the Relay route to replace the invalid address."
+                },
             )
             authenticated = false
             _connectionState.value = ConnectionState.Disconnected
@@ -1459,7 +1480,7 @@ class ConnectionManager(
             // expires, auth state may have changed (e.g., user hit Revoke
             // during the retry window).
             if (shouldReconnect && reconnectGate()) {
-                val resolved = resolveBestEndpointSafe(EndpointSurface.Relay)
+                val resolved = resolveBestRelayEndpointSafe()
                 val targetUrl = resolved?.relayWebSocketUrl()
                 if (resolved != null) {
                     // Mirror scheduleNetworkReResolve: clear the sustained-loss

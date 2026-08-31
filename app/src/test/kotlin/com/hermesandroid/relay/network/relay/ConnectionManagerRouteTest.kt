@@ -35,6 +35,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowNetwork
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.measureTimeMillis
 
 /**
@@ -100,13 +101,28 @@ class ConnectionManagerRouteTest {
         )
 
     private fun buildManager(
+        relayCandidateEligibility: (EndpointCandidate) -> Boolean = { true },
+        dashboardRelayRequestProvider: (suspend (String) -> Request?)? = null,
         candidates: () -> List<EndpointCandidate>,
     ): ConnectionManager = ConnectionManager(
         ChannelMultiplexer(),
         context = context,
         endpointResolver = EndpointResolver(httpClient = OkHttpClient()),
         endpointCandidatesProvider = { candidates() },
+        relayCandidateEligibility = relayCandidateEligibility,
+        dashboardRelayRequestProvider = dashboardRelayRequestProvider,
     ).also { managers.add(it) }
+
+    private fun ingressRoute(
+        role: String,
+        priority: Int,
+    ): EndpointCandidate = EndpointCandidate(
+        role = role,
+        priority = priority,
+        relay = RelayEndpoint(
+            "ws://${server.hostName}:${server.port}/$role/api/plugins/hermes-relay/transport",
+        ),
+    )
 
     @Test
     fun `network callback registers at construction without connect`() {
@@ -184,6 +200,57 @@ class ConnectionManagerRouteTest {
             "tailscale",
             manager.activeEndpoint.value?.role,
         )
+    }
+
+    @Test
+    fun `initial Relay resolution skips higher priority ineligible ingress`() {
+        val requestUrl = CompletableDeferred<String>()
+        val tailscale = ingressRoute("tailscale", priority = 0)
+        val public = ingressRoute("public", priority = 1)
+        val manager = buildManager(
+            candidates = { listOf(tailscale, public) },
+            relayCandidateEligibility = { it.role == "public" },
+            dashboardRelayRequestProvider = { url ->
+                requestUrl.complete(url)
+                Request.Builder().url("$url?ticket=public-ticket").build()
+            },
+        )
+        manager.setInsecureMode(true)
+
+        manager.connect(public.relay!!.url)
+
+        val winner = runBlocking {
+            withTimeout(10_000) { manager.activeRelayEndpoint.first { it?.role == "public" } }
+        }
+        assertEquals("public", winner?.role)
+        assertEquals(
+            public.relay!!.url.trimEnd('/') + "/ws",
+            runBlocking { withTimeout(10_000) { requestUrl.await() } },
+        )
+    }
+
+    @Test
+    fun `explicit re-resolve re-evaluates dynamic Relay eligibility`() {
+        val allowedRole = AtomicReference("public")
+        val tailscale = ingressRoute("tailscale", priority = 0)
+        val public = ingressRoute("public", priority = 1)
+        val manager = buildManager(
+            candidates = { listOf(tailscale, public) },
+            relayCandidateEligibility = { it.role == allowedRole.get() },
+            dashboardRelayRequestProvider = { url ->
+                Request.Builder().url("$url?ticket=test-ticket").build()
+            },
+        )
+        manager.setInsecureMode(true)
+        manager.connect(public.relay!!.url)
+        runBlocking {
+            withTimeout(10_000) { manager.activeRelayEndpoint.first { it?.role == "public" } }
+        }
+
+        allowedRole.set("tailscale")
+        runBlocking { manager.probeAndReconnectNow() }
+
+        assertEquals("tailscale", manager.activeRelayEndpoint.value?.role)
     }
 
     @Test

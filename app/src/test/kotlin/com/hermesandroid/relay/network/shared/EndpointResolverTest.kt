@@ -904,6 +904,84 @@ class EndpointResolverTest {
     }
 
     @Test
+    fun protectedDashboardRelayIngressTreats401And403AsReachableAuthRequired() = runTest {
+        listOf(401, 403).forEach { status ->
+            reachableServer.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    if (request.path?.endsWith("/health") == true) {
+                        MockResponse().setResponseCode(status)
+                    } else {
+                        MockResponse().setResponseCode(404)
+                    }
+            }
+            val candidate = EndpointCandidate(
+                role = "public-$status",
+                relay = RelayEndpoint(
+                    "ws://${reachableServer.hostName}:${reachableServer.port}" +
+                        "/api/plugins/hermes-relay/transport",
+                ),
+            )
+            val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+
+            val winner = resolver.resolve(listOf(candidate), EndpointSurface.Relay)
+
+            assertEquals(candidate, winner)
+            val outcome = resolver.probeOutcomes.value[
+                EndpointResolver.outcomeKey(candidate, EndpointSurface.Relay)
+            ]
+            assertEquals(true, outcome?.reachable)
+            assertTrue(outcome?.detail?.contains("authorization required") == true)
+            assertEquals(
+                "/api/plugins/hermes-relay/transport/health",
+                reachableServer.takeRequest(1, TimeUnit.SECONDS)?.path,
+            )
+        }
+    }
+
+    @Test
+    fun authChallengeOnDirectRelayDoesNotProveReachability() = runTest {
+        reachableServer.dispatcher = healthDispatcher(statusCode = 401)
+        val direct = EndpointCandidate(
+            role = "direct",
+            relay = RelayEndpoint("ws://${reachableServer.hostName}:${reachableServer.port}"),
+        )
+
+        val winner = EndpointResolver(fastClient, clock = { clockMillis.get() })
+            .resolve(listOf(direct), EndpointSurface.Relay)
+
+        assertNull(winner)
+    }
+
+    @Test
+    fun protectedDashboardRelayIngress404AndTransportFailureRemainUnreachable() = runTest {
+        reachableServer.dispatcher = healthDispatcher(statusCode = 404)
+        val missing = EndpointCandidate(
+            role = "missing",
+            relay = RelayEndpoint(
+                "ws://${reachableServer.hostName}:${reachableServer.port}" +
+                    "/api/plugins/hermes-relay/transport",
+            ),
+        )
+        val closedServer = MockWebServer().also {
+            it.start()
+            it.shutdown()
+        }
+        val offline = EndpointCandidate(
+            role = "offline",
+            priority = 1,
+            relay = RelayEndpoint(
+                "ws://${closedServer.hostName}:${closedServer.port}" +
+                    "/api/plugins/hermes-relay/transport",
+            ),
+        )
+
+        val resolver = EndpointResolver(fastClient, clock = { clockMillis.get() })
+
+        assertNull(resolver.resolve(listOf(missing), EndpointSurface.Relay))
+        assertNull(resolver.resolve(listOf(offline), EndpointSurface.Relay))
+    }
+
+    @Test
     fun secureLinkStandardSurfacesProbeIndependently() {
         val pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         val candidate = EndpointCandidate(

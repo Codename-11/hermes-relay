@@ -1,13 +1,84 @@
 package com.hermesandroid.relay.viewmodel
 
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.data.RelayEndpoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EffectiveRelayRouteTest {
+    @Test
+    fun `authenticated Dashboard origin fences only namespaced Relay ingress`() {
+        val publicIngress = EndpointCandidate(
+            role = "public",
+            dashboard = DashboardEndpoint("https://hermes.example"),
+            relay = RelayEndpoint(
+                "wss://hermes.example/api/plugins/hermes-relay/transport",
+            ),
+        )
+        val tailscaleIngress = EndpointCandidate(
+            role = "tailscale",
+            dashboard = DashboardEndpoint("http://100.71.8.56:9119"),
+            relay = RelayEndpoint(
+                "ws://100.71.8.56:9119/api/plugins/hermes-relay/transport",
+            ),
+        )
+        val directTailscale = tailscaleIngress.copy(
+            relay = RelayEndpoint("ws://100.71.8.56:8767"),
+        )
+
+        assertTrue(
+            relayCandidateEligibleForAuthenticatedDashboard(
+                publicIngress,
+                "https://hermes.example/",
+            ),
+        )
+        assertFalse(
+            relayCandidateEligibleForAuthenticatedDashboard(
+                tailscaleIngress,
+                "https://hermes.example",
+            ),
+        )
+        assertTrue(
+            relayCandidateEligibleForAuthenticatedDashboard(
+                directTailscale,
+                "https://hermes.example",
+            ),
+        )
+        assertTrue(
+            "Before Dashboard auth, route priority remains unchanged",
+            relayCandidateEligibleForAuthenticatedDashboard(tailscaleIngress, null),
+        )
+    }
+
+    @Test
+    fun `ingress candidate fails closed when its Dashboard metadata is absent or mismatched`() {
+        val ingress = RelayEndpoint(
+            "wss://hermes.example/api/plugins/hermes-relay/transport",
+        )
+
+        assertFalse(
+            relayCandidateEligibleForAuthenticatedDashboard(
+                EndpointCandidate(role = "missing", relay = ingress),
+                "https://hermes.example",
+            ),
+        )
+        assertFalse(
+            relayCandidateEligibleForAuthenticatedDashboard(
+                EndpointCandidate(
+                    role = "mismatch",
+                    dashboard = DashboardEndpoint("https://other.example"),
+                    relay = ingress,
+                ),
+                "https://hermes.example",
+            ),
+        )
+    }
+
     @Test
     fun `dashboard ingress uses only the matching authenticated origin`() {
         val ingress = "wss://hermes.example/api/plugins/hermes-relay/transport/ws"

@@ -5,6 +5,7 @@ import android.util.Log
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpointContract
+import com.hermesandroid.relay.data.isDashboardRelayIngressUrl
 import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
@@ -51,7 +52,7 @@ import javax.net.ssl.SSLException
  */
 data class RouteProbeOutcome(
     val reachable: Boolean,
-    /** Short human-readable failure reason; null when [reachable]. */
+    /** Short result detail; protected ingress may be reachable but require authorization. */
     val detail: String? = null,
     /** Resolver-clock timestamp of when the probe finished. */
     val atMillis: Long,
@@ -567,8 +568,11 @@ class EndpointResolver(
                     }
                     val resultUrl = fallbackUrl?.toString() ?: target.requestUrl
                     result.let { response ->
-                        val ok = response.successful
-                        val probeTitle = if (ok) {
+                        val authRequired = surface == EndpointSurface.Relay &&
+                            isDashboardRelayIngressUrl(candidate.relay?.url) &&
+                            response.code in setOf(401, 403)
+                        val reachable = response.successful || authRequired
+                        val probeTitle = if (reachable) {
                             context?.getString(R.string.endpoint_diag_probe_ok) ?: "Endpoint probe ok"
                         } else {
                             context?.getString(R.string.endpoint_diag_probe_failed) ?: "Endpoint probe failed"
@@ -577,20 +581,28 @@ class EndpointResolver(
                             candidate = candidate,
                             surface = surface,
                             generation = generation,
-                            reachable = ok,
-                            detail = if (ok) null else "HTTP ${response.code} from $resultPath",
+                            reachable = reachable,
+                            detail = when {
+                                authRequired -> "HTTP ${response.code} · Dashboard authorization required"
+                                reachable -> null
+                                else -> "HTTP ${response.code} from $resultPath"
+                            },
                         ) {
                             DiagnosticsLog.record(
                                 category = DiagnosticCategory.Endpoint,
-                                severity = if (ok) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
+                                severity = if (reachable) DiagnosticSeverity.Info else DiagnosticSeverity.Warning,
                                 title = probeTitle,
-                                detail = if (ok) null else "HTTP ${response.code}",
+                                detail = when {
+                                    authRequired -> "HTTP ${response.code} · Dashboard authorization required"
+                                    reachable -> null
+                                    else -> "HTTP ${response.code}"
+                                },
                                 operation = operation,
                                 endpointRole = candidate.role,
                                 configuredUrl = target.baseUrl,
                                 requestUrl = resultUrl,
                                 elapsedMs = clock() - startedAtMs,
-                                suggestion = if (ok) {
+                                suggestion = if (reachable) {
                                     null
                                 } else {
                                     NetworkDiagnosticGuidance.forHttpStatus(

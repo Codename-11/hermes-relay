@@ -454,6 +454,26 @@ internal fun resolveEffectiveRelayUrl(
     }
 }
 
+/**
+ * Dashboard ingress shares the Dashboard credential boundary. Once a
+ * reviewed Dashboard origin owns auth, a different-origin ingress is not a
+ * fallback: it cannot mint a ticket with those credentials. Direct Relay and
+ * pinned proxy routes keep their independent transport ownership.
+ */
+internal fun relayCandidateEligibleForAuthenticatedDashboard(
+    candidate: EndpointCandidate,
+    authenticatedDashboardOrigin: String?,
+): Boolean {
+    val relayUrl = candidate.relay?.url
+    if (!isDashboardRelayIngressUrl(relayUrl)) return true
+    val authenticatedOrigin = authenticatedDashboardOrigin
+        ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+        ?: return true
+    val candidateDashboard = candidate.dashboard?.url ?: return false
+    return sameDashboardBase(candidateDashboard, authenticatedOrigin) &&
+        dashboardOriginForRelayIngress(authenticatedOrigin, relayUrl) != null
+}
+
 internal fun reusablePlaceholderForAdd(
     preAllocatedId: String?,
     connections: List<Connection>,
@@ -1162,6 +1182,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         context = application,
         endpointResolver = endpointResolver,
         endpointCandidatesProvider = { activeRouteCandidatesSnapshot() },
+        relayCandidateEligibility = { candidate ->
+            relayCandidateEligibleForAuthenticatedDashboard(
+                candidate = candidate,
+                authenticatedDashboardOrigin = activeConnection.value
+                    ?.authenticatedDashboardOrigin,
+            )
+        },
         proxyClientProvider = { url -> pluginProxyClientForUrl(url) },
         // Pull the active device id through AuthManager — it's the same id
         // PairingPreferences keys the endpoint list on. Nullable wrapper
