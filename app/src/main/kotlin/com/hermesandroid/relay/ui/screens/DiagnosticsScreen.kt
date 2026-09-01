@@ -544,19 +544,24 @@ internal fun buildStatusChecks(
             )
     }
 
+    // A healthy standard-only connection should not read like three missing
+    // dependencies. Collapse the absent optional extension to one neutral row;
+    // configured Relay keeps the detailed auth/server/plugin troubleshooting.
+    if (!relayConfigured) {
+        checks += StatusCheck(
+            context.getString(R.string.diag_relay_tools_optional),
+            CheckStatus.Unknown,
+            reason = context.getString(R.string.diag_relay_tools_not_paired),
+            category = DiagnosticCategory.Relay,
+        )
+    }
     // 6) Optional Relay / pairing auth.
     val authLabel = context.getString(R.string.diag_check_pairing_auth)
     val authRelayActive = context.getString(R.string.diag_check_relay_active)
     val authPairingProg = context.getString(R.string.diag_check_pairing_progress)
     val authNotPaired = context.getString(R.string.diag_check_not_paired)
     val authErr = recentError(DiagnosticCategory.Auth)
-    checks += when {
-        !relayConfigured ->
-            StatusCheck(
-                authLabel, CheckStatus.Unknown,
-                reason = context.getString(R.string.active_section_optional),
-                category = DiagnosticCategory.Auth,
-            )
+    if (relayConfigured) checks += when {
         authState is AuthState.Paired ->
             StatusCheck(
                 authLabel, CheckStatus.Pass,
@@ -586,18 +591,11 @@ internal fun buildStatusChecks(
 
     // 7) Relay server (optional — Unknown when not paired/configured).
     val relayLabel = context.getString(R.string.active_section_optional_relay)
-    val relayNotConfigured = context.getString(R.string.diag_check_relay_not_configured)
     val relayConnected = context.getString(R.string.diag_check_connected)
     val relayReachableNotReady = context.getString(R.string.diag_check_reachable_not_ready)
     val relayConfiguredNotReachable = context.getString(R.string.diag_check_configured_not_reachable)
     val relayErr = recentError(DiagnosticCategory.Relay)
-    checks += when {
-        !relayConfigured ->
-            StatusCheck(
-                relayLabel, CheckStatus.Unknown,
-                reason = relayNotConfigured,
-                category = DiagnosticCategory.Relay,
-            )
+    if (relayConfigured) checks += when {
         relayReady ->
             StatusCheck(
                 relayLabel, CheckStatus.Pass,
@@ -629,7 +627,7 @@ internal fun buildStatusChecks(
         relayReady = relayReady,
         relayUpdateInfo = relayUpdateInfo,
     )
-    checks += when (pluginState) {
+    if (relayConfigured) checks += when (pluginState) {
         RelayPluginDiagnosticState.NotConfigured ->
             StatusCheck(
                 pluginLabel, CheckStatus.Unknown,

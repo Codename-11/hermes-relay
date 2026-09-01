@@ -13,16 +13,17 @@ dos versiones proceden del mismo código y pueden convivir en el teléfono.
 | Pregunta | Google Play | Sideload |
 |---|---|---|
 | ¿Instalación sencilla y actualizaciones automáticas? | Sí | No |
-| ¿Chat, perfiles, Manage y Voice? | Sí | Sí |
-| ¿Terminal, multimedia y notificaciones con Relay? | Sí | Sí |
+| ¿Chat, perfiles, Manage, Voice y archivos entrantes? | Sí | Sí |
+| ¿Terminal, mejoras multimedia y notificaciones con Relay? | Sí | Sí |
 | ¿Leer o capturar la pantalla? | No | Sí |
 | ¿Tocar, escribir, deslizar y manejar aplicaciones? | No | Sí |
 
 ## La versión y Relay son decisiones independientes
 
 La **versión de la aplicación** decide si Android incluye Device Control. El
-**complemento Relay** opcional conecta el terminal, el contenido multimedia,
-las notificaciones y los canales de dispositivos con el host de Hermes.
+**complemento Relay** opcional conecta el terminal, las notificaciones y los
+canales de dispositivos con el host de Hermes, y añade compatibilidad y
+metadatos multimedia. Los archivos entrantes normales usan el Dashboard estándar.
 
 Device Control solo funciona con **Sideload + Relay emparejado**. Chat, Manage y
 la voz estándar no necesitan ninguno de los dos.

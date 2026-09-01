@@ -18,7 +18,7 @@ It's easy to read this page as "Google Play vs Sideload" and miss that two
 - **The Relay plugin** (server-side) — optional for the upstream standard path,
   but encouraged for the complete Hermes-Relay experience. Pairing it fills
   capabilities Hermes does not yet expose upstream: terminal/TUI, Relay and
-  enhanced voice, notification forwarding, media handoff, desktop tools, Relay
+  enhanced voice, notification forwarding, media enhancements, desktop tools, Relay
   sessions, **and** the device-control channel. Hermes-Relay prefers a compatible
   upstream surface whenever one exists and should retire duplicate Relay paths
   as upstream ownership expands.

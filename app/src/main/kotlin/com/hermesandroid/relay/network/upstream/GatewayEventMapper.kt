@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.booleanOrNull
 
 /**
@@ -397,8 +398,26 @@ class GatewayEventMapper(
                 }
             }
 
-            // Known-but-unrendered (notification.show, …) and unknown types
-            // alike: ignore.
+            "notification.show" -> {
+                val text = payload.string("text")?.trim().orEmpty()
+                if (text.isNotEmpty()) {
+                    callbacks.onNoticeShow(
+                        GatewayAgentNotice(
+                            text = text,
+                            level = payload.string("level"),
+                            kind = payload.string("kind"),
+                            ttlMs = payload.long("ttl_ms"),
+                            key = payload.string("key"),
+                            id = payload.string("id"),
+                        ),
+                    )
+                }
+            }
+
+            "notification.clear" ->
+                payload.string("key")?.trim()?.takeIf(String::isNotEmpty)?.let(callbacks.onNoticeClear)
+
+            // Unknown event types remain forward-compatible no-ops.
             else -> Unit
         }
         previousEventType = type
@@ -595,6 +614,9 @@ private fun JsonObject?.string(key: String): String? =
 
 private fun JsonObject?.int(key: String): Int? =
     (this?.get(key) as? JsonPrimitive)?.intOrNull
+
+private fun JsonObject?.long(key: String): Long? =
+    (this?.get(key) as? JsonPrimitive)?.longOrNull
 
 private fun JsonObject?.double(key: String): Double? =
     (this?.get(key) as? JsonPrimitive)?.doubleOrNull

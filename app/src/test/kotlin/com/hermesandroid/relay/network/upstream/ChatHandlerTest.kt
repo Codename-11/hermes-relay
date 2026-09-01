@@ -1531,6 +1531,42 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_carriesHydratedMarkerAttachmentWithoutReloading() {
+        var requestCount = 0
+        val path = "/tmp/voice-note.mp3"
+        handler.onMediaBarePathRequested = { messageId, requestedPath ->
+            requestCount++
+            handler.mutateMessage(messageId) { message ->
+                message.copy(
+                    attachments = message.attachments + Attachment(
+                        contentType = "audio/mpeg",
+                        content = "",
+                        fileName = "voice-note.mp3",
+                        relayToken = requestedPath,
+                        cachedUri = "content://media/voice-note.mp3",
+                        state = AttachmentState.LOADED,
+                    ),
+                )
+            }
+        }
+        val history = listOf(
+            MessageItem(
+                id = "assistant-media",
+                role = "assistant",
+                content = JsonPrimitive("Voice note\nMEDIA:$path"),
+            ),
+        )
+
+        handler.loadMessageHistory(history)
+        handler.loadMessageHistory(history)
+
+        val attachment = handler.messages.value.single().attachments.single()
+        assertEquals(1, requestCount)
+        assertEquals(AttachmentState.LOADED, attachment.state)
+        assertEquals("content://media/voice-note.mp3", attachment.cachedUri)
+    }
+
+    @Test
     fun loadMessageHistory_preservesCompletedGeneratedImageUntilMarkerPersists() {
         handler.addPlaceholderMessage(
             ChatMessage(

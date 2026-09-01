@@ -344,6 +344,46 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         dataStore.edit { it[key] = route.storageValue }
     }
 
+    /**
+     * Clear Relay-only selections after Relay has been explicitly removed from
+     * the active connection. A temporarily unreachable configured Relay must
+     * not call this: preserving the selection lets the richer route resume
+     * when connectivity returns.
+     *
+     * [expectedScope] fences profile/connection changes that can race the
+     * DataStore edit. Values are re-read inside the transaction instead of
+     * trusting an earlier settings snapshot, so a newer user choice wins.
+     * The legacy default-profile keys are global (their storage names predate
+     * connection scoping), so they are never rewritten here: runtime fallback
+     * handles an unpaired default profile without changing another
+     * connection's selection.
+     */
+    suspend fun reconcileRelayRemoval(expectedScope: VoiceProfileScope): Boolean {
+        if (_scope.value != expectedScope || expectedScope.profileName == null) return false
+        var changed = false
+        dataStore.edit { prefs ->
+            if (_scope.value != expectedScope) return@edit
+
+            val engine = VoiceEngineMode.fromStorage(
+                resolveString(prefs, KEY_ENGINE_MODE, expectedScope, DEFAULT_ENGINE_MODE),
+            )
+            val route = VoiceAudioRoute.fromStorage(
+                resolveString(prefs, KEY_AUDIO_ROUTE, expectedScope, DEFAULT_AUDIO_ROUTE),
+            )
+            if (engine == VoiceEngineMode.RealtimeAgent) {
+                prefs[stringPreferencesKey(scopedName(KEY_ENGINE_MODE, expectedScope))] =
+                    VoiceEngineMode.HermesVoiceOutput.storageValue
+                changed = true
+            }
+            if (route == VoiceAudioRoute.Relay) {
+                prefs[stringPreferencesKey(scopedName(KEY_AUDIO_ROUTE, expectedScope))] =
+                    VoiceAudioRoute.Auto.storageValue
+                changed = true
+            }
+        }
+        return changed
+    }
+
     /** "" clears the override (relay falls back to the server's saved voice). */
     suspend fun setEnhancedVoice(voice: String) {
         val key = stringPreferencesKey(scopedName(KEY_ENH_VOICE, _scope.value))

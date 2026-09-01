@@ -48,7 +48,7 @@ Chat messages are **not cached** on your device. They are loaded from your Herme
 The app connects only to endpoints you configure:
 
 - **Your Hermes API server** — HTTP/SSE for chat streaming
-- **Your relay server** — WSS for terminal/TUI relay, Bridge Core status, media handoff, notification companion, and session management
+- **Your relay server** — WSS for terminal/TUI relay, Bridge Core status, explicit Relay media/enhancements, notification companion, and session management. Ordinary inbound files use the authenticated Dashboard route.
 - **Your relay voice routes** — HTTP(S)/WSS for speech-to-text, voice settings, realtime voice sessions, and text-to-speech audio when you use Voice mode
 - **Your Hermes Dashboard/Gateway or API route** — Android Assistant turns, including bounded visible text and an available screenshot when compatible firmware supplies screen context
 

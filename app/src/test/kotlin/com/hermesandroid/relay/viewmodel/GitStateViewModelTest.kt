@@ -2,6 +2,7 @@ package com.hermesandroid.relay.viewmodel
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import com.hermesandroid.relay.data.GitRepositoryRoute
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -56,21 +57,29 @@ class GitStateViewModelTest {
     }
 
     @Test
-    fun `disabled configuration does not discover repositories until enabled`() = runBlocking {
-        enqueueJson("""{"repos":[]}""")
+    fun `disabled Relay discovery still loads standard session repository`() = runBlocking {
+        enqueueJson("""{"branch":"main","changed":0,"staged":0,"unstaged":0,"untracked":0,"files":[]}""")
         val vm = GitStateViewModel(application)
         vm.configure(
             DashboardApiClient(server.url("/").toString()),
             ownerKey,
             scanningEnabled = false,
         )
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = null)
 
         vm.loadRepos()
-        assertEquals(0, server.requestCount)
+        val standard = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Ready>().first()
+        }
+        assertEquals(GitRepositoryRoute.UPSTREAM, standard.repos.single().route)
+        assertEquals("/api/git/status?path=%2Fworkspace%2Frepo", server.takeRequest().path)
+        assertEquals(1, server.requestCount)
 
+        enqueueJson("""{"branch":"main","changed":0,"staged":0,"unstaged":0,"untracked":0,"files":[]}""")
+        enqueueJson("""{"repos":[]}""")
         vm.setScanningEnabled(true)
-        vm.loadRepos()
         withTimeout(5_000) { vm.repos.filterIsInstance<GitStateUiState.Ready>().first() }
+        assertEquals("/api/git/status?path=%2Fworkspace%2Frepo", server.takeRequest().path)
         assertEquals("/api/plugins/hermes-relay/git/repos", server.takeRequest().path)
     }
 
@@ -202,5 +211,142 @@ class GitStateViewModelTest {
             vm.detail.filterIsInstance<GitRepoDetailState.Error>().first()
         }
         assertTrue(error.message.contains("unknown repository"))
+    }
+
+    @Test
+    fun `active session repository uses upstream Git without Relay`() = runBlocking {
+        enqueueJson(
+            """{"branch":"main","changed":2,"staged":0,"unstaged":1,"untracked":1,"added":7,"removed":2,"files":[]}""",
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(404).setBody("""{"detail":"No such API endpoint"}"""),
+        )
+        val vm = GitStateViewModel(application)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = "/workspace/repo/src")
+        vm.loadRepos()
+
+        val ready = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Ready>().first()
+        }
+        assertEquals(1, ready.repos.size)
+        assertEquals(GitRepositoryRoute.UPSTREAM, ready.repos.single().route)
+        assertEquals("/workspace/repo", ready.repos.single().root)
+        assertEquals("/api/git/status?path=%2Fworkspace%2Frepo", server.takeRequest().path)
+        assertEquals("/api/plugins/hermes-relay/git/repos", server.takeRequest().path)
+    }
+
+    @Test
+    fun `standard session repository can be selected while Relay discovery is off`() = runBlocking {
+        enqueueJson(
+            """{"branch":"main","changed":1,"staged":0,"unstaged":1,"untracked":0,"added":2,"removed":0,"files":[{"path":"a.kt","unstaged":true}]}""",
+        )
+        enqueueJson(
+            """{"branch":"main","changed":1,"staged":0,"unstaged":1,"untracked":0,"added":2,"removed":0,"files":[{"path":"a.kt","unstaged":true}]}""",
+        )
+        enqueueJson("""{"files":[{"path":"a.kt","added":2,"removed":0,"staged":false}]}""")
+        enqueueJson("""{"branches":[{"name":"main","checkedOut":true}]}""")
+        val vm = GitStateViewModel(application)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = false)
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = null)
+        vm.loadRepos()
+        val repos = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Ready>().first()
+        }
+
+        vm.selectRepo(repos.repos.single().id)
+        val detail = withTimeout(5_000) {
+            vm.detail.filterIsInstance<GitRepoDetailState.Ready>().first()
+        }
+        assertEquals("a.kt", detail.status.modified.single().path)
+        assertNotNull(vm.currentTarget())
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun `upstream operational failure does not downgrade to Relay`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"detail":"git crashed"}"""))
+        enqueueJson(
+            """{"repos":[{"id":"alpha","name":"alpha","root":"/workspace/repo"}]}""",
+        )
+        val vm = GitStateViewModel(application)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = null)
+        vm.loadRepos()
+
+        val error = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Error>().first()
+        }
+        assertTrue(error.message.contains("HTTP 500"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `upstream session status maps official review and branch shapes`() = runBlocking {
+        enqueueJson(
+            """{"branch":"feature/x","changed":2,"staged":1,"unstaged":1,"untracked":0,"added":9,"removed":3,"files":[{"path":"a.kt","staged":true},{"path":"b.kt","unstaged":true}]}""",
+        )
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"detail":"plugin absent"}"""))
+        enqueueJson(
+            """{"branch":"feature/x","changed":2,"staged":1,"unstaged":1,"untracked":0,"added":9,"removed":3,"files":[{"path":"a.kt","staged":true},{"path":"b.kt","unstaged":true}]}""",
+        )
+        enqueueJson(
+            """{"files":[{"path":"a.kt","added":5,"removed":1,"staged":true},{"path":"b.kt","added":4,"removed":2,"staged":false}],"base":null}""",
+        )
+        enqueueJson(
+            """{"branches":[{"name":"feature/x","checkedOut":true,"isDefault":false,"isRemote":false,"worktreePath":"/workspace/repo"}]}""",
+        )
+        val vm = GitStateViewModel(application)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = null)
+        vm.loadRepos()
+        val repos = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Ready>().first()
+        }
+
+        vm.selectRepo(repos.repos.single().id)
+        val detail = withTimeout(5_000) {
+            vm.detail.filterIsInstance<GitRepoDetailState.Ready>().first()
+        }
+        assertEquals(2, detail.status.counts.changes)
+        assertEquals(9, detail.status.counts.additions)
+        assertEquals(3, detail.status.counts.deletions)
+        assertEquals("a.kt", detail.status.staged.single().path)
+        assertEquals("b.kt", detail.status.modified.single().path)
+        assertTrue(detail.branches.single().isCurrent)
+    }
+
+    @Test
+    fun `missing upstream read route falls back to matching Relay repository`() = runBlocking {
+        enqueueJson(
+            """{"branch":"main","changed":1,"staged":0,"unstaged":1,"untracked":0,"files":[]}""",
+        )
+        enqueueJson(
+            """{"repos":[{"id":"relay-alpha","name":"repo","root":"/workspace/repo","current_branch":"main","dirty":true}]}""",
+        )
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"detail":"route unavailable"}"""))
+        enqueueJson(
+            """{"counts":{"staged":0,"modified":1,"untracked":0},"staged":[],"modified":[{"path":"a.kt"}],"untracked":[],"truncated":false}""",
+        )
+        enqueueJson(
+            """{"branches":[{"name":"main","checkedOut":true,"isDefault":true,"isRemote":false,"worktreePath":"/workspace/repo"}]}""",
+        )
+        val vm = GitStateViewModel(application)
+        vm.configure(DashboardApiClient(server.url("/").toString()), ownerKey, scanningEnabled = true)
+        vm.setSessionWorkspace(repoRoot = "/workspace/repo", workingDirectory = null)
+        vm.loadRepos()
+        val repos = withTimeout(5_000) {
+            vm.repos.filterIsInstance<GitStateUiState.Ready>().first()
+        }
+
+        vm.selectRepo(repos.repos.single().id)
+        val detail = withTimeout(5_000) {
+            vm.detail.filterIsInstance<GitRepoDetailState.Ready>().first()
+        }
+        assertEquals("a.kt", detail.status.modified.single().path)
+        val paths = buildList {
+            repeat(5) { add(server.takeRequest().path.orEmpty()) }
+        }
+        assertTrue(paths.contains("/api/plugins/hermes-relay/git/status?repo=relay-alpha"))
     }
 }

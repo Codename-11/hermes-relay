@@ -99,8 +99,14 @@ private const val PREAMBLE =
     "The user is chatting via the Hermes-Relay Android app. " +
     "Keep responses mobile-friendly and concise when possible."
 
+/** Representative capability used only by the Settings preview fixture. */
+internal val PHONE_CONTEXT_PREVIEW_TOOLS = setOf("android_phone_status")
+
 /**
- * Build the system-prompt block from [settings] + [snapshot].
+ * Build the system-prompt block from [settings] + [snapshot]. Relay-only
+ * bridge guidance is emitted only when [availableTools] proves that this exact
+ * selected session/profile can call at least one `android_*` tool. A missing
+ * catalog fails closed for tool claims while preserving neutral mobile context.
  *
  * Returns `null` iff:
  *   1. [AppContextSettings.master] is false, OR
@@ -112,14 +118,27 @@ private const val PREAMBLE =
  * itself is useful (it's the original v0.1.0 behavior). The "everything
  * off → null" case in the brief is the `master=false` branch.
  */
-fun buildPromptBlock(settings: AppContextSettings, snapshot: PhoneSnapshot): String? {
+fun buildPromptBlock(
+    settings: AppContextSettings,
+    snapshot: PhoneSnapshot,
+    availableTools: Set<String>? = null,
+): String? {
     if (!settings.master) return null
 
     val lines = mutableListOf<String>()
     lines += PREAMBLE
 
-    if (settings.bridgeState) {
-        lines += buildBridgeLine(snapshot)
+    val phoneControlTools = availableTools
+        ?.filterTo(mutableSetOf()) {
+            it.startsWith("android_") && it != "android_setup"
+        }
+        .orEmpty()
+
+    if (settings.bridgeState && phoneControlTools.isNotEmpty()) {
+        lines += buildBridgeLine(
+            snapshot = snapshot,
+            phoneStatusToolAvailable = "android_phone_status" in phoneControlTools,
+        )
     }
 
     if (settings.currentApp && snapshot.currentApp != null) {
@@ -130,7 +149,7 @@ fun buildPromptBlock(settings: AppContextSettings, snapshot: PhoneSnapshot): Str
         lines += "Battery: ${snapshot.batteryPercent}%."
     }
 
-    if (settings.safetyStatus) {
+    if (settings.safetyStatus && phoneControlTools.isNotEmpty()) {
         buildSafetyLine(snapshot)?.let { lines += it }
     }
 
@@ -151,7 +170,10 @@ fun buildPromptBlock(settings: AppContextSettings, snapshot: PhoneSnapshot): Str
  * the bridge isn't bound — "Phone bridge: not installed" is itself useful
  * context (tells the agent not to try tool calls into the phone).
  */
-private fun buildBridgeLine(snapshot: PhoneSnapshot): String {
+private fun buildBridgeLine(
+    snapshot: PhoneSnapshot,
+    phoneStatusToolAvailable: Boolean,
+): String {
     if (!snapshot.bridgeBound) {
         return "Phone bridge: not connected. Tool calls into the phone are unavailable."
     }
@@ -189,8 +211,12 @@ private fun buildBridgeLine(snapshot: PhoneSnapshot): String {
 
     val screenText = if (snapshot.screenOn) "Screen: on." else "Screen: off."
 
-    return "Phone bridge: enabled. $permsText. $screenText $unattendedText " +
-        "For full phone status (current app, battery, blocklist), call the android_phone_status tool."
+    val statusToolHint = if (phoneStatusToolAvailable) {
+        " For full phone status (current app, battery, blocklist), call the android_phone_status tool."
+    } else {
+        ""
+    }
+    return "Phone bridge: enabled. $permsText. $screenText $unattendedText$statusToolHint"
 }
 
 /**

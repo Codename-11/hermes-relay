@@ -34,6 +34,8 @@ class GatewayEventMapperTest {
         val failures = mutableListOf<GatewayTurnFailure>()
         val statusUpdates = mutableListOf<Pair<String?, String>>()
         val statusClears = mutableListOf<String>()
+        val notices = mutableListOf<GatewayAgentNotice>()
+        val noticeClears = mutableListOf<String>()
         val sessionIds = mutableListOf<String>()
         var starts = 0
         var turnCompletes = 0
@@ -70,6 +72,8 @@ class GatewayEventMapperTest {
             onFailure = { failures += it },
             onStatusUpdate = { kind, text -> statusUpdates += kind to text },
             onStatusClear = { statusClears += it },
+            onNoticeShow = { notices += it },
+            onNoticeClear = { noticeClears += it },
         )
     }
 
@@ -121,6 +125,45 @@ class GatewayEventMapperTest {
         mapperWith(r).onEvent("thinking.delta", obj("""{"text":"considering the tradeoffs"}"""))
         assertEquals(listOf("considering the tradeoffs"), r.thinkingDeltas)
         assertTrue(r.statusUpdates.isEmpty())
+    }
+
+    @Test
+    fun `official notice show and clear preserve exact keyed contract`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent(
+            "notification.show",
+            obj(
+                """{"text":"⚠ Credits depleted","level":"warn","kind":"sticky","ttl_ms":null,"key":"credits.depleted","id":"notice-1"}""",
+            ),
+        )
+        mapper.onEvent("notification.clear", obj("""{"key":"credits.depleted"}"""))
+
+        assertEquals(
+            GatewayAgentNotice(
+                text = "⚠ Credits depleted",
+                level = "warn",
+                kind = "sticky",
+                ttlMs = null,
+                key = "credits.depleted",
+                id = "notice-1",
+            ),
+            r.notices.single(),
+        )
+        assertEquals(listOf("credits.depleted"), r.noticeClears)
+    }
+
+    @Test
+    fun `malformed official notices remain forward compatible no ops`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+
+        mapper.onEvent("notification.show", obj("""{"level":"info"}"""))
+        mapper.onEvent("notification.clear", obj("""{"key":"   "}"""))
+
+        assertTrue(r.notices.isEmpty())
+        assertTrue(r.noticeClears.isEmpty())
     }
 
     @Test

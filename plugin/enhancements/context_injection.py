@@ -63,8 +63,38 @@ def available_context_blocks() -> list[dict[str, str]]:
     ]
 
 
-def get_injected_context_blocks() -> list[dict[str, str]]:
-    """Return the blocks that would be injected on the next prompt build."""
+def _session_tool_names(session_info: Mapping[str, Any] | None) -> set[str]:
+    """Flatten the host's authoritative per-session tool catalog.
+
+    A host that exposes tools to native plugin prompt sections may use
+    ``{toolset: [tool_name, ...]}`` or a flat list. Current upstream's native
+    callback metadata does not include tools, so it intentionally fails closed.
+    A context block must never advertise a tool merely because a related
+    platform is configured.
+    """
+    if not isinstance(session_info, Mapping):
+        return set()
+    tools = session_info.get("tools")
+    if isinstance(tools, Mapping):
+        values = tools.values()
+    elif isinstance(tools, (list, tuple, set, frozenset)):
+        values = (tools,)
+    else:
+        return set()
+
+    names: set[str] = set()
+    for value in values:
+        if isinstance(value, str):
+            names.add(value)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            names.update(item for item in value if isinstance(item, str))
+    return names
+
+
+def get_injected_context_blocks(
+    session_info: Mapping[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    """Return the blocks that would be injected for this agent session."""
     if not agent_context_enabled():
         return []
 
@@ -76,9 +106,16 @@ def get_injected_context_blocks() -> list[dict[str, str]]:
                 "text": MEDIA_SENSITIVITY_INSTRUCTION,
             }
         )
-    # Only advertise proactive phone messaging when the platform is actually
-    # enabled (PHONE_ENABLED) and the per-block hint isn't suppressed.
-    if phone_platform_enabled() and context_phone_platform_enabled():
+    # Platform registration is not proof that the model can call a delivery
+    # tool. Current upstream deliberately keeps send_message out of the agent
+    # tool catalog; it remains an operator/cron/MCP transport. Older or custom
+    # hosts may expose a real callable. Advertise it only when the authoritative
+    # per-session tool catalog says that callable exists.
+    if (
+        phone_platform_enabled()
+        and context_phone_platform_enabled()
+        and "send_message" in _session_tool_names(session_info)
+    ):
         blocks.append(
             {
                 "name": PHONE_PLATFORM_BLOCK_NAME,
@@ -103,13 +140,20 @@ def _fence_block(block: dict[str, str]) -> str:
     return f"<!-- hermes-relay:{name} -->\n{text}\n<!-- /hermes-relay:{name} -->"
 
 
-def _build_injection_text() -> str:
-    return "\n\n".join(_fence_block(block) for block in get_injected_context_blocks())
+def _build_injection_text(
+    session_info: Mapping[str, Any] | None = None,
+) -> str:
+    return "\n\n".join(
+        _fence_block(block) for block in get_injected_context_blocks(session_info)
+    )
 
 
-def _native_section_content(block_name: str) -> str:
+def _native_section_content(
+    block_name: str,
+    session_info: Mapping[str, Any] | None = None,
+) -> str:
     """Resolve one section inside the active Hermes profile scope."""
-    for block in get_injected_context_blocks():
+    for block in get_injected_context_blocks(session_info):
         if block["name"] == block_name:
             return block["text"]
     return ""
@@ -136,7 +180,7 @@ def register_context_sections(ctx: Any) -> bool:
             *,
             _block_name: str = block_name,
         ) -> str:
-            return _native_section_content(_block_name)
+            return _native_section_content(_block_name, _session_info)
 
         register(
             id=f"hermes-relay.{block_name}",
@@ -191,7 +235,14 @@ def apply_context_injection(agent_class: type[Any] | None = None) -> bool:
             return base_prompt
 
         try:
-            injection = _build_injection_text()
+            tool_names: list[str] = []
+            for tool in getattr(self, "tools", ()) or ():
+                if not isinstance(tool, Mapping):
+                    continue
+                function = tool.get("function")
+                if isinstance(function, Mapping) and isinstance(function.get("name"), str):
+                    tool_names.append(function["name"])
+            injection = _build_injection_text({"tools": tool_names})
         except Exception:
             logger.debug(
                 "Relay context injection failed while building blocks; returning base prompt",

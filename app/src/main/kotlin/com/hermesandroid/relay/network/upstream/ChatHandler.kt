@@ -1540,19 +1540,28 @@ class ChatHandler {
             val prior = priorById[messageId]
             // Outbound attachments: prefer an id-match (covers any future
             // user-message id reconciliation), else fall back to the
-            // content-keyed queue. Inbound attachments normally come back via
-            // marker re-dispatch. One narrow exception retains a completed
-            // image_generate result when the immediate post-turn history read
-            // still lacks its MEDIA marker; otherwise the rendered image
-            // disappears during the persistence-lag window.
+            // content-keyed queue. Exact inbound marker attachments are also
+            // carried by id: a history refresh must not replace a successfully
+            // loaded image/file with a fresh LOADING placeholder. A process
+            // restart has no prior attachment, so the marker still dispatches
+            // normally and rehydrates it. One additional narrow exception
+            // retains a completed image_generate result when the immediate
+            // post-turn history read still lacks its MEDIA marker.
             val carriedAttachments = run {
                 val persistedImagePaths = persistedImages.paths.toHashSet()
+                val persistedMediaKeys = messageMediaHits.mapTo(HashSet()) { (_, hit) ->
+                    when (hit) {
+                        is MediaMarkerHit.RelayToken -> hit.token
+                        is MediaMarkerHit.BarePath -> hit.path
+                    }
+                }
                 val priorGeneratedImage = prior?.toolCalls.orEmpty().any { tool ->
                     isImageGenerationToolName(tool.name) &&
                         tool.isComplete && tool.success != false
                 }
                 val byId = prior?.attachments.orEmpty().filter { attachment ->
                     attachment.relayToken == null ||
+                        attachment.relayToken in persistedMediaKeys ||
                         (role == MessageRole.USER && attachment.relayToken in persistedImagePaths) ||
                         (
                             role == MessageRole.ASSISTANT &&
@@ -1708,15 +1717,27 @@ class ChatHandler {
                 is MediaMarkerHit.RelayToken -> {
                     val dedupeKey = "$messageId:relay:${hit.token}"
                     if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker accepted from reloaded Relay history")
-                        onMediaAttachmentRequested(messageId, hit.token)
+                        val alreadyHydrated = _messages.value
+                            .firstOrNull { it.matchesIdentity(messageId) }
+                            ?.attachments
+                            ?.any { it.relayToken == hit.token } == true
+                        if (!alreadyHydrated) {
+                            Log.d(TAG, "Media marker accepted from reloaded Relay history")
+                            onMediaAttachmentRequested(messageId, hit.token)
+                        }
                     }
                 }
                 is MediaMarkerHit.BarePath -> {
                     val dedupeKey = "$messageId:bare:${hit.path}"
                     if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker (bare-path, reload): ${hit.path}")
-                        onMediaBarePathRequested(messageId, hit.path)
+                        val alreadyHydrated = _messages.value
+                            .firstOrNull { it.matchesIdentity(messageId) }
+                            ?.attachments
+                            ?.any { it.relayToken == hit.path } == true
+                        if (!alreadyHydrated) {
+                            Log.d(TAG, "Media marker (bare-path, reload): ${hit.path}")
+                            onMediaBarePathRequested(messageId, hit.path)
+                        }
                     }
                 }
             }

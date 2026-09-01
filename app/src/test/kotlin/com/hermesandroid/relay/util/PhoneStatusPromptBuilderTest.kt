@@ -27,12 +27,62 @@ import org.junit.Test
 class PhoneStatusPromptBuilderTest {
 
     private val defaultSettings = AppContextSettings()
+    private val phoneTools = setOf("android_phone_status", "android_tap")
+
+    @Test
+    fun missingToolCatalog_keepsNeutralMobileContextWithoutRelayClaims() {
+        val output = buildPromptBlock(
+            defaultSettings,
+            PhoneSnapshot(
+                bridgeBound = true,
+                masterEnabled = true,
+                blocklistCount = 4,
+            ),
+            availableTools = null,
+        )
+
+        assertNotNull(output)
+        assertTrue(output!!.contains("Hermes-Relay Android app"))
+        assertFalse(output.contains("Phone bridge:"))
+        assertFalse(output.contains("android_phone_status"))
+        assertFalse(output.contains("Safety rails:"))
+    }
+
+    @Test
+    fun settingsPreviewFixture_keepsBridgeAndSafetyToggleExamplesVisible() {
+        val output = buildPromptBlock(
+            defaultSettings,
+            PhoneSnapshot(
+                blocklistCount = 3,
+                destructiveVerbCount = 5,
+                autoDisableMinutes = 15,
+            ),
+            availableTools = PHONE_CONTEXT_PREVIEW_TOOLS,
+        )
+
+        assertNotNull(output)
+        assertTrue(output!!.contains("Phone bridge: not connected"))
+        assertTrue(output.contains("Safety rails: 3 blocked apps, 5 destructive verbs, 15m auto-disable."))
+    }
+
+    @Test
+    fun setupOnlyCatalog_doesNotAdvertisePhoneControl() {
+        val output = buildPromptBlock(
+            defaultSettings,
+            PhoneSnapshot(bridgeBound = true, masterEnabled = true),
+            availableTools = setOf("android_setup"),
+        )
+
+        assertNotNull(output)
+        assertFalse(output!!.contains("Phone bridge:"))
+        assertFalse(output.contains("android_phone_status"))
+    }
 
     // --- Case 1: bridge not bound, all defaults off ---
 
     @Test
     fun defaultSnapshot_bridgeNotBound_saysNotConnected() {
-        val output = buildPromptBlock(defaultSettings, PhoneSnapshot())
+        val output = buildPromptBlock(defaultSettings, PhoneSnapshot(), phoneTools)
         assertNotNull(
             "master defaults to true so the block should render",
             output,
@@ -63,7 +113,7 @@ class PhoneStatusPromptBuilderTest {
             credentialLockDetected = true,
             screenOn = true,
         )
-        val output = buildPromptBlock(defaultSettings, snapshot)
+        val output = buildPromptBlock(defaultSettings, snapshot, phoneTools)
         assertNotNull(output)
         assertTrue(
             "expected the disabled-by-user line; got: $output",
@@ -91,7 +141,7 @@ class PhoneStatusPromptBuilderTest {
             credentialLockDetected = false,
             screenOn = true,
         )
-        val output = buildPromptBlock(defaultSettings, snapshot)
+        val output = buildPromptBlock(defaultSettings, snapshot, phoneTools)
         assertNotNull(output)
         assertTrue(
             "expected 'Unattended access: off' advisory; got: $output",
@@ -123,7 +173,7 @@ class PhoneStatusPromptBuilderTest {
             credentialLockDetected = false,
             screenOn = false,
         )
-        val output = buildPromptBlock(defaultSettings, snapshot)
+        val output = buildPromptBlock(defaultSettings, snapshot, phoneTools)
         assertNotNull(output)
         assertTrue(
             "expected the 'Unattended access: on — the screen will wake' advisory; got: $output",
@@ -155,7 +205,7 @@ class PhoneStatusPromptBuilderTest {
             credentialLockDetected = true,
             screenOn = true,
         )
-        val output = buildPromptBlock(defaultSettings, snapshot)
+        val output = buildPromptBlock(defaultSettings, snapshot, phoneTools)
         assertNotNull(output)
         assertTrue(
             "agent MUST see the credential-lock warning string; got: $output",
@@ -188,6 +238,7 @@ class PhoneStatusPromptBuilderTest {
                 unattendedEnabled = true,
                 screenOn = true,
             ),
+            phoneTools,
         )
         assertNull(
             "master=false must omit the system message entirely " +
@@ -213,11 +264,29 @@ class PhoneStatusPromptBuilderTest {
             credentialLockDetected = false,
             screenOn = true,
         )
-        val output = buildPromptBlock(defaultSettings, snapshot)
+        val output = buildPromptBlock(defaultSettings, snapshot, phoneTools)
         assertNotNull(output)
         assertTrue(
             "expected permissions list; got: $output",
             output!!.contains("Permissions: accessibility, screen capture, overlay, notifications"),
         )
+    }
+
+    @Test
+    fun bridgeToolWithoutStatusTool_omitsUnavailableStatusToolAdvice() {
+        val output = buildPromptBlock(
+            defaultSettings,
+            PhoneSnapshot(
+                bridgeBound = true,
+                masterEnabled = true,
+                accessibilityGranted = true,
+                screenOn = true,
+            ),
+            availableTools = setOf("android_tap"),
+        )
+
+        assertNotNull(output)
+        assertTrue(output!!.contains("Phone bridge: enabled"))
+        assertFalse(output.contains("android_phone_status"))
     }
 }

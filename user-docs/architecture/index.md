@@ -2,7 +2,7 @@
 
 <ExpandableImage
   src="/architecture-homepage.svg"
-  alt="How Hermes-Relay connects: upstream Hermes owns standard chat, Manage and voice; the encouraged Relay extension fills current gaps for terminal, notifications, media, desktop tools, enhanced voice and Relay sessions; Device Control also needs the sideload build."
+  alt="How Hermes-Relay connects: upstream Hermes owns standard chat, Manage, voice and inbound files; the encouraged Relay extension fills current gaps for terminal, notifications, desktop tools, enhanced voice and Relay sessions; Device Control also needs the sideload build."
   caption="Select the diagram to inspect it at full size."
 />
 
