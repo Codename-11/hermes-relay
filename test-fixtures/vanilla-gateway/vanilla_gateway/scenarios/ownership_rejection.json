@@ -1,0 +1,23 @@
+{
+  "name": "ownership_rejection",
+  "live_session_id": "fixture-live-owner-conflict",
+  "stored_session_id": "20260901_165658_owner_conflict",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.session_exclusive_submit"
+  ],
+  "initial_history": [],
+  "turns": [
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "error",
+          "payload": {
+            "message": "Session 20260901_165658_owner_conflict already has a live owner (webui, pid 42, running 0m). Only one surface at a time may run a session, because a second one would reason from a transcript that does not include the first one's work."
+          }
+        }
+      ]
+    }
+  ]
+}

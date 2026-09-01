@@ -133,6 +133,9 @@ class GatewayClientHarness(
     @Volatile
     var createdSessionProfileName: String? = null
 
+    @Volatile
+    var createdSessionLazy = false
+
     /** Config keys rejected with the older-gateway unknown-key response. */
     val unsupportedConfigKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -329,6 +332,7 @@ class GatewayClientHarness(
                                     ?: (params["profile"] as? JsonPrimitive)?.contentOrNull
                                     ?: "default",
                             )
+                            if (createdSessionLazy) put("lazy", true)
                         })
                     }
                 }
@@ -768,6 +772,7 @@ class GatewayChatClientTest {
         val thinkingDeltas = ConcurrentLinkedQueue<String>()
         val sessionIds = ConcurrentLinkedQueue<String>()
         val errors = ConcurrentLinkedQueue<String>()
+        val submitRejections = ConcurrentLinkedQueue<String>()
         val resumeFailures = ConcurrentLinkedQueue<String>()
         val interactions = ConcurrentLinkedQueue<GatewayAsk>()
         val interactionExpiries = ConcurrentLinkedQueue<GatewayAskExpiry>()
@@ -805,6 +810,7 @@ class GatewayChatClientTest {
             onResumeFailure = { resumeFailures += it; completeLatch.countDown() },
             onStatusUpdate = { _, _ -> },
             onStatusClear = { },
+            onSubmitRejected = { submitRejections += it; completeLatch.countDown() },
         )
     }
 
@@ -812,6 +818,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        sessionReadyTimeoutMs: Long = 300_000L,
         compactingTimeoutMs: Long = 600_000L,
         callbackDispatcher: (block: () -> Unit) -> Unit = { it() },
         ticketTimeoutMs: Long = 8_000L,
@@ -834,6 +841,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs = rpcTimeoutMs,
         promptSubmitTimeoutMs = promptSubmitTimeoutMs,
         turnIdleTimeoutMs = turnIdleTimeoutMs,
+        sessionReadyTimeoutMs = sessionReadyTimeoutMs,
         compactingTimeoutMs = compactingTimeoutMs,
     )
 
@@ -872,6 +880,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        sessionReadyTimeoutMs: Long = 300_000L,
         compactingTimeoutMs: Long = 600_000L,
         ticketTimeoutMs: Long = 8_000L,
     ) {
@@ -881,6 +890,7 @@ class GatewayChatClientTest {
             rpcTimeoutMs = rpcTimeoutMs,
             promptSubmitTimeoutMs = promptSubmitTimeoutMs,
             turnIdleTimeoutMs = turnIdleTimeoutMs,
+            sessionReadyTimeoutMs = sessionReadyTimeoutMs,
             compactingTimeoutMs = compactingTimeoutMs,
             ticketTimeoutMs = ticketTimeoutMs,
         )
@@ -3945,6 +3955,42 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `lazy fresh session waits for authoritative ready edge before submit`() {
+        harness.createdSessionLazy = true
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitRpc("session.create")
+        val serverWs = harness.awaitServerSocket()
+        Thread.sleep(100)
+        assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject { put("lazy", false) },
+                "live-1",
+            ),
+        )
+
+        harness.awaitRpc("prompt.submit")
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `lazy fresh session readiness timeout never submits`() {
+        rebuildClient(sessionReadyTimeoutMs = 50L)
+        harness.createdSessionLazy = true
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitRpc("session.create")
+
+        waitUntil { r.preflightFailures.isNotEmpty() }
+        assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
     fun `authoritative prompt rejections surface server message without preflight fallback`() {
         val cases = listOf(
             4004 to "Truncation target must be an integer",
@@ -3964,8 +4010,9 @@ class GatewayChatClientTest {
             client.sendTurn(null, "hello-$code", null, r.callbacks) { r.preflightFailures += it }
             harness.awaitRpc("prompt.submit")
 
-            waitUntil { r.errors.isNotEmpty() }
-            assertEquals(listOf(message), r.errors.toList())
+            waitUntil { r.submitRejections.isNotEmpty() }
+            assertEquals(listOf(message), r.submitRejections.toList())
+            assertTrue(r.errors.isEmpty())
             assertTrue("$code must not trigger SSE fallback", r.preflightFailures.isEmpty())
             assertEquals(index + 1, harness.rpcLog.count { it.first == "prompt.submit" })
         }
