@@ -97,6 +97,70 @@ class VoicePreferencesRepositoryTest {
         repository.setStopPhrases(emptyList())
         assertTrue(repository.settings.first().stopPhrases.isEmpty())
     }
+
+    @Test
+    fun relayRemoval_normalizesOnlyRelayOwnedSelectionsInExpectedScope() = runTest {
+        repository.setActiveScope("connection-a", "coder")
+        repository.setEngineMode(VoiceEngineMode.RealtimeAgent)
+        repository.setAudioRoute(VoiceAudioRoute.Relay)
+        val scope = repository.activeScope.value
+
+        assertTrue(repository.reconcileRelayRemoval(scope))
+
+        val settings = repository.settings.first()
+        assertEquals(VoiceEngineMode.HermesVoiceOutput.storageValue, settings.engineMode)
+        assertEquals(VoiceAudioRoute.Auto.storageValue, settings.audioRoute)
+        assertFalse(repository.reconcileRelayRemoval(scope))
+    }
+
+    @Test
+    fun relayRemoval_doesNotMutateAProfileThatNoLongerOwnsTheScope() = runTest {
+        repository.setActiveScope("connection-a", "coder")
+        repository.setEngineMode(VoiceEngineMode.RealtimeAgent)
+        repository.setAudioRoute(VoiceAudioRoute.Relay)
+        val staleScope = repository.activeScope.value
+
+        repository.setActiveScope("connection-a", "writer")
+        assertFalse(repository.reconcileRelayRemoval(staleScope))
+
+        repository.setActiveScope("connection-a", "coder")
+        val settings = repository.settings.first()
+        assertEquals(VoiceEngineMode.RealtimeAgent.storageValue, settings.engineMode)
+        assertEquals(VoiceAudioRoute.Relay.storageValue, settings.audioRoute)
+    }
+
+    @Test
+    fun relayRemoval_doesNotRewriteGlobalDefaultSelectionSharedByAnotherConnection() = runTest {
+        repository.setActiveScope("connection-a", null)
+        repository.setEngineMode(VoiceEngineMode.RealtimeAgent)
+        repository.setAudioRoute(VoiceAudioRoute.Relay)
+
+        assertFalse(repository.reconcileRelayRemoval(repository.activeScope.value))
+
+        repository.setActiveScope("connection-b", null)
+        val settings = repository.settings.first()
+        assertEquals(VoiceEngineMode.RealtimeAgent.storageValue, settings.engineMode)
+        assertEquals(VoiceAudioRoute.Relay.storageValue, settings.audioRoute)
+    }
+
+    @Test
+    fun relayRemoval_normalizesNamedProfileWithoutChangingSameProfileOnAnotherConnection() = runTest {
+        repository.setActiveScope("connection-a", "coder")
+        repository.setEngineMode(VoiceEngineMode.RealtimeAgent)
+        repository.setAudioRoute(VoiceAudioRoute.Relay)
+
+        repository.setActiveScope("connection-b", "coder")
+        repository.setEngineMode(VoiceEngineMode.RealtimeAgent)
+        repository.setAudioRoute(VoiceAudioRoute.Relay)
+
+        repository.setActiveScope("connection-a", "coder")
+        assertTrue(repository.reconcileRelayRemoval(repository.activeScope.value))
+
+        repository.setActiveScope("connection-b", "coder")
+        val settings = repository.settings.first()
+        assertEquals(VoiceEngineMode.RealtimeAgent.storageValue, settings.engineMode)
+        assertEquals(VoiceAudioRoute.Relay.storageValue, settings.audioRoute)
+    }
 }
 
 private class InMemoryVoicePreferencesDataStore : DataStore<Preferences> {

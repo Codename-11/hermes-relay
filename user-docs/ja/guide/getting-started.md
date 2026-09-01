@@ -22,8 +22,8 @@ canonical_source: /guide/getting-started
 |---|---|---|
 | 推奨対象 | ほとんどのユーザー | Device Control を使うユーザー |
 | 更新 | 自動 | APK を手動更新 |
-| Chat、Voice、Manage | 含まれる | 含まれる |
-| Relay のターミナル、メディア、通知 | 含まれる | 含まれる |
+| Chat、Voice、Manage、受信ファイル | 含まれる | 含まれる |
+| Relay のターミナル、メディア拡張、通知 | 含まれる | 含まれる |
 | 画面読み取り、タップ、入力、ナビゲーション | 含まれない | 含まれる |
 
 <StoreBadge />
@@ -35,7 +35,7 @@ canonical_source: /guide/getting-started
 ## 2. Hermes を到達可能にする
 
 Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat、
-セッション、ログイン、Manage、標準 Voice を提供します。`hermes dashboard`
+セッション、ログイン、Manage、標準 Voice、認証済み受信ファイルを提供します。`hermes dashboard`
 で起動し、スマートフォンから到達できるようにします。
 
 `:8642` の API サーバーはオプションです。明示的な Direct API 接続または

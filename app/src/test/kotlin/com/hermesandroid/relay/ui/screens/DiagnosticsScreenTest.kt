@@ -60,8 +60,19 @@ class DiagnosticsScreenTest {
         assertEquals(
             CheckStatus.Unknown,
             checks.single {
-                it.name == context.getString(R.string.active_section_optional_relay)
+                it.name == context.getString(R.string.diag_relay_tools_optional)
             }.status,
+        )
+        assertEquals(
+            context.getString(R.string.diag_relay_tools_not_paired),
+            checks.single { it.name == context.getString(R.string.diag_relay_tools_optional) }.reason,
+        )
+        assertFalse(
+            checks.any {
+                it.name == context.getString(R.string.diag_check_pairing_auth) ||
+                    it.name == context.getString(R.string.active_section_optional_relay) ||
+                    it.name == context.getString(R.string.diag_check_relay_plugin)
+            },
         )
         assertFalse(
             "Absent optional API/Relay surfaces must not make chat fail",

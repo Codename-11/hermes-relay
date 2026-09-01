@@ -39,7 +39,7 @@
       </section>
 
       <h2>Google Play build</h2>
-      <p>The Google Play build ships Hermes Bridge Core: chat, voice, terminal and TUI relay, notification companion, media handoff, relay sessions, and status. It does not include AccessibilityService-based Device Control and cannot read your screen, tap, type, swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.</p>
+      <p>The Google Play build ships Hermes Bridge Core: chat, voice, standard inbound files, terminal and TUI relay, notification companion, Relay media enhancements, relay sessions, and status. It does not include AccessibilityService-based Device Control and cannot read your screen, tap, type, swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.</p>
       <p>The sideload build is a separate distribution track for users who intentionally install Device Control outside Google Play.</p>
 
       <h2>Data storage</h2>
@@ -56,7 +56,7 @@
       <p>Chat messages are not cached on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.</p>
 
       <h2>Network connections</h2>
-      <p>The app connects only to endpoints you configure: your Hermes API server for chat streaming; your relay server for terminal and TUI relay, Bridge Core status, media handoff, notification companion, and session management; and your relay voice routes when you use Voice mode.</p>
+      <p>The app connects only to endpoints you configure: your Hermes Dashboard/Gateway for standard chat, management, voice, and inbound files; your optional API server for chat fallback; your relay server for terminal and TUI relay, Bridge Core status, explicit Relay media enhancements, notification companion, and session management; and your relay voice routes when you use enhanced Voice modes.</p>
       <p>No connections are made to Google, Anthropic, or any other third-party service by the app. There is no telemetry, advertising, external crash reporting, DNS prefetching, or background network activity to hosted Hermes-Relay services. Your Hermes server may separately connect to AI providers according to its configuration; that server-side activity is outside the scope of this app.</p>
 
       <h2>Permissions</h2>

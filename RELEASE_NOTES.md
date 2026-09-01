@@ -1,10 +1,10 @@
-# Hermes-Relay Android v1.14.0
+# Hermes-Relay Android v1.15.0
 
-**Release Date:** August 30, 2026
+**Release Date:** August 31, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.14.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.15.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,33 +12,32 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This release makes saved Hermes connections reliable across LAN, Tailscale, and public HTTPS while keeping Dashboard authentication bound to its exact trusted origin. It also adds delegated-agent previews and an optional native Git workspace, and improves Voice, Assistant, Threads, profile drafts, and Clarify interactions.
-
-## Added
-
-- **Delegated-agent previews.** Follow bounded lifecycle, progress, tool previews, and available read-only child history without leaving the parent chat. Partial history and reconnect gaps remain explicit. (#447)
-- **Native Git workspace.** Review repository state, diffs, branches, staging, commits, and remotes from Chat or Settings. Git operations require Hermes-Relay Plugin v1.11.0 and retain confirmation and grant boundaries.
+This release makes the everyday Android experience work through current upstream Hermes without treating the optional Hermes-Relay Plugin as a prerequisite. It also strengthens parent access, cross-client activity, transport ownership, recovery, and release visibility.
 
 ## Changed
 
-- **Route-aware connections.** Dashboard, Relay, and optional API health are evaluated independently across LAN, Tailscale, and public HTTPS. Same-origin Relay ingress stays on the Dashboard origin that owns authentication, while direct compatibility routes keep separate credentials. (Related: #399)
-- **Voice Focus controls.** Stop and immediate spoken steering remain accessible while Hermes is Thinking, Transcribing, or Speaking, including TalkBack, Switch Access, keyboard, and sideload overlay surfaces.
+- **Upstream-first standard surfaces.** Chat attachments, inbound host files, current-session Git reads, Nous usage bars, and keyed Hermes notices use authenticated Dashboard/Gateway contracts first. Relay remains an additive compatibility and enhancement layer.
+- **Clear Settings ownership.** Media sits with Chat and Voice under Hermes. Proactive Threads, Terminal, Notification Companion, Relay sessions, enhanced voice, and Device Control stay grouped under Relay tools.
+- **App-specific supervised parent access.** Parents choose a PIN or password and receive a six-word recovery phrase; Android device credentials and biometrics no longer grant parent authority.
+- **Complete What's New history.** Release highlights, the remaining improvements and fixes, compatibility notes, toast counts, and history now come from one structured inventory.
 
 ## Fixed
 
-- Wake-word detection packages one compatible ONNX Runtime for sherpa and Java JNI on every supported ABI. (#444)
-- Continuous voice waits for barge-in microphone teardown before listening again. (#464)
-- Fresh chats retain their selected profile without reopening a previous session or carrying a proactive Thread route across profiles. (#436)
-- Provisional Threads can be removed locally and reconcile with promoted sessions without deleting server history. (#461)
-- Clarify cards expose a reachable Other answer, keyboard Send, and authoritative expiry behavior. (#446)
-- Passive Android browsing no longer claims or interrupts a turn owned by another client. (Related: #365)
-- Assistant sessions show retryable no-speech feedback, recover their active state after recreation, and redact conversation details behind the keyguard. (Related: #424)
-- Protected Relay ingress `401/403` responses are recognized as authentication boundaries rather than outages; malformed, different-origin, and direct unauthorized routes still fail closed.
+- Host-local images, audio, video, and files download through the authenticated Dashboard and remain loaded across history reconciliation instead of flashing `Relay URL not configured` or returning to Loading.
+- Standard voice remains usable after explicit Relay removal, while temporary Relay outages preserve configured choices and default-profile preferences stay isolated across connections.
+- Android can display uniquely matched Desktop/TUI Working and Waiting activity without resuming, activating, or interrupting the external turn.
+- Dashboard/Gateway chats preserve their transcript, draft, profile, and session through sign-out or outages instead of silently changing to Direct API.
+- Completed text survives Dashboard-history authentication expiry and returns the existing sign-in recovery path.
+- Long-running context compaction refreshes the turn watchdog instead of being interrupted as idle.
+- Bot Chat history renders immediately after its route-owned handler binds.
+- An exact idle live-session snapshot settles an Android-owned turn whose terminal frame was lost, reconciles history, and drains its queued follow-up.
+- Supervised Add Gateway remains parent-owned across relock, back navigation, and pending setup cancellation.
+- Completed generated images stay visible during marker persistence lag and retain the intended image-generation presentation.
 
 ## Install / Verify
 
-- App version: **1.14.0** (versionCode **52**).
-- Standard Chat, sessions, profiles, Manage, and standard voice continue to work against unmodified upstream Hermes without the optional Relay plugin.
-- Install Hermes-Relay Plugin v1.11.0 for same-origin Relay extensions, Git workspace actions, Bridge, media, proactive features, and enhanced voice.
+- App version: **1.15.0** (versionCode **53**).
+- Standard Chat, sessions, profiles, Manage, standard voice, outbound attachments, and ordinary inbound files work against current unmodified upstream Hermes without the optional Hermes-Relay Plugin.
+- Install Hermes-Relay Plugin v1.11.1 for Terminal, proactive Threads/offline delivery, Notification Companion, Relay sessions, provider-native/realtime voice, compatibility media metadata, Secure Link, and phone/device control.
+- Explicit Direct API/API-only connections remain supported and are never used as a silent failover for a Dashboard-owned chat.
 - Granular Device Control and the system Voice Focus overlay remain sideload-only; the Google Play build does not declare their restricted permissions.
-- Existing connections, drafts, sessions, profile ownership, and legacy direct Relay routes remain data-preserving compatibility paths.

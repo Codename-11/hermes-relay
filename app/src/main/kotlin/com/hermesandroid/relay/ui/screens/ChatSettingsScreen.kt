@@ -706,8 +706,9 @@ fun ChatSettingsScreen(
                                 )
                             }
 
-                            // Live preview of the exact text that will be sent.
-                            // Rebuilds on every toggle change via remember(key1..key5).
+                            // Representative preview of each enabled block.
+                            // The chat context audit remains the exact selected-
+                            // session preview. Rebuilds on every toggle change.
                             val previewText = remember(
                                 appContextEnabled,
                                 appContextBridgeState,
@@ -735,6 +736,14 @@ fun ChatSettingsScreen(
                                         destructiveVerbCount = 5,
                                         autoDisableMinutes = 15,
                                     ),
+                                    // This card is an explanatory fixture, not
+                                    // the active session audit. Supply one
+                                    // representative Relay tool so the bridge
+                                    // and safety toggles remain visible; the
+                                    // real send path uses the selected
+                                    // session/profile's authoritative catalog.
+                                    availableTools =
+                                        com.hermesandroid.relay.util.PHONE_CONTEXT_PREVIEW_TOOLS,
                                 )
                             }
                             Card(

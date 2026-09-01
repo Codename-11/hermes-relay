@@ -93,7 +93,7 @@ scripts/dev.bat run      # Build + install + launch (requires connected device)
 
 Hermes-Relay can use two upstream Hermes surfaces:
 
-- **Dashboard/Gateway** on `:9119` — primary Chat, sessions, sign-in, Manage, and standard voice
+- **Dashboard/Gateway** on `:9119` — primary Chat, sessions, sign-in, Manage, standard voice, and inbound files
 - **API server** on `:8642` — optional Chat fallback and advanced headless compatibility
 
 ::: tip Already have a Hermes server — or someone set one up for you?
@@ -200,7 +200,8 @@ Three easy ways to get the key onto your phone (no 64-character typing required)
 ::::
 
 **Standard setup — enable the Dashboard/Gateway.** This one upstream surface
-provides primary Chat, sessions, Manage, authentication, and standard voice.
+provides primary Chat, sessions, Manage, authentication, standard voice, and
+authenticated inbound file delivery.
 
 ::::details Enable Manage (Skills, Cron, Models, Keys) — run the dashboard
 Run the Hermes dashboard on a phone-reachable URL. Because your
@@ -301,10 +302,10 @@ More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
 ## 4. Recommended — complete the setup with Relay {#relay-server-optional}
 
 The unmodified Hermes Dashboard/Gateway remains authoritative for Chat,
-sessions, Manage, sign-in, and standard voice. The Relay plugin is an encouraged
+sessions, Manage, sign-in, standard voice, and ordinary inbound files. The Relay plugin is an encouraged
 extension for capabilities upstream Hermes does not yet expose: Terminal/TUI,
-notifications, media handoff, desktop tools, Relay sessions, enhanced voice,
-and optional Device Control.
+notifications, desktop tools, Relay sessions, enhanced voice, optional Device
+Control, and media compatibility or sensitivity metadata.
 
 Hermes-Relay follows an upstream-first rule: when upstream Hermes ships a
 compatible capability, the standard path should move there and Relay should

@@ -2,6 +2,108 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.15.0",
+   "title": "Standard Hermes first, with clearer Relay boundaries",
+   "date": "2026-08-31",
+   "summary": "Chat, voice, attachments, inbound files, current-session Git, usage, and Hermes notices now prefer current upstream Dashboard and Gateway support. Relay stays optional for compatibility and the tools it uniquely provides.",
+   "changes": [
+    {
+     "id": "upstream-standard-surfaces",
+     "kind": "improved",
+     "title": "Use standard Hermes without Relay prompts",
+     "summary": "Chat attachments, inbound files, current-session Git, Nous usage, and Hermes notices use upstream routes first.",
+     "highlight": true
+    },
+    {
+     "id": "stable-inbound-media",
+     "kind": "fixed",
+     "title": "Keep returned files loaded",
+     "summary": "Images, audio, video, and documents download through the Dashboard and no longer flash Relay errors or return to Loading.",
+     "highlight": true
+    },
+    {
+     "id": "supervised-parent-access",
+     "kind": "improved",
+     "title": "Use app-specific parent access",
+     "summary": "A parent PIN or password plus recovery phrase protects Supervised Mode without trusting the phone unlock credential.",
+     "highlight": true
+    },
+    {
+     "id": "settings-relay-boundaries",
+     "kind": "improved",
+     "title": "See which features need Relay",
+     "summary": "Media sits with standard Hermes settings while Threads, Terminal, notifications, enhanced voice, and device tools stay under Relay tools."
+    },
+    {
+     "id": "complete-release-history",
+     "kind": "improved",
+     "title": "Read the complete release record",
+     "summary": "What's New shows one release summary, selected highlights, every remaining change, and relevant compatibility notes."
+    },
+    {
+     "id": "relay-removal-voice",
+     "kind": "fixed",
+     "title": "Keep Standard voice after removing Relay",
+     "summary": "Dashboard voice remains ready, temporary outages preserve choices, and shared default-profile settings stay isolated."
+    },
+    {
+     "id": "passive-external-activity",
+     "kind": "fixed",
+     "title": "Observe another client's activity safely",
+     "summary": "A uniquely matched Desktop or TUI turn can show Working or Waiting without Android taking control."
+    },
+    {
+     "id": "chat-transport-ownership",
+     "kind": "fixed",
+     "title": "Keep each chat on its chosen transport",
+     "summary": "Dashboard chats preserve their transcript, draft, profile, and session through sign-out or outages instead of silently changing databases."
+    },
+    {
+     "id": "history-auth-recovery",
+     "kind": "fixed",
+     "title": "Preserve completed replies at sign-in expiry",
+     "summary": "A Dashboard history authentication failure keeps completed text visible and opens the existing sign-in recovery path."
+    },
+    {
+     "id": "compaction-watchdog",
+     "kind": "fixed",
+     "title": "Let long context compaction finish",
+     "summary": "Visible compaction activity refreshes the turn watchdog instead of being interrupted as idle."
+    },
+    {
+     "id": "bot-chat-binding",
+     "kind": "fixed",
+     "title": "Render Bot Chat history immediately",
+     "summary": "Route-owned Bot Chats observe their bound history from first composition."
+    },
+    {
+     "id": "missing-terminal-recovery",
+     "kind": "fixed",
+     "title": "Settle turns after a lost terminal frame",
+     "summary": "An exact idle live-session snapshot reconciles the Android-owned turn and drains its queued follow-up."
+    },
+    {
+     "id": "supervised-gateway-setup",
+     "kind": "fixed",
+     "title": "Keep Gateway setup parent-owned",
+     "summary": "Relock and back navigation cancel the exact pending setup without bypassing parent authority."
+    },
+    {
+     "id": "generated-image-retention",
+     "kind": "fixed",
+     "title": "Keep completed generated images visible",
+     "summary": "Generated media survives marker persistence lag and retains its intended Chat animation."
+    }
+   ],
+   "compatibility": [
+    "Current upstream Hermes provides standard Chat, sessions, Manage, voice, attachments, inbound files, current-session Git reads, usage, and notices without the optional Hermes-Relay Plugin.",
+    "Hermes-Relay Plugin 1.11.1 remains required for Terminal, proactive Threads and offline delivery, Notification Companion, Relay sessions, enhanced voice, Secure Link, and phone or device control.",
+    "Granular Device Control and the system Voice Focus overlay remain sideload-only."
+   ],
+   "playNotes": "Standard Chat, Voice, attachments, returned files, current-session Git, usage, and Hermes notices now prefer upstream Dashboard and Gateway support without requiring Relay. Returned media stays loaded, voice survives Relay removal, and Settings clearly separates standard Hermes from Relay tools. Supervised Mode also gains app-specific parent access and recovery.",
+   "sections": []
+  },
+  {
    "version": "1.14.0",
    "title": "Connections, delegated work, Git, and voice",
    "date": "2026-08-30",

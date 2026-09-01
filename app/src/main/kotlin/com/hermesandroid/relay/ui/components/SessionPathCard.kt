@@ -141,8 +141,8 @@ internal data class SessionCapability(
  *    live. SSE paths only get post-hoc reasoning, so this is gateway-only.
  *    While the gateway is still being probed (Unknown) we surface it as a
  *    "checking" reason rather than a confirmed chip.
- *  - Media / Terminal → require the relay to be CONNECTED (the relay brokers
- *    those channels). A configured-but-disconnected relay is not enough.
+ *  - Media → current upstream Dashboard managed-file delivery OR connected
+ *    Relay compatibility transport. Terminal remains Relay-owned.
  *  - Voice → `voiceReady` (standard dashboard voice OR relay voice — whichever
  *    the connection actually has).
  */
@@ -150,6 +150,7 @@ internal data class SessionCapability(
 internal fun sessionCapabilities(
     transport: SessionPathTransport,
     gatewayAvailability: GatewayAvailability,
+    upstreamMediaAvailable: Boolean,
     relayConnected: Boolean,
     relayConfigured: Boolean,
     voiceReady: Boolean,
@@ -170,11 +171,11 @@ internal fun sessionCapabilities(
         ),
         SessionCapability(
             type = "media",
-            available = relayConnected,
+            available = upstreamMediaAvailable || relayConnected,
             reason = when {
-                relayConnected -> null
+                upstreamMediaAvailable || relayConnected -> null
                 relayConfigured -> stringResource(R.string.session_path_relay_not_connected)
-                else -> stringResource(R.string.session_path_pair_relay_media)
+                else -> stringResource(R.string.session_path_media_not_ready)
             },
         ),
         SessionCapability(

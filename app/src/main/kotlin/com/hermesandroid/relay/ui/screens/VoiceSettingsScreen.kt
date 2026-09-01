@@ -957,25 +957,6 @@ private fun VoiceForThisProfileCard(
 ) {
     val scope = rememberCoroutineScope()
 
-    // Auto-repair when Relay disappears out from under a Relay-only selection:
-    // a persisted RealtimeAgent engine (Relay-only) or Relay route can't run
-    // without a paired Relay, so fall back to the always-available defaults.
-    LaunchedEffect(relayVoiceReady, currentEngine, currentAudioRoute) {
-        if (!relayVoiceReady) {
-            if (currentEngine == VoiceEngineMode.RealtimeAgent) {
-                prefsRepo.setEngineMode(VoiceEngineMode.HermesVoiceOutput)
-            }
-            val coerced = coerceAudioRoute(
-                engine = VoiceEngineMode.HermesVoiceOutput,
-                route = currentAudioRoute,
-                relayVoiceReady = false,
-            )
-            if (coerced != currentAudioRoute) {
-                prefsRepo.setAudioRoute(coerced)
-            }
-        }
-    }
-
     SectionCard(title = stringResource(R.string.voice_settings_for_profile_title)) {
         Text(
             text = stringResource(R.string.voice_settings_engine_label),

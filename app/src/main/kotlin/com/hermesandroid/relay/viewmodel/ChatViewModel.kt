@@ -70,6 +70,7 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayAgentNotice
 import com.hermesandroid.relay.network.upstream.GatewayActiveSession
 import com.hermesandroid.relay.network.upstream.GatewayActiveSessionStatus
 import com.hermesandroid.relay.network.upstream.GatewayActiveSessionsResult
@@ -82,6 +83,7 @@ import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayReconnectDisposition
 import com.hermesandroid.relay.network.upstream.isDashboardSignInRequiredFailure
+import com.hermesandroid.relay.network.upstream.isDashboardManagedFilesUnsupported
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
@@ -98,11 +100,13 @@ import com.hermesandroid.relay.network.upstream.resolveReasoningEffortAvailabili
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ApiModelRoutingErrorCode
 import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
 import com.hermesandroid.relay.network.upstream.modelOptionsIdentityToPublish
 import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
@@ -126,6 +130,8 @@ import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
+import com.hermesandroid.relay.ui.UiMessageBus
+import com.hermesandroid.relay.ui.UiMessageSeverity
 import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
@@ -175,6 +181,39 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 internal const val SESSION_DIRECTORY_PAGE_SIZE = 50
+
+internal data class GatewayNoticePresentation(
+    val text: String,
+    val severity: UiMessageSeverity,
+    val ttlMillis: Long,
+    val key: String?,
+)
+
+private val LEADING_NOTICE_GLYPH = Regex("^[•⚠✕✗✓]\uFE0F?\\s*")
+
+internal fun gatewayNoticePresentation(notice: GatewayAgentNotice): GatewayNoticePresentation {
+    val severity = when (notice.level?.trim()?.lowercase()) {
+        "success" -> UiMessageSeverity.Success
+        "warn", "warning", "error" -> UiMessageSeverity.Warning
+        else -> UiMessageSeverity.Info
+    }
+    val ttl = when (notice.kind?.trim()?.lowercase()) {
+        "ttl" -> notice.ttlMs?.takeIf { it > 0L }
+            ?.coerceAtMost(60_000L)
+            ?: UiMessageBus.DEFAULT_TTL_MS
+        // Official Desktop keeps every non-TTL notice until an exact keyed
+        // notification.clear arrives. This includes kind="agent" startup
+        // notices whose lifetime is owned by the gateway, not a client timer.
+        else -> 0L
+    }
+    return GatewayNoticePresentation(
+        text = notice.text.trim().replaceFirst(LEADING_NOTICE_GLYPH, "").trim(),
+        severity = severity,
+        ttlMillis = ttl,
+        key = notice.key?.trim()?.takeIf(String::isNotEmpty)
+            ?: notice.id?.trim()?.takeIf(String::isNotEmpty),
+    )
+}
 
 data class SessionDirectoryReadyEvent(
     val contextKey: String?,
@@ -354,6 +393,22 @@ internal fun voiceTurnTransportRejection(
     null
 }
 
+internal fun buildMediaCapabilityHint(
+    upstreamAvailable: Boolean,
+    relayAvailable: Boolean,
+): String? = listOfNotNull(
+    ChatViewModel.UPSTREAM_MEDIA_HINT.takeIf { upstreamAvailable },
+    ChatViewModel.RELAY_MEDIA_HINT.takeIf { relayAvailable },
+).joinToString("\n\n").ifBlank { null }
+
+internal fun eligibleSseToolNames(toolsets: List<ToolsetInfo>?): Set<String>? =
+    toolsets
+        ?.asSequence()
+        ?.filter { it.enabled && it.configured }
+        ?.flatMap { it.tools.asSequence() }
+        ?.filter { it.isNotBlank() }
+        ?.toSet()
+
 class ChatViewModel : ViewModel() {
     /**
      * Active Android-only supervision policy. RelayApp replaces this snapshot
@@ -376,6 +431,8 @@ class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
     private var chatHandler: ChatHandler? = null
+    private var sseToolCatalogJob: Job? = null
+    private val _sseToolNames = MutableStateFlow<Set<String>?>(null)
 
     /**
      * The in-flight chat turn, transport-agnostic: SSE turns wrap their
@@ -652,6 +709,7 @@ class ChatViewModel : ViewModel() {
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
     private var relayHttpClient: RelayHttpClient? = null
+    private var dashboardMediaClientProvider: (() -> DashboardApiClient?)? = null
     private var mediaSettingsRepo: MediaSettingsRepository? = null
     private var mediaCacheWriter: MediaCacheWriter? = null
     private var appContext: Context? = null
@@ -674,6 +732,7 @@ class ChatViewModel : ViewModel() {
         // `send()` below for the construction site.
         // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
+        const val MEDIA_HOST_ONLY = "File is on your Hermes host"
         private const val MEDIA_FETCH_TIMEOUT_MS = 120_000L
         private val WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX = Regex("""^[A-Za-z]:[\\/].+""")
 
@@ -693,21 +752,18 @@ class ChatViewModel : ViewModel() {
         private const val MAX_CHECKPOINT_MOA_LABEL_CHARS = 120
         private const val MAX_CHECKPOINT_MOA_TEXT_CHARS = 16_000
 
-        /**
-         * One-line capability nudge appended to the SSE `system_message` when a
-         * relay route is configured, so the agent knows it can surface images/
-         * files by absolute server path (the client fetches them over the relay
-         * `/media/by-path` channel and renders them inline). SSE-only: the
-         * gateway transport has no per-turn system slot, so this can't ride a
-         * gateway turn — there the upstream prompt_builder's own `MEDIA:`
-         * instruction plus the client-side render fallback cover it.
-         */
+        /** Upstream-first file/media capability for SSE fallback turns. */
+        const val UPSTREAM_MEDIA_HINT =
+            "Media display: this client supports standard upstream Hermes file delivery. " +
+                "To show a host-local image, audio, video, or file, put its absolute path " +
+                "on its own line as `MEDIA:/absolute/path`. The client fetches it through " +
+                "the authenticated upstream Dashboard file routes and renders it inline."
+
+        /** Additive Relay compatibility/metadata capability for SSE fallback turns. */
         const val RELAY_MEDIA_HINT =
-            "Media display: this client can render images and files you reference by " +
-                "absolute server path. To show one to the user, put its absolute path on " +
-                "its own line as `MEDIA:/absolute/path`, or use a markdown image " +
-                "`![description](/absolute/path)`. The client fetches it over the secure " +
-                "relay channel and shows it inline."
+            "Relay enhancement: a paired Relay may add legacy-path compatibility and " +
+                "sensitivity metadata when standard upstream delivery cannot serve an " +
+                "artifact. Relay is not required for ordinary upstream media delivery."
     }
 
     /** Callback to persist session ID — set by RelayApp */
@@ -3095,6 +3151,8 @@ class ChatViewModel : ViewModel() {
             onStatusClear = { kind ->
                 if (acceptsEvent()) handler.clearTurnStatus(kind)
             },
+            onNoticeShow = ::showGatewayNotice,
+            onNoticeClear = ::clearGatewayNotice,
         )
         return GatewayInboundTurnRegistration(
             callbacks = callbacks,
@@ -3567,6 +3625,21 @@ class ChatViewModel : ViewModel() {
      */
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
+
+    private fun showGatewayNotice(notice: GatewayAgentNotice) {
+        val presentation = gatewayNoticePresentation(notice)
+        if (presentation.text.isEmpty()) return
+        UiMessageBus.post(
+            text = presentation.text,
+            severity = presentation.severity,
+            ttlMillis = presentation.ttlMillis,
+            key = presentation.key,
+        )
+    }
+
+    private fun clearGatewayNotice(key: String) {
+        UiMessageBus.clear(key)
+    }
 
     fun reactToMessage(message: ChatMessage, emoji: String?) {
         val gateway = gatewayClient ?: return
@@ -4467,6 +4540,7 @@ class ChatViewModel : ViewModel() {
         fetchSkills()
         fetchPersonalities()
         fetchModels()
+        refreshSseToolCatalog(apiClient)
         // Keep the tool-call history in sync with the active chat handler's
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
@@ -4533,6 +4607,8 @@ class ChatViewModel : ViewModel() {
      * repeatedly; re-subscribes the tool-call history collector.
      */
     fun bindDemoHandler(handler: ChatHandler) {
+        sseToolCatalogJob?.cancel()
+        _sseToolNames.value = null
         this.chatHandler = handler
         backgroundProcessSessionJob?.cancel()
         selectBackgroundProcessSession(null)
@@ -4575,7 +4651,8 @@ class ChatViewModel : ViewModel() {
         context: Context,
         relayHttpClient: RelayHttpClient,
         mediaSettingsRepo: MediaSettingsRepository,
-        mediaCacheWriter: MediaCacheWriter
+        mediaCacheWriter: MediaCacheWriter,
+        dashboardMediaClientProvider: () -> DashboardApiClient? = { null },
     ) {
         this.appContext = context.applicationContext
         if (chatTurnCheckpointStore == null) {
@@ -4583,6 +4660,7 @@ class ChatViewModel : ViewModel() {
         }
         ensureCheckpointObservers()
         this.relayHttpClient = relayHttpClient
+        this.dashboardMediaClientProvider = dashboardMediaClientProvider
         if (_modelProviders.value.isNotEmpty()) refreshRelayReasoningCapabilities()
         this.mediaSettingsRepo = mediaSettingsRepo
         this.mediaCacheWriter = mediaCacheWriter
@@ -4624,6 +4702,16 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun refreshSseToolCatalog(client: HermesApiClient?) {
+        sseToolCatalogJob?.cancel()
+        _sseToolNames.value = null
+        if (client == null) return
+        sseToolCatalogJob = viewModelScope.launch {
+            val names = eligibleSseToolNames(client.getToolsets().getOrNull())
+            if (apiClient === client) _sseToolNames.value = names
+        }
+    }
+
     fun updateApiClient(client: HermesApiClient?) {
         // A route handoff / reconnect rebuilds the HTTP API client. An SSE turn
         // is bound to the OLD client, so it must be cancelled. A GATEWAY turn
@@ -4653,6 +4741,7 @@ class ChatViewModel : ViewModel() {
         fetchSkills()
         fetchPersonalities()
         fetchModels()
+        refreshSseToolCatalog(client)
     }
 
     /**
@@ -8022,6 +8111,8 @@ class ChatViewModel : ViewModel() {
             onStatusClear = { kind ->
                 if (owns()) handler.clearTurnStatus(kind)
             },
+            onNoticeShow = ::showGatewayNotice,
+            onNoticeClear = ::clearGatewayNotice,
         )
     }
 
@@ -9368,11 +9459,7 @@ class ChatViewModel : ViewModel() {
         val personaPrompt: String?,
         val appContext: String?,
         val interfaceContext: String?,
-        /**
-         * Relay media-capability hint — tells the agent it can surface images/
-         * files by absolute server path. Non-null only on SSE turns when a relay
-         * route is configured (the gateway has no system slot to carry it).
-         */
+        /** Upstream-first media capability plus any additive Relay enhancement. */
         val mediaCapability: String?,
         /**
          * Relay-plugin-owned server-side context blocks that are injected into
@@ -9427,13 +9514,23 @@ class ChatViewModel : ViewModel() {
                 selected != _defaultPersonality.value -> personalityPrompts[selected]
             else -> null
         }
-        val appContextRaw = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        // Tell the agent it can surface images/files by absolute server path —
-        // but only on SSE (the gateway carries no system_message) and only when
-        // a relay route is configured (otherwise the client can't fetch them).
+        val availableTools = if (gateway) {
+            gatewayClient?.serverTools?.value
+        } else {
+            _sseToolNames.value
+        }
+        val appContextRaw = buildPromptBlock(
+            settings = appContextSettings,
+            snapshot = capturePhoneSnapshot(),
+            availableTools = availableTools,
+        )
+        // Gateway has no per-turn system slot. SSE carries the standard
+        // Dashboard route first, then the optional Relay enhancement.
+        val upstreamMediaAvailable = dashboardMediaClientProvider?.invoke() != null
         val relayMediaAvailable = relayHttpClient?.mediaUrlConfigured() == true
         val mediaCapability: String? =
-            RELAY_MEDIA_HINT.takeIf { !gateway && relayMediaAvailable }
+            buildMediaCapabilityHint(upstreamMediaAvailable, relayMediaAvailable)
+                .takeIf { !gateway }
         // combinedSystemMessage appends the media hint after the phone-status
         // block (a stable environment fact, like phone status) and before the
         // per-turn interface context. The per-block fields below null out blanks
@@ -9673,6 +9770,7 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
+        val nativeImageToolProgressObserved = AtomicBoolean(false)
         val handleToolCallStart = { toolCallId: String, toolName: String, argsPreview: String? ->
             markTransportAccepted()
             ensurePostInterimMessage()
@@ -9686,10 +9784,16 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            if (isImageGenerationToolName(toolName)) {
+                nativeImageToolProgressObserved.set(true)
+            }
             handleToolCallStart(toolCallId, toolName, null)
         }
         val onGatewayToolCallStartCb =
             { toolCallId: String, toolName: String, argsPreview: String? ->
+                if (isImageGenerationToolName(toolName)) {
+                    nativeImageToolProgressObserved.set(true)
+                }
                 handleToolCallStart(toolCallId, toolName, argsPreview)
             }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
@@ -9722,10 +9826,18 @@ class ChatViewModel : ViewModel() {
         }
         fun startImageActivityBridge() {
             val relay = relayHttpClient ?: return
+            if (!relay.mediaUrlConfigured()) return
             stopImageActivityBridge()
             imageActivityJob = viewModelScope.launch {
+                // Current upstream emits native tool progress. Give that
+                // authoritative path the first opportunity to identify image
+                // work; Relay polling is compatibility-only for older hosts
+                // whose stream omitted those events.
+                delay(1_000)
+                if (nativeImageToolProgressObserved.get()) return@launch
                 var consecutiveErrors = 0
                 while (true) {
+                    if (nativeImageToolProgressObserved.get()) break
                     val activeSessionId = handler.currentSessionId.value
                     if (activeSessionId.isNullOrBlank()) {
                         delay(250)
@@ -9747,7 +9859,7 @@ class ChatViewModel : ViewModel() {
                     snapshot.activities.forEach { activity ->
                         val prior = observedImageToolStates[activity.callId]
                         if (prior == null) {
-                            onToolCallStartCb(activity.callId, activity.toolName)
+                            handleToolCallStart(activity.callId, activity.toolName, null)
                         }
                         if (
                             activity.state == "completed" &&
@@ -10454,6 +10566,8 @@ class ChatViewModel : ViewModel() {
                         onStatusClear = { kind ->
                             handler.clearTurnStatus(kind)
                         },
+                        onNoticeShow = ::showGatewayNotice,
+                        onNoticeClear = ::clearGatewayNotice,
                     ),
                     attachments = (attachments.orEmpty() + gatewayOnlyAttachments)
                         .map { it.toGatewayAttachment() },
@@ -10625,6 +10739,8 @@ class ChatViewModel : ViewModel() {
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
 
         // 1. Insert LOADING placeholder.
         val placeholder = Attachment(
@@ -10662,8 +10778,19 @@ class ChatViewModel : ViewModel() {
             }
 
             // 3. Fetch + cache.
-            performFetchWith(handler, messageId, token, settings) {
-                relay.fetchMedia(token)
+            performFetchWith(
+                handler,
+                messageId,
+                token,
+                settings,
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { _ ->
+                if (relay.mediaUrlConfigured()) {
+                    relay.fetchMedia(token, maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1L) * 1024L * 1024L)
+                } else {
+                    Result.failure(MediaRouteUnavailableException())
+                }
             }
         }
     }
@@ -10690,6 +10817,9 @@ class ChatViewModel : ViewModel() {
         val att = msg.attachments.getOrNull(attachmentIndex) ?: return
         val fetchKey = att.relayToken ?: return
         val expectedRole = msg.role
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
 
         // Flip back to a pure LOADING spinner (drop the CTA marker) so the
         // user gets immediate feedback that the download kicked off.
@@ -10710,14 +10840,20 @@ class ChatViewModel : ViewModel() {
                 fetchKey,
                 settings,
                 expectedRole = expectedRole,
-            ) {
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { maxBytes ->
                 if (
                     fetchKey.startsWith("/") ||
                     WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX.matches(fetchKey)
                 ) {
-                    relay.fetchMediaByPath(fetchKey)
+                    fetchServerPath(fetchKey, maxBytes, upstreamMediaClient)
                 } else {
-                    relay.fetchMedia(fetchKey)
+                    if (relay.mediaUrlConfigured()) {
+                        relay.fetchMedia(fetchKey, maxBytes = maxBytes)
+                    } else {
+                        Result.failure(MediaRouteUnavailableException())
+                    }
                 }
             }
         }
@@ -10757,14 +10893,24 @@ class ChatViewModel : ViewModel() {
         if (supervisedModePolicy.enabled &&
             !supervisedModePolicy.capabilities.generatedImages
         ) return ServerImageResult.Failure("Generated images are disabled in supervised mode")
-        val relay = relayHttpClient
-            ?: return ServerImageResult.Failure("Relay not configured on this connection")
-        // fetchMediaByPath returns Result<MediaBytes>; fold it ONCE, right here,
-        // into a non-Result type. The resolver boundary must not return
-        // kotlin.Result from a suspend fun (see [ServerImageResult]).
-        return relay.fetchMediaByPath(serverPath).fold(
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
+        val maxBytes = mediaSettingsRepo?.settings?.first()?.maxInboundSizeMb
+            ?.toLong()
+            ?.coerceAtLeast(1L)
+            ?.times(1024L * 1024L)
+            ?: 25L * 1024L * 1024L
+        val result = fetchServerPath(serverPath, maxBytes, upstreamMediaClient)
+        if (
+            routeOwner != activeProfileContextKey ||
+            historyGeneration != historyLoadGeneration.get()
+        ) {
+            return ServerImageResult.Failure("Connection changed while loading image")
+        }
+        return result.fold(
             onSuccess = { ServerImageResult.Success(it.bytes, it.sensitive) },
-            onFailure = { ServerImageResult.Failure(it.message ?: "relay fetch failed") },
+            onFailure = { ServerImageResult.Failure(it.message ?: "Image unavailable") },
         )
     }
 
@@ -10808,6 +10954,9 @@ class ChatViewModel : ViewModel() {
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
 
         val placeholder = Attachment(
             contentType = if (expectedRole == MessageRole.USER) {
@@ -10864,11 +11013,57 @@ class ChatViewModel : ViewModel() {
                 originalPath,
                 settings,
                 expectedRole = expectedRole,
-            ) {
-                relay.fetchMediaByPath(originalPath)
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { maxBytes ->
+                fetchServerPath(originalPath, maxBytes, upstreamMediaClient)
             }
         }
     }
+
+    /**
+     * Resolve a gateway-local path upstream-first. Relay is an additive
+     * compatibility route for older hosts or paths outside upstream's managed
+     * file policy; it is never required when current upstream can serve the
+     * file directly.
+     */
+    private suspend fun fetchServerPath(
+        serverPath: String,
+        maxBytes: Long,
+        upstream: DashboardApiClient?,
+    ): Result<RelayHttpClient.FetchedMedia> {
+        if (upstream != null) {
+            val upstreamResult = upstream.downloadManagedFile(serverPath, maxBytes)
+                .map { fetched ->
+                    RelayHttpClient.FetchedMedia(
+                        contentType = fetched.contentType,
+                        bytes = fetched.bytes,
+                        fileName = fetched.fileName,
+                        sensitive = false,
+                    )
+                }
+            if (upstreamResult.isSuccess) return upstreamResult
+            val upstreamFailure = upstreamResult.exceptionOrNull()
+            if (upstreamFailure?.isDashboardManagedFilesUnsupported() != true) {
+                return upstreamResult
+            }
+            val relay = relayHttpClient
+            if (relay?.mediaUrlConfigured() == true) {
+                return relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+            }
+            return Result.failure(MediaRouteUnavailableException(upstreamFailure))
+        }
+
+        val relay = relayHttpClient
+        return if (relay?.mediaUrlConfigured() == true) {
+            relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+        } else {
+            Result.failure(MediaRouteUnavailableException())
+        }
+    }
+
+    private class MediaRouteUnavailableException(cause: Throwable? = null) :
+        java.io.IOException(MEDIA_HOST_ONLY, cause)
 
     private fun persistedImageContentType(path: String): String =
         when (path.substringAfterLast('.').lowercase()) {
@@ -10899,13 +11094,15 @@ class ChatViewModel : ViewModel() {
         fetchKey: String,
         settings: MediaSettings,
         expectedRole: MessageRole = MessageRole.ASSISTANT,
-        fetch: suspend () -> Result<RelayHttpClient.FetchedMedia>,
+        expectedContextKey: String? = activeProfileContextKey,
+        expectedHistoryGeneration: Int = historyLoadGeneration.get(),
+        fetch: suspend (maxBytes: Long) -> Result<RelayHttpClient.FetchedMedia>,
     ) {
         val cache = mediaCacheWriter ?: return
         val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
 
         val result = try {
-            withTimeout(MEDIA_FETCH_TIMEOUT_MS) { fetch() }
+            withTimeout(MEDIA_FETCH_TIMEOUT_MS) { fetch(maxBytes) }
         } catch (e: TimeoutCancellationException) {
             Result.failure(java.io.IOException("Media download timed out"))
         } catch (e: CancellationException) {
@@ -10913,6 +11110,11 @@ class ChatViewModel : ViewModel() {
         } catch (e: Exception) {
             Result.failure(e)
         }
+        if (
+            chatHandler !== handler ||
+            activeProfileContextKey != expectedContextKey ||
+            historyLoadGeneration.get() != expectedHistoryGeneration
+        ) return
         result.fold(
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
@@ -10965,6 +11167,15 @@ class ChatViewModel : ViewModel() {
                 }
             },
             onFailure = { err ->
+                if (err is MediaRouteUnavailableException) {
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
+                        att.copy(
+                            state = AttachmentState.FAILED,
+                            errorMessage = MEDIA_HOST_ONLY,
+                        )
+                    }
+                    return@fold
+                }
                 val human = classifyError(err, context = "media_fetch", ctx = appContext)
                 updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                     att.copy(

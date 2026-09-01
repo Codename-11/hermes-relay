@@ -21,6 +21,7 @@ import com.hermesandroid.relay.data.EnhancedVoiceOverrides
 import com.hermesandroid.relay.data.VoiceAudioRoute
 import com.hermesandroid.relay.data.VoiceEngineMode
 import com.hermesandroid.relay.data.VoicePreferencesRepository
+import com.hermesandroid.relay.data.VoiceProfileScope
 import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
@@ -170,6 +171,9 @@ internal class HermesRuntimeBinder(
             relayHttpClient = connection.relayHttpClient,
             mediaSettingsRepo = connection.mediaSettingsRepo,
             mediaCacheWriter = connection.mediaCacheWriter,
+            dashboardMediaClientProvider = {
+                connection.activeDashboardUrl()?.let(connection::dashboardClientForActive)
+            },
         )
         chat.setSelectedProfileProvider { connection.selectedProfile.value }
         chat.setIsolatedProfileApiProvider { connection.selectedProfileUsesIsolatedApiRoute() }
@@ -289,6 +293,36 @@ internal class HermesRuntimeBinder(
         }
         jobs += runtime.coroutineScope.launch {
             combine(
+                connection.connectionsHydrated,
+                connection.activeConnectionId,
+                connection.relayConfigured,
+                voiceSettingsHydrated,
+                voicePreferencesRepository.activeScope,
+            ) { connectionsReady, connectionId, relayConfigured, settingsReady, scope ->
+                VoiceRelayReconciliationInputs(
+                    connectionsReady = connectionsReady,
+                    connectionId = connectionId,
+                    relayConfigured = relayConfigured,
+                    settingsReady = settingsReady,
+                    scope = scope,
+                )
+            }.collectLatest { inputs ->
+                if (
+                    inputs.connectionsReady &&
+                    inputs.settingsReady &&
+                    inputs.connectionId != null &&
+                    !inputs.relayConfigured &&
+                    // Default-profile storage is a legacy global layer shared
+                    // across connections. Keep its fallback runtime-only.
+                    inputs.scope.profileName != null &&
+                    inputs.scope.connectionId == inputs.connectionId
+                ) {
+                    voicePreferencesRepository.reconcileRelayRemoval(inputs.scope)
+                }
+            }
+        }
+        jobs += runtime.coroutineScope.launch {
+            combine(
                 connection.streamingEndpoint,
                 connection.serverCapabilities,
                 connection.gatewayAvailability,
@@ -403,13 +437,22 @@ internal class HermesRuntimeBinder(
                 connection.chatReady,
                 connection.standardVoiceAvailability,
                 connection.relayVoiceReady,
-                connection.profileSelectionSettled,
-            ) { settings, chatReady, standard, relayReady, profileSettled ->
+                connection.relayConfigured,
+            ) { settings, chatReady, standard, relayReady, relayConfigured ->
+                VoiceReadinessInputs(
+                    settings = settings,
+                    chatReady = chatReady,
+                    standardAvailability = standard,
+                    relayReady = relayReady,
+                    relayConfigured = relayConfigured,
+                )
+            }.combine(connection.profileSelectionSettled) { inputs, profileSettled ->
                 resolveVoiceActivationReadiness(
-                    settings,
-                    chatReady,
-                    standard,
-                    relayReady,
+                    inputs.settings,
+                    inputs.chatReady,
+                    inputs.standardAvailability,
+                    inputs.relayReady,
+                    inputs.relayConfigured,
                     profileSettled,
                 )
             }
@@ -563,6 +606,22 @@ internal class HermesRuntimeBinder(
         val hiddenSources: Set<String> = emptySet(),
     )
 
+    private data class VoiceRelayReconciliationInputs(
+        val connectionsReady: Boolean,
+        val connectionId: String?,
+        val relayConfigured: Boolean,
+        val settingsReady: Boolean,
+        val scope: VoiceProfileScope,
+    )
+
+    private data class VoiceReadinessInputs(
+        val settings: VoiceSettings,
+        val chatReady: Boolean,
+        val standardAvailability: StandardVoiceAvailability,
+        val relayReady: Boolean,
+        val relayConfigured: Boolean,
+    )
+
     private companion object {
         const val PROFILE_SETTLE_BACKSTOP_MS = 2_500L
         const val PROFILE_CONTEXT_COALESCE_MS = 160L
@@ -601,12 +660,14 @@ internal fun resolveVoiceActivationReadiness(
     chatReady: Boolean,
     standardAvailability: StandardVoiceAvailability,
     relayReady: Boolean,
+    relayConfigured: Boolean,
     profileSettled: Boolean,
 ): HermesVoiceActivationReadiness {
     if (!profileSettled) {
         return HermesVoiceActivationReadiness.Waiting("Loading the selected Hermes profile")
     }
-    return when (VoiceEngineMode.fromStorage(settings.engineMode)) {
+    val effectiveSettings = voiceSettingsForRelayConfiguration(settings, relayConfigured)
+    return when (VoiceEngineMode.fromStorage(effectiveSettings.engineMode)) {
         VoiceEngineMode.RealtimeAgent -> {
             if (relayReady) {
                 HermesVoiceActivationReadiness.Ready(HermesVoiceActivationRoute.Realtime)
@@ -618,7 +679,7 @@ internal fun resolveVoiceActivationReadiness(
             if (!chatReady) {
                 return HermesVoiceActivationReadiness.Waiting("Waiting for Hermes chat")
             }
-            when (VoiceAudioRoute.fromStorage(settings.audioRoute)) {
+            when (VoiceAudioRoute.fromStorage(effectiveSettings.audioRoute)) {
                 VoiceAudioRoute.Relay -> if (relayReady) {
                     HermesVoiceActivationReadiness.Ready(
                         HermesVoiceActivationRoute.RelayAudio
@@ -640,6 +701,24 @@ internal fun resolveVoiceActivationReadiness(
             }
         }
     }
+}
+
+/**
+ * Relay absence is a topology decision, unlike a transient route outage. Only
+ * the former may fall back from Relay-only persisted selections.
+ */
+internal fun voiceSettingsForRelayConfiguration(
+    settings: VoiceSettings,
+    relayConfigured: Boolean,
+): VoiceSettings {
+    if (relayConfigured) return settings
+    return settings.copy(
+        engineMode = VoiceEngineMode.HermesVoiceOutput.storageValue,
+        audioRoute = when (VoiceAudioRoute.fromStorage(settings.audioRoute)) {
+            VoiceAudioRoute.Relay -> VoiceAudioRoute.Auto.storageValue
+            else -> settings.audioRoute
+        },
+    )
 }
 
 private fun standardVoiceReadiness(

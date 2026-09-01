@@ -13,15 +13,16 @@ canonical_source: /guide/release-tracks
 | 问题 | Google Play | Sideload |
 |---|---|---|
 | 安装简单并自动更新？ | 是 | 否 |
-| Chat、Profiles、Manage 和 Voice？ | 是 | 是 |
-| 配合 Relay 的终端、媒体和通知？ | 是 | 是 |
+| Chat、Profiles、Manage、Voice 和入站文件？ | 是 | 是 |
+| 配合 Relay 的终端、媒体增强和通知？ | 是 | 是 |
 | 读取或截取屏幕？ | 否 | 是 |
 | 点击、输入、滑动和操作应用？ | 否 | 是 |
 
 ## 应用版本和 Relay 是两个独立选择
 
 **应用版本**决定 Android 是否包含 Device Control。可选的 **Relay 插件**负责将
-终端、媒体、通知和设备通道连接到 Hermes 主机。
+终端、通知和设备通道连接到 Hermes 主机，并补充媒体兼容性和元数据。普通入站
+文件使用标准 Dashboard。
 
 Device Control 仅在 **Sideload + 已配对 Relay** 的组合下工作。Chat、Manage 和
 标准 Voice 均不需要这两项。

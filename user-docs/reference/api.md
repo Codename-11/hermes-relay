@@ -14,13 +14,13 @@ Use this page to choose the right contract before reaching for an endpoint.
   <a class="contract-card contract-card--dashboard" href="./upstream-hermes.html#dashboard-gateway">
     <span class="contract-card__eyebrow">UPSTREAM · :9119</span>
     <strong>Dashboard & Gateway</strong>
-    <span>Preferred chat transport, Manage, profiles and Vanilla Hermes voice.</span>
+    <span>Preferred chat, Manage, profiles, Vanilla Hermes voice and inbound files.</span>
     <code>Dashboard session + WS ticket</code>
   </a>
   <a class="contract-card contract-card--relay" href="./relay-api.html">
     <span class="contract-card__eyebrow">OPTIONAL PLUGIN · :8767</span>
     <strong>Hermes Relay</strong>
-    <span>Pairing, terminal, media, Relay voice, desktop tools and phone control.</span>
+    <span>Pairing, terminal, media enhancements, Relay voice, desktop tools and phone control.</span>
     <code>Relay session + per-channel grants</code>
   </a>
 </div>
@@ -52,9 +52,10 @@ Hermes-Relay chooses routes by capability and authentication state:
 4. Fall back to `/v1/chat/completions` or `/v1/runs` only when the native
    session surface is unavailable.
 5. Use dashboard `/api/audio/*` for Vanilla Hermes voice.
-6. Contact Relay only for paired, additive power features.
+6. Use Dashboard file download/stream routes for ordinary inbound media.
+7. Contact Relay only for paired, additive tools and enhancements.
 
-Chat, Manage, and Vanilla Hermes voice must continue to work against an
+Chat, Manage, Vanilla Hermes voice, and ordinary inbound files must continue to work against an
 unmodified upstream Hermes installation. Relay routes never become a hidden
 dependency for that default path.
 

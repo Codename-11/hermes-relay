@@ -1,6 +1,6 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-08-30
+**Release Date:** 2026-08-31
 
 This beta preserves complete multi-route pairing while preventing Desktop from dialing Dashboard-ingress Relay routes before Dashboard WebSocket ticket support is available. (Related: #399)
 

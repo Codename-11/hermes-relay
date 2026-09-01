@@ -10,8 +10,8 @@ and Android uses the highest-priority reachable one. Direct API and Relay
 routes remain independently optional:
 
 - **Chat, sessions, Manage, and standard voice** use the Dashboard/Gateway route and its dashboard session.
-- **Direct API/headless compatibility** uses the API server URL and bearer only when configured.
-- **Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback** use the relay URL and require a paired relay session token.
+- **Direct API/headless compatibility** uses the API server URL and bearer only for explicitly selected API-only chats.
+- **Terminal, bridge, TUI, Relay session management, clipboard, profile writes, Android control, explicit Relay media tokens, and relay-token voice fallback** use the relay URL and require a paired relay session token. Ordinary inbound files use the authenticated Dashboard route.
 
 The app stores these capabilities under one stable connection identity. One
 Hermes connection can therefore use LAN at home and Tailscale away from home

@@ -79,7 +79,7 @@ Verify app flow:
 2. Verify Chat works without Relay.
 3. Verify Manage signs in through the dashboard.
 4. Verify Vanilla Hermes voice uses dashboard audio when available.
-5. Pair Relay by QR only for Terminal, Bridge, media, relay sessions, desktop
+5. Pair Relay by QR only for Terminal, Bridge, explicit Relay media enhancements, relay sessions, desktop
    tools, notification companion, and Relay voice extras.
 6. Confirm Terminal and Bridge stay gated when no Relay session is paired.
 

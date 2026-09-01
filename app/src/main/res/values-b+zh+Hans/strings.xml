@@ -707,8 +707,8 @@
     <string name="settings_voice_mode">语音模式</string>
     <string name="settings_voice_mode_desc">仪表盘语音、实时 Relay 选项、提供商</string>
     <string name="settings_threads">话题</string>
-    <string name="settings_threads_desc">允许代理主动与你对话（默认关闭）</string>
-    <string name="settings_power_tools">高级工具</string>
+    <string name="settings_threads_desc">由 Relay 发起的对话和主动推送（默认关闭）</string>
+    <string name="settings_power_tools">Relay 工具</string>
     <string name="settings_terminal">终端</string>
     <string name="settings_terminal_desc">通过已配对的 Relay 会话访问服务器 shell</string>
     <string name="settings_bridge">Bridge</string>
@@ -720,7 +720,7 @@
     <string name="settings_notification_companion">通知助手</string>
     <string name="settings_notification_companion_desc">为已配对的 Relay 工具共享手机通知</string>
     <string name="settings_media">媒体</string>
-    <string name="settings_media_desc">Relay 入站附件、自动获取、缓存上限</string>
+    <string name="settings_media_desc">聊天附件、下载行为、隐私和缓存</string>
     <string name="settings_bridge_safety">Bridge 安全</string>
     <string name="settings_bridge_safety_desc">黑名单、破坏性动词确认、自动禁用</string>
     <string name="settings_sideload">Sideload</string>
@@ -1212,8 +1212,8 @@
     <!-- P1: MediaSettingsScreen -->
     <string name="media_title">媒体</string>
     <string name="media_back">返回</string>
-    <string name="media_intro_1">控制应用如何处理通过 Relay 传来的工具结果文件（截图、PDF 等）。</string>
-    <string name="media_intro_2">仅限 Relay——这些设置不影响你在聊天中附加的图片或标准（无 Relay）连接上的任何内容。</string>
+    <string name="media_intro_1">控制应用如何下载、保护和缓存 Hermes 在聊天中发送的文件。</string>
+    <string name="media_intro_2">优先使用标准 Dashboard 媒体。配对后，Relay 可补充兼容性传输和敏感度元数据。</string>
     <string name="media_max_inbound">最大入站附件大小</string>
     <string name="media_max_inbound_value">%1$d MB</string>
     <string name="media_max_inbound_desc">超过此大小的文件在下载后被拒绝。</string>
@@ -2166,7 +2166,8 @@
     <string name="session_path_signin_for_gateway">请在管理页面登录以使用实时思考 Gateway。</string>
     <string name="session_path_gateway_api_server">Gateway 传输可用——此会话通过 API 服务器传输。</string>
     <string name="session_path_relay_not_connected">Relay 已配对但未连接。</string>
-    <string name="session_path_pair_relay_media">配对 Relay 以发送和接收媒体。</string>
+    <string name="session_path_pair_relay_media">配对 Relay，以兼容较旧 Hermes 主机上的媒体。</string>
+    <string name="session_path_media_not_ready">更新 Hermes 以使用标准媒体传输，或配对 Relay 以获得兼容性。</string>
     <string name="session_path_pair_relay_terminal">配对 Relay 以使用终端。</string>
     <string name="session_path_voice_not_ready">此连接的语音未就绪。</string>
     <string name="session_path_threads_pair_relay">配对 Relay 并开启"让 Hermes 联系我"，代理才能打开话题。</string>
@@ -2791,6 +2792,8 @@
     <string name="inbound_attach_downloading">正在下载…%1$s</string>
     <string name="inbound_attach_failed">附件失败</string>
     <string name="inbound_attach_tap_retry">点击重试</string>
+    <string name="inbound_attach_host_only">文件位于你的 Hermes 主机上</string>
+    <string name="inbound_attach_host_only_help">更新 Hermes 以使用标准下载，或配对 Relay 以获得兼容性。</string>
     <string name="inbound_attach_open">外部打开</string>
     <string name="inbound_attach_share">分享</string>
     <string name="inbound_attach_save">保存到设备</string>
@@ -3250,6 +3253,8 @@
     <string name="diag_check_ready_with">已就绪（%s）</string>
     <string name="diag_check_relay_active">Relay 活跃</string>
     <string name="diag_check_relay_not_configured">Relay 未配置</string>
+    <string name="diag_relay_tools_optional">Relay 工具（可选）</string>
+    <string name="diag_relay_tools_not_paired">未配对</string>
     <string name="diag_check_relay_server">检查 Relay 服务器</string>
     <string name="diag_check_relay_plugin">Relay 插件</string>
     <string name="diag_plugin_not_configured">未配置可选插件</string>
@@ -3279,8 +3284,8 @@
     <string name="inbound_attach_cd_cancel">取消</string>
     <string name="inbound_attach_open_failed">无法打开附件</string>
     <string name="inbound_attach_share_failed">无法分享附件</string>
-    <string name="injected_context_media_no_relay">媒体需要活跃的 Relay 连接</string>
-    <string name="injected_context_media_relay_active">Relay 已为媒体激活</string>
+    <string name="injected_context_media_no_relay">没有额外媒体指令——标准传输仍由服务器负责</string>
+    <string name="injected_context_media_relay_active">Relay 媒体增强可用</string>
     <string name="injected_context_media_title">媒体共享</string>
     <string name="injected_context_persona_not_set">未设置角色</string>
     <string name="injected_context_persona_server_side">服务端角色</string>
@@ -4413,7 +4418,7 @@
     <string name="chat_git_deletions">删除 %1$d 行</string>
     <plurals name="chat_git_change_count"><item quantity="other">%1$d 个更改</item></plurals>
     <string name="settings_git_workspace">Git 工作区</string>
-    <string name="settings_git_workspace_desc">查看更改、分支、提交和远程仓库</string>
+    <string name="settings_git_workspace_desc">优先使用当前会话的 Git，可选择发现主机仓库</string>
     <string name="current_chat_activity_title">当前聊天活动</string>
     <string name="current_chat_activity_subtitle">此聊天中的只读实时详情</string>
     <string name="current_chat_activity_open">预览当前聊天活动</string>
@@ -4448,7 +4453,7 @@
     <string name="agent_activity_child_role_task">任务</string>
     <string name="agent_activity_child_role_agent">代理</string>
     <string name="agent_activity_child_role_system">系统</string>
-    <string name="settings_git_workspace_off_desc">关闭 · 主机仓库扫描需手动启用</string>
+    <string name="settings_git_workspace_off_desc">仅会话仓库 · 主机发现需手动启用</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>

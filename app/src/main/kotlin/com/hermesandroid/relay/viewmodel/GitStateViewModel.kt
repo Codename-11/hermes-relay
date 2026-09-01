@@ -72,8 +72,9 @@ data class GitTarget(
 /**
  * View model for the Git State Android surface (read + write).
  *
- * Loads the scanned repo list from the Hermes-Relay plugin and, on selection,
- * fetches working-tree status + branches. Mutations (stage/unstage/discard/
+ * Loads the active session repository from upstream first and adds repositories
+ * discovered by the Hermes-Relay plugin. On selection it fetches working-tree
+ * status + branches. Mutations (stage/unstage/discard/
  * commit/fetch/pull/push/checkout) all require the ``plugin.api.write`` grant:
  * ``configure`` binds one connection/profile/Dashboard owner and every mutation
  * refuses (surfacing a readable message, never a POST) when that owner's grant
@@ -119,12 +120,12 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     private var mutationJob: Job? = null
     private var messageJob: Job? = null
     private var scopeKey: String? = null
+    private var sessionRepoPath: String? = null
     private var targetGeneration: Long = 0
 
     fun selectedRepoIdForDisplay(): String? = _selectedRepoId.value
 
     fun currentTarget(): GitTarget? {
-        if (!_scanningEnabled.value) return null
         val owner = scopeKey ?: return null
         val repo = _selectedRepoId.value ?: return null
         return GitTarget(owner, repo, targetGeneration)
@@ -143,10 +144,34 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         api = dashboard?.let(::GitStateApiClient)
     }
 
+    /**
+     * Bind standard Git to the active upstream session workspace.
+     *
+     * An exact `git_repo_root` wins; `cwd` is the official Desktop-compatible
+     * fallback. Changing sessions invalidates every selected repository target
+     * before starting a fresh, owner-bound discovery pass.
+     */
+    fun setSessionWorkspace(repoRoot: String?, workingDirectory: String?) {
+        val next = repoRoot?.trim()?.takeIf { it.isNotBlank() }
+            ?: workingDirectory?.trim()?.takeIf { it.isNotBlank() }
+        if (sessionRepoPath == next) return
+        val workspaceWasLoaded = _repos.value !is GitStateUiState.Loading
+        sessionRepoPath = next
+        targetGeneration += 1
+        clearWorkspaceState()
+        // Preserve lazy discovery: the first host scan still starts only when
+        // the Git workspace asks for it. Once visible/loaded, a session switch
+        // refreshes immediately against the new exact workspace.
+        if (workspaceWasLoaded) loadRepos()
+    }
+
     fun setScanningEnabled(enabled: Boolean) {
         if (_scanningEnabled.value == enabled) return
+        val workspaceWasLoaded = _repos.value !is GitStateUiState.Loading
         _scanningEnabled.value = enabled
-        if (!enabled) clearWorkspaceState()
+        targetGeneration += 1
+        clearWorkspaceState()
+        if (workspaceWasLoaded) loadRepos()
     }
 
     /** Grants the plugin.api.write capability for this connection/profile. */
@@ -158,7 +183,6 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     fun hasWriteGrant(): Boolean = _writeGrant.value
 
     fun loadRepos() {
-        if (!_scanningEnabled.value) return
         val client = api ?: run {
             _repos.value = GitStateUiState.Error("Dashboard connection unavailable")
             return
@@ -167,7 +191,10 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
         reposJob?.cancel()
         reposJob = viewModelScope.launch {
             _repos.value = GitStateUiState.Loading
-            client.repos().fold(
+            client.repos(
+                sessionRepoPath = sessionRepoPath,
+                includeRelayDiscovery = _scanningEnabled.value,
+            ).fold(
                 onSuccess = { list ->
                     if (scopeKey == expectedScope) {
                         _repos.value = GitStateUiState.Ready(list, null)
@@ -208,7 +235,6 @@ class GitStateViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun selectRepo(repoId: String) {
-        if (!_scanningEnabled.value) return
         val client = api ?: return
         targetGeneration += 1
         _selectedRepoId.value = repoId

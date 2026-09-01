@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -53,7 +54,9 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.UiMessage
 import com.hermesandroid.relay.ui.UiMessageBus
+import com.hermesandroid.relay.ui.UiMessageEvent
 import com.hermesandroid.relay.ui.UiMessageSeverity
+import com.hermesandroid.relay.ui.reduceUiMessages
 import kotlinx.coroutines.delay
 
 private const val MAX_RETAINED = 6
@@ -68,7 +71,8 @@ private const val ROW_MIN_HEIGHT_DP = 34
  * overlay. Auto-dismisses (paused while expanded) and coalesces duplicates so a
  * burst of the same status collapses to one refreshed row.
  *
- * Errors stay on the snackbar — only post info/success/status here.
+ * App-owned errors stay on the snackbar. Keyed upstream AgentNotices may also
+ * use the warning tone because their sticky/clear lifecycle is server-owned.
  */
 @Composable
 fun MessageBannerHost(
@@ -82,18 +86,19 @@ fun MessageBannerHost(
     var expanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        UiMessageBus.events.collect { msg ->
-            // Coalesce identical text so e.g. repeated "Reconnecting…" collapses
-            // to a single, freshly-timed row rather than stacking.
-            shown.filter { it.text == msg.text }.forEach { dup ->
-                shown.remove(dup)
-                expiresAt.remove(dup.id)
-            }
-            shown.add(msg)
-            expiresAt[msg.id] = nowMs() + msg.ttlMillis
-            while (shown.size > MAX_RETAINED) {
-                val dropped = shown.removeAt(0)
-                expiresAt.remove(dropped.id)
+        UiMessageBus.events.collect { event ->
+            val next = reduceUiMessages(shown, event, MAX_RETAINED)
+            val retainedIds = next.mapTo(mutableSetOf()) { it.id }
+            expiresAt.keys.filterNot(retainedIds::contains).forEach { expiresAt.remove(it) }
+            shown.clear()
+            shown.addAll(next)
+            if (event is UiMessageEvent.Show) {
+                val msg = event.message
+                expiresAt[msg.id] = if (msg.ttlMillis == 0L) {
+                    Long.MAX_VALUE
+                } else {
+                    nowMs() + msg.ttlMillis
+                }
             }
         }
     }
@@ -104,6 +109,7 @@ fun MessageBannerHost(
         while (shown.isNotEmpty()) {
             val now = nowMs()
             val soonest = shown.minOfOrNull { expiresAt[it.id] ?: Long.MAX_VALUE } ?: break
+            if (soonest == Long.MAX_VALUE) break
             if (soonest <= now) {
                 shown.filter { (expiresAt[it.id] ?: Long.MAX_VALUE) <= now }.forEach { expired ->
                     shown.remove(expired)
@@ -281,6 +287,7 @@ private fun MessageRow(
 private fun severityContainer(severity: UiMessageSeverity): Color = when (severity) {
     UiMessageSeverity.Success -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.58f)
     UiMessageSeverity.Status -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.74f)
+    UiMessageSeverity.Warning -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.72f)
     UiMessageSeverity.Info -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.90f)
 }
 
@@ -288,12 +295,14 @@ private fun severityContainer(severity: UiMessageSeverity): Color = when (severi
 private fun severityOnContainer(severity: UiMessageSeverity): Color = when (severity) {
     UiMessageSeverity.Success -> MaterialTheme.colorScheme.onTertiaryContainer
     UiMessageSeverity.Status -> MaterialTheme.colorScheme.onSecondaryContainer
+    UiMessageSeverity.Warning -> MaterialTheme.colorScheme.onErrorContainer
     UiMessageSeverity.Info -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 private fun severityIcon(severity: UiMessageSeverity): ImageVector = when (severity) {
     UiMessageSeverity.Success -> Icons.Filled.CheckCircle
     UiMessageSeverity.Status -> Icons.Filled.Sync
+    UiMessageSeverity.Warning -> Icons.Filled.Warning
     UiMessageSeverity.Info -> Icons.Filled.Info
 }
 

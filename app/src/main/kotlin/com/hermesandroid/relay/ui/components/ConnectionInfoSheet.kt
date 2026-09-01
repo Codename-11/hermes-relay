@@ -741,6 +741,7 @@ fun AgentInfoSheet(
     val relayConnectionState by connectionViewModel.relayConnectionState.collectAsState()
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
     val voiceReady by connectionViewModel.voiceReady.collectAsState()
+    val standardVoiceReady by connectionViewModel.standardVoiceReady.collectAsState()
     val proactiveEnabled by connectionViewModel.proactiveEnabled.collectAsState()
     val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
     val allConnections by connectionViewModel.connectionStore.connections.collectAsState()
@@ -842,6 +843,7 @@ fun AgentInfoSheet(
     val sessionCaps = sessionCapabilities(
         transport = sessionTransport,
         gatewayAvailability = gatewayAvailability,
+        upstreamMediaAvailable = gatewayAvailability == GatewayAvailability.Ready || standardVoiceReady,
         relayConnected = relayConnectionState == ConnectionState.Connected,
         relayConfigured = relayUrl.isNotBlank(),
         voiceReady = voiceReady,
@@ -3423,6 +3425,8 @@ private fun LegacyAgentInfoSheet(
                 val sessionCaps = sessionCapabilities(
                     transport = sessionTransport,
                     gatewayAvailability = gatewayAvailability,
+                    upstreamMediaAvailable = gatewayAvailability == GatewayAvailability.Ready ||
+                        connectionViewModel.standardVoiceReady.collectAsState().value,
                     relayConnected = relayConnected,
                     relayConfigured = relayUrl.isNotBlank(),
                     voiceReady = voiceReady,

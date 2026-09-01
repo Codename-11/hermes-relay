@@ -7,6 +7,7 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MediaSettingsRepository
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.upstream.ChatHandler
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.util.MediaCacheWriter
 import io.mockk.coEvery
@@ -30,6 +31,7 @@ import org.robolectric.annotation.Config
 class ChatViewModelMediaStateTest {
 
     private lateinit var server: MockWebServer
+    private lateinit var dashboardServer: MockWebServer
     private lateinit var handler: ChatHandler
     private lateinit var viewModel: ChatViewModel
     private lateinit var cache: MediaCacheWriter
@@ -37,6 +39,7 @@ class ChatViewModelMediaStateTest {
     @Before
     fun setUp() {
         server = MockWebServer().apply { start() }
+        dashboardServer = MockWebServer().apply { start() }
         val context = RuntimeEnvironment.getApplication()
         val relay = RelayHttpClient(
             okHttpClient = OkHttpClient(),
@@ -46,6 +49,7 @@ class ChatViewModelMediaStateTest {
                     .trimEnd('/')
             },
             sessionTokenProvider = { "paired-session" },
+            pairedTokenSnapshot = { "paired-session" },
         )
         cache = mockk()
         coEvery { cache.cache(any(), any(), any()) } returns
@@ -66,6 +70,7 @@ class ChatViewModelMediaStateTest {
     @After
     fun tearDown() {
         server.shutdown()
+        dashboardServer.shutdown()
     }
 
     @Test
@@ -149,6 +154,175 @@ class ChatViewModelMediaStateTest {
             request.requestUrl?.encodedQuery,
         )
         assertEquals(windowsPath, request.requestUrl?.queryParameter("path"))
+    }
+
+    @Test
+    fun assistantBarePathPrefersAuthenticatedUpstreamDashboardDownload() {
+        val path = "/tmp/test-voice-message.mp3"
+        dashboardServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "audio/mpeg")
+                .setHeader("Content-Disposition", "attachment; filename=\"test-voice-message.mp3\"")
+                .setBody("voice-bytes"),
+        )
+        viewModel.cellularNetworkOverride = false
+        viewModel.initializeMedia(
+            context = RuntimeEnvironment.getApplication(),
+            relayHttpClient = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { server.url("/").toString().replaceFirst("http://", "ws://").trimEnd('/') },
+                sessionTokenProvider = { "paired-session" },
+                pairedTokenSnapshot = { "paired-session" },
+            ),
+            mediaSettingsRepo = MediaSettingsRepository(RuntimeEnvironment.getApplication()),
+            mediaCacheWriter = cache,
+            dashboardMediaClientProvider = {
+                DashboardApiClient(baseUrl = dashboardServer.url("/").toString())
+            },
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-audio-upstream",
+                    role = "assistant",
+                    content = JsonPrimitive("Voice reply\nMEDIA:$path"),
+                ),
+            ),
+        )
+
+        val loaded = awaitMessage {
+            it.attachments.singleOrNull()?.state == AttachmentState.LOADED
+        }.attachments.single()
+        assertEquals("audio/mpeg", loaded.contentType)
+        assertEquals("test-voice-message.mp3", loaded.fileName)
+        val request = dashboardServer.takeRequest()
+        assertEquals("/api/files/download", request.requestUrl?.encodedPath)
+        assertEquals(path, request.requestUrl?.queryParameter("path"))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun assistantBarePathWithoutUpstreamOrRelaySettlesAsNeutralHostFile() {
+        viewModel.cellularNetworkOverride = false
+        viewModel.initializeMedia(
+            context = RuntimeEnvironment.getApplication(),
+            relayHttpClient = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { null },
+                sessionTokenProvider = { null },
+            ),
+            mediaSettingsRepo = MediaSettingsRepository(RuntimeEnvironment.getApplication()),
+            mediaCacheWriter = cache,
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-file-unavailable",
+                    role = "assistant",
+                    content = JsonPrimitive("MEDIA:/tmp/result.zip"),
+                ),
+            ),
+        )
+
+        val unavailable = awaitMessage {
+            it.attachments.singleOrNull()?.errorMessage == ChatViewModel.MEDIA_HOST_ONLY
+        }.attachments.single()
+        assertEquals(AttachmentState.FAILED, unavailable.state)
+        assertEquals("result.zip", unavailable.fileName)
+    }
+
+    @Test
+    fun assistantBarePathFallsBackToRelayWhenUpstreamRouteIsUnavailable() {
+        val path = "/tmp/legacy-host-image.png"
+        dashboardServer.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "image/png")
+                .setHeader("Content-Disposition", "inline; filename=\"legacy-host-image.png\"")
+                .setBody("image-bytes"),
+        )
+        viewModel.cellularNetworkOverride = false
+        viewModel.initializeMedia(
+            context = RuntimeEnvironment.getApplication(),
+            relayHttpClient = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { server.url("/").toString().replaceFirst("http://", "ws://").trimEnd('/') },
+                sessionTokenProvider = { "paired-session" },
+                pairedTokenSnapshot = { "paired-session" },
+            ),
+            mediaSettingsRepo = MediaSettingsRepository(RuntimeEnvironment.getApplication()),
+            mediaCacheWriter = cache,
+            dashboardMediaClientProvider = {
+                DashboardApiClient(baseUrl = dashboardServer.url("/").toString())
+            },
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-image-fallback",
+                    role = "assistant",
+                    content = JsonPrimitive("MEDIA:$path"),
+                ),
+            ),
+        )
+
+        val loaded = awaitMessage {
+            it.attachments.singleOrNull()?.state == AttachmentState.LOADED
+        }.attachments.single()
+        assertEquals("image/png", loaded.contentType)
+        assertEquals("/api/files/download", dashboardServer.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/media/by-path", server.takeRequest().requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun assistantBarePathDoesNotBypassUpstreamSensitiveFileDenial() {
+        val path = "/home/user/.ssh/id_ed25519"
+        dashboardServer.enqueue(MockResponse().setResponseCode(403).setBody("sensitive file"))
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/octet-stream")
+                .setBody("must-not-be-fetched"),
+        )
+        viewModel.cellularNetworkOverride = false
+        viewModel.initializeMedia(
+            context = RuntimeEnvironment.getApplication(),
+            relayHttpClient = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { server.url("/").toString().replaceFirst("http://", "ws://").trimEnd('/') },
+                sessionTokenProvider = { "paired-session" },
+                pairedTokenSnapshot = { "paired-session" },
+            ),
+            mediaSettingsRepo = MediaSettingsRepository(RuntimeEnvironment.getApplication()),
+            mediaCacheWriter = cache,
+            dashboardMediaClientProvider = {
+                DashboardApiClient(baseUrl = dashboardServer.url("/").toString())
+            },
+        )
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-sensitive-denied",
+                    role = "assistant",
+                    content = JsonPrimitive("MEDIA:$path"),
+                ),
+            ),
+        )
+
+        val denied = awaitMessage {
+            it.attachments.singleOrNull()?.let { attachment ->
+                attachment.state == AttachmentState.FAILED && attachment.errorMessage != null
+            } == true
+        }.attachments.single()
+        assertEquals(AttachmentState.FAILED, denied.state)
+        assertEquals(1, dashboardServer.requestCount)
+        assertEquals(0, server.requestCount)
     }
 
     private fun awaitMessage(predicate: (ChatMessage) -> Boolean): ChatMessage {

@@ -22,8 +22,8 @@ TLS y operación están en la [guía completa en inglés](/guide/getting-started
 |---|---|---|
 | Recomendado para | La mayoría de usuarios | Usuarios de Device Control |
 | Actualizaciones | Automáticas | Actualización manual del APK |
-| Chat, Voice y Manage | Incluidos | Incluidos |
-| Terminal, multimedia y notificaciones con Relay | Incluidos | Incluidos |
+| Chat, Voice, Manage y archivos entrantes | Incluidos | Incluidos |
+| Terminal, mejoras multimedia y notificaciones con Relay | Incluidos | Incluidos |
 | Leer la pantalla, tocar, escribir y navegar | No incluido | Incluido |
 
 <StoreBadge />
@@ -35,7 +35,8 @@ descargues el archivo `.aab`; está destinado a Google Play.
 ## 2. Haz que Hermes sea accesible
 
 Android usa normalmente el Dashboard/Gateway de Hermes en `:9119`. Proporciona
-Chat, sesiones, inicio de sesión, Manage y voz estándar. Inícialo con
+Chat, sesiones, inicio de sesión, Manage, voz estándar y archivos entrantes
+autenticados. Inícialo con
 `hermes dashboard` y haz que esa dirección sea accesible desde el teléfono.
 
 El servidor de API en `:8642` es opcional: sirve como conexión explícita de

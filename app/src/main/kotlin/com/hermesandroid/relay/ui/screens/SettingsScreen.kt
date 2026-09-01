@@ -355,7 +355,7 @@ fun SettingsScreen(
         )
         else -> null
     }
-    // The Power tools below all ride the relay plugin. Rather than stamp an
+    // The Relay tools below all ride the optional plugin. Rather than stamp an
     // identical badge on every card (noise, not signal), the dependency is
     // surfaced ONCE on the section header as a single plugin-state badge.
     val pluginBadge = when (relayUiState) {
@@ -630,12 +630,22 @@ fun SettingsScreen(
             )
 
             SettingsCategoryRow(
+                icon = Icons.Filled.Image,
+                title = stringResource(R.string.settings_media),
+                subtitle = stringResource(R.string.settings_media_desc),
+                onClick = onNavigateToMediaSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
                 icon = Icons.Filled.GraphicEq,
                 title = stringResource(R.string.settings_voice_mode),
                 subtitle = stringResource(R.string.settings_voice_mode_desc),
                 onClick = onNavigateToVoiceSettings,
                 isDarkTheme = isDarkTheme,
             )
+
+            SettingsSectionHeader(stringResource(R.string.settings_power_tools), trailing = pluginBadge)
 
             SettingsCategoryRow(
                 icon = Icons.AutoMirrored.Filled.Message,
@@ -644,8 +654,6 @@ fun SettingsScreen(
                 onClick = onNavigateToProactiveSettings,
                 isDarkTheme = isDarkTheme,
             )
-
-            SettingsSectionHeader(stringResource(R.string.settings_power_tools), trailing = pluginBadge)
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Code,
@@ -680,13 +688,6 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
             // === END PHASE3-notif-listener-followup ===
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Image,
-                title = stringResource(R.string.settings_media),
-                subtitle = stringResource(R.string.settings_media_desc),                onClick = onNavigateToMediaSettings,
-                isDarkTheme = isDarkTheme,
-            )
 
             if (BuildFlavor.isSideload) {
                 // === PHASE3-safety-rails: bridge safety entry-point ===

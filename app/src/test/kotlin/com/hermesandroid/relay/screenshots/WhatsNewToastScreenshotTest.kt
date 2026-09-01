@@ -61,10 +61,10 @@ class WhatsNewToastScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText("Connections, delegated work, Git, and voice").assertExists()
-        compose.onNodeWithText("Also: 2 improvements · 10 fixes").assertExists()
+        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries").assertExists()
+        compose.onNodeWithText("Also: 2 improvements · 9 fixes").assertExists()
         compose.onNodeWithText(
-            "Release notes stay out of your way, Chat uses one consistent presentation…",
+            "See which features need Relay, Read the complete release record…",
         ).assertExists()
         compose.onNodeWithText("View all").assertExists()
         compose.onNodeWithContentDescription("Close").assertExists()
@@ -86,7 +86,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Connections, delegated work, Git, and voice").performClick()
+        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries").performClick()
         expanded = false
         compose.onNodeWithText("View all").performClick()
         compose.onNodeWithContentDescription("Close").performClick()
@@ -108,7 +108,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
         compose.mainClock.advanceTimeBy(300L)
-        compose.onNodeWithText("Connections, delegated work, Git, and voice")
+        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries")
             .performTouchInput { swipeLeft(durationMillis = 300L) }
         compose.mainClock.advanceTimeBy(300L)
 

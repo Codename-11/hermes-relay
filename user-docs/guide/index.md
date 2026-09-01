@@ -1,6 +1,6 @@
 # Hermes-Relay — Android
 
-Hermes-Relay puts the [Hermes Agent](https://hermes-agent.nousresearch.com) you already run on Android. Start with the standard Dashboard/Gateway connection for Chat, sessions, Manage, sign-in, and voice. Pair the encouraged Relay extension for Terminal/TUI, notifications, media, desktop tools, enhanced voice, Relay sessions, and optional Device Control.
+Hermes-Relay puts the [Hermes Agent](https://hermes-agent.nousresearch.com) you already run on Android. Start with the standard Dashboard/Gateway connection for Chat, sessions, Manage, sign-in, voice, and inbound files. Pair the encouraged Relay extension for Terminal/TUI, notifications, desktop tools, enhanced voice, Relay sessions, optional Device Control, and media compatibility or metadata.
 
 <AndroidSetupPath mode="overview" />
 
@@ -17,13 +17,16 @@ Relay, and pairing Relay never replaces the upstream connection.
 ```
 Phone (WS)       → Hermes dashboard (:9119)    [gateway chat with live thinking]
 Phone (HTTP/SSE) → Hermes API Server (:8642)   [Direct API compatibility, sessions, runs]
-Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Vanilla Hermes voice]
-Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, relay voice]
+Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Voice + inbound files]
+Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, relay voice + media enhancements]
 ```
 
-Standard Chat remains on the dashboard Gateway and asks for sign-in or retry when unavailable. API-only and explicitly selected Direct API chats use the Hermes API Server's SSE routes. The relay server handles Bridge Core,
-terminal, TUI, media, notification companion, relay sessions, and relay-backed
-voice routes. Sideload builds additionally expose Android Device Control routes.
+Standard Chat remains on the Dashboard Gateway and asks for sign-in or retry
+when unavailable. API-only and explicitly selected Direct API chats use the
+Hermes API Server's SSE routes. Authenticated Dashboard file routes handle
+ordinary inbound media. The Relay server handles Bridge Core, terminal, TUI,
+notification companion, Relay sessions, Relay-backed voice, and additive media
+compatibility. Sideload builds additionally expose Android Device Control routes.
 
 ## Feature status
 

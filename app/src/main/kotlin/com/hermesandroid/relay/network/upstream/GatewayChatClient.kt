@@ -399,6 +399,14 @@ class GatewayChatClient(
     private val _serverProject = MutableStateFlow<GatewaySessionProject?>(null)
     val serverProject: StateFlow<GatewaySessionProject?> = _serverProject.asStateFlow()
 
+    /**
+     * Exact model-callable tool names from upstream `session.info.tools` for
+     * the selected live session/profile. Null means the gateway has not
+     * supplied a catalog; an empty set means it authoritatively supplied none.
+     */
+    private val _serverTools = MutableStateFlow<Set<String>?>(null)
+    val serverTools: StateFlow<Set<String>?> = _serverTools.asStateFlow()
+
     /** Serializes connect / session-establish so concurrent sends share one socket. */
     private val connectMutex = Mutex()
 
@@ -892,6 +900,7 @@ class GatewayChatClient(
         storedSessionId = null
         liveSessionProfile = null
         cancelledTurnDrain = null
+        _serverTools.value = null
     }
 
     /**
@@ -1810,18 +1819,17 @@ class GatewayChatClient(
     }
 
     /**
-     * Provider-neutral account limits owned by upstream Hermes. Current hosts
-     * may not expose this additive method yet; callers should treat JSON-RPC
-     * method-not-found as capability absence and use the optional Relay
-     * compatibility surface when paired.
+     * Official upstream Nous usage bars. Current hosts may not expose this
+     * additive method yet; callers should treat JSON-RPC method-not-found as
+     * capability absence and use the optional Relay enhancement when paired.
      */
-    suspend fun providerUsage(): Result<JsonObject> {
+    suspend fun usageBars(): Result<JsonObject> {
         try {
             connectMutex.withLock { ensureConnected() }
         } catch (e: Exception) {
             return Result.failure(e)
         }
-        return rpc("account.usage", JsonObject(emptyMap()))
+        return rpc("usage.bars", JsonObject(emptyMap()))
     }
 
     /**
@@ -3227,6 +3235,18 @@ class GatewayChatClient(
                     )
                 }
         }
+        if (info.containsKey("tools")) {
+            val groups = info["tools"] as? JsonObject
+            _serverTools.value = groups
+                ?.values
+                ?.asSequence()
+                ?.mapNotNull { it as? JsonArray }
+                ?.flatMap { it.asSequence() }
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                ?.filter { it.isNotBlank() }
+                ?.toSet()
+                ?: emptySet()
+        }
         // Context usage: require used > 0 — a COLD resume resets counters and
         // reports 0 until the first turn rebuilds the prompt; painting 0 would
         // mislead on a session that actually has history.
@@ -3242,6 +3262,7 @@ class GatewayChatClient(
     /** Apply a session create/resume result without leaking metadata from the prior session. */
     private fun applySessionResultInfo(result: JsonObject) {
         _serverProject.value = null
+        _serverTools.value = null
         (result["info"] as? JsonObject)?.let { applySessionInfo(it) }
     }
 
@@ -4788,6 +4809,8 @@ class GatewayChatClient(
             dispatchIfCurrent(stillCurrent) { callbacks.onStatusUpdate(kind, text) }
         },
         onStatusClear = { kind -> dispatchIfCurrent(stillCurrent) { callbacks.onStatusClear(kind) } },
+        onNoticeShow = { notice -> dispatchIfCurrent(stillCurrent) { callbacks.onNoticeShow(notice) } },
+        onNoticeClear = { key -> dispatchIfCurrent(stillCurrent) { callbacks.onNoticeClear(key) } },
     )
 
     private fun dispatchIfCurrent(stillCurrent: () -> Boolean, callback: () -> Unit) {

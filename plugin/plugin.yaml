@@ -2,7 +2,7 @@ name: hermes-relay
 # Temporary v1 shim for Hermes installers that reject manifests the runtime supports; see TODO.md.
 manifest_version: 1
 api_version: 1
-version: 1.11.0
+version: 1.11.1
 description: "Hermes-Relay plugin for QR pairing, relay sessions, dashboard management, remote desktop/phone tooling, and optional legacy compatibility diagnostics. Standard chat, Manage, and dashboard voice remain vanilla upstream Hermes surfaces."
 author: Axiom Labs
 license: MIT
