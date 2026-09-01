@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/play-store-feature-1024x500.png" alt="Hermes-Relay — your Hermes agent, in your pocket" width="800">
+  <img src="assets/readme-hero-v2.jpg" alt="Hermes-Relay — Your Hermes agent. Wherever you are. Android, Voice, Desktop." width="1000">
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-age
 A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough for the upstream standard path: chat, management, voice, inbound files, Petdex, and ordinary installed-plugin pages. The Hermes-Relay plugin is optional for that base but encouraged for the complete current experience: Terminal/TUI, notifications, desktop tools, enhanced voice, Relay sessions, page drafts, optional Device Control, and media compatibility or metadata. Hermes-Relay prefers compatible upstream surfaces as they become available instead of keeping duplicate extension paths. **Connect Hermes first, then grant Hermes-Relay separately; the same one-time invite contract pairs Android or the Desktop CLI.**
 
 <p align="center">
-  <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — upstream Hermes owns Chat, Manage, standard Voice, and inbound files; the encouraged Relay extension fills current gaps for Terminal, notifications, enhanced voice, sessions, desktop tools, and optional Device Control." width="900">
+  <img src="assets/readme-connection-map-v2.png" alt="How Hermes-Relay connects — Dashboard and Gateway own the standard Android path for Chat, Manage, Voice, and inbound files; the optional Relay plugin separately adds Android enhancements plus CLI and UI tools; sideload adds Device Control." width="1000">
 </p>
 
 ## Quick Start (Android)
