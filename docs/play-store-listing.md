@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.14.0 - Connections, delegated work, Git, and voice
+v1.15.0 - Standard Hermes first, with clearer Relay boundaries
 
-Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.
+Standard Chat, Voice, attachments, returned files, current-session Git, usage, and Hermes notices now prefer upstream Dashboard and Gateway support without requiring Relay. Returned media stays loaded, voice survives Relay removal, and Settings clearly separates standard Hermes from Relay tools. Supervised Mode also gains app-specific parent access and recovery.
 ```
 ## Category
 
