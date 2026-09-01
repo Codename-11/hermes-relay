@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android attachment viewer scales video to the actual aspect ratio.** Portrait videos are no longer forced into a fixed 16:9 container; the SurfaceView sizes itself from the video's real dimensions (read up front via `MediaMetadataRetriever`, then confirmed by the player), so there is no 16:9 flash before playback starts.
+
 ## [Android 1.15.0] - 2026-08-31
 
 ### Changed

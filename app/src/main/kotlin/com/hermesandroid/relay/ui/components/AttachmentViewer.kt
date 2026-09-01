@@ -5,6 +5,7 @@ package com.hermesandroid.relay.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
+import android.media.MediaMetadataRetriever
 import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
@@ -91,6 +92,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import coil3.compose.AsyncImage
@@ -314,7 +316,13 @@ fun AttachmentViewer(
         val context = LocalContext.current
         val exportAllowed = LocalImageExportAllowed.current ||
             attachment.renderMode != AttachmentRenderMode.IMAGE
-        AllowDeviceRotation()
+        // Rotation while a video plays tears down the ExoPlayer surface on
+        // several devices (Activity recreation / surface loss despite
+        // configChanges), killing playback. Keep rotation for images only;
+        // video/audio/pdf stay locked to the app's portrait orientation.
+        if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
+            AllowDeviceRotation()
+        }
         val scope = rememberCoroutineScope()
         var busy by remember { mutableStateOf(false) }
 
@@ -452,7 +460,6 @@ internal fun AttachmentGalleryViewer(
     ) {
         val context = LocalContext.current
         val exportAllowed = LocalImageExportAllowed.current
-        AllowDeviceRotation()
         val scope = rememberCoroutineScope()
         var busy by remember { mutableStateOf(false) }
         val revealed = remember { mutableStateMapOf<String, Boolean>() }
@@ -466,6 +473,13 @@ internal fun AttachmentGalleryViewer(
 
         val currentIndex = pagerState.currentPage.coerceIn(attachments.indices)
         val attachment = attachments[currentIndex]
+        // Rotation while a video plays tears down the ExoPlayer surface on
+        // several devices (Activity recreation / surface loss despite
+        // configChanges), killing playback. Keep rotation for images only;
+        // video/audio/pdf stay locked to the app's portrait orientation.
+        if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
+            AllowDeviceRotation()
+        }
         val currentKey = galleryAttachmentKey(attachment, currentIndex)
         val blurMode = LocalMediaBlurMode.current
         val currentBlurred = revealed[currentKey] != true &&
@@ -750,10 +764,48 @@ private fun VideoBody(attachment: Attachment) {
     var muted by remember { mutableStateOf(false) }
     var position by remember { mutableStateOf(0L) }
     var duration by remember { mutableStateOf(0L) }
+    // Aspect ratio follows the ACTUAL video (ExoPlayer reports the rotated
+    // display size), so portrait videos are not forced into a 16:9 box.
+    var videoAspect by remember { mutableStateOf(16f / 9f) }
+
+    // Probe the real video size up front so the surface is laid out with the
+    // correct aspect ratio from the very first frame — otherwise the container
+    // flashes at the 16:9 placeholder until ExoPlayer reports the size.
+    LaunchedEffect(uri) {
+        if (uri == null) return@LaunchedEffect
+        val metadataAspect = withContext(Dispatchers.IO) {
+            runCatching {
+                // MediaMetadataRetriever only implements AutoCloseable on
+                // API 29+; the `.use {}` shortcut is a NewApi violation at
+                // minSdk 26, so release manually in a finally block.
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloatOrNull() ?: return@runCatching null
+                    val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloatOrNull() ?: return@runCatching null
+                    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                    // The player applies rotation for display; swap dims for 90/270.
+                    val effectiveWidth = if (rotation == 90 || rotation == 270) height else width
+                    val effectiveHeight = if (rotation == 90 || rotation == 270) width else height
+                    if (effectiveHeight > 0f) effectiveWidth / effectiveHeight else null
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }.getOrNull()
+        }
+        if (metadataAspect != null && metadataAspect > 0f) {
+            videoAspect = metadataAspect
+        }
+    }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.height > 0) {
+                    videoAspect = videoSize.width.toFloat() / videoSize.height.toFloat()
+                }
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
@@ -771,7 +823,7 @@ private fun VideoBody(attachment: Attachment) {
             factory = { ctx ->
                 SurfaceView(ctx).also { player.setVideoSurfaceView(it) }
             },
-            modifier = Modifier.fillMaxWidth().weight(1f, fill = false).aspectRatio(16f / 9f),
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false).aspectRatio(videoAspect),
         )
         PlaybackControls(
             isPlaying = isPlaying,
