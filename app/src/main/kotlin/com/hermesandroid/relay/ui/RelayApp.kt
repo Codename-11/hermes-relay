@@ -2200,6 +2200,9 @@ fun RelayApp() {
                         // Routine in-progress reconnect surfaces here (amber cue)
                         // instead of a take-space banner or a floating toast.
                         reconnecting = connectionReconnecting,
+                        maxContentWidth = chatResponsiveLayout(
+                            LocalConfiguration.current.screenWidthDp,
+                        ).chromeMaxWidth,
                         modifier = Modifier.petPerchSurface(
                             key = APP_STATUS_PET_WALK_REGION,
                             routes = APP_STATUS_PET_ROUTES,

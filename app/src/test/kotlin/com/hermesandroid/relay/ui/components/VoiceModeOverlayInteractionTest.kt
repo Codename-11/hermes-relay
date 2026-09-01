@@ -87,6 +87,35 @@ class VoiceModeOverlayInteractionTest {
     }
 
     @Test
+    @Config(qualifiers = "w1280dp-h800dp-xhdpi")
+    fun expandedLandscape_usesSplitLayoutAndKeepsMicSemanticAction() {
+        var micTaps = 0
+        compose.mainClock.autoAdvance = false
+
+        compose.setContent {
+            MaterialTheme {
+                VoiceModeOverlay(
+                    uiState = idleVoiceState(),
+                    onMicTap = { micTaps += 1 },
+                    onMicRelease = {},
+                    onInterrupt = {},
+                    onDismiss = {},
+                    onModeChange = {},
+                    onClearError = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(VOICE_FOCUS_SPLIT_LAYOUT_TEST_TAG).assertExists()
+        compose.onNodeWithTag(VOICE_FOCUS_STACKED_LAYOUT_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(VOICE_MODE_MIC_TEST_TAG)
+            .assertHasClickAction()
+            .performSemanticsAction(SemanticsActions.OnClick)
+
+        compose.runOnIdle { assertEquals(1, micTaps) }
+    }
+
+    @Test
     fun focusMode_emptySpaceDoesNotClickThroughToChat() {
         var backgroundTaps = 0
         compose.mainClock.autoAdvance = false

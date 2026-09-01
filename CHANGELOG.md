@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Android Chat and Voice use tablet space intentionally.** Expanded layouts keep introductions, transcripts, composer controls, and status chrome on readable centered rails, while landscape Voice Focus separates identity controls from conversation activity without changing phone or portrait interaction behavior.
+
 ## [Android 1.15.0] - 2026-08-31
 
 ### Changed
