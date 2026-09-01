@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -24,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -46,63 +49,70 @@ fun RelayStatusStrip(
      * surfaces — the top chrome stays empty so chat content never shifts.
      */
     reconnecting: Boolean = false,
+    maxContentWidth: Dp? = null,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .windowInsetsPadding(
-                WindowInsets.safeDrawing.only(
-                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-                ),
-            )
-            .padding(start = 14.dp, end = 14.dp, top = 3.dp, bottom = 4.dp)
-            .clip(appearanceRoundedCornerShape(16.dp))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .relayPanel(
-                shape = appearanceRoundedCornerShape(16.dp),
-                background = RelayRefresh.Navy2.copy(alpha = 0.88f),
-                borderColor = RelayRefresh.Line,
-            ),
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier
+        Column(
+            modifier = modifier
+                .then(maxContentWidth?.let { Modifier.widthIn(max = it) } ?: Modifier)
                 .fillMaxWidth()
-                .heightIn(min = 22.dp)
-                .padding(horizontal = 14.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                    ),
+                )
+                .padding(start = 14.dp, end = 14.dp, top = 3.dp, bottom = 4.dp)
+                .clip(appearanceRoundedCornerShape(16.dp))
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .relayPanel(
+                    shape = appearanceRoundedCornerShape(16.dp),
+                    background = RelayRefresh.Navy2.copy(alpha = 0.88f),
+                    borderColor = RelayRefresh.Line,
+                ),
         ) {
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 22.dp)
+                    .padding(horizontal = 14.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                leadingBadge()
-                if (securityGlyph != null) {
-                    securityGlyph()
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    leadingBadge()
+                    if (securityGlyph != null) {
+                        securityGlyph()
+                    }
+                    // Route is in flux mid-reconnect, so the amber cue replaces the
+                    // route label rather than stacking beside it in the 22dp strip.
+                    when {
+                        reconnecting -> ReconnectingCue(modifier = Modifier.weight(1f))
+                        routeLabel.isNotBlank() -> Text(
+                            text = "· $routeLabel",
+                            style = relayMetadataStyle(),
+                            color = RelayRefresh.Muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
-                // Route is in flux mid-reconnect, so the amber cue replaces the
-                // route label rather than stacking beside it in the 22dp strip.
-                when {
-                    reconnecting -> ReconnectingCue(modifier = Modifier.weight(1f))
-                    routeLabel.isNotBlank() -> Text(
-                        text = "· $routeLabel",
-                        style = relayMetadataStyle(),
-                        color = RelayRefresh.Muted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = trailing,
+                    style = relayMetadataStyle(),
+                    color = RelayRefresh.Muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = trailing,
-                style = relayMetadataStyle(),
-                color = RelayRefresh.Muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }

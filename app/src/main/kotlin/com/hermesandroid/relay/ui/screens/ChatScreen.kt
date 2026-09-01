@@ -98,6 +98,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -119,6 +120,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.chatResponsiveLayout
 import com.hermesandroid.relay.ui.theme.radialNavyBackground
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ChatMode
@@ -749,6 +751,7 @@ fun ChatScreen(
     gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
     onNavigateToGitWorkspace: () -> Unit = {},
 ) {
+    val responsiveLayout = chatResponsiveLayout(LocalConfiguration.current.screenWidthDp)
     val supervised = supervisedPolicy.enabled
     val supervisedVisibility = supervisedPolicy.visibility.resolved()
     LaunchedEffect(supervisedPolicy) {
@@ -3311,7 +3314,13 @@ fun ChatScreen(
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(horizontal = 32.dp)
+                            modifier = Modifier
+                                .padding(horizontal = 32.dp)
+                                .then(
+                                    responsiveLayout.introMaxWidth?.let {
+                                        Modifier.widthIn(max = it)
+                                    } ?: Modifier,
+                                ),
                         ) {
                             Spacer(modifier = Modifier.weight(0.15f))
 
@@ -3320,12 +3329,15 @@ fun ChatScreen(
                                 LocalBackgroundVisualizationEnabled.current &&
                                 (!supervised || supervisedVisibility.showAgentIdentity)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .weight(0.7f, fill = false)
-                                ) {
+                                val avatarModifier = responsiveLayout.avatarSize?.let { size ->
+                                    Modifier
+                                        .size(size)
+                                        .clipToBounds()
+                                } ?: Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .weight(0.7f, fill = false)
+                                Box(modifier = avatarModifier) {
                                     LocalAgentAvatar.current.Render(
                                         state = AvatarRenderState(
                                             state = if (error != null) SphereState.Error else SphereState.Idle,
@@ -4650,6 +4662,13 @@ fun ChatScreen(
                             supervisedPolicy.capabilities.attachmentCategories
                         )) pasteImageFromClipboard else ({ }),
                 onLongPressAttach = { if (!supervised) showCommandPalette = true },
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .then(
+                        responsiveLayout.chromeMaxWidth?.let {
+                            Modifier.widthIn(max = it)
+                        } ?: Modifier,
+                    ),
                 charLimit = charLimit,
                 caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
