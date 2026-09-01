@@ -123,6 +123,25 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_ownership_rejection_is_terminal_without_persisted_turn(self) -> None:
+        fixture, base_url = await self.start("ownership_rejection")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.create", {"profile": "default"})
+        await ws.receive_json()
+        await self.rpc(ws, 2, "prompt.submit", {"text": "not recorded in evidence"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "error",
+        )
+        error = frames[-1]["params"]["payload"]["message"]
+        self.assertIn("already has a live owner (webui", error)
+        self.assertIn("Only one surface at a time may run a session", error)
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+        ) as response:
+            history = await response.json()
+        self.assertEqual([], history["messages"])
+
     async def test_compaction_status_repeats_before_terminal_completion(self) -> None:
         fixture, base_url = await self.start("compaction_status")
         ws, _ = await self.connect(base_url)
@@ -381,6 +400,7 @@ class ScenarioTestCase(unittest.TestCase):
             "cross_client_observation",
             "initial_history_bind",
             "ordinary_turn",
+            "ownership_rejection",
             "rapid_tools_interims",
             "subagent_child_preview",
             "terminal_gap_activate",
@@ -432,6 +452,10 @@ class ScenarioTestCase(unittest.TestCase):
         self.assertEqual(
             ("gateway.message_complete", "gateway.session_active_list"),
             load_scenario("cross_client_observation").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_exclusive_submit",),
+            load_scenario("ownership_rejection").contract_requirements,
         )
 
     def test_tls_arguments_must_be_paired(self) -> None:

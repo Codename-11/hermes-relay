@@ -30,7 +30,14 @@ def _live_session_payload(sid, session):
         "running": False, "status": "idle",
     }
 
+def _start_agent_build(sid, session):
+    _emit("session.info", sid, {"lazy": False})
+    ready.set()
+
 def _run_prompt_submit(sid, session, agent):
+    if _ensure_active_session_slot(sid, session) is not None:
+        _emit("error", sid, {})
+        return False
     try:
         _emit("message.complete", sid, {})
     finally:
@@ -67,6 +74,11 @@ def _mirror_subagent_child(event):
 METHODS_SOURCE = '''
 def method(name):
     return lambda fn: fn
+
+@method("session.create")
+def _(rid, params):
+    _schedule_agent_build("live")
+    return {"session_id": "live", "info": {"lazy": True}}
 
 @method("session.resume")
 def _(rid, params):
@@ -106,6 +118,26 @@ def _(rid, params):
     return _ok(rid, {"sessions": rows})
 '''
 
+PROMPT_METHODS_SOURCE = '''
+def method(name):
+    return lambda fn: fn
+
+@method("prompt.submit")
+def _(rid, params):
+    session = sessions[params["session_id"]]
+    if (refusal := _ensure_active_session_slot(params["session_id"], session)) is not None:
+        return _err(rid, 4090, str(refusal), {"reason": refusal.reason})
+    return _ok(rid, {"ok": True})
+'''
+
+ACTIVE_SESSIONS_SOURCE = '''
+SESSION_NOT_OWNED = "SESSION_NOT_OWNED"
+PER_SESSION_EXCLUSIVE_SUBMIT = True
+
+def session_already_owned_message(session_id, entry):
+    return f"Session {session_id} already has a live owner ({entry}). Only one surface at a time may run a session."
+'''
+
 API_SOURCE = '''
 ROUTES = [
     ("POST", "/api/sessions/{session_id}/chat/stream"),
@@ -132,6 +164,8 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         sources = {
             module.SERVER: SERVER_SOURCE,
             module.SESSION_METHODS: METHODS_SOURCE,
+            module.PROMPT_METHODS: PROMPT_METHODS_SOURCE,
+            module.ACTIVE_SESSIONS: ACTIVE_SESSIONS_SOURCE,
             module.API_SERVER: API_SOURCE,
         }
         for relative, text in sources.items():

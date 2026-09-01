@@ -119,6 +119,8 @@ class GatewayChatClient(
     private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
+    /** Test seam — lazy session.create/resume readiness barrier. */
+    private val sessionReadyTimeoutMs: Long = SESSION_READY_TIMEOUT_MS,
     /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
     private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
@@ -191,6 +193,7 @@ class GatewayChatClient(
          * would have been abandoned server-side anyway.
          */
         private const val PROMPT_SUBMIT_REQUEST_TIMEOUT_MS = 1_800_000L
+        private const val SESSION_READY_TIMEOUT_MS = 300_000L
         private const val CONNECT_TIMEOUT_MS = 20_000L
 
         /**
@@ -421,6 +424,9 @@ class GatewayChatClient(
     /** Invalidates an older async prewarm when a newer session selection wins. */
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
+    private val lazyLiveSessions = ConcurrentHashMap.newKeySet<String>()
+    private val readyLiveSessions = ConcurrentHashMap.newKeySet<String>()
+    private val sessionReadyWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
     /** Monotonic client-local fence for lazy child watch open/close races. */
     private val childWatchGeneration = AtomicLong(0)
@@ -832,7 +838,7 @@ class GatewayChatClient(
                         // through the normal failed-turn callback instead.
                         cleanupStagedAttachments(stagedImagePaths)
                         turn.tracer.done("submit-rejected")
-                        turn.callbacks.onError(
+                        turn.callbacks.onSubmitRejected(
                             submitError?.message ?: "Hermes rejected the new session",
                         )
                         return@launch
@@ -899,6 +905,9 @@ class GatewayChatClient(
         liveSessionId = null
         storedSessionId = null
         liveSessionProfile = null
+        failSessionReadyWaiters("gateway session cleared")
+        lazyLiveSessions.clear()
+        readyLiveSessions.clear()
         cancelledTurnDrain = null
         _serverTools.value = null
     }
@@ -3389,6 +3398,7 @@ class GatewayChatClient(
             requestedStoredId != null &&
             liveSessionProfile == requestedProfile
         ) {
+            awaitSessionReadyIfRequired(liveSessionId!!)
             return
         }
 
@@ -3418,6 +3428,7 @@ class GatewayChatClient(
                 liveSessionProfile = requestedProfile
                 updateCancelledDrainLiveSession(requestedStoredId, live)
                 applySessionResultInfo(result)
+                awaitSessionReadyIfRequired(live, result)
                 return
             }
             throw GatewayAuthoritativeResumeException(
@@ -3453,6 +3464,45 @@ class GatewayChatClient(
         if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
         if (settledTurnDrain?.storedSessionId != stored) settledTurnDrain = null
         turn.callbacks.onSessionId(stored)
+        awaitSessionReadyIfRequired(live, created)
+    }
+
+    /**
+     * Wait for current upstream's authoritative deferred-build edge instead of
+     * racing a lazy session into compute-host turn isolation. Without this
+     * barrier, the parent runtime can claim the durable lease before the child
+     * rechecks it, causing the child to reject itself as a second live owner.
+     */
+    private suspend fun awaitSessionReadyIfRequired(
+        liveId: String,
+        sessionResult: JsonObject? = null,
+    ) {
+        val lazy = (sessionResult?.get("info") as? JsonObject)?.booleanField("lazy") == true
+        if (lazy) lazyLiveSessions += liveId
+        if (liveId !in lazyLiveSessions) return
+        if (readyLiveSessions.remove(liveId)) {
+            lazyLiveSessions.remove(liveId)
+            return
+        }
+        val waiter = sessionReadyWaiters.computeIfAbsent(liveId) { CompletableDeferred() }
+        if (readyLiveSessions.remove(liveId)) waiter.complete(Unit)
+        try {
+            withTimeout(sessionReadyTimeoutMs) { waiter.await() }
+            lazyLiveSessions.remove(liveId)
+        } catch (error: Exception) {
+            throw GatewayPreflightException(
+                error.message ?: "Hermes session initialization timed out",
+            )
+        } finally {
+            sessionReadyWaiters.remove(liveId, waiter)
+        }
+    }
+
+    private fun failSessionReadyWaiters(message: String) {
+        sessionReadyWaiters.values.forEach {
+            it.completeExceptionally(GatewayRpcException(message))
+        }
+        sessionReadyWaiters.clear()
     }
 
     private fun createListener(ready: CompletableDeferred<Unit>) = object : WebSocketListener() {
@@ -3629,6 +3679,17 @@ class GatewayChatClient(
         if (type == "sessions.changed") {
             callbackDispatcher { sessionDirectoryInvalidationListener?.invoke() }
             return
+        }
+
+        // Lazy create/resume returns before its AIAgent exists. The deferred
+        // build publishes exact-session session.info when it is ready. Record
+        // that edge before live-session routing so a fast build cannot race
+        // the RPC response and strand the first submit.
+        if (type == "session.info" && !eventSessionId.isNullOrBlank() &&
+            payload?.booleanField("lazy") != true
+        ) {
+            readyLiveSessions += eventSessionId
+            sessionReadyWaiters.remove(eventSessionId)?.complete(Unit)
         }
 
         // Upstream emits session.reclaimed process-wide, so it is identified
@@ -3958,6 +4019,9 @@ class GatewayChatClient(
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
+        failSessionReadyWaiters("gateway connection lost")
+        lazyLiveSessions.clear()
+        readyLiveSessions.clear()
         failChildWatches("Child watch disconnected from the gateway")
         val turn = activeTurn
         if (turn == null) {
@@ -4135,6 +4199,9 @@ class GatewayChatClient(
         webSocket = null
         readySignal = null
         liveSessionId = null
+        failSessionReadyWaiters("gateway socket closed")
+        lazyLiveSessions.clear()
+        readyLiveSessions.clear()
         attachMethodForSocket = null
         commandsCatalogCache = null
         _processCapability.value = GatewayProcessCapability.Unknown
@@ -4811,6 +4878,9 @@ class GatewayChatClient(
         onStatusClear = { kind -> dispatchIfCurrent(stillCurrent) { callbacks.onStatusClear(kind) } },
         onNoticeShow = { notice -> dispatchIfCurrent(stillCurrent) { callbacks.onNoticeShow(notice) } },
         onNoticeClear = { key -> dispatchIfCurrent(stillCurrent) { callbacks.onNoticeClear(key) } },
+        onSubmitRejected = { message ->
+            dispatchIfCurrent(stillCurrent) { callbacks.onSubmitRejected(message) }
+        },
     )
 
     private fun dispatchIfCurrent(stillCurrent: () -> Boolean, callback: () -> Unit) {

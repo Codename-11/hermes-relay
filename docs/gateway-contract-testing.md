@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `ownership_rejection` | A submit acknowledged before the defense-in-depth ownership check emits the canonical terminal refusal; no user/model row is persisted and clients must not enter history recovery |
 | `compaction_status` | Compaction status is client-visible before terminal completion and may repeat as a heartbeat |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
