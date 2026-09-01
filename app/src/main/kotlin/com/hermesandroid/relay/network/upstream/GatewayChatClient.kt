@@ -119,6 +119,8 @@ class GatewayChatClient(
     private val promptSubmitTimeoutMs: Long = PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
     /** Test seam — idle-progress watchdog base. Production keeps [TURN_TIMEOUT_MS]. */
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
+    /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
+    private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
@@ -158,6 +160,19 @@ class GatewayChatClient(
         private const val ASK_CLARIFY_SECRET_TIMEOUT_MS = 330_000L
         private const val ASK_SUDO_TIMEOUT_MS = 150_000L
         private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
+
+        /**
+         * Server-side context compaction summarizes the transcript through a
+         * (possibly slow) model with NO deltas or tool events flowing until it
+         * finishes — near the context ceiling that silence routinely exceeds
+         * [TURN_TIMEOUT_MS], so the idle watchdog would `session.interrupt` a
+         * healthy compression, roll back its work, and retrigger on the next
+         * prompt forever. A `status.update` event with kind `compacting`
+         * (emitted at compaction start, and periodically by newer gateways)
+         * arms this longer leash instead; any regular event rearms
+         * [TURN_TIMEOUT_MS].
+         */
+        private const val COMPACTING_TIMEOUT_MS = 600_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
         const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
@@ -263,7 +278,7 @@ class GatewayChatClient(
         .newBuilder()
         // The 10s default connectTimeout is LAN-tuned; a remote dashboard
         // reached over Tailscale (DERP cold start) can take longer to complete
-        // the WS upgrade. A failed connect drops chat to the SSE fallback and a
+        // the WS upgrade. A failed connect leaves Android on its Gateway owner and a
         // 5s cooldown, so give the first remote handshake room.
         .connectTimeout(20, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
@@ -785,7 +800,7 @@ class GatewayChatClient(
                     // Once this turn's own events are flowing (or it already
                     // finished), the prompt provably reached the server — a
                     // slow, lost, or socket-severed ack must NOT preflight-fail
-                    // into the SSE fallback, which would resubmit the same
+                    // into a second transport, which would resubmit the same
                     // prompt as a duplicate turn. Recovery belongs to the
                     // stream: the watchdog and mid-turn rejoin own it.
                     if (turn.started || turn.ended || turn.transportRecoveryStarted) {
@@ -4307,10 +4322,12 @@ class GatewayChatClient(
     // ------------------------------------------------------------------
 
     /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
-    private fun watchdogTimeoutFor(eventType: String): Long = when (eventType) {
-        "clarify.request", "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
-        "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+    private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
+        eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
+        eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
+        eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
+        eventType == "status.update" &&
+            payload?.stringField("kind") == "compacting" -> compactingTimeoutMs
         else -> turnIdleTimeoutMs
     }
 
@@ -4432,7 +4449,7 @@ class GatewayChatClient(
             // Reset on every event — long tool runs keep the turn alive.
             // Ask requests block with no further events, so they arm with
             // their own (longer) duration via watchdogTimeoutFor.
-            armWatchdog(watchdogTimeoutFor(type))
+            armWatchdog(watchdogTimeoutFor(type, payload))
             // Queue this immediately before the terminal callbacks. Both are
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
@@ -4823,7 +4840,7 @@ data class GatewayAttachment(
     val sizeBytes: Long? = null,
 )
 
-/** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */
+/** Connect/auth/submit failed before the turn started; the caller retains transport ownership. */
 internal class GatewayPreflightException(message: String) : Exception(message)
 
 /** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */

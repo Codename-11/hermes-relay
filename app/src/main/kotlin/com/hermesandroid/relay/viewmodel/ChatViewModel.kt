@@ -126,6 +126,7 @@ import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -290,7 +291,7 @@ internal data class ResolvedGatewayActiveSessions(
     val ambiguousForCurrent: Boolean,
 )
 
-/** Resolve process-wide runtime rows without ever inventing a profile owner. */
+/** Resolve process-wide runtime rows without ever inventing an ambiguous profile owner. */
 internal fun resolveGatewayActiveSessions(
     sessions: List<GatewayActiveSession>,
     directory: Set<SessionActivityOwner>,
@@ -315,6 +316,8 @@ internal fun resolveGatewayActiveSessions(
                 currentRuntimeId == row.runtimeSessionId &&
                 currentOwner.storedSessionId == row.storedSessionId -> currentOwner
             explicitProfile != null && candidates.size == 1 -> candidates.single()
+            explicitProfile == null && currentOwner != null && candidates.singleOrNull() == currentOwner ->
+                currentOwner
             else -> null
         }
         if (owner == null) {
@@ -2120,9 +2123,12 @@ class ChatViewModel : ViewModel() {
      * RelayApp pushes the resolved value) prefers an EventSource-compatible
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
+    private var resolvedStreamingEndpoint: String = "completions"
+
     var streamingEndpoint: String = "completions"
         set(value) {
-            field = value
+            resolvedStreamingEndpoint = value
+            field = endpointForConversationOwner(value)
             // Only the gateway transport auto-names sessions server-side
             // (tui_gateway runs the turn in a HermesCLI child that calls
             // agent.title_generator.maybe_auto_title). The api_server SSE/runs/
@@ -2137,12 +2143,19 @@ class ChatViewModel : ViewModel() {
         }
 
     /**
-     * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
-     * sign-in expired, attachments present). Wired from RelayApp alongside
-     * [streamingEndpoint] as the capability-resolved SSE preference; never
-     * "auto" or "gateway".
+     * Capability-resolved endpoint for an explicitly API-owned compatibility
+     * conversation. It never acts as a fallback for a Gateway-owned chat.
      */
     var sseFallbackEndpoint: String = "completions"
+        set(value) {
+            field = value
+            if (
+                conversationBinding.value.transport == SessionTransport.SSE &&
+                resolvedStreamingEndpoint == "gateway"
+            ) {
+                streamingEndpoint = resolvedStreamingEndpoint
+            }
+        }
 
     /**
      * Gateway chat transport (dashboard `/api/ws` — live thinking). Owned and
@@ -3183,6 +3196,7 @@ class ChatViewModel : ViewModel() {
     ) {
         val handler = chatHandler ?: return
         if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) return
+        val contextKey = activeProfileContextKey
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = viewModelScope.launch {
             val expected = expectedAssistantText?.trim()?.takeIf { it.isNotEmpty() }
@@ -3215,7 +3229,28 @@ class ChatViewModel : ViewModel() {
                 }
 
                 val transcriptSnapshot = handler.messages.value
-                val serverMessages = loadGatewaySessionHistory(storedSessionId)
+                val serverMessages = try {
+                    loadGatewaySessionHistory(
+                        sessionId = storedSessionId,
+                        requireProfileScope = true,
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A live completion is already visible and settled locally.
+                    // History auth loss must retain that transcript and promote
+                    // the existing sign-in recovery instead of escaping this
+                    // Main-scope coroutine and crashing the app.
+                    if (
+                        chatHandler === handler &&
+                        activeProfileContextKey == contextKey &&
+                        handler.currentSessionId.value == storedSessionId
+                    ) {
+                        publishHistoryLoadFailure(storedSessionId, e)
+                    }
+                    gatewayHistoryReconcileJob = null
+                    return@launch
+                }
                 if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
                     return@launch
                 }
@@ -3727,6 +3762,17 @@ class ChatViewModel : ViewModel() {
     private val bindingDisplayProfile: Profile?
         get() = conversationBinding.value.displayProfile
 
+    private fun endpointForConversationOwner(candidate: String): String =
+        when (conversationBinding.value.transport) {
+            SessionTransport.GATEWAY -> "gateway"
+            SessionTransport.SSE -> if (candidate == "gateway") sseFallbackEndpoint else candidate
+            null -> candidate
+        }
+
+    private fun reapplyConversationTransportAffinity() {
+        streamingEndpoint = resolvedStreamingEndpoint
+    }
+
     /**
      * Profile namespace owned by the conversation currently on screen. Opening a
      * row from the global All Profiles browser binds this state first; the UI
@@ -3739,6 +3785,7 @@ class ChatViewModel : ViewModel() {
 
     private fun clearOpenedSessionOwner() {
         conversationBindingController.releaseExplicitOwner()
+        reapplyConversationTransportAffinity()
     }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
@@ -3846,6 +3893,12 @@ class ChatViewModel : ViewModel() {
         lister: suspend (String?, Int, Int) -> Result<List<SessionItem>>?,
     ) {
         profileSessionPageLister = lister
+    }
+
+    private var dashboardSignInRequiredHandler: (() -> Unit)? = null
+
+    fun setDashboardSignInRequiredHandler(handler: () -> Unit) {
+        dashboardSignInRequiredHandler = handler
     }
 
     /**
@@ -4236,7 +4289,19 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun publishHistoryLoadFailure(sessionId: String, error: Throwable) {
-        if (error.isDashboardSignInRequiredFailure()) return
+        if (error.isDashboardSignInRequiredFailure()) {
+            dashboardSignInRequiredHandler?.invoke()
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = "Dashboard sign-in required for chat history",
+                detail = "stored_session=$sessionId; dashboard_auth=required",
+                operation = "load chat history",
+                endpointRole = "gateway",
+                suggestion = "Sign in to Dashboard on the active route, then retry this conversation.",
+            )
+            return
+        }
         val rawError = error.message?.takeIf { it.isNotBlank() }
             ?: "The active profile's conversation history could not be reached."
         _chatFailure.value = ChatFailureNotice(
@@ -4637,6 +4702,7 @@ class ChatViewModel : ViewModel() {
                 lastSessionRefreshSuccessNanos = 0L
                 _sessionListUnavailable.value = false
                 conversationBindingController.reset()
+                reapplyConversationTransportAffinity()
                 exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
@@ -4799,6 +4865,8 @@ class ChatViewModel : ViewModel() {
         } else {
             sessionProfileNameProvider()
         }
+        val targetTransport = sessionId?.let(SessionTransport::forSessionId)
+            ?: SessionTransport.forEndpoint(resolvedStreamingEndpoint)
         if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
@@ -4806,6 +4874,7 @@ class ChatViewModel : ViewModel() {
                 sessionId = sessionId,
                 displayProfile = explicitDisplayProfile,
                 lockedProfileToken = lockedProfileNameProvider(),
+                transport = targetTransport,
             )
             if (!accepted) return
         } else if (reconciliation) {
@@ -4813,6 +4882,7 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
             if (!accepted) {
                 _initialChatSettled.value = true
@@ -4823,8 +4893,10 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
         }
+        reapplyConversationTransportAffinity()
         activateSessionActivityScope()
         handler.activeAgentName = currentAgentDisplayName()
         if (
@@ -5382,6 +5454,7 @@ class ChatViewModel : ViewModel() {
                                     // recovery state. Preserve cached history and
                                     // mark the directory unavailable without also
                                     // emitting a generic turn/error toast.
+                                    dashboardSignInRequiredHandler?.invoke()
                                 } else if (scoped != null) {
                                     // The shared API list belongs to the launch/default
                                     // database. Preserve the current profile's rows and
@@ -5404,7 +5477,9 @@ class ChatViewModel : ViewModel() {
                             )
                             retryUnavailable = true
                             retryReadiness = retryReadiness || !e.isSessionReadTimeout()
-                            if (!e.isDashboardSignInRequiredFailure()) {
+                            if (e.isDashboardSignInRequiredFailure()) {
+                                dashboardSignInRequiredHandler?.invoke()
+                            } else {
                                 emitError(
                                     e,
                                     context = if (profileSessionLister != null) {
@@ -5581,7 +5656,10 @@ class ChatViewModel : ViewModel() {
         // profile/context so an All Profiles conversation becomes a fresh
         // draft for that same owner instead of falling back to the globally
         // restored default profile.
-        conversationBindingController.startFreshDraft()
+        conversationBindingController.startFreshDraft(
+            SessionTransport.forEndpoint(resolvedStreamingEndpoint),
+        )
+        reapplyConversationTransportAffinity()
         exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
@@ -5840,6 +5918,7 @@ class ChatViewModel : ViewModel() {
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
         conversationBindingController.switchSession(sessionId)
+        reapplyConversationTransportAffinity()
 
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -5956,6 +6035,7 @@ class ChatViewModel : ViewModel() {
         }
         if (handler.currentSessionId.value == null) {
             conversationBindingController.switchSession(null)
+            reapplyConversationTransportAffinity()
             onSessionChanged?.invoke(null)
         }
 
@@ -6182,10 +6262,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (
             (streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
             val message = if (streamingEndpoint == "gateway") {
-                "Gateway is unavailable and no API fallback is configured for this connection."
+                "This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry."
             } else {
                 "API fallback is not configured for this connection."
             }
@@ -6293,9 +6373,15 @@ class ChatViewModel : ViewModel() {
             ?: return VoiceMessageSubmissionResult.Rejected("Hermes chat is not ready.")
         val client = apiClient
         if ((streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
-            return VoiceMessageSubmissionResult.Rejected("Hermes is not connected.")
+            return VoiceMessageSubmissionResult.Rejected(
+                if (streamingEndpoint == "gateway") {
+                    "This chat needs the Hermes Dashboard. Sign in or reconnect, then retry."
+                } else {
+                    "The direct API connection is unavailable."
+                },
+            )
         }
         if (activeStream != null || streamRecovery != null || handler.isStreaming.value) {
             return VoiceMessageSubmissionResult.Rejected(
@@ -7823,13 +7909,39 @@ class ChatViewModel : ViewModel() {
                     if (!queuedSuccessorPending.get()) {
                         val expectedSessionId = checkpoint.sessionId
                         viewModelScope.launch {
-                            val history = loadSessionHistory(expectedSessionId)
-                            if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
-                                handler.loadMessageHistory(history)
-                                refreshSessions()
-                                scheduleTitleReconcile(expectedSessionId)
+                            try {
+                                val history = loadSessionHistory(expectedSessionId)
+                                if (
+                                    handler.currentSessionId.value == expectedSessionId &&
+                                    history.isNotEmpty()
+                                ) {
+                                    handler.loadMessageHistory(history)
+                                    clearMatchingHistoryLoadFailure(expectedSessionId)
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // Recovery completion has already settled the
+                                // local turn. Keep it visible and route an
+                                // expired Dashboard session to sign-in.
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
+                                    publishHistoryLoadFailure(expectedSessionId, e)
+                                }
+                            } finally {
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
+                                    refreshSessions()
+                                    scheduleTitleReconcile(expectedSessionId)
+                                }
+                                drainQueue()
                             }
-                            drainQueue()
                         }
                     }
                 }
@@ -9566,7 +9678,7 @@ class ChatViewModel : ViewModel() {
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
-                toolName == "image_generate" &&
+                isImageGenerationToolName(toolName) &&
                     observedImageToolStates.putIfAbsent(toolCallId, "running") != null
             if (!alreadyObserved) {
                 handler.onToolCallStart(currentMessageId, toolCallId, toolName, argsPreview)
@@ -9693,6 +9805,7 @@ class ChatViewModel : ViewModel() {
             // tool.complete. The structured reload recovers those calls without ever
             // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
+            val historyContextKey = activeProfileContextKey
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
             // server transcript would WIPE the just-shown error bubble (the user
@@ -9711,34 +9824,54 @@ class ChatViewModel : ViewModel() {
                     )
                 }
                 viewModelScope.launch {
-                    if (!turnErrored && !gatewayHistoryReconcileRequired) {
-                        // Profile-aware read: a gateway turn on a non-default profile
-                        // persists into THAT profile's own state.db, so the bare
-                        // api_server `/api/sessions/{id}/messages` 404s → emptyList()
-                        // → a silent wipe of the just-finished turn. loadSessionHistory
-                        // prefers the `?profile=` dashboard loader on gateway connections.
-                        val serverMessages = loadSessionHistory(sid)
-                        val missingPersistedToolActivity =
-                            completedTransport == "gateway" &&
-                                handler.hasMissingPersistedToolActivity(serverMessages)
-                        if (shouldReloadHistoryAfterSuccessfulTurn(
-                                actualTransport = completedTransport,
-                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
-                                missingPersistedToolActivity = missingPersistedToolActivity,
-                            )
-                        ) {
-                            handler.loadMessageHistory(serverMessages)
+                    try {
+                        if (!turnErrored && !gatewayHistoryReconcileRequired) {
+                            // Profile-aware read: a gateway turn on a non-default profile
+                            // persists into THAT profile's own state.db, so the bare
+                            // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                            // → a silent wipe of the just-finished turn. loadSessionHistory
+                            // prefers the `?profile=` dashboard loader on gateway connections.
+                            val serverMessages = loadSessionHistory(sid)
+                            val missingPersistedToolActivity =
+                                completedTransport == "gateway" &&
+                                    handler.hasMissingPersistedToolActivity(serverMessages)
+                            if (shouldReloadHistoryAfterSuccessfulTurn(
+                                    actualTransport = completedTransport,
+                                    gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                    missingPersistedToolActivity = missingPersistedToolActivity,
+                                )
+                            ) {
+                                handler.loadMessageHistory(serverMessages)
+                                clearMatchingHistoryLoadFailure(sid)
+                            }
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
+                            publishHistoryLoadFailure(sid, e)
+                        }
+                    } finally {
+                        // Re-sync the drawer now that the turn is persisted server-side.
+                        // The only other auto-refresh fires ~160ms after session creation
+                        // (RelayApp) — mid-stream, BEFORE the new session's first message
+                        // is persisted, so a brand-new chat would otherwise stay missing
+                        // from the drawer (carried only by the optimistic row) until a
+                        // manual reload. By message.complete the dashboard list includes it.
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
+                            refreshSessions()
+                            scheduleTitleReconcile(sid)
+                        }
+                        drainQueue()
                     }
-                    // Re-sync the drawer now that the turn is persisted server-side.
-                    // The only other auto-refresh fires ~160ms after session creation
-                    // (RelayApp) — mid-stream, BEFORE the new session's first message
-                    // is persisted, so a brand-new chat would otherwise stay missing
-                    // from the drawer (carried only by the optimistic row) until a
-                    // manual reload. By message.complete the dashboard list includes it.
-                    refreshSessions()
-                    scheduleTitleReconcile(sid)
-                    drainQueue()
                 }
                 Unit
             } else {
@@ -10015,12 +10148,11 @@ class ChatViewModel : ViewModel() {
             )
         }
 
-        // SSE dispatch shared by the three HTTP endpoints AND the gateway
-        // branch's per-turn fallback (gateway unreachable / not the resolved
-        // transport). Warns once per dispatch about any attachment it can't carry.
+        // SSE dispatch shared by the three explicit API compatibility endpoints.
+        // Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle? {
             val sseClient = client ?: run {
-                onErrorCb("Gateway unavailable and no API fallback is configured.")
+                onErrorCb("The direct API connection is unavailable.")
                 return null
             }
             val prepared = prepareTextTransportAttachments(message, attachments.orEmpty())
@@ -10165,13 +10297,13 @@ class ChatViewModel : ViewModel() {
         activeStream = when {
             effectiveEndpoint != "gateway" -> dispatchSse(effectiveEndpoint)
 
-            // Gateway turns upload ALL attachments via their typed upstream
-            // RPC (image.attach_bytes / pdf.attach / file.attach), matching the
-            // desktop client. Only a missing gateway client forces the per-turn
-            // SSE fallback (where non-image attachments are not upstream-
-            // recognized and would be dropped — graceful degradation).
-            gateway == null ->
-                dispatchSse(resolveSseFallback(handler))
+            // The conversation owner is immutable. Losing Gateway preserves
+            // the local transcript/draft and exposes Retry; it never dispatches
+            // the turn into the API server's different session database.
+            gateway == null -> {
+                onErrorCb("This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry.")
+                null
+            }
 
             else -> {
                 startImageActivityBridge()
@@ -10343,11 +10475,14 @@ class ChatViewModel : ViewModel() {
                             activeStream = null
                             settleSessionActivity(handler.currentSessionId.value)
                         } else {
-                            // Nothing started server-side — rerun this turn on
-                            // the SSE fallback. Callbacks land on the main
-                            // thread, so swapping activeStream here is safe.
-                            // The fallback turn is not steerable.
-                            activeStream = dispatchSse(resolveSseFallback(handler))
+                            // Nothing started server-side. Keep this turn bound
+                            // to Gateway and settle it as retryable local state;
+                            // API sessions are a different owner/database.
+                            onPreflightErrorCb(
+                                IllegalStateException(
+                                    "Hermes Dashboard chat is unavailable. Sign in or reconnect, then retry.",
+                                ),
+                            )
                         }
                     },
                 )
@@ -10371,8 +10506,8 @@ class ChatViewModel : ViewModel() {
         // configured transport: a gateway-configured turn forced onto SSE
         // (voice interface context, trace drain) did carry the synthetic
         // messages, and skipping the mark there re-sent them every turn.
-        // The async gateway preflight-failure fallback stays conservative:
-        // its traces are marked on the NEXT turn (at-least-once delivery).
+        // A failed Gateway preflight leaves these traces unsynced; retrying the
+        // same owner retains at-least-once delivery without crossing stores.
         if (voiceIntentMessages != null && effectiveEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
@@ -10383,18 +10518,6 @@ class ChatViewModel : ViewModel() {
     /** Adapt an SSE [EventSource] to the transport-agnostic turn handle. */
     private fun EventSource.asTurnHandle(): ActiveTurnHandle =
         ActiveTurnHandle { this.cancel() }
-
-    /**
-     * SSE endpoint for a turn that was meant for the gateway. The sessions
-     * endpoint needs an existing server session — without one, use the
-     * stateless completions path instead of failing the turn.
-     */
-    private fun resolveSseFallback(handler: ChatHandler): String =
-        if (sseFallbackEndpoint == "sessions" && handler.currentSessionId.value == null) {
-            "completions"
-        } else {
-            sseFallbackEndpoint
-        }
 
     private fun currentAgentDisplayName(
         effectiveProfileOverride: Profile? = null,

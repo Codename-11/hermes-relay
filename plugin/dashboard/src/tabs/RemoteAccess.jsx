@@ -149,7 +149,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
           <div className="flex items-center gap-2">
             <Dot tone={apiServing ? "ok" : "muted"} />
             <span>
-              API fallback → host :8642: {apiServing
+              Direct API → host :8642: {apiServing
                 ? `active on ${listenerLabel(apiService)} · optional`
                 : "off"}
             </span>

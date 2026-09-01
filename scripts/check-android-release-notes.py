@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Validate and synchronize Android release-note surfaces.
 
-The newest ``changelog.json`` entry is the curated source for the in-app
-What's New experience. ``--write`` refreshes the legacy text fallback, Google
-Play notes, and the matching operator copy in ``docs/play-store-listing.md``.
-The technical CHANGELOG and GitHub release body remain fuller records, but
-their version headings are checked so release prep cannot silently drift.
+The newest ``changelog.json`` entry is the complete user-visible source for the
+in-app What's New experience. ``--write`` refreshes the legacy text fallback,
+Google Play notes, and the matching operator copy in
+``docs/play-store-listing.md``. The technical CHANGELOG and GitHub release body
+remain separate records, but their version headings are checked so release
+prep cannot silently drift.
 """
 
 from __future__ import annotations
@@ -29,6 +30,12 @@ PLAY_SECTION_RE = re.compile(
     r"\(≤500 characters\):\s+```\s*\n)(.*?)(\n```\s*\n## Category)",
     re.DOTALL,
 )
+CHANGE_KINDS = ("added", "improved", "fixed")
+CHANGE_KIND_LABELS = {
+    "added": "Added",
+    "improved": "Improved",
+    "fixed": "Fixed",
+}
 
 
 def _read_text(relative: pathlib.Path) -> str:
@@ -44,8 +51,8 @@ def _android_version() -> str:
 
 def _latest_entry() -> dict[str, Any]:
     data = json.loads(_read_text(CHANGELOG_JSON))
-    if not isinstance(data, dict) or data.get("schema") != 2:
-        raise ValueError("changelog.json must use schema 2")
+    if not isinstance(data, dict) or data.get("schema") != 3:
+        raise ValueError("changelog.json must use schema 3")
     versions = data.get("versions")
     if not isinstance(versions, list) or not versions or not isinstance(versions[0], dict):
         raise ValueError("changelog.json must contain at least one version")
@@ -60,60 +67,51 @@ def validate_curated_entry(entry: dict[str, Any], expected_version: str) -> list
             f"latest changelog version is {version!r}, expected Android {expected_version!r}"
         )
 
-    for field in ("title", "date"):
+    for field in ("title", "date", "summary"):
         if not isinstance(entry.get(field), str) or not entry[field].strip():
             errors.append(f"latest changelog entry requires non-empty {field}")
 
-    highlight = entry.get("highlight")
-    if not isinstance(highlight, dict):
-        errors.append("latest changelog entry requires a highlight object")
-        highlight = {}
-    for field in ("title", "summary"):
-        if not isinstance(highlight.get(field), str) or not highlight[field].strip():
-            errors.append(f"latest changelog highlight requires non-empty {field}")
+    changes = entry.get("changes")
+    if not isinstance(changes, list) or not changes:
+        errors.append("latest changelog entry requires a non-empty changes array")
+        changes = []
 
-    bullets = highlight.get("bullets")
-    if not isinstance(bullets, list):
-        errors.append("latest changelog highlight bullets must be an array")
-        bullets = []
-    elif not 1 <= len(bullets) <= 3:
-        errors.append("latest changelog highlight must contain 1-3 bullets")
-    if any(not isinstance(item, str) or not item.strip() for item in bullets):
-        errors.append("latest changelog highlight bullets must be non-empty strings")
-
-    improvements = entry.get("improvements", [])
-    if not isinstance(improvements, list):
-        errors.append("latest changelog improvements must be an array")
-        improvements = []
-    elif len(improvements) > 2:
-        errors.append("latest changelog may contain at most 2 improvements")
-    if any(not isinstance(item, str) or not item.strip() for item in improvements):
-        errors.append("latest changelog improvements must be non-empty strings")
-    if len(bullets) + len(improvements) > 5:
-        errors.append("latest changelog may expose at most 5 total list items")
-
-    digest = entry.get("toastDigest")
-    if not isinstance(digest, dict):
-        errors.append("latest changelog entry requires a toastDigest object")
-        digest = {}
-    digest_counts: list[int] = []
-    for field in ("additionalFeatureCount", "fixCount"):
-        count = digest.get(field)
-        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-            errors.append(f"latest changelog toastDigest {field} must be a non-negative integer")
+    seen_ids: set[str] = set()
+    highlight_count = 0
+    for index, change in enumerate(changes):
+        prefix = f"latest changelog change {index + 1}"
+        if not isinstance(change, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        change_id = change.get("id")
+        if not isinstance(change_id, str) or not change_id.strip():
+            errors.append(f"{prefix} requires a non-empty id")
+        elif change_id in seen_ids:
+            errors.append(f"latest changelog change id {change_id!r} is duplicated")
         else:
-            digest_counts.append(count)
-    digest_preview = digest.get("preview")
-    if not isinstance(digest_preview, list):
-        errors.append("latest changelog toastDigest preview must be an array")
-        digest_preview = []
-    elif any(not isinstance(item, str) or not item.strip() for item in digest_preview):
-        errors.append("latest changelog toastDigest preview items must be non-empty strings")
-    if len(digest_counts) == 2:
-        if sum(digest_counts) == 0 and digest_preview:
-            errors.append("latest changelog toastDigest preview must be empty when counts are zero")
-        elif sum(digest_counts) > 0 and not 1 <= len(digest_preview) <= 2:
-            errors.append("latest changelog toastDigest preview must contain 1-2 items when secondary items exist")
+            seen_ids.add(change_id)
+        if change.get("kind") not in CHANGE_KINDS:
+            errors.append(f"{prefix} kind must be one of {', '.join(CHANGE_KINDS)}")
+        for field in ("title", "summary"):
+            if not isinstance(change.get(field), str) or not change[field].strip():
+                errors.append(f"{prefix} requires non-empty {field}")
+        is_highlight = change.get("highlight", False)
+        if not isinstance(is_highlight, bool):
+            errors.append(f"{prefix} highlight must be a boolean")
+        elif is_highlight:
+            highlight_count += 1
+    if not 1 <= highlight_count <= 4:
+        errors.append("latest changelog must select 1-4 highlighted changes")
+
+    compatibility = entry.get("compatibility", [])
+    if not isinstance(compatibility, list):
+        errors.append("latest changelog compatibility must be an array")
+    elif any(not isinstance(item, str) or not item.strip() for item in compatibility):
+        errors.append("latest changelog compatibility items must be non-empty strings")
+
+    for legacy_field in ("highlight", "improvements", "toastDigest"):
+        if legacy_field in entry:
+            errors.append(f"latest changelog must derive presentation instead of defining {legacy_field}")
 
     play_notes = entry.get("playNotes")
     if not isinstance(play_notes, str) or not play_notes.strip():
@@ -124,17 +122,29 @@ def validate_curated_entry(entry: dict[str, Any], expected_version: str) -> list
 
 
 def render_whats_new(entry: dict[str, Any]) -> str:
-    highlight = entry["highlight"]
     lines = [
         f"v{entry['version']} - {entry['title']}",
         "",
-        highlight["title"],
-        *(f"* {bullet}" for bullet in highlight["bullets"]),
+        "Summary",
+        f"* {entry['summary']}",
     ]
-    improvements = entry.get("improvements", [])
-    if improvements:
-        lines.extend(("", "Also improved", *(f"* {item}" for item in improvements)))
+    changes = entry["changes"]
+    highlights = [change for change in changes if change.get("highlight", False)]
+    if highlights:
+        lines.extend(("", "Highlights", *(_render_change(change) for change in highlights)))
+    remaining = [change for change in changes if not change.get("highlight", False)]
+    for kind in CHANGE_KINDS:
+        items = [change for change in remaining if change["kind"] == kind]
+        if items:
+            lines.extend(("", CHANGE_KIND_LABELS[kind], *(_render_change(change) for change in items)))
+    compatibility = entry.get("compatibility", [])
+    if compatibility:
+        lines.extend(("", "Compatibility", *(f"* {item}" for item in compatibility)))
     return "\n".join(lines) + "\n"
+
+
+def _render_change(change: dict[str, Any]) -> str:
+    return f"* {change['title']} — {change['summary']}"
 
 
 def render_play_notes(entry: dict[str, Any]) -> str:

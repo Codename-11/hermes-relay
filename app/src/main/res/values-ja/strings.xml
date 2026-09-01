@@ -141,7 +141,7 @@
     <string name="chat_failure_details_guidance">Hermes からこのエラーが報告されました。アプリがルートやモデルを自動的に切り替えることはありません。</string>
     <string name="chat_failure_copy_details">詳細をコピー</string>
     <string name="chat_failure_route_gateway">ゲートウェイ</string>
-    <string name="chat_failure_route_api">API フォールバック</string>
+    <string name="chat_failure_route_api">Direct API</string>
     <string name="chat_open_settings">設定を開く</string>
     <string name="chat_connect_hermes">Hermesを接続してください</string>
     <string name="chat_try_demo">デモを試してみる</string>
@@ -309,7 +309,7 @@
     <string name="cw_cloud_subtitle">ホスト済みエージェントに接続します</string>
     <string name="cw_server_vps_title">リモートゲートウェイ</string>
     <string name="cw_server_vps_subtitle">Dashboard アドレスを入力</string>
-    <string name="cw_relay_optional_note">プライベート LAN と Tailscale のアドレスは HTTP または HTTPS を使用できます。公開アドレスには HTTPS が必要です。Relay と API フォールバックは任意です。</string>
+    <string name="cw_relay_optional_note">プライベート LAN と Tailscale のアドレスは HTTP または HTTPS を使用できます。公開アドレスには HTTPS が必要です。Relay と Direct API は任意です。</string>
     <string name="cw_cloud_entry_title">Nous ホスト版 Hermes に接続</string>
     <string name="cw_cloud_entry_description">Nous Portal に表示されるエージェントのアドレスを入力してください。Hermes が見つかった後、安全にサインインします。</string>
     <string name="cw_cloud_agent_name">エージェントのアドレス</string>
@@ -396,7 +396,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 または http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API チャットとセッションで使用されます — API ポート 8642 および http:// はベア ホストとして想定されます (ダッシュボードの 9119 は個別に派生します)</string>
     <string name="cw_scan_message">この LAN をスキャンして Hermes ダッシュボード/API を探しています…</string>
-    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。API キーは任意の直接 API フォールバックでのみ使います。</string>
+    <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。API キーは明示的な Direct API 接続でのみ使います。</string>
     <string name="cw_pair_relay_section">Relay のペア (オプション)</string>
     <string name="cw_pair_relay_section_desc">すでに Relay プラグインを実行していますか?ここでペアリングすると、ターミナル、Bridge、およびチャネル許可が有効になります。</string>
     <string name="cw_pair_relay_url_label">Relay URL</string>
@@ -621,6 +621,11 @@
     <string name="changelog_state_collapsed">折りたたみ済み</string>
     <string name="changelog_installed">インストール済み</string>
     <string name="changelog_also_improved">その他の改善</string>
+    <string name="changelog_highlights">ハイライト</string>
+    <string name="changelog_added">追加</string>
+    <string name="changelog_improved">改善</string>
+    <string name="changelog_fixed">修正</string>
+    <string name="changelog_compatibility">互換性</string>
     <string name="changelog_toast_also">その他: %1$s</string>
     <string name="changelog_view_all">すべて表示</string>
     <plurals name="changelog_additional_feature_count">
@@ -628,6 +633,9 @@
     </plurals>
     <plurals name="changelog_fix_count">
         <item quantity="other">%1$d 件の修正</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="other">%1$d 件の改善</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -695,7 +703,7 @@
     <string name="settings_hermes_management">Hermes 管理</string>
     <string name="settings_hermes_management_desc">ダッシュボードの機能: スキル、cron、MCP、プロファイル、モデル</string>
     <string name="settings_chat">チャット</string>
-    <string name="settings_chat_desc">チャット動作、Gateway、API フォールバック、ツール表示、メッセージ長</string>
+    <string name="settings_chat_desc">チャット動作、Gateway、Direct API、ツール表示、メッセージ長</string>
     <string name="settings_voice_mode">ボイスモード</string>
     <string name="settings_voice_mode_desc">ダッシュボード音声、リアルタイムRelayオプション、プロバイダー</string>
     <string name="settings_threads">Threads</string>
@@ -806,11 +814,11 @@
     <string name="chat_settings_debug">デバッグ</string>
     <string name="chat_settings_show_system_messages_desc">サーバーの非表示の「[システム: …]」マーカーを表示します (モデル/パーソナリティの変更)。 Off はデスクトップ/TUI に一致します。</string>
     <string name="chat_settings_streaming_endpoint">ストリーミングエンドポイント</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">自動: サーバーが公開しているものに基づいて最適なパスを選択します。現在使用しているもの:</string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">自動: 標準接続は Gateway、API 専用接続は Direct API を使用します。現在使用中: </string>
     <string name="chat_settings_gateway_suffix">(ダッシュボード WebSocket を介したライブ思考)</string>
     <string name="chat_settings_chat_completions_suffix">(/v1/chat/completions 経由でチャット)</string>
     <string name="chat_settings_runs_suffix">(明示的にストリーミングされた /v1/runs を介してチャットします)</string>
-    <string name="chat_settings_gateway_desc">Gateway: ダッシュボード上のライブ思考 + 豊富なツール イベント WebSocket (/api/ws) — デスクトップ アプリが使用するもの。管理サインインが必要です。利用できない場合はターンごとに SSE に戻ります。</string>
+    <string name="chat_settings_gateway_desc">Gateway: ダッシュボード WebSocket（/api/ws）経由のライブ思考と豊富なツールイベント — デスクトップアプリと同じ経路です。管理へのサインインが必要です。利用できない場合もこのチャットは Gateway のまま、サインインまたは再試行を案内します。</string>
     <string name="chat_settings_sessions_desc">セッション: Hermes-native /api/sessions/{id}/chat/stream。</string>
     <string name="chat_settings_chat_desc">チャット: /v1/chat/completions 経由の OpenAI 互換の SSE。</string>
     <string name="chat_settings_runs_desc">実行: サーバーが /v1/runs を直接ストリーミングする場合にのみ使用します。</string>
@@ -3415,7 +3423,7 @@
     <string name="whats_new_full_history">全履歴を表示</string>
     <string name="whats_new_no_notes">リリースノートはありません</string>
     <string name="whats_new_title">新機能</string>
-    <string name="whats_new_subtitle">最新リリースのハイライト</string>
+    <string name="whats_new_subtitle">ハイライトと完全なリリース詳細</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">時間制限付き画面アクセスの期限切れ</string>
     <string name="bridge_notification_auto_disabled_body">操作がなかったため、画面の検査と操作をオフにしました。他の許可は変更されません。</string>
@@ -3506,7 +3514,7 @@
     <string name="active_section_dashboard_unreachable">接続できません</string>
     <string name="active_section_no_fallback_routes">フォールバックルートはまだありません</string>
     <string name="active_section_no_fallback_routes_desc">直接チャットのフォールバックやネットワーク切り替え用に、任意の API ルートを追加できます。</string>
-    <string name="active_section_add_api_fallback">フォールバックルートを追加</string>
+    <string name="active_section_add_api_fallback">Direct API ルートを追加</string>
     <string name="active_section_security_authentication">認証</string>
     <string name="active_section_dashboard_session">Dashboard セッション</string>
     <string name="active_section_credential_storage">認証情報ストレージ</string>
@@ -3572,7 +3580,7 @@
     <string name="cw_timeline_authenticated">認証を確認済み</string>
     <string name="cw_timeline_ready">接続準備完了</string>
     <string name="cw_timeline_ready_detail">Chat、Manage、Voice でこの Dashboard を使用できます</string>
-    <string name="active_section_optional_api_fallback">任意の直接 API フォールバック</string>
+    <string name="active_section_optional_api_fallback">任意の Direct API</string>
     <string name="active_section_api_not_required">この接続が Hermes Dashboard を使用する場合は必要ありません。</string>
     <string name="active_section_where_api_key">このキーはどこで入手しますか？</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY は Hermes サーバー上で作成します。このアプリからは発行されません。任意の API サーバーを有効にする場合のみ設定します。このサーバーには使用可能なキーが必要です。同じ値をここに入力してください。</string>
@@ -4522,7 +4530,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">Direct API</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">この端末で使う Dashboard と Gateway のアドレスを設定します。プライベート LAN と Tailscale ルートは HTTP または HTTPS を使用でき、公開ルートには HTTPS が必要です。</string>
     <string name="dashboard_address_editor_title">ゲートウェイのアドレス</string>
@@ -4539,7 +4547,7 @@
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
-    <string name="network_routes_summary">LAN、Tailscale、公開ルートはこの Gateway への接続経路です。API フォールバックと Relay 拡張は任意です。</string>
+    <string name="network_routes_summary">LAN、Tailscale、公開ルートはこの Gateway への接続経路です。Direct API と Relay 拡張は任意です。</string>
     <string name="network_routes_title">Network routes</string>
     <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>

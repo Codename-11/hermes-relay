@@ -209,6 +209,7 @@ internal class HermesRuntimeBinder(
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
+        chat.setDashboardSignInRequiredHandler(connection::probeNow)
         chat.setDashboardConfigLoader { connection.loadActiveDashboardConfig() }
         chat.profileSessionDeleter = connection::deleteSession
         chat.profileSessionRenamer = connection::renameSession
@@ -260,6 +261,11 @@ internal class HermesRuntimeBinder(
         }
         jobs += runtime.coroutineScope.launch {
             chat.isStreaming.collect(connection::setChatStreaming)
+        }
+        jobs += runtime.coroutineScope.launch {
+            chat.conversationBinding.collect { binding ->
+                connection.setActiveConversationTransport(binding.transport)
+            }
         }
         jobs += runtime.coroutineScope.launch {
             combine(

@@ -2436,14 +2436,11 @@ internal fun Throwable.isDashboardSignInRequiredFailure(): Boolean {
         java.util.IdentityHashMap<Throwable, Boolean>(),
     )
     while (current != null && seen.add(current)) {
-        if (
-            current is DashboardHttpException &&
-            current.statusCode == 401 &&
-            (
-                current.message.orEmpty().contains("no_cookie", ignoreCase = true) ||
-                    current.message.orEmpty().contains("unauthenticated", ignoreCase = true)
-                )
-        ) {
+        // Every 401 from an authenticated Dashboard route means the saved
+        // browser/native session can no longer authorize this request. Older
+        // gateways used `no_cookie`/`unauthenticated`; current builds may return
+        // reason codes such as `session_expired`, or no structured body at all.
+        if (current is DashboardHttpException && current.statusCode == 401) {
             return true
         }
         current = current.cause

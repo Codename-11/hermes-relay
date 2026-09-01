@@ -59,8 +59,9 @@
 ### 3. Chat via Direct API, Not Relay Proxy
 
 **Status:** Superseded as the standard route by ADR 38 (2026-07-18). Direct API
-chat remains the automatic fallback and an advanced headless compatibility
-mode; the upstream Dashboard/Gateway is now the primary connection surface.
+chat remains an explicit API-only/headless compatibility mode; the upstream
+Dashboard/Gateway is now the primary connection surface. ADR 71 removes
+availability-driven fallback between their non-interchangeable session stores.
 
 **Decision:** ~~Chat channel proxies through the relay to the WebAPI.~~ **Updated:** Chat now connects directly from the Android app to the Hermes API Server via HTTP/SSE. The relay server is only used for bridge and terminal channels.
 
@@ -2210,7 +2211,7 @@ starting connectivity does not itself require or imply a tool grant.
 
 ## ADR 38 — Dashboard/Gateway is the primary Android connection surface
 
-**Status:** Accepted (2026-07-18).
+**Status:** Superseded by ADR 71 for chat fallback semantics (2026-08-31).
 
 **Context.** Android originally treated the API server URL and bearer key as the
 identity and prerequisite for every saved connection. The app later gained the
@@ -2226,7 +2227,7 @@ stable identity independent of endpoint URLs.
 - **Dashboard/Gateway is standard.** It owns primary chat, dashboard auth,
   sessions, Manage, and Vanilla Hermes voice against unmodified upstream Hermes.
 - **API server is optional.** When discovered or explicitly configured, it is an
-  automatic chat fallback and an advanced headless compatibility surface. Its
+  API-only chat and advanced headless compatibility surface. Its
   bearer is requested and validated only when that endpoint is configured.
 - **Relay is optional.** It adds pairing, terminal, bridge/device control,
   media, notification companion, enhanced voice, and desktop tooling. It never
@@ -2238,15 +2239,14 @@ stable identity independent of endpoint URLs.
   profile's authoritative Hermes session database without proxying chat.
   Native Gateway lifecycle events take precedence, and absence of the optional
   route silently restores the vanilla behavior.
-- **Readiness is capability-based.** Chat, Manage, Voice, API fallback, and
+- **Readiness is capability-based.** Chat, Manage, Voice, Direct API, and
   Relay extensions report their own state. A missing optional endpoint does not
   mark the whole connection unhealthy.
-- **Routing is automatic.** Chat prefers Dashboard/Gateway and falls back to the
-  API server only when configured and usable. Users choose a transport only in
-  advanced diagnostics or compatibility settings, not during normal setup.
-  Endpoint discovery may advertise a conventional API route, but does not enable
-  that optional fallback unless the connection has persisted API configuration;
-  cold-start state remains unconfigured until that persisted value is hydrated.
+- **Routing is owner-bound.** Standard Chat uses Dashboard/Gateway. Legacy
+  API-only records and explicit advanced compatibility selections use the API
+  server. Live authentication or reachability never changes an open chat's
+  owner. Endpoint discovery may advertise a conventional API route, but does
+  not enable it for a Dashboard-owned conversation.
 
 **Product flow.** Normal onboarding asks for one Hermes address, discovers the
 Dashboard/Gateway, authenticates through its supported provider, and finishes
@@ -2260,8 +2260,8 @@ An API endpoint or Relay can be added later without recreating the connection.
 
 - Dashboard-only Hermes connections can chat, manage, use sessions, and use
   Vanilla Hermes voice without fake API credentials.
-- API outages do not degrade a healthy Gateway session; they remove only the
-  fallback capability.
+- API outages do not degrade a healthy Gateway session; they affect only an
+  explicit Direct API compatibility conversation.
 - Connection storage, diagnostics, backup/restore, route discovery, pairing,
   and profile/session scoping must tolerate independently absent endpoints.
 - Legacy API-only users keep working, but public documentation no longer teaches
@@ -3777,7 +3777,7 @@ be considered later without being silently introduced now.
 
 ## ADR 66 — Android Supervised Mode is a parent-controlled client policy
 
-**Status:** Implemented in code; physical managed-device certification pending (2026-08-24).
+**Status:** Implemented in code; app-specific parent credential and physical managed-device certification pending (2026-08-31).
 
 **Context.** Some operators prepare a deliberately restricted Hermes profile
 for use through a parent-supervised Android client. The profile remains the
@@ -3789,9 +3789,10 @@ child security or as a server-enforced account type.
 **Decision.** Android will treat Supervised Mode as an opt-in, locally enforced
 policy pinned to one existing Connection and one existing Hermes profile. The
 parent is responsible for preparing and reviewing that profile before enabling
-the mode. Entering, changing, or leaving the parent policy requires Android
-device authentication. That prompt authenticates an enrolled device user, not
-a distinct server-side parent identity. While the policy is active, the app restores directly
+the mode. Entering, changing, or leaving the parent policy requires the
+app-global parent PIN or password. Android's screen lock, device credential,
+and enrolled biometrics are not parent authority because the supervised user
+may legitimately control them. While the policy is active, the app restores directly
 into a restricted root and never renders the ordinary app behind an
 authentication prompt. A missing Connection, missing profile, malformed policy,
 failed authentication, process restart, or restored route that cannot prove its
@@ -3804,6 +3805,37 @@ policy editor or full application settings. Backgrounding, inactivity, process
 recreation, and leaving parent settings relock parent access according to the
 policy. Deep links, notification actions, restored navigation, shortcuts, and
 programmatic routes pass the same gate.
+
+The parent credential store persists only salted verifiers in app-private
+DataStore. Parent and recovery verifiers use independent 128-bit salts and
+PBKDF2-HMAC-SHA256 with 310,000 iterations; candidate comparison is
+constant-time. Five failures start a persisted 30-second delay, repeated
+failures increase it to a capped 15 minutes, and successful verification clears
+the counter. Enrollment first requires an explicit choice: an exactly six-digit
+PIN entered through the app keypad, or a password of at least eight and at most
+64 characters entered through the normal password keyboard. It returns a randomly
+generated six-word recovery phrase exactly once. Six distinct words from a
+128-word vocabulary provide about 42 bits of entropy: deliberately less than the
+previous opaque code, but materially easier to read, type, and send for this
+family-facing client restriction. Authenticated change and recovery
+reset replace both verifiers and issue a new recovery phrase; unauthenticated
+enrollment cannot overwrite an existing or corrupt record.
+
+An authenticated parent may remove the app-global credential without presenting
+the recovery phrase. Removal atomically deletes the credential record and sets
+every supervised policy to `enabled = false`, so no policy can remain active
+without an unlock path. All other policy configuration is retained for later
+re-enrollment. It does not delete server-owned Hermes sessions or history. If both the parent
+credential and recovery phrase are lost, the deliberate last-resort escape hatch
+is Android's **Clear data** action for the app. Uninstall/reinstall is not the
+documented recovery path because Android backup restore may restore local state.
+
+Missing, malformed, unsupported-version, weakened-KDF, and unreadable records
+fail closed. A legacy enabled policy has no trustworthy app parent identity to
+migrate, so it stays at the restricted root. Recovery requires resetting local
+app data, reconnecting, and configuring Supervised Mode again; Android must not
+disable the policy or promote the current device user automatically. Server
+sessions and history are not deleted by that local reset.
 
 The parent policy controls capabilities rather than imposing a special
 attachment count. Initial capabilities are text chat, new chat, cancel, steer,
@@ -3877,8 +3909,28 @@ or applicable legal obligations. Public language uses **Supervised Mode** or
 **parent-controlled client**, not "child account," "safe for children," or
 "server enforced."
 
+The verifier design raises the cost of an offline guess but cannot make a
+six-digit PIN high entropy. A privileged attacker who can copy or roll back the
+app-private store can attempt guesses offline or weaken the persisted backoff;
+device integrity, backup policy, and a strong parent password remain relevant.
+The recovery phrase may be copied or shared with a brief instruction to remove
+the message or saved copy from the phone after it reaches a parent-only place.
+It must otherwise be stored outside the supervised user's reach. Stock
+Android also cannot give one app a parent-only biometric enrollment or tell the
+app which enrolled fingerprint or face authenticated. Biometric convenience may
+be considered only as an explicit second layer over this app credential, never
+as proof of a distinct parent.
+
+**Localization decision.** Until physical certification and fluent security-copy
+review, the Supervised Mode and parent-authentication surface remains canonical
+English in every app locale. It intentionally falls back to English and must not
+be described as localized. Security-critical setup, recovery, migration, and
+lockout wording will move into the translated catalogs together after review;
+machine-translating only part of this boundary is not accepted.
+
 **Verification gate.** Implementation requires policy, authentication,
-navigation, process-death, deep-link, notification, capability, attachment,
+navigation, KDF-record validation, persisted throttling, change/recovery
+rotation, corruption/migration, process-death, deep-link, notification, capability, attachment,
 voice, session-ownership, Relay-tag, and revocation tests. Physical testing must
 cover the exact Android build on a managed/restricted device, including relock,
 restart, offline recovery, and attempts to escape the restricted root. Until
@@ -4039,9 +4091,10 @@ The precedence is:
    revalidated. A failed or unsupported live refresh is **Unavailable**.
 
 Android resolves each active-list row through exact foreground or detached
-ownership already held by that client, or explicit profile metadata if a
-future upstream sends it. A bounded REST directory never proves that a durable
-`session_key` is globally unique. Ambiguous or unresolved rows apply no status.
+ownership already held by that client, explicit profile metadata if a future
+upstream sends it, or the currently selected passive session when its durable
+`session_key` has exactly one owner in the current connection directory.
+Duplicate same-id owners across profiles remain ambiguous and apply no status.
 Resolved rows from a partial snapshot may update their exact owners, but they
 cannot infer absence. A missing row clears stale live state for a scope only
 when the successful process-wide snapshot was complete and every relevant row
@@ -4081,7 +4134,10 @@ paths, which concern exact Android-owned checkpoints.
 and saved-session selection establish only the shared Gateway socket. They use
 profile-scoped REST history plus process-wide `session.active_list`; while an
 unowned row with the selected durable id is live, Android performs bounded
-history refreshes and one final read after settlement. These observer paths send
+history refreshes and one final read after settlement. When that durable id has
+exactly one owner in the current connection directory, the same read-only row
+also projects Working or Waiting for the selected session; duplicate cross-profile
+owners remain neutral. These observer paths send
 no `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`.
 Exact Android-owned checkpoints retain `session.activate` with durable-resume
 fallback, and explicit send or session-config actions may resume because the user
@@ -4197,3 +4253,46 @@ large profile database remains a separate certification gate.
 `apps/desktop/src/app/session/hooks/use-session-list-actions.ts`. Android wiring
 lives in `DashboardApiClient`, `HermesRuntimeBinder`, `ChatScreen`, and
 `ChatViewModel`.
+
+---
+
+## ADR 71 — Android conversations are transport-affine
+
+**Status:** Accepted (2026-08-31).
+
+**Context.** Standard Android Chat now follows the upstream Dashboard/Gateway
+model, but Auto resolution still changed a live conversation to API-server
+sessions, completions, or runs when Dashboard sign-in expired or Gateway became
+unavailable. The optional API server could therefore make Chat appear connected
+and even complete a local turn while Dashboard session/history reads returned
+401. Gateway and API-server session ids belong to different databases and are
+not interchangeable, especially for named profile homes. Reachability of one
+surface is not authority to mutate a conversation owned by the other.
+
+**Decision.** Every Android conversation binding includes its transport owner
+alongside connection, profile, and session identity.
+
+- A standard saved connection's Auto owner is Gateway and does not change with
+  Gateway availability. `SignInRequired` requests Dashboard sign-in; a temporary
+  failure preserves transcript, draft, attachments, queued destination, and
+  retry state.
+- Missing Gateway clients and failed Gateway preflight never dispatch the turn
+  through API-server SSE. Attachments, voice sends, slash commands, queued
+  turns, session restore, and profile switches all use the same bound owner.
+- A legacy connection with API configuration but no persisted Dashboard route
+  remains API-only. Existing `api_…` records retain their API session slot.
+  Advanced manual Direct API selection is explicit and takes effect for a new
+  chat; it does not migrate an existing Gateway transcript or session.
+- Cold-start restoration selects the persisted session slot from the saved
+  connection/manual preference, not a transient auth or health verdict.
+  Dashboard history remains authoritative for Gateway bindings; API session
+  history remains authoritative only for API-owned bindings.
+- User-facing Connected and ordinary route labels describe the active binding
+  owner. A reachable sibling endpoint cannot mask sign-out or failure. Exact
+  endpoint names remain available in advanced diagnostics/compatibility UI.
+
+**Consequences.** Sessions, runs, and completions remain useful for legitimate
+API-only/headless clients, compatibility testing, and existing API records, but
+they are no longer automatic recovery for standard Chat. Users retry or sign in
+without losing local work, named profiles cannot cross databases silently, and
+readiness reflects the conversation that will actually receive the next turn.

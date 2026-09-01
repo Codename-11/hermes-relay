@@ -40,32 +40,50 @@ class SupervisedNavigationPolicyTest {
     @Test fun `parent access or ordinary mode permits add gateway`() {
         assertTrue(mayStartAddConnection(supervisedEnabled = true, parentAccessUnlocked = true))
         assertTrue(mayStartAddConnection(supervisedEnabled = false, parentAccessUnlocked = false))
+        assertFalse(
+            mayStartAddConnection(
+                supervisedEnabled = false,
+                parentAccessUnlocked = true,
+                activeTargetId = "already-started",
+            ),
+        )
     }
 
-    @Test fun `locked add gateway action has no side effects`() {
-        var navigated = false
-        var prepared = false
-        val started = runAddConnectionAction(
+    @Test fun `locked add gateway action performs no allocation or side effects`() {
+        val actions = mutableListOf<String>()
+        val target = runAddConnectionAction(
             supervisedEnabled = true,
             parentAccessUnlocked = false,
-            navigateToPair = { navigated = true },
-            prepareConnection = { prepared = true },
-        )
-        assertFalse(started)
-        assertFalse(navigated)
-        assertFalse(prepared)
-    }
-
-    @Test fun `allowed add gateway action navigates before preparation`() {
-        val actions = mutableListOf<String>()
-        val started = runAddConnectionAction(
-            supervisedEnabled = true,
-            parentAccessUnlocked = true,
+            activeTargetId = null,
+            allocateTarget = { actions += "allocate"; "target" },
+            recordTarget = { actions += "record" },
             navigateToPair = { actions += "navigate" },
             prepareConnection = { actions += "prepare" },
         )
-        assertTrue(started)
-        assertTrue(actions == listOf("navigate", "prepare"))
+        assertTrue(target == null)
+        assertTrue(actions.isEmpty())
+    }
+
+    @Test fun `allowed add gateway action records target before navigation and preparation`() {
+        val actions = mutableListOf<String>()
+        val target = runAddConnectionAction(
+            supervisedEnabled = true,
+            parentAccessUnlocked = true,
+            activeTargetId = null,
+            allocateTarget = { actions += "allocate"; "target" },
+            recordTarget = { actions += "record:$it" },
+            navigateToPair = { actions += "navigate:$it" },
+            prepareConnection = { actions += "prepare:$it" },
+        )
+        assertTrue(target == "target")
+        assertTrue(
+            actions == listOf(
+                "allocate",
+                "record:target",
+                "navigate:target",
+                "prepare:target",
+            ),
+        )
     }
 
     @Test fun `supervised redirect waits until the navigation graph has a route`() {
@@ -75,6 +93,7 @@ class SupervisedNavigationPolicyTest {
         assertTrue(isSupervisedRouteContentAllowed(true, false, Screen.Chat.route))
         assertTrue(shouldRedirectSupervisedRoute(true, false, Screen.AdvancedSettings.route))
         assertFalse(isSupervisedRouteContentAllowed(true, false, Screen.AdvancedSettings.route))
+        assertFalse(isSupervisedRouteContentAllowed(true, false, Screen.ConnectionsSettings.route))
         assertFalse(shouldRedirectSupervisedRoute(true, true, Screen.AdvancedSettings.route))
         assertTrue(isSupervisedRouteContentAllowed(true, true, Screen.AdvancedSettings.route))
     }
@@ -153,25 +172,23 @@ class SupervisedNavigationPolicyTest {
         )
     }
 
-    @Test fun `first enable requires configured policy secure screen and successful device credential`() {
+    @Test fun `first enable requires configured policy and successful app parent credential`() {
         val configured = SupervisedModePolicy(pinnedProfileName = "willow")
 
         assertFalse(
             mayEnableSupervisedMode(
                 configured,
-                deviceSecure = false,
-                deviceCredentialConfirmed = true,
+                parentCredentialConfirmed = false,
             ),
         )
         assertFalse(
             mayEnableSupervisedMode(
                 configured,
-                deviceSecure = true,
-                deviceCredentialConfirmed = false,
+                parentCredentialConfirmed = false,
             ),
         )
-        assertFalse(mayEnableSupervisedMode(SupervisedModePolicy(), true, true))
-        assertTrue(mayEnableSupervisedMode(configured, true, true))
-        assertFalse(mayEnableSupervisedMode(configured.copy(enabled = true), true, true))
+        assertFalse(mayEnableSupervisedMode(SupervisedModePolicy(), true))
+        assertTrue(mayEnableSupervisedMode(configured, true))
+        assertFalse(mayEnableSupervisedMode(configured.copy(enabled = true), true))
     }
 }

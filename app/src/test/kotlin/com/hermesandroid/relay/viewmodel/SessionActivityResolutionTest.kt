@@ -5,6 +5,7 @@ import com.hermesandroid.relay.data.SessionLiveStatus
 import com.hermesandroid.relay.network.upstream.GatewayActiveSession
 import com.hermesandroid.relay.network.upstream.GatewayActiveSessionStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,14 +41,35 @@ class SessionActivityResolutionTest {
     }
 
     @Test
-    fun `unscoped stored id stays unresolved even when bounded directory looks unique`() {
+    fun `unique selected passive owner resolves without a runtime binding`() {
         val unique = SessionActivityOwner.of("connection", "beta", "unique")
         val result = resolveGatewayActiveSessions(
             sessions = listOf(
                 GatewayActiveSession(
                     runtimeSessionId = "runtime",
                     storedSessionId = "unique",
-                    status = GatewayActiveSessionStatus.Starting,
+                    status = GatewayActiveSessionStatus.Waiting,
+                    lastActiveEpochSeconds = 1.0,
+                ),
+            ),
+            directory = setOf(alpha, unique),
+            currentOwner = unique,
+        )
+
+        assertEquals(unique, result.runtimes.single().owner)
+        assertEquals(SessionLiveStatus.Waiting, result.runtimes.single().status)
+        assertFalse(result.ambiguous)
+    }
+
+    @Test
+    fun `unique passive owner for a nonselected session stays unresolved`() {
+        val unique = SessionActivityOwner.of("connection", "beta", "unique")
+        val result = resolveGatewayActiveSessions(
+            sessions = listOf(
+                GatewayActiveSession(
+                    runtimeSessionId = "runtime",
+                    storedSessionId = "unique",
+                    status = GatewayActiveSessionStatus.Working,
                     lastActiveEpochSeconds = 1.0,
                 ),
             ),

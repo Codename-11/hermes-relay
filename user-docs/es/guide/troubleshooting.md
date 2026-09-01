@@ -36,10 +36,10 @@ HTTPS `:10443` del tailnet redirige al Dashboard local `:9119`.
 - Comprueba la URL del Dashboard/Gateway, la sesión y `/api/ws`.
 - Si aparece un error, pulsa **Retry** una sola vez.
 - Revisa los registros del servidor Hermes.
-- El API fallback opcional se diagnostica por separado; su fallo no bloquea un Gateway saludable.
+- La Direct API opcional se diagnostica por separado; su fallo no bloquea un Gateway saludable.
 - Los modelos locales pueden tardar varios minutos; si Android corta la conexión en segundo plano, la respuesta terminada se recuperará al reconectar.
 
-Si el API fallback configurado intencionadamente no está disponible, comprueba
+Si la Direct API configurada intencionadamente no está disponible, comprueba
 `API_SERVER_ENABLED`, la dirección de escucha, `http://<host>:8642/health`, la
 `API_SERVER_KEY` creada por el operador y el firewall. El inicio de sesión del Dashboard no crea esa clave.
 

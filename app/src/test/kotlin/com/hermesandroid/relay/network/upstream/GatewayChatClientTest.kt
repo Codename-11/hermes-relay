@@ -804,6 +804,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        compactingTimeoutMs: Long = 600_000L,
         callbackDispatcher: (block: () -> Unit) -> Unit = { it() },
         ticketTimeoutMs: Long = 8_000L,
     ) = GatewayChatClient(
@@ -825,6 +826,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs = rpcTimeoutMs,
         promptSubmitTimeoutMs = promptSubmitTimeoutMs,
         turnIdleTimeoutMs = turnIdleTimeoutMs,
+        compactingTimeoutMs = compactingTimeoutMs,
     )
 
     private fun awaitCondition(
@@ -862,6 +864,7 @@ class GatewayChatClientTest {
         rpcTimeoutMs: Long = 15_000L,
         promptSubmitTimeoutMs: Long = 1_800_000L,
         turnIdleTimeoutMs: Long = 180_000L,
+        compactingTimeoutMs: Long = 600_000L,
         ticketTimeoutMs: Long = 8_000L,
     ) {
         client.shutdown()
@@ -870,6 +873,7 @@ class GatewayChatClientTest {
             rpcTimeoutMs = rpcTimeoutMs,
             promptSubmitTimeoutMs = promptSubmitTimeoutMs,
             turnIdleTimeoutMs = turnIdleTimeoutMs,
+            compactingTimeoutMs = compactingTimeoutMs,
             ticketTimeoutMs = ticketTimeoutMs,
         )
     }
@@ -4926,6 +4930,85 @@ class GatewayChatClientTest {
             "watchdog must not have interrupted a live turn",
             harness.rpcLog.none { it.first == "session.interrupt" },
         )
+    }
+
+    @Test
+    fun `compacting status extends watchdog until a later completion`() {
+        rebuildClient(turnIdleTimeoutMs = 250L, compactingTimeoutMs = 1_000L)
+        val r = Recorder()
+        client.sendTurn(null, "compact once", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "status.update",
+                buildJsonObject { put("kind", "compacting") },
+                "live-1",
+            ),
+        )
+        Thread.sleep(500)
+
+        assertTrue("normal idle watchdog fired during compaction: ${r.errors}", r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"),
+        )
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `compacting heartbeats rearm watchdog beyond one compaction lease`() {
+        rebuildClient(turnIdleTimeoutMs = 200L, compactingTimeoutMs = 500L)
+        val r = Recorder()
+        client.sendTurn(null, "compact with heartbeats", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        repeat(3) {
+            serverWs.send(
+                harness.eventFrame(
+                    "status.update",
+                    buildJsonObject { put("kind", "compacting") },
+                    "live-1",
+                ),
+            )
+            Thread.sleep(300)
+        }
+
+        assertTrue("compaction lease was not rearmed: ${r.errors}", r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"),
+        )
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `non compacting status keeps the ordinary watchdog`() {
+        rebuildClient(turnIdleTimeoutMs = 250L, compactingTimeoutMs = 2_000L)
+        val r = Recorder()
+        client.sendTurn(null, "ordinary status", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(
+            harness.eventFrame(
+                "status.update",
+                buildJsonObject { put("kind", "process") },
+                "live-1",
+            ),
+        )
+
+        assertTrue("ordinary watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        harness.awaitRpc("session.interrupt")
     }
 
     @Test

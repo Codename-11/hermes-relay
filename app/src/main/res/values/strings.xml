@@ -145,7 +145,7 @@
     <string name="chat_failure_details_guidance">Hermes reported this error. The app won’t switch routes or models automatically.</string>
     <string name="chat_failure_copy_details">Copy details</string>
     <string name="chat_failure_route_gateway">Gateway</string>
-    <string name="chat_failure_route_api">API fallback</string>
+    <string name="chat_failure_route_api">Direct API</string>
     <string name="chat_open_settings">Open Settings</string>
     <string name="chat_connect_hermes">Connect Hermes</string>
     <string name="chat_try_demo">Try the demo</string>
@@ -315,7 +315,7 @@
     <string name="cw_cloud_subtitle">Connect to your hosted agent</string>
     <string name="cw_server_vps_title">Remote gateway</string>
     <string name="cw_server_vps_subtitle">Enter its Dashboard address</string>
-    <string name="cw_relay_optional_note">Private LAN and Tailscale addresses may use HTTP or HTTPS. Public addresses require HTTPS. Relay and API fallback are optional.</string>
+    <string name="cw_relay_optional_note">Private LAN and Tailscale addresses may use HTTP or HTTPS. Public addresses require HTTPS. Relay and Direct API are optional.</string>
     <string name="cw_cloud_entry_title">Connect to Nous-hosted Hermes</string>
     <string name="cw_cloud_entry_description">Enter the agent address shown in Nous Portal. You’ll sign in securely after Hermes is found.</string>
     <string name="cw_cloud_agent_name">Agent address</string>
@@ -387,7 +387,7 @@
     <string name="cw_back">Back</string>
     <string name="cw_connect_button">Connect</string>
     <string name="cw_hermes_label">Hermes</string>
-    <string name="cw_hermes_label_desc">Use this for Chat and Manage. Pair Relay later only when you enable Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the preferred upstream auth path; the API key remains the Android Chat fallback.</string>
+    <string name="cw_hermes_label_desc">Use this for Chat and Manage. Pair Relay later only when you enable Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the standard upstream auth path; an API key is only for explicit Direct API connections.</string>
     <string name="cw_api_url_label">API server URL or host</string>
     <string name="cw_api_key_label">API key</string>
     <string name="cw_api_key_placeholder">Value from API_SERVER_KEY</string>
@@ -419,7 +419,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 or http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API used by Chat and sessions — API port 8642 and http:// assumed for bare hosts (the dashboard\'s 9119 is derived separately)</string>
     <string name="cw_scan_message">Scanning this LAN for Hermes dashboard/API…</string>
-    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for the optional direct API fallback.</string>
+    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for optional Direct API compatibility.</string>
     <string name="cw_pair_relay_section">Pair Relay (optional)</string>
     <string name="cw_pair_relay_for">Pair Relay with %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Add the optional Relay extension to this saved Hermes connection. This does not add or replace a server.</string>
@@ -666,6 +666,11 @@
     <string name="changelog_state_collapsed">Collapsed</string>
     <string name="changelog_installed">Installed</string>
     <string name="changelog_also_improved">Also improved</string>
+    <string name="changelog_highlights">Highlights</string>
+    <string name="changelog_added">Added</string>
+    <string name="changelog_improved">Improved</string>
+    <string name="changelog_fixed">Fixed</string>
+    <string name="changelog_compatibility">Compatibility</string>
     <string name="changelog_toast_also">Also: %1$s</string>
     <string name="changelog_view_all">View all</string>
     <plurals name="changelog_additional_feature_count">
@@ -675,6 +680,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d fix</item>
         <item quantity="other">%1$d fixes</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d improvement</item>
+        <item quantity="other">%1$d improvements</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -742,7 +751,7 @@
     <string name="settings_hermes_management">Hermes management</string>
     <string name="settings_hermes_management_desc">Dashboard features: skills, cron, MCP, profiles, models</string>
     <string name="settings_chat">Chat</string>
-    <string name="settings_chat_desc">Chat behavior, Gateway, API fallback, tool display, message length</string>
+    <string name="settings_chat_desc">Chat behavior, Gateway, Direct API, tool display, message length</string>
     <string name="settings_voice_mode">Voice mode</string>
     <string name="settings_voice_mode_desc">Dashboard voice, realtime relay options, providers</string>
     <string name="settings_threads">Threads</string>
@@ -863,11 +872,11 @@
     <string name="chat_settings_debug">Debug</string>
     <string name="chat_settings_show_system_messages_desc">Show the server\'s hidden \"[System: …]\" markers (model / personality changes). Off matches the desktop/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Streaming endpoint</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Auto: picks the best path based on what your server exposes. Currently using: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Auto: standard connections use Gateway; API-only connections use Direct API. Currently using: </string>
     <string name="chat_settings_gateway_suffix"> (live thinking via the dashboard WebSocket)</string>
     <string name="chat_settings_chat_completions_suffix"> (chat via /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (chat via explicitly streamed /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Gateway: live thinking + rich tool events over the dashboard WebSocket (/api/ws) — what the desktop app uses. Requires Manage sign-in; falls back to SSE per turn when unavailable.</string>
+    <string name="chat_settings_gateway_desc">Gateway: live thinking + rich tool events over the dashboard WebSocket (/api/ws) — what the desktop app uses. Requires Manage sign-in; when unavailable, this chat stays on Gateway and offers sign-in or retry.</string>
     <string name="chat_settings_sessions_desc">Sessions: Hermes-native /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: OpenAI-compatible SSE via /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Runs: use only when your server streams /v1/runs directly.</string>
@@ -1018,14 +1027,14 @@
     <string name="active_section_primary_dashboard">Primary Dashboard</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">Direct API</string>
     <string name="active_section_in_use">In use</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="dashboard_gateway_configured">Configured address</string>
     <string name="dashboard_gateway_secure_origin">Authenticated Dashboard address</string>
     <string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
     <string name="network_routes_title">Network routes</string>
-    <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. API fallback and Relay extensions are optional.</string>
+    <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. Direct API and Relay extensions are optional.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
     <string name="active_section_using_now">Using now</string>
@@ -1045,7 +1054,7 @@
     <string name="active_section_dashboard_unreachable">Not reachable</string>
     <string name="active_section_no_fallback_routes">No fallback routes yet</string>
     <string name="active_section_no_fallback_routes_desc">Add a LAN, Tailscale, or public address to keep this connection available when networks change.</string>
-    <string name="active_section_add_api_fallback">Add fallback route</string>
+    <string name="active_section_add_api_fallback">Add Direct API route</string>
     <string name="active_section_security_authentication">Authentication</string>
     <string name="active_section_dashboard_session">Dashboard session</string>
     <string name="active_section_credential_storage">Credential storage</string>
@@ -1060,7 +1069,7 @@
     <string name="active_section_route_selection">Route selection</string>
     <string name="active_section_automatic">Automatic</string>
     <string name="active_section_api_access">API access</string>
-    <string name="active_section_optional_api_fallback">Optional direct API fallback</string>
+    <string name="active_section_optional_api_fallback">Optional Direct API</string>
     <string name="active_section_api_not_required">Not required when this connection uses the Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Where do I get this?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, which requires a usable key, then enter the same value here.</string>
@@ -3781,7 +3790,7 @@
     <string name="whats_new_full_history">View full history</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
-    <string name="whats_new_subtitle">Latest release highlights</string>
+    <string name="whats_new_subtitle">Highlights and complete release details</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Timed screen access expired</string>
     <string name="bridge_notification_auto_disabled_body">Screen inspection and control are off after being idle. Other grants are unchanged.</string>
@@ -4246,7 +4255,7 @@
     <string name="voice_overlay_notification_body">Microphone access remains available while Hermes is over another app.</string>
     <string name="voice_overlay_notification_stop">Stop voice</string>
     <string name="conn_info_profile_api_key_title">Profile API key</string>
-    <string name="conn_info_profile_api_key_hint">Used only for this profile’s shared multiplex API fallback. Stored encrypted; the connection key is never reused.</string>
+    <string name="conn_info_profile_api_key_hint">Used only for this profile’s shared multiplex Direct API route. Stored encrypted; the connection key is never reused.</string>
     <string name="conn_info_profile_api_key_stored">A key is stored</string>
     <string name="conn_info_profile_api_key_not_stored">No key stored</string>
     <string name="conn_info_profile_api_key_save">Save key</string>

@@ -61,6 +61,15 @@ configuration between invocations and do not add `--no-daemon` to normal dev
 commands; a different heap or Java home starts a separate daemon and discards
 the warm-process benefit.
 
+On Windows, all repository dev helpers serialize Android build and device work
+through one machine-wide lane shared by every Hermes-Relay worktree. Use
+`scripts/android-lane.ps1` for ad hoc Gradle, connected-test, and APK-install
+commands, and keep Android Studio idle while another owner holds the lane. For
+an exact commit that is already pushed, prefer the `Android On-Demand` workflow
+for heavy verification so concurrent worktrees use isolated GitHub-hosted
+runners. See [Android build execution](docs/android-build-lane.md) for cloud
+presets, the optional full local gate, status, and recovery modes.
+
 Use the narrowest command that proves the change:
 
 1. `scripts/dev.bat compile` for a Kotlin compile check.
@@ -68,7 +77,10 @@ Use the narrowest command that proves the change:
 3. `scripts/dev.bat install-fast` when the result must run on the connected
    arm64 phone. This passes `-Phermes.devAbi=arm64-v8a`, avoiding the x86,
    x86_64, and armeabi-v7a native libraries in the local APK.
-4. `scripts/dev.bat prepush` before pushing Android work.
+4. `Android On-Demand` after an exact commit is pushed for lint, broad checks,
+   assemblies, or release smoke.
+5. `scripts/dev.bat prepush` only when full local verification is explicitly
+   wanted or cloud execution is unavailable.
 
 `install-fast` is intentionally phone-specific. Use `install` for a universal
 sideload debug APK or when the target ABI is not arm64. Release builds remain
@@ -258,12 +270,16 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
 
 ## Testing
 
-- **Android pre-push gate:** `scripts\dev.bat prepush` on Windows or
-  `./scripts/dev.sh prepush` on macOS/Linux. This runs the Android repository
-  checks, Google Play debug lint, and the same focused unit-test shard used by
-  CI in one cached Gradle invocation. Run it before pushing Android PR updates
-  to catch common hosted failures without waiting for another full Actions
-  cycle; hosted CI remains the exhaustive all-variant gate.
+- **Android cloud verification (preferred for pushed work):** dispatch the
+  registered `Required checks` workflow with an exact base/head SHA pair and
+  `android_preset` set to `focused`, `lint`, `assemble-debug`, `release-smoke`,
+  or `all-final`. It calls the reusable Android workflow from `dev`. Check for
+  an existing run before dispatching the same SHA/preset again. The four
+  `all-final` compute jobs use isolated runners and may execute concurrently.
+- **Full local Android gate (optional):** `scripts\dev.bat prepush` on Windows
+  or `./scripts/dev.sh prepush` on macOS/Linux. This retains the repository
+  checks, full Android lint, and both focused flavor shards for an explicit local
+  run or cloud outage. On Windows it acquires the machine-wide lane.
 - **Focused Android unit test:** `scripts/dev.bat test-one "<fully-qualified-class-or-pattern>"`
 - **Android unit tests:** `scripts/dev.bat test` (runs the sideload debug JUnit + MockK + Compose suite)
 - **Gateway contract lab:** [`docs/gateway-contract-testing.md`](docs/gateway-contract-testing.md)
@@ -272,7 +288,7 @@ Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/pl
   device lane is scheduled automatically.
 - **Python tests:** `python -m unittest plugin.tests.test_<name>` from the repo root with the hermes-agent venv active. `pytest` works too but the pre-existing `conftest.py` imports a module that isn't always installed — `unittest` avoids that entirely.
 
-CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched.
+CI is split into path-filtered workflows: `.github/workflows/ci-android.yml` (lint + build + test on app/Gradle changes), `.github/workflows/ci-server.yml` (syntax check + focused server tests on plugin/Python changes), and `.github/workflows/ci-desktop.yml` (desktop type/build/smoke checks). They run on pushes to `main` and `dev` and on PRs targeting either when their paths are touched. The registered `ci-required.yml` dispatcher calls `android-on-demand.yml` as the trusted manual compute lane for an exact pushed commit; it does not replace required PR checks.
 Superseded Android runs on `dev` and PR refs are canceled automatically; `main`
 runs are never canceled because each release-branch commit must complete its
 independent validation.

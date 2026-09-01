@@ -292,7 +292,7 @@
     <string name="cw_cloud_subtitle">Подключитесь к своему размещённому агенту</string>
     <string name="cw_server_vps_title">Удалённый шлюз</string>
     <string name="cw_server_vps_subtitle">Введите адрес Dashboard</string>
-    <string name="cw_relay_optional_note">Частные адреса LAN и Tailscale могут использовать HTTP или HTTPS. Публичным адресам требуется HTTPS. Relay и резервный API необязательны.</string>
+    <string name="cw_relay_optional_note">Частные адреса LAN и Tailscale могут использовать HTTP или HTTPS. Публичным адресам требуется HTTPS. Relay и Direct API необязательны.</string>
     <string name="cw_cloud_entry_title">Подключиться к Hermes на хостинге Nous</string>
     <string name="cw_cloud_entry_description">Введите адрес агента, указанный в Nous Portal. После обнаружения Hermes вы безопасно войдёте в систему.</string>
     <string name="cw_cloud_agent_name">Адрес агента</string>
@@ -392,7 +392,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 или http://your-server:8642</string>
     <string name="cw_api_url_supporting">API Гермеса, используемый Чатом и сеансами — порт API 8642 и http:// предполагаются для голых хостов (порт 9119 панели управления выводится отдельно)</string>
     <string name="cw_scan_message">Сканирование этой локальной сети на предмет панели управления/API Гермеса…</string>
-    <string name="cw_dashboard_signin_hint">Войдите через панель управления, чтобы разблокировать Управление и голос — ключ API предназначен только для необязательного резервного копирования прямого API.</string>
+    <string name="cw_dashboard_signin_hint">Войдите через панель управления, чтобы разблокировать Управление и голос — ключ API предназначен только для явно настроенного Direct API.</string>
     <string name="cw_pair_relay_section">Сопряжение Relay (необязательно)</string>
     <string name="cw_pair_relay_for">Сопряжение Relay с %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Добавьте необязательное расширение Relay к этому сохранённому подключению Гермеса. Это не добавляет и не заменяет сервер.</string>
@@ -599,6 +599,11 @@
     <string name="changelog_state_collapsed">Свернуто</string>
     <string name="changelog_installed">Установлено</string>
     <string name="changelog_also_improved">Также улучшено</string>
+    <string name="changelog_highlights">Основное</string>
+    <string name="changelog_added">Добавлено</string>
+    <string name="changelog_improved">Улучшено</string>
+    <string name="changelog_fixed">Исправлено</string>
+    <string name="changelog_compatibility">Совместимость</string>
     <string name="changelog_toast_also">Также: %1$s</string>
     <string name="changelog_view_all">Показать все</string>
     <plurals name="changelog_additional_feature_count">
@@ -612,6 +617,12 @@
         <item quantity="few">%1$d исправления</item>
         <item quantity="many">%1$d исправлений</item>
         <item quantity="other">%1$d исправления</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d улучшение</item>
+        <item quantity="few">%1$d улучшения</item>
+        <item quantity="many">%1$d улучшений</item>
+        <item quantity="other">%1$d улучшения</item>
     </plurals>
     <string name="diag_title">Диагностика</string>
     <string name="diag_back">Назад</string>
@@ -671,7 +682,7 @@
     <string name="settings_hermes_management">Управление Гермесом</string>
     <string name="settings_hermes_management_desc">Функции панели управления: навыки, cron, MCP, профили, модели</string>
     <string name="settings_chat">Чат</string>
-    <string name="settings_chat_desc">Поведение чата, Gateway, резервный API, отображение инструментов, длина сообщения</string>
+    <string name="settings_chat_desc">Поведение чата, Gateway, Direct API, отображение инструментов, длина сообщения</string>
     <string name="settings_voice_mode">Режим голоса</string>
     <string name="settings_voice_mode_desc">Голос панели управления, опции Relay в реальном времени, поставщики</string>
     <string name="settings_threads">Потоки</string>
@@ -780,11 +791,11 @@
     <string name="chat_settings_debug">Отладка</string>
     <string name="chat_settings_show_system_messages_desc">Показывать скрытые сервером маркеры \&quot;[Система: …]\&quot; (изменения модели / личности). Выключено соответствует рабочему столу/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Потоковая конечная точка</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Авто: выбирает лучший путь на основе того, что ваш сервер предоставляет. В настоящее время используется:</string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Авто: стандартные подключения используют Gateway; подключения только к API используют Direct API. Сейчас используется: </string>
     <string name="chat_settings_gateway_suffix">(живое мышление через WebSocket панели управления)</string>
     <string name="chat_settings_chat_completions_suffix">(чат через /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix">(чат через явно потоковые /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Шлюз: живое мышление + богатые события инструментов через WebSocket панели управления (/api/ws) — что использует настольное приложение. Требует входа в систему Manage; возвращается к SSE на каждый ход, когда недоступен.</string>
+    <string name="chat_settings_gateway_desc">Gateway: живое мышление и расширенные события инструментов через WebSocket панели управления (/api/ws), как в настольном приложении. Требует входа в Manage; если Gateway недоступен, чат остается на нем и предлагает войти или повторить попытку.</string>
     <string name="chat_settings_sessions_desc">Сессии: Hermes-native /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Чат: совместимый с OpenAI SSE через /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Запуски: используйте только когда ваш сервер напрямую потоковые /v1/runs.</string>
@@ -916,7 +927,7 @@
     <string name="active_section_dashboard_unreachable">Недоступно</string>
     <string name="active_section_no_fallback_routes">Нет резервных маршрутов</string>
     <string name="active_section_no_fallback_routes_desc">Добавьте локальный адрес, Tailscale или публичный адрес, чтобы сохранить это соединение доступным при изменении сетей.</string>
-    <string name="active_section_add_api_fallback">Добавить резервный маршрут</string>
+    <string name="active_section_add_api_fallback">Добавить маршрут Direct API</string>
     <string name="active_section_security_authentication">Аутентификация</string>
     <string name="active_section_dashboard_session">Сессия панели управления</string>
     <string name="active_section_credential_storage">Хранение учетных данных</string>
@@ -931,7 +942,7 @@
     <string name="active_section_route_selection">Выбор маршрута</string>
     <string name="active_section_automatic">Автоматически</string>
     <string name="active_section_api_access">Доступ к API</string>
-    <string name="active_section_optional_api_fallback">Дополнительный прямой резерв API</string>
+    <string name="active_section_optional_api_fallback">Необязательный Direct API</string>
     <string name="active_section_api_not_required">Не требуется, если это соединение использует панель управления Гермесом.</string>
     <string name="active_section_where_api_key">Где взять это?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY создается на вашем сервере Гермеса; он не предоставляется этим приложением. Настройте его только при включении дополнительного сервера API, который требует рабочего ключа, затем введите то же значение здесь.</string>
@@ -3275,7 +3286,7 @@
     <string name="whats_new_full_history">Просмотреть полную историю</string>
     <string name="whats_new_no_notes">Примечания к выпуску недоступны</string>
     <string name="whats_new_title">Что нового</string>
-    <string name="whats_new_subtitle">Последние обновления</string>
+    <string name="whats_new_subtitle">Основное и полный список изменений</string>
     <string name="bridge_notification_auto_disabled_title">Временный доступ к экрану истек</string>
     <string name="bridge_notification_auto_disabled_body">Просмотр и управление экраном отключены после бездействия. Другие разрешения не изменены.</string>
     <string name="bridge_notification_control_title">Агент Гермес имеет управление устройством</string>
@@ -4263,7 +4274,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">Direct API</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">Укажите адрес Dashboard и Gateway для этого телефона. Частные маршруты LAN и Tailscale могут использовать HTTP или HTTPS; публичным маршрутам требуется HTTPS.</string>
     <string name="dashboard_address_editor_title">Адрес шлюза</string>

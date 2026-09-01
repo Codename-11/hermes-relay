@@ -6,10 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Android Supervised Mode uses app-specific parent access.** Parents choose a six-digit PIN or password, receive a shareable six-word recovery phrase, and can remove the credential without losing their supervised profile, capability, appearance, visibility, session, or relock settings. Android device credentials and biometrics no longer grant parent access.
+- **Android What's New now provides a readable, complete release record.** One overall title and summary lead into selected highlights, every remaining user-visible addition, improvement, and fix, and relevant compatibility boundaries. Toast counts and previews are derived from that same inventory, so View all no longer promises details the expanded dialog and history cannot show.
+
 ### Fixed
 
+- **Passively observed Desktop/TUI turns now show live activity in the Android session drawer.** A uniquely matched selected session projects Working or Waiting without Android resuming, activating, or interrupting the external runtime; ambiguous cross-profile matches remain neutral. (Related: #365)
+- **Hermes-Relay Plugin installs through the native Hermes command again.** The manifest remains fully described for current hosts while avoiding the installer/runtime schema mismatch in affected Hermes releases.
+- **Android Chat keeps one transport owner through sign-out and outages.** Dashboard/Gateway conversations now preserve their transcript, draft, profile, and session for sign-in or retry instead of silently sending the next turn to a reachable Direct API database. Legacy API-only connections and explicitly selected Direct API chats remain supported.
+- **Android keeps completed chat text visible when Dashboard sign-in expires.** Generic and reason-coded history `401` responses settle the local turn, preserve its transcript, and surface the existing sign-in recovery without reading another profile's API history.
+- **Android keeps long-running context compaction alive.** A client-visible compaction status extends and refreshes the Gateway turn watchdog instead of interrupting healthy compression after the ordinary idle window. (Supersedes #484.)
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)
 - **Android Chat settles an owned Gateway turn when its terminal frame is lost.** An exact idle `session.active_list` snapshot now completes the matching local stream, reconciles durable history, and drains its queued follow-up without interrupting or claiming Desktop/TUI work.
+- **Supervised Gateway setup stays parent-owned.** Add Gateway is single-flight and checks live parent authority before allocating a draft, relock/back cancels the exact pending setup, and the locked Chat footer no longer attempts protected navigation.
+- **Generated images stay visible and use their intended Chat animation.** Completed image media survives a marker-lagging history refresh, and both the built-in `image_generate` tool and profile tools ending in `_create_image` use the image-generation presentation.
 
 ## [Android 1.14.0] - 2026-08-30
 

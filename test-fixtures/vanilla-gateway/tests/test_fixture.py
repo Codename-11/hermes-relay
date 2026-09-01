@@ -123,6 +123,23 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_compaction_status_repeats_before_terminal_completion(self) -> None:
+        fixture, base_url = await self.start("compaction_status")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "message.complete",
+        )
+        events = [frame["params"] for frame in frames if frame.get("method") == "event"]
+        compacting = [
+            event for event in events
+            if event.get("type") == "status.update"
+            and event.get("payload", {}).get("kind") == "compacting"
+        ]
+        self.assertEqual(2, len(compacting))
+        self.assertEqual("message.complete", events[-1]["type"])
+
     async def test_cross_client_observer_never_claims_or_interrupts_producer(self) -> None:
         fixture, base_url = await self.start("cross_client_observation")
         producer, _ = await self.connect(base_url)
@@ -138,6 +155,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         await self.rpc(observer, 3, "session.active_list")
         active = (await observer.receive_json())["result"]["sessions"]
         self.assertEqual("working", active[0]["status"])
+        self.assertNotIn("profile", active[0])
         async with self.session.get(
             f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
             params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},

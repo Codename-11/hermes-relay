@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.annotation.RequiresApi
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.Locale
@@ -65,7 +66,6 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
 
-private const val IMAGE_GENERATION_TOOL = "image_generate"
 private const val GRID_COLUMNS = 42
 private const val GRID_ROWS = 24
 private const val DEFAULT_ANIMATION_DURATION_MS = 4_800
@@ -134,11 +134,11 @@ internal fun resolveImageGenerationVisualStyle(
 }
 
 internal fun ToolCall.showsImageGenerationPlaceholder(): Boolean =
-    !isComplete && name.trim().lowercase() == IMAGE_GENERATION_TOOL
+    !isComplete && isImageGenerationToolName(name)
 
 internal fun imageGenerationStartedAt(toolCalls: List<ToolCall>): Long? =
     toolCalls.lastOrNull {
-        it.name.trim().lowercase() == IMAGE_GENERATION_TOOL
+        isImageGenerationToolName(it.name)
     }?.startedAt
 
 internal fun formatGenerationDuration(elapsedMillis: Long): String =
@@ -155,7 +155,7 @@ internal fun shouldShowImageGenerationPlaceholder(
     hasMediaResult: Boolean,
 ): Boolean {
     val imageCalls = toolCalls.filter {
-        it.name.trim().lowercase() == IMAGE_GENERATION_TOOL
+        isImageGenerationToolName(it.name)
     }
     if (imageCalls.any { !it.isComplete }) return true
     return !hasMediaResult &&
