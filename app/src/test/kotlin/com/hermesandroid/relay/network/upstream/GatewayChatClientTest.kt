@@ -772,6 +772,7 @@ class GatewayChatClientTest {
         val moaReferences = ConcurrentLinkedQueue<GatewayMoaReference>()
         val usages = ConcurrentLinkedQueue<UsageInfo>()
         val reconcileRequests = AtomicInteger(0)
+        val completions = AtomicInteger(0)
         val completeLatch = CountDownLatch(1)
         val preflightFailures = ConcurrentLinkedQueue<String>()
 
@@ -785,7 +786,7 @@ class GatewayChatClientTest {
             onToolCallFailed = { _, _ -> },
             onTurnComplete = { },
             onReconcileRequired = { reconcileRequests.incrementAndGet() },
-            onComplete = { completeLatch.countDown() },
+            onComplete = { completions.incrementAndGet(); completeLatch.countDown() },
             onUsage = { it?.let(usages::add) },
             onError = { errors += it; completeLatch.countDown() },
             onToolGenerating = { toolGenerating += it ?: "" },
@@ -837,6 +838,21 @@ class GatewayChatClientTest {
             Thread.sleep(10)
         }
         assertTrue("condition did not settle within ${timeoutMs}ms", condition())
+    }
+
+    private fun exactActiveSessionPayload(
+        status: String,
+        liveSessionId: String = "live-1",
+        storedSessionId: String = "20260612_120000_abc123",
+    ): JsonObject = buildJsonObject {
+        put("sessions", buildJsonArray {
+            add(buildJsonObject {
+                put("id", liveSessionId)
+                put("session_key", storedSessionId)
+                put("status", status)
+                put("last_active", 1_777_000_000.0)
+            })
+        })
     }
 
     /**
@@ -4712,6 +4728,180 @@ class GatewayChatClientTest {
         assertEquals("finished offscreen", completions.single().expectedAssistantText)
         assertTrue(client.hasActiveTurn().not())
         assertTrue(harness.ticketMints.get() >= 2)
+    }
+
+    @Test
+    fun `active session idle settles exact Android turn without interrupt`() = runBlocking {
+        val recorder = Recorder()
+        client.sendTurn(null, "finish without terminal", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.start", null, "live-1"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "durable partial") },
+                "live-1",
+            ),
+        )
+        awaitCondition { recorder.textDeltas.isNotEmpty() }
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle")
+
+        assertTrue(client.listActiveSessions() is GatewayActiveSessionsResult.Success)
+        assertTrue("idle snapshot did not settle turn", recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(1, recorder.completions.get())
+        assertEquals(1, recorder.reconcileRequests.get())
+        assertTrue(recorder.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `active session idle never settles passively observed turn`() = runBlocking {
+        val recorder = Recorder()
+        client.setUnsolicitedTurnProvider {
+            GatewayInboundTurnRegistration(recorder.callbacks) { true }
+        }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(harness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            harness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "desktop-owned") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { recorder.textDeltas.isNotEmpty() }
+        harness.activeSessionListPayload = exactActiveSessionPayload(
+            status = "idle",
+            liveSessionId = "live-resumed",
+            storedSessionId = "stored-session",
+        )
+
+        client.listActiveSessions()
+        assertFalse(recorder.completeLatch.await(250, TimeUnit.MILLISECONDS))
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "desktop-owned") },
+                "live-resumed",
+            ),
+        )
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `stale active session snapshot cannot settle newer turn generation`() = runBlocking {
+        val first = Recorder()
+        client.sendTurn(null, "first", null, first.callbacks) { first.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.start", null, "live-1"))
+        serverWs.send(
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "first") }, "live-1"),
+        )
+        awaitCondition { first.textDeltas.isNotEmpty() }
+
+        harness.suppressAckMethods += "session.active_list"
+        val staleSnapshot = scope.async { client.listActiveSessions() }
+        val staleAck = harness.awaitPendingAck()
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "first") },
+                "live-1",
+            ),
+        )
+        assertTrue(first.completeLatch.await(5, TimeUnit.SECONDS))
+
+        val second = Recorder()
+        client.sendTurn(
+            "20260612_120000_abc123",
+            "second",
+            null,
+            second.callbacks,
+        ) { second.preflightFailures += it }
+        harness.awaitRpcCount("prompt.submit", 2)
+        serverWs.send(harness.eventFrame("message.start", null, "live-1"))
+        serverWs.send(
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "second") }, "live-1"),
+        )
+        awaitCondition { second.textDeltas.isNotEmpty() }
+
+        harness.releaseAck(staleAck, exactActiveSessionPayload("idle"))
+        assertTrue(staleSnapshot.await() is GatewayActiveSessionsResult.Success)
+        assertFalse(second.completeLatch.await(250, TimeUnit.MILLISECONDS))
+        assertEquals(0, second.reconcileRequests.get())
+
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "second") },
+                "live-1",
+            ),
+        )
+        assertTrue(second.completeLatch.await(5, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `cancellation wins over delayed active session idle snapshot`() = runBlocking {
+        val recorder = Recorder()
+        val handle = client.sendTurn(null, "cancel me", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.start", null, "live-1"))
+        serverWs.send(
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "partial") }, "live-1"),
+        )
+        awaitCondition { recorder.textDeltas.isNotEmpty() }
+
+        harness.suppressAckMethods += "session.active_list"
+        val delayedSnapshot = scope.async { client.listActiveSessions() }
+        val delayedAck = harness.awaitPendingAck()
+        handle.cancel()
+        harness.awaitRpc("session.interrupt")
+        harness.releaseAck(delayedAck, exactActiveSessionPayload("idle"))
+
+        assertTrue(delayedSnapshot.await() is GatewayActiveSessionsResult.Success)
+        assertEquals(0, recorder.completions.get())
+        assertEquals(0, recorder.reconcileRequests.get())
+    }
+
+    @Test
+    fun `late terminal after active session settle is consumed once`() = runBlocking {
+        val recorder = Recorder()
+        val unmatched = ConcurrentLinkedQueue<GatewayBackgroundTurnCompletion>()
+        client.setUnmatchedTurnCompleteListener(unmatched::add)
+        client.sendTurn(null, "late terminal", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.start", null, "live-1"))
+        serverWs.send(
+            harness.eventFrame("message.delta", buildJsonObject { put("text", "done") }, "live-1"),
+        )
+        awaitCondition { recorder.textDeltas.isNotEmpty() }
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle")
+        client.listActiveSessions()
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+
+        serverWs.send(
+            harness.eventFrame(
+                "message.complete",
+                buildJsonObject { put("text", "done") },
+                "live-1",
+            ),
+        )
+        Thread.sleep(150)
+        assertEquals(1, recorder.completions.get())
+        assertTrue(unmatched.isEmpty())
     }
 
     @Test

@@ -3015,6 +3015,51 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun queuedCorrectionDrainsOnceAfterOwnedTurnSettlesFromActiveSessionIdle() = runBlocking {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.sendMessage("Original Android turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Answer without terminal") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Queued correction")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Queued correction") }
+        persistedHistory = persistedAnswerHistory("Answer without terminal", "settled-answer")
+        gatewayHarness.activeSessionListPayload = buildJsonObject {
+            put("sessions", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "live-resumed")
+                    put("session_key", STORED_SESSION_ID)
+                    put("status", "idle")
+                    put("last_active", 1_777_000_000.0)
+                })
+            })
+        }
+
+        gatewayClient.listActiveSessions()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        awaitCondition {
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Queued correction") &&
+                    params["queued"] == JsonPrimitive(true)
+            } == 1
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertTrue(viewModel.steerableTurn.value)
+    }
+
+    @Test
     fun multipleQueuedMessagesDrainAsAnOwnedRunChain() {
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", null),

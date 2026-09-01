@@ -239,6 +239,37 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fixture.scenario.live_session_id, events[-1]["session_id"])
         self.assertNotIn("message.complete", [event["type"] for event in events])
 
+    async def test_active_list_idle_settles_without_message_complete(self) -> None:
+        fixture, base_url = await self.start("terminal_gap_active_list")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "message.delta",
+        )
+        for _ in range(50):
+            async with self.session.get(f"{base_url}/__fixture__/state") as response:
+                state = await response.json()
+            if not state["running"]:
+                break
+            await asyncio.sleep(0.01)
+        self.assertFalse(state["running"])
+
+        await self.rpc(
+            ws,
+            2,
+            "session.active_list",
+            {"current_session_id": fixture.scenario.live_session_id},
+        )
+        snapshot = (await ws.receive_json())["result"]["sessions"]
+        self.assertEqual("idle", snapshot[0]["status"])
+        self.assertEqual(fixture.scenario.live_session_id, snapshot[0]["id"])
+        self.assertEqual(fixture.scenario.stored_session_id, snapshot[0]["session_key"])
+        self.assertNotIn(
+            "message.complete",
+            [frame.get("params", {}).get("type") for frame in frames],
+        )
+
     async def test_queued_follow_up_runs_after_first_turn(self) -> None:
         _, base_url = await self.start("queued_follow_up")
         ws, _ = await self.connect(base_url)
@@ -353,6 +384,7 @@ class ScenarioTestCase(unittest.TestCase):
             "rapid_tools_interims",
             "subagent_child_preview",
             "terminal_gap_activate",
+            "terminal_gap_active_list",
             "terminal_gap_session_info",
             "queued_follow_up",
             "scope_rejection_inputs",
@@ -388,6 +420,10 @@ class ScenarioTestCase(unittest.TestCase):
                 "gateway.session_activate_live",
             ),
             load_scenario("terminal_gap_activate").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_active_list",),
+            load_scenario("terminal_gap_active_list").contract_requirements,
         )
         self.assertEqual(
             ("gateway.settled_session_info",),
