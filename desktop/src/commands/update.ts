@@ -34,6 +34,7 @@ import { isDaemonProcessAlive, readDaemonStatus } from '../lib/daemonStatus.js'
 
 export interface UpdateCommandOptions {
   platform?: NodeJS.Platform
+  arch?: string
   bundle?: WindowsBundleState
 }
 
@@ -182,15 +183,19 @@ export async function updateCommand(
 
   const repo = typeof args.flags.repo === 'string' ? args.flags.repo : undefined
   const platform = options.platform ?? process.platform
+  const arch = options.arch ?? process.arch
   const bundle = options.bundle ?? detectWindowsBundle({ platform })
   const installer = installerRequested || (platform === 'win32' && bundle.installed)
   const target = installer ? 'cli_ui' : 'cli'
+  const selectedAssetName = installer
+    ? 'hermes-relay-windows-x64-setup.exe'
+    : assetNameForPlatform(platform, arch)
 
   let info: UpdateInfo | null = null
   try {
     const checkOpts = {
       ...(repo !== undefined ? { repo } : {}),
-      ...(installer ? { assetName: 'hermes-relay-windows-x64-setup.exe' } : {})
+      ...(selectedAssetName !== null ? { assetName: selectedAssetName } : {})
     }
     info = await checkForUpdate(checkOpts)
   } catch (err) {
@@ -292,7 +297,7 @@ export async function updateCommand(
   }
 
   // Refuse to proceed if this platform has no matching asset.
-  const wantAsset = installer ? 'hermes-relay-windows-x64-setup.exe' : assetNameForPlatform()
+  const wantAsset = selectedAssetName
   if (!wantAsset || !info.asset_url) {
     const msg = `no binary available for ${process.platform}/${process.arch}`
     if (wantJson) {
