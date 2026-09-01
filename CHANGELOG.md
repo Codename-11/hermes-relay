@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Android Chat and Voice use tablet space intentionally.** Expanded layouts keep introductions, transcripts, composer controls, and status chrome on readable centered rails, while landscape Voice Focus separates identity controls from conversation activity without changing phone or portrait interaction behavior.
 - **Android Supervised Mode uses app-specific parent access.** Parents choose a six-digit PIN or password, receive a shareable six-word recovery phrase, and can remove the credential without losing their supervised profile, capability, appearance, visibility, session, or relock settings. Android device credentials and biometrics no longer grant parent access.
 - **Android What's New now provides a readable, complete release record.** One overall title and summary lead into selected highlights, every remaining user-visible addition, improvement, and fix, and relevant compatibility boundaries. Toast counts and previews are derived from that same inventory, so View all no longer promises details the expanded dialog and history cannot show.
 
