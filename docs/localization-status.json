@@ -13,24 +13,14 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "ad8ea753dbd1018d8ce6eb1ecfa7add87376c13c5c453f3ae5276635cfa22ec0",
+        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
         "readme": "english-fallback",
-        "user_docs": "core-pages",
-        "website": "complete"
-      },
-      "docs_locale": "de",
-      "docs_source_sha256": {
-        "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
-        "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
-        "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
-      },
-      "website_source_sha256": "d46cda2f01180304190606db2f7817f84d47f49d33806898cda242b58b1e8f20"
+        "user_docs": "english-fallback"
+      }
     },
     "en": {
       "native_name": "English",
@@ -48,24 +38,14 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "ad8ea753dbd1018d8ce6eb1ecfa7add87376c13c5c453f3ae5276635cfa22ec0",
+        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
         "readme": "english-fallback",
-        "user_docs": "core-pages",
-        "website": "complete"
-      },
-      "docs_locale": "es",
-      "docs_source_sha256": {
-        "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
-        "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
-        "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
-      },
-      "website_source_sha256": "d46cda2f01180304190606db2f7817f84d47f49d33806898cda242b58b1e8f20"
+        "user_docs": "english-fallback"
+      }
     },
     "ja": {
       "native_name": "日本語",
