@@ -549,6 +549,28 @@ class GatewayChatClient(
     )
 
     /**
+     * One exact turn settled from authoritative session state may still receive
+     * the terminal frame that was already in flight. Consume only that terminal
+     * so it cannot be reported as a second unmatched completion. A subsequent
+     * message.start clears the drain because it establishes the next turn on
+     * the same live runtime.
+     */
+    @Volatile
+    private var settledTurnDrain: SettledTurnDrain? = null
+
+    private data class SettledTurnDrain(
+        val storedSessionId: String,
+        val liveSessionId: String,
+    )
+
+    private data class ActiveTurnLivenessProbe(
+        val turn: GatewayTurn,
+        val storedSessionId: String,
+        val liveSessionId: String,
+        val progressGeneration: Long,
+    )
+
+    /**
      * Creates UI callbacks when the server starts a turn that has no matching
      * [sendTurn] call (for example a background-process completion). The
      * provider is consulted only for an explicit `message.start` whose live
@@ -677,6 +699,7 @@ class GatewayChatClient(
     ): ActiveTurnHandle {
         val turn = GatewayTurn(
             callbacks = dispatchOn(callbacks),
+            androidOwned = true,
             onTransportAccepted = onTransportAccepted,
         )
         // Warm = the connection-establish phases are skipped this turn (socket
@@ -724,6 +747,10 @@ class GatewayChatClient(
                     cleanupStagedAttachments(stagedImagePaths)
                     return@launch
                 }
+                // A newly accepted Android send is a distinct generation on
+                // this runtime. Its terminal must never be consumed by the
+                // prior turn's optional late-terminal drain.
+                settledTurnDrain = null
                 activeTurn = turn
                 turn.armWatchdog()
                 // Generic `file.attach` uploads are staged artifacts, not
@@ -1363,6 +1390,7 @@ class GatewayChatClient(
                     callbacks = dispatchOn(callbacks),
                     dedupeAdjacentMessageStarts = true,
                     deferEvents = true,
+                    androidOwned = true,
                 ).also { turn ->
                     turn.markRecoveredStarted()
                     activeTurn = turn
@@ -1486,6 +1514,7 @@ class GatewayChatClient(
                     boundTurn = GatewayTurn(
                         callbacks = dispatchOn(callbacks),
                         dedupeAdjacentMessageStarts = true,
+                        androidOwned = true,
                     ).also { turn ->
                         turn.markRecoveredStarted()
                         activeTurn = turn
@@ -1519,6 +1548,7 @@ class GatewayChatClient(
                     val queuedTurn = GatewayTurn(
                         callbacks = dispatchOn(registration.callbacks),
                         dedupeAdjacentMessageStarts = true,
+                        androidOwned = true,
                     )
                     // recoverTurn is resumed on its caller's coroutine context;
                     // ChatViewModel calls it from Main, so this admission runs
@@ -2414,6 +2444,7 @@ class GatewayChatClient(
         } catch (error: Exception) {
             return GatewayActiveSessionsResult.TransientFailure(error)
         }
+        val livenessProbe = captureActiveTurnLivenessProbe()
         val result = rpc(
             "session.active_list",
             buildJsonObject {
@@ -2433,9 +2464,55 @@ class GatewayChatClient(
             val payload = result.getOrThrow()
             val rows = payload["sessions"] as? JsonArray
                 ?: throw GatewayRpcException("session.active_list returned no sessions array")
-            GatewayActiveSessionsResult.Success(rows.map(::parseGatewayActiveSession))
+            val sessions = rows.map(::parseGatewayActiveSession)
+            reconcileActiveTurnFromSnapshot(livenessProbe, sessions)
+            GatewayActiveSessionsResult.Success(sessions)
         } catch (parseError: Exception) {
             GatewayActiveSessionsResult.TransientFailure(parseError)
+        }
+    }
+
+    /**
+     * Capture only a locally submitted/recovered turn. Merely observing an
+     * exact session through the shared Gateway socket never grants Android
+     * authority to settle Desktop/TUI work.
+     */
+    private fun captureActiveTurnLivenessProbe(): ActiveTurnLivenessProbe? {
+        val turn = activeTurn ?: return null
+        val generation = turn.captureLivenessGeneration() ?: return null
+        val storedId = storedSessionId ?: return null
+        val liveId = liveSessionId ?: return null
+        return ActiveTurnLivenessProbe(turn, storedId, liveId, generation)
+    }
+
+    /**
+     * `session.active_list` is process-wide, but a row naming both identifiers
+     * already owned by this client is authoritative for that exact runtime.
+     * Fence the delayed snapshot by turn identity and progress generation so an
+     * old idle result cannot settle a newer turn or race newer live events.
+     */
+    private fun reconcileActiveTurnFromSnapshot(
+        probe: ActiveTurnLivenessProbe?,
+        sessions: List<GatewayActiveSession>,
+    ) {
+        probe ?: return
+        if (activeTurn !== probe.turn ||
+            storedSessionId != probe.storedSessionId ||
+            liveSessionId != probe.liveSessionId
+        ) return
+        val exact = sessions.singleOrNull { row ->
+            row.runtimeSessionId == probe.liveSessionId &&
+                row.storedSessionId == probe.storedSessionId
+        } ?: return
+        if (exact.status != GatewayActiveSessionStatus.Idle) return
+        if (probe.turn.settleFromAuthoritativeSessionState(
+                running = false,
+                source = "session.active_list",
+                expectedProgressGeneration = probe.progressGeneration,
+            )
+        ) {
+            if (activeTurn === probe.turn) activeTurn = null
+            if (!AppForegroundTracker.isForeground.value) scheduleBackgroundClose()
         }
     }
 
@@ -2831,6 +2908,7 @@ class GatewayChatClient(
         activeTurn = null
         backgroundTurns.clear()
         cancelledTurnDrain = null
+        settledTurnDrain = null
         unsolicitedTurnProvider = null
         coldPrewarmSessionReadyListener = null
         unmatchedTurnCompleteListener = null
@@ -3267,6 +3345,7 @@ class GatewayChatClient(
         val requestedProfile = currentSessionProfile()
         if (requestedStoredId != null && requestedStoredId != storedSessionId) {
             cancelledTurnDrain = null
+            settledTurnDrain = null
         }
         if (
             liveSessionId != null &&
@@ -3336,6 +3415,7 @@ class GatewayChatClient(
         storedSessionId = stored
         liveSessionProfile = requestedProfile
         if (cancelledTurnDrain?.storedSessionId != stored) cancelledTurnDrain = null
+        if (settledTurnDrain?.storedSessionId != stored) settledTurnDrain = null
         turn.callbacks.onSessionId(stored)
     }
 
@@ -3713,6 +3793,7 @@ class GatewayChatClient(
         }
         dispatchProcessEvent(type, payload, eventSessionId)
         if (consumeCancelledTurnEvent(type, eventSessionId)) return
+        if (consumeSettledTurnTerminal(type, eventSessionId)) return
         var turn = activeTurn
         if (turn == null && type == "message.start") {
             // Unsolicited turns are accepted only with an explicit exact live-
@@ -4237,6 +4318,7 @@ class GatewayChatClient(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
         deferEvents: Boolean = false,
+        private val androidOwned: Boolean = false,
         private val onTransportAccepted: () -> Unit = { },
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
@@ -4263,6 +4345,7 @@ class GatewayChatClient(
 
         private val rejoinAttempts = java.util.concurrent.atomic.AtomicInteger(0)
         private val transportAccepted = AtomicBoolean(false)
+        private val progressGeneration = java.util.concurrent.atomic.AtomicLong(0L)
 
         fun markTransportAccepted() {
             if (transportAccepted.compareAndSet(false, true)) {
@@ -4339,6 +4422,7 @@ class GatewayChatClient(
             if (settledWithoutTerminalFrame) return
             if (type != "session.info") {
                 started = true
+                progressGeneration.incrementAndGet()
                 markTransportAccepted()
             }
             tracer.mark("ttfe")
@@ -4368,10 +4452,20 @@ class GatewayChatClient(
          * exact turn has proved it went live. A pre-start `running=false`
          * heartbeat can race `prompt.submit` and is not a completion boundary.
          */
-        fun settleFromAuthoritativeSessionState(running: Boolean?, source: String): Boolean {
+        fun captureLivenessGeneration(): Long? =
+            if (androidOwned && started && !ended) progressGeneration.get() else null
+
+        fun settleFromAuthoritativeSessionState(
+            running: Boolean?,
+            source: String,
+            expectedProgressGeneration: Long? = null,
+        ): Boolean {
             if (running != false || !started) return false
             val settled = synchronized(deferredEventLock) {
-                if (ended) {
+                if (ended ||
+                    (expectedProgressGeneration != null &&
+                        progressGeneration.get() != expectedProgressGeneration)
+                ) {
                     false
                 } else {
                     settledWithoutTerminalFrame = true
@@ -4382,6 +4476,7 @@ class GatewayChatClient(
             if (!settled) return false
 
             disarmWatchdog()
+            armSettledTurnDrain()
             Log.i(TAG, "Gateway turn settled from $source after missing terminal frame")
             callbacks.onReconcileRequired()
             callbacks.onComplete()
@@ -4402,6 +4497,7 @@ class GatewayChatClient(
                         callbacks = dispatchOn(registration.callbacks),
                         dedupeAdjacentMessageStarts = true,
                         deferEvents = true,
+                        androidOwned = true,
                     )
                 }
             }
@@ -4527,6 +4623,26 @@ class GatewayChatClient(
             submitWaitUntilMs = System.currentTimeMillis() + CANCELLED_TURN_SUBMIT_WAIT_MS,
             terminalRequired = terminalRequired,
         )
+    }
+
+    private fun armSettledTurnDrain() {
+        val storedId = storedSessionId ?: return
+        val liveId = liveSessionId ?: return
+        settledTurnDrain = SettledTurnDrain(storedId, liveId)
+    }
+
+    /** Consume one late terminal from a turn already settled by session state. */
+    private fun consumeSettledTurnTerminal(type: String, eventSessionId: String?): Boolean {
+        val drain = settledTurnDrain ?: return false
+        if (eventSessionId != drain.liveSessionId) return false
+        if (type == "message.start") {
+            if (settledTurnDrain === drain) settledTurnDrain = null
+            return false
+        }
+        if (type != "message.complete" && type != "error") return false
+        if (settledTurnDrain === drain) settledTurnDrain = null
+        Log.d(TAG, "Ignored late terminal for gateway turn settled from session state")
+        return true
     }
 
     private fun updateCancelledDrainLiveSession(storedId: String, liveId: String) {

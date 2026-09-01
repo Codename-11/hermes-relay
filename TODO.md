@@ -28,8 +28,11 @@ and older Gateways without `session.active_list`. Before calling the status
 model device-certified:
 
 - Exercise working, quiet tool-heavy work, each pending-input surface, normal
-  completion, Stop, reconnect, app restart, and process recreation against
-  current vanilla upstream.
+  completion, a lost terminal followed by an exact active-list Idle row, Stop,
+  reconnect, app restart, and process recreation against current vanilla
+  upstream. Confirm the lost-terminal path preserves the partial transcript,
+  settles composer/steering state, and drains or cancels queued corrections
+  exactly once according to the owning turn outcome.
 - Verify All Profiles with duplicate session ids across two profiles and two
   saved connections; no late snapshot or old socket generation may mark the
   wrong row live.

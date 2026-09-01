@@ -3710,15 +3710,20 @@ live even when upstream had already persisted the final answer. The earlier
 visible-chat Idle reattach fix covered a socket that closed after foreground
 prewarm; it did not cover this already-active turn state.
 
-**Decision.** A Gateway turn may settle from `session.activate` or exact-session
-`session.info` only when the turn has already received turn-scoped activity and
-upstream reports `running=false`. Pre-start idle snapshots are ignored because
-they can race prompt admission. This backstop is a successful server-owned
-settle, not cancellation or transport failure: Android completes the local
-stream, keeps the durable session identity, performs bounded identity-fenced
-history reconciliation, and never resubmits through API fallback. Cold open
-continues to use `session.resume`; an authoritative resume rejection remains
-visible and cannot create or switch to a replacement context.
+**Decision.** A Gateway turn may settle from `session.activate`, exact-session
+`session.info`, or an exact live/durable `session.active_list` row only when the
+turn is Android-owned, has already received turn-scoped activity, and upstream
+reports `running=false` or Idle. The active-list request captures the exact turn
+and its progress generation; a session/profile switch, cancellation, newer turn,
+or intervening live event rejects the delayed snapshot. Pre-start idle snapshots
+and passively observed Desktop/TUI turns are never eligible. This backstop is a
+successful server-owned settle, not cancellation or transport failure: Android
+completes the local stream, keeps the durable session identity, performs bounded
+identity-fenced history reconciliation, consumes one late terminal without
+double-completion, and never resubmits through API fallback. A locally queued
+correction drains once through its existing owner chain after settlement. Cold
+open continues to use `session.resume`; an authoritative resume rejection
+remains visible and cannot create or switch to a replacement context.
 
 The recovery writes one bounded content-free diagnostic containing only route,
 missing-terminal phase, and reconciliation action. It records no prompt or

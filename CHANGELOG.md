@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)
+- **Android Chat settles an owned Gateway turn when its terminal frame is lost.** An exact idle `session.active_list` snapshot now completes the matching local stream, reconciles durable history, and drains its queued follow-up without interrupting or claiming Desktop/TUI work.
 
 ## [Android 1.14.0] - 2026-08-30
 
