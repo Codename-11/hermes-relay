@@ -68,6 +68,10 @@ jobs:
               exit 1
             fi
           done
+          if [ "$ANDROID" = "true" ] && [[ "$ANDROID_VERSION" == *-* ]]; then
+            echo "::error::Coordinated Android approval is stable-only; use a dev candidate tag for prereleases"
+            exit 1
+          fi
 
   android:
     name: Approve Hermes-Relay Android

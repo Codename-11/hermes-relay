@@ -88,6 +88,10 @@ const androidPreflightWorkflow = readFileSync(
   join(repoRoot, '.github', 'workflows', 'play-preflight-android.yml'),
   'utf8',
 );
+const androidApprovalWorkflow = readFileSync(
+  join(repoRoot, '.github', 'workflows', 'approve-release-android.yml'),
+  'utf8',
+);
 const androidReleaseWorkflow = readFileSync(
   join(repoRoot, '.github', 'workflows', 'release-android.yml'),
   'utf8',
@@ -115,10 +119,12 @@ assert.match(cliReleaseWorkflow, /name: Restore exact-source tray build cache[\s
 assert.match(desktopCiWorkflow, /name: Restore exact-source tray build cache[\s\S]*?actions\/cache@v5/);
 assert.match(pluginReleaseWorkflow, /workflow_dispatch:[\s\S]*?Approved Plugin version/);
 assert.match(androidPreflightWorkflow, /Package immutable preflight artifacts/);
+assert.match(androidApprovalWorkflow, /Android public approval accepts stable SemVer only/);
 assert.match(androidReleaseWorkflow, /Download exact stable preflight artifacts/);
 assert.match(androidReleaseWorkflow, /artifact-ids: \$\{\{ needs\.validate\.outputs\.preflight_artifact_id \}\}/);
 assert.match(requiredChecksWorkflow, /name: Reuse exact-tree required checks/);
 assert.match(requiredChecksWorkflow, /name: required-checks-\$\{\{ needs\.changes\.outputs\.tree \}\}/);
 assert.match(releaseTrainWorkflow, /name: Hermes-Relay Coordinated Release Approval/);
+assert.match(releaseTrainWorkflow, /Coordinated Android approval is stable-only/);
 
 console.log('CI path classification tests passed.');

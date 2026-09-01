@@ -40,6 +40,10 @@ jobs:
             echo "::error::Hermes-Relay Android Release Approval must run from main, not $GITHUB_REF"
             exit 1
           fi
+          if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Android public approval accepts stable SemVer only: $REQUESTED_VERSION"
+            exit 1
+          fi
           TOML_VERSION=$(grep -oP 'appVersionName\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
           if [ "$REQUESTED_VERSION" != "$TOML_VERSION" ]; then
             echo "::error::Requested version $REQUESTED_VERSION does not match appVersionName $TOML_VERSION"
