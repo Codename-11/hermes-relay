@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Passively observed Desktop/TUI turns now show live activity in the Android session drawer.** A uniquely matched selected session projects Working or Waiting without Android resuming, activating, or interrupting the external runtime; ambiguous cross-profile matches remain neutral. (Related: #365)
 - **Hermes-Relay Plugin installs through the native Hermes command again.** The manifest remains fully described for current hosts while avoiding the installer/runtime schema mismatch in affected Hermes releases.
 - **Android Chat keeps one transport owner through sign-out and outages.** Dashboard/Gateway conversations now preserve their transcript, draft, profile, and session for sign-in or retry instead of silently sending the next turn to a reachable Direct API database. Legacy API-only connections and explicitly selected Direct API chats remain supported.
 - **Android keeps completed chat text visible when Dashboard sign-in expires.** Generic and reason-coded history `401` responses settle the local turn, preserve its transcript, and surface the existing sign-in recovery without reading another profile's API history.

@@ -3772,6 +3772,16 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition {
             gatewayHarness.rpcLog.count { it.first == "session.active_list" } > baselineActiveList
         }
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
+                SessionActivityState.Working
+        }
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("waiting")
+        viewModel.requestSessionActivityRefresh()
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
+                SessionActivityState.NeedsInput
+        }
         persistedHistory = listOf(
             MessageItem(
                 id = "desktop-answer",
