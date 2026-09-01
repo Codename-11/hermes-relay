@@ -628,6 +628,21 @@ and the release notes and learn only what the software does.
 
 ### 3. Build and verify locally
 
+During release-note/version iteration, use the narrow release-prep lane:
+
+```powershell
+python scripts/android-prepush.py --release-prep
+```
+
+It runs release metadata checks plus the rendered Changelog/What's New tests in
+the serialized Android lane. Once the exact commit is pushed, current-head CI
+and Play preflight own lint, focused shards, both-flavor assemblies, signing,
+and final package scans. Do not repeat the complete local release build unless
+cloud execution is unavailable or explicit local artifact/device proof is
+needed.
+
+For that explicit full local proof:
+
 ```bat
 scripts\dev.bat bundle
 keytool -printcert -jarfile app\build\outputs\bundle\googlePlayRelease\hermes-relay-*-googlePlay-release.aab
@@ -661,14 +676,17 @@ The preflight workflow:
 3. builds and release-signs the same APK/AAB variants used by the public release;
 4. scans the final minified APK DEX for unsupported collection calls;
 5. uploads the Google Play AAB as a private **Production draft**; and
-6. records a 30-day preflight proof keyed to the version and Git tree hash.
+6. retains the exact signed sideload APK, Play AAB, R8 mappings, manifest, and
+   checksums as one immutable 30-day artifact keyed to version and Git tree.
 
 No sideload APK or GitHub Release is published by preflight. A successful signed
-build, final DEX scan, and Production-draft upload is the automated Play release
-gate. Play Console pre-review and pre-launch reports are informational and
-non-blocking because their detailed results are not exposed through the release
-automation API. If the release source changes after preflight, rerun it—the
-approval workflow matches the complete Git tree, not just the version number.
+build, final package scans, and Production-draft upload is the automated Play
+release gate. The private artifact is immutable and hash-verified again before
+publication; the stable release workflow does not rebuild those bytes. Play
+Console pre-review and pre-launch reports are informational and non-blocking
+because their detailed results are not exposed through the release automation
+API. If the release source changes after preflight, rerun it—the approval
+workflow matches the complete Git tree, not just the version number.
 
 GitHub exposes manual workflows only after their workflow file exists on the
 default branch. For the first release that introduces this process, merge the
@@ -709,12 +727,13 @@ from `main`; every release job explicitly checks out and verifies the immutable
 an existing tag or changing its artifact tree. Manual stable tags are still
 guarded by the same preflight proof in the tag workflow.
 
-The tag-triggered `.github/workflows/release-android.yml` rebuilds and scans the
-artifacts, changes the existing Play Production draft to `completed` (submitting
-it for review), and only after Play accepts that operation creates the public
-GitHub Release with the sideload APK. A missing preflight, changed release tree,
-missing Play credential, or Play submission failure prevents public GitHub
-publication.
+The tag-triggered `.github/workflows/release-android.yml` downloads the exact
+private preflight artifact by ID, verifies its source workflow, manifest, tree,
+version, sizes, and hashes, reruns the package scanners, then changes the
+existing Play Production draft to `completed` (submitting it for review). Only
+after Play accepts that operation does it publish those same APK/AAB bytes on
+GitHub. A missing preflight, changed release tree, artifact mismatch, missing
+Play credential, or Play submission failure prevents public publication.
 
 Plugin/Python version files are intentionally not part of an Android app
 release unless the plugin package itself is also being released.
@@ -909,26 +928,37 @@ Android, Plugin, dashboard, and desktop now have separate CI/release lanes.
 This keeps a dashboard CSS fix from running the full server suite, and keeps
 plugin changes from forcing an Android app `versionCode` bump.
 
+Every successful `Required checks` run records a short-lived proof keyed to the
+checked Git tree. For the canonical `dev` → `main` release PR, CI first proves
+the simulated merge tree is identical to the `dev` tree. If an unexpired proof
+from a successful Required-checks run exists, the PR verifies and reuses it;
+otherwise it automatically falls back to the normal path-aware matrix. Content
+changes can never reuse an older proof because they change the tree hash.
+
 On every push of a tag matching `android-v*`, `.github/workflows/release-android.yml`:
 
 1. Verifies a stable tag resolves to a commit contained in `main`, or a
    prerelease tag resolves to a commit contained in `dev`, and that the tag matches `appVersionName` in
    `gradle/libs.versions.toml` (mismatches fail the workflow).
-2. Runs the Android debug build and the stable sideload pairing/connection
-   regression slice with explicit timeouts.
-3. Decodes `HERMES_KEYSTORE_BASE64` into `$RUNNER_TEMP/release.keystore`
-   and exports `HERMES_KEYSTORE_PATH` (skipped if the secret is unset).
-4. For stable releases, builds all four flavored release artifacts
-   (`./gradlew bundleRelease assembleRelease`); only the sideload APK and
-   googlePlay AAB are attached. For prereleases, builds only the side-by-side
-   `sideloadCandidate` APK.
-5. Generates `SHA256SUMS.txt` covering the two attached files.
-6. For stable releases only, promotes the exact preflighted Production draft to
+2. For stable releases, verifies and downloads the exact immutable Play
+   preflight artifact; prereleases run the focused CI slice and build the
+   side-by-side `sideloadCandidate` APK.
+3. Revalidates stable artifact hashes, DEX collection compatibility, packaged
+   native compatibility, and retained R8 mappings without recompiling.
+4. Generates candidate checksums when applicable; stable checksums come from
+   the verified preflight artifact and cover the two public files.
+5. For stable releases only, promotes the exact preflighted Production draft to
    `completed`; prereleases never upload to Play.
-7. Creates a GitHub Release named `Hermes-Relay Android v<version>` with `RELEASE_NOTES.md` as
+6. Creates a GitHub Release named `Hermes-Relay Android v<version>` with `RELEASE_NOTES.md` as
    the body. Attaches the APK, AAB, and `SHA256SUMS.txt`. Tags any version
    containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.
-8. Prints a `$GITHUB_STEP_SUMMARY` with the release and Play result.
+7. Prints a `$GITHUB_STEP_SUMMARY` with the release and Play result.
+
+For an approved multi-surface train, run **Hermes-Relay Coordinated Release
+Approval** from `main`, select the affected surfaces, and enter their prepared
+versions. It dispatches Android, Plugin, and CLI+UI approval jobs concurrently;
+each surface keeps its independent source, validation, tag, artifact, and
+publication workflow.
 
 On every direct push of a tag matching `server-v*`, or after an approved
 dispatch from `.github/workflows/approve-release-extensions.yml`,

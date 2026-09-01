@@ -1,5 +1,20 @@
 # Hermes-Relay — Dev Log
 
+## 2026-09-01 — Exact-tree release artifact promotion
+
+Android Play preflight now packages the signed sideload APK, Play AAB, R8
+mappings, manifest, and public checksums as one immutable tree-keyed artifact.
+Stable approval revalidates and publishes those exact bytes instead of
+recompiling the release after Play accepted the draft. Final DEX and native
+compatibility checks still run against the promoted package.
+
+Required CI records a separate short-lived proof keyed to the complete Git
+tree. Canonical `dev` to `main` promotion reuses that proof only when the
+simulated merge tree is byte-identical; missing evidence or any tree change
+falls back to the full path-aware matrix. Local Android release iteration now
+uses a metadata-and-presentation lane, and a coordinated approval workflow can
+start independent Android, Plugin, and CLI+UI release jobs concurrently.
+
 ## 2026-08-31 — Android Gateway compaction watchdog lease
 
 Gateway turns now recognize the upstream `status.update` payload kind
