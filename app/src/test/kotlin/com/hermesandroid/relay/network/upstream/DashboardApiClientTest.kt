@@ -2042,13 +2042,15 @@ class DashboardApiClientTest {
                 .setBody("audio-bytes"),
         )
 
+        val output = ByteArrayOutputStream()
         val fetched = DashboardApiClient(baseUrl = server.url("/").toString())
-            .downloadManagedFile("/tmp/Hermes audio/voice reply.mp3", 1024)
+            .downloadManagedFile("/tmp/Hermes audio/voice reply.mp3", 1024, output)
             .getOrThrow()
 
         assertEquals("audio/mpeg", fetched.contentType)
         assertEquals("voice reply.mp3", fetched.fileName)
-        assertEquals("audio-bytes", fetched.bytes.decodeToString())
+        assertEquals(11L, fetched.sizeBytes)
+        assertEquals("audio-bytes", output.toString(Charsets.UTF_8.name()))
         val request = server.takeRequest()
         assertEquals("/api/files/download", request.requestUrl!!.encodedPath)
         assertEquals("/tmp/Hermes audio/voice reply.mp3", request.requestUrl!!.queryParameter("path"))
@@ -2059,9 +2061,26 @@ class DashboardApiClientTest {
         server.enqueue(MockResponse().setHeader("Content-Length", 2048))
 
         val result = DashboardApiClient(baseUrl = server.url("/").toString())
-            .downloadManagedFile("/tmp/large.bin", 1024)
+            .downloadManagedFile("/tmp/large.bin", 1024, ByteArrayOutputStream())
 
         assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun downloadManagedFile_rejectsChunkedBodyAfterStreamingCap() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/octet-stream")
+                .setChunkedBody("seventeen-byte-doc", 3),
+        )
+        val output = ByteArrayOutputStream()
+
+        val result = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadManagedFile("/tmp/growing.bin", 16, output)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("configured download limit"))
+        assertTrue(output.size() <= 16)
     }
 
     @Test
