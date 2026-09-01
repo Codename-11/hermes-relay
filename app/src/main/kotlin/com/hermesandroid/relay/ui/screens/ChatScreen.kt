@@ -3580,7 +3580,14 @@ fun ChatScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
-                            .fillMaxSize()
+                            .align(Alignment.Center)
+                            .fillMaxHeight()
+                            .then(
+                                responsiveLayout.transcriptMaxWidth?.let {
+                                    Modifier.widthIn(max = it)
+                                } ?: Modifier,
+                            )
+                            .fillMaxWidth()
                             .padding(horizontal = 12.dp)
                             .padding(top = if (showTranscriptSearch) 112.dp else 0.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
