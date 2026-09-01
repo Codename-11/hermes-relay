@@ -14,7 +14,7 @@ function classifyCiPaths(paths) {
   const under = (prefixes) => paths.some((path) => prefixes.some((prefix) => path.startsWith(prefix)));
 
   return {
-    android: forceAll || under(['app/', 'relay-core/', 'relay-ui/', 'ui-preview/', 'quest/', 'gradle/']) || exact([
+    android: forceAll || under(['app/', 'gradle/']) || exact([
       'build.gradle.kts', 'settings.gradle.kts', 'gradle.properties', 'gradlew', 'gradlew.bat',
       'scripts/check-android-locales.py', 'scripts/android-locale-harness.py',
       'scripts/check-android-collection-apis.py', 'scripts/check-android-native-compat.py',

@@ -2,8 +2,9 @@
 
 A JVM-only **Compose for Desktop** module for iterating on presentational
 composables **on the PC with hot reload** — edit, see it live, no
-build/deploy/test loop on a device. It is **not shipped**: nothing in the app,
-plugin, or CLI release builds depends on it.
+build/deploy/test loop on a device. It belongs only to the quarantined Quest
+experiment and is **not shipped**: nothing in the production app, plugin, or
+CLI release builds depends on it.
 
 ## Why this exists
 
@@ -21,16 +22,15 @@ module *or* to the shared `MorphingSphereCore.kt` reload live.
 **Cold run (no hot reload):**
 
 ```bash
-./gradlew :ui-preview:run
+./gradlew -p experiments/quest :ui-preview:run
 ```
 
-> **First-sync check:** this is the only piece of the dev tooling that pins a
-> Compose Multiplatform version (`org.jetbrains.compose` `1.10.3` in
-> `build.gradle.kts`) against the repo's Kotlin (`2.3.21`). If a future Kotlin bump
+> **First-sync check:** this experimental tooling pins a Compose Multiplatform
+> version (`org.jetbrains.compose` `1.12.0` in `build.gradle.kts`) against the
+> Quest build's Kotlin (`2.4.10`). If a future Kotlin bump
 > breaks the pairing, realign per the
 > [Compose compatibility matrix](https://kotlinlang.org/docs/multiplatform/compose-compatibility-and-versioning.html).
-> The module is fully additive — removing the `include(":ui-preview")` line in
-> `settings.gradle.kts` drops it with zero impact on shipped builds.
+> The module is fully additive inside the quarantined build.
 
 ## What can live here
 
@@ -41,16 +41,15 @@ the network must be fed **fake state** from the gallery controls.
 
 ### The single-source-of-truth pattern
 
-The sphere is the model to copy. Its **algorithm** lives once in
-`MorphingSphereCore.kt` (pure `kotlin.math`), source-shared into this module from
-`:relay-ui` and guarded by `MorphingSphereCoreParityTest`. Each surface supplies
-only a thin renderer:
+Inside this experiment, the sphere algorithm lives in
+`relay-ui/.../MorphingSphereCore.kt` (pure `kotlin.math`) and is source-shared
+into this module. The production Android and web sphere implementations remain
+separate sources of truth outside the experiment.
 
 | Surface | Renderer | Lives in |
 |---|---|---|
-| Android | `MorphingSphere.kt` (Canvas + `@Preview`) | `:relay-ui`, `:app` |
-| Desktop | `DesktopSphere.kt` (Canvas, no `@Preview`) | this module |
-| Web | `sphere.js` | `preview/web/` |
+| Quest experiment | `MorphingSphere.kt` (Canvas + `@Preview`) | `:relay-ui` |
+| Desktop experiment | `DesktopSphere.kt` (Canvas, no `@Preview`) | this module |
 
 To add a component: hoist it to a value-only `@Composable`, add it to
 `PreviewGallery` in `Main.kt`, and drive it from controls. If it needs logic that

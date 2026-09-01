@@ -16,7 +16,7 @@ const none = {
 
 assert.deepEqual(classifyCiPaths(['README.md']), none);
 assert.deepEqual(classifyCiPaths(['desktop/src/cli.ts']), { ...none, desktop: true });
-assert.deepEqual(classifyCiPaths(['relay-core/src/main/kotlin/Wire.kt']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['experiments/quest/src/main/kotlin/Quest.kt']), none);
 assert.deepEqual(classifyCiPaths(['scripts/check-android-release-notes.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['scripts/check-android-native-compat.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['scripts/android_release_artifacts.py']), { ...none, android: true });
