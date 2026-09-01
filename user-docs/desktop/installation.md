@@ -209,12 +209,13 @@ hermes-relay update --json      # machine-readable status
 The updater:
 
 1. Polls the GitHub Releases API and picks the SemVer-max `desktop-v*` tag, with a migration fallback to historical `cli-v*` releases (prereleases included). The same resolver as the install scripts — fixed in alpha.11; pre-alpha.11 builds may report "Up to date" when a newer alpha exists, so use the install one-liner once to bootstrap onto alpha.11+ if you're stuck below it.
-2. SemVer-compares to your running version (`hermes-relay --version` — embedded at build time, accurate inside Bun-compiled binaries).
+2. SemVer-compares to your running version (`hermes-relay --version` — embedded at build time, accurate inside Bun-compiled binaries). On Windows, it also reads the colocated UI executable's product version when the UI is installed and reports any CLI/UI drift.
 3. Downloads the platform asset and verifies SHA256.
 4. **POSIX (macOS / Linux):** atomic `fs.rename` over the running binary. The running process keeps the old inode open, so `hermes-relay daemon` (if running) keeps serving until restarted; the next `hermes-relay <verb>` invocation picks up the new binary.
-5. **Windows:** can't replace a running `.exe`, so the updater writes to `<bin>.new.exe` and `finalizePendingUpdate()` runs at the top of `main()` on every subsequent invocation to rename it into place. Result: the swap completes the **next** time you run `hermes-relay`.
+5. **Windows CLI-only:** can't replace a running `.exe`, so the updater writes to `<bin>.new.exe` and `finalizePendingUpdate()` runs at the top of `main()` on every subsequent invocation to rename it into place. Result: the swap completes the **next** time you run `hermes-relay`.
+6. **Windows CLI+UI:** when the colocated management UI exists, the normal command selects the checksum-verified NSIS bundle instead of the standalone CLI asset. Setup waits for the invoking CLI to exit, replaces both executables, and restores the daemon and tray only when they were running before the update. A stopped tray remains stopped.
 
-`hermes-relay update` updates the CLI binary only. On Windows, `hermes-relay update --installer` updates the complete CLI + UI bundle. The UI's update action uses the same bundle path, restarts the affected processes, and reopens the UI after replacement.
+`hermes-relay update` automatically updates the complete CLI+UI bundle when the Windows management UI is installed. Explicit Windows CLI-only installations and all macOS/Linux installations keep the standalone binary path. `--installer` remains available to install or repair the Windows bundle explicitly, and the UI's update action uses the same verified installer contract.
 
 If `hermes-relay update --check` says "Up to date" but you know there's a newer alpha, see the [troubleshooting note](./troubleshooting.md#hermes-relay-update-says-up-to-date-but-i-know-there-s-a-newer-alpha).
 

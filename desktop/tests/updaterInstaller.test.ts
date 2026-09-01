@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { updateCommand } from '../src/commands/update.js'
+import { installerRunsSilently, updateCommand } from '../src/commands/update.js'
 import {
   assetNameForPlatform,
   checkForUpdate,
@@ -147,6 +147,14 @@ test('installer check reports a newer local preview without treating it as an er
       command: 'update',
       positional: [],
       flags: { installer: true, check: true, json: true, repo: 'example/hermes-relay' }
+    }, {
+      platform: 'win32',
+      bundle: {
+        installed: false,
+        path: 'C:\\Hermes\\hermes-relay-tray.exe',
+        version: null,
+        running: false
+      }
     }))
     assert.equal(check.code, 0)
     const report = JSON.parse(check.output)
@@ -160,10 +168,110 @@ test('installer check reports a newer local preview without treating it as an er
       command: 'update',
       positional: [],
       flags: { installer: true, yes: true, json: true, repo: 'example/hermes-relay' }
+    }, {
+      platform: 'win32',
+      bundle: {
+        installed: false,
+        path: 'C:\\Hermes\\hermes-relay-tray.exe',
+        version: null,
+        running: false
+      }
     }))
     assert.equal(install.code, 2)
-    assert.match(JSON.parse(install.output).error, /older than this CLI/)
+    assert.match(JSON.parse(install.output).error, /older than the installed CLI/)
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('default Windows update targets the installer when an older UI is installed', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify([{
+    tag_name: `desktop-v${VERSION}`,
+    prerelease: VERSION.includes('-'),
+    published_at: '2026-09-01T00:00:00Z',
+    assets: [
+      {
+        name: 'hermes-relay-win-x64.exe',
+        browser_download_url: 'https://download.test/hermes-relay.exe',
+        size: 10
+      },
+      {
+        name: 'hermes-relay-windows-x64-setup.exe',
+        browser_download_url: 'https://download.test/setup.exe',
+        size: 20
+      }
+    ]
+  }]), { status: 200, headers: { 'content-type': 'application/json' } })
+
+  try {
+    const check = await captureStdout(() => updateCommand({
+      command: 'update',
+      positional: [],
+      flags: { check: true, json: true, repo: 'example/hermes-relay' }
+    }, {
+      platform: 'win32',
+      bundle: {
+        installed: true,
+        path: 'C:\\Hermes\\hermes-relay-tray.exe',
+        version: '0.4.0-beta.4',
+        running: true
+      }
+    }))
+    assert.equal(check.code, 0)
+    const report = JSON.parse(check.output)
+    assert.equal(report.target, 'cli_ui')
+    assert.equal(report.asset_name, 'hermes-relay-windows-x64-setup.exe')
+    assert.equal(report.ui_installed, true)
+    assert.equal(report.ui_version, '0.4.0-beta.4')
+    assert.equal(report.versions_in_sync, false)
+    assert.equal(report.up_to_date, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('default Windows update preserves a headless CLI-only installation', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify([{
+    tag_name: `desktop-v${VERSION}`,
+    prerelease: VERSION.includes('-'),
+    published_at: '2026-09-01T00:00:00Z',
+    assets: [{
+      name: 'hermes-relay-win-x64.exe',
+      browser_download_url: 'https://download.test/hermes-relay.exe',
+      size: 10
+    }]
+  }]), { status: 200, headers: { 'content-type': 'application/json' } })
+
+  try {
+    const check = await captureStdout(() => updateCommand({
+      command: 'update',
+      positional: [],
+      flags: { check: true, json: true, repo: 'example/hermes-relay' }
+    }, {
+      platform: 'win32',
+      bundle: {
+        installed: false,
+        path: 'C:\\Hermes\\hermes-relay-tray.exe',
+        version: null,
+        running: false
+      }
+    }))
+    assert.equal(check.code, 0)
+    const report = JSON.parse(check.output)
+    assert.equal(report.target, 'cli')
+    assert.equal(report.asset_name, 'hermes-relay-win-x64.exe')
+    assert.equal(report.ui_installed, false)
+    assert.equal(report.versions_in_sync, true)
+    assert.equal(report.up_to_date, true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('existing bundle updates suppress the installer finish-page restart choice', () => {
+  assert.equal(installerRunsSilently(true, false, false), true)
+  assert.equal(installerRunsSilently(false, false, false), false)
+  assert.equal(installerRunsSilently(false, true, false), true)
 })

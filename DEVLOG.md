@@ -1,5 +1,19 @@
 # Hermes-Relay — Dev Log
 
+## 2026-09-01 — Unified Windows desktop update contract
+
+The desktop updater now treats a detected Windows management UI as an installed
+bundle rather than updating only the CLI executable. Update checks compare the
+embedded CLI version with the tray executable's product version, expose the
+selected `cli` or `cli_ui` target in JSON, and route drift repair through the
+checksum-verified NSIS installer. Windows installations without the tray keep
+the standalone cooperative CLI swap.
+
+Bundle updates wait for the invoking CLI to exit, stop installer-owned CLI,
+daemon, and tray processes, then restore only the daemon and tray processes that
+were running before the update. Focused tests cover bundle detection, installer
+selection, drift reporting, headless preservation, and stopped-tray behavior.
+
 ## 2026-08-31 — Android Gateway compaction watchdog lease
 
 Gateway turns now recognize the upstream `status.update` payload kind
