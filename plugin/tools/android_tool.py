@@ -89,8 +89,94 @@ def _bridge_url() -> str:
     """URL of the relay (default) or direct phone connection."""
     return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8767")
 
+def _hermes_home() -> Path:
+    """Host Hermes home, honouring an explicit ``HERMES_HOME`` override."""
+    override = os.getenv("HERMES_HOME")
+    return Path(override) if override else Path.home() / ".hermes"
+
+
+def _token_from_env_file() -> Optional[str]:
+    """Read ``ANDROID_BRIDGE_TOKEN`` straight out of ``~/.hermes/.env``."""
+    try:
+        raw = (_hermes_home() / ".env").read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() != "ANDROID_BRIDGE_TOKEN":
+            continue
+        value = value.strip().strip('"').strip("'")
+        if value:
+            return value
+    return None
+
+
+def _token_from_sessions() -> Optional[str]:
+    """Fall back to the most recently seen paired session token."""
+    try:
+        raw = (_hermes_home() / "hermes-relay-sessions.json").read_text(
+            encoding="utf-8"
+        )
+        data = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    sessions = data.get("sessions") if isinstance(data, dict) else None
+    if not isinstance(sessions, list):
+        return None
+
+    def _last_seen(entry: Any) -> float:
+        seen = entry.get("last_seen") if isinstance(entry, dict) else None
+        return float(seen) if isinstance(seen, (int, float)) else 0.0
+
+    for entry in sorted(sessions, key=_last_seen, reverse=True):
+        if not isinstance(entry, dict):
+            continue
+        token = entry.get("token")
+        if isinstance(token, str) and token:
+            return token
+    return None
+
+
+# Disk fallbacks are re-read at most once per TTL so a long-lived host does
+# not stat two files on every single bridge call.
+_TOKEN_CACHE_TTL = 30.0
+_token_cache: tuple[float, Optional[str]] = (0.0, None)
+
+
 def _bridge_token() -> Optional[str]:
-    return os.getenv("ANDROID_BRIDGE_TOKEN")
+    """Bearer token for every relay bridge call.
+
+    Resolution order:
+
+    1. ``ANDROID_BRIDGE_TOKEN`` in the process environment.
+    2. ``ANDROID_BRIDGE_TOKEN`` in ``~/.hermes/.env`` — the file
+       :func:`android_setup` writes.
+    3. The most recently seen paired session in
+       ``~/.hermes/hermes-relay-sessions.json``.
+
+    Steps 2 and 3 exist because the environment is snapshotted when the host
+    process starts: a token written (by ``android_setup``, ``hermes-pair``, or
+    by hand) *after* that point stayed invisible until a full restart, and
+    every bridge endpoint answered ``401 Authorization: Bearer *** required``
+    on a phone that was in fact paired and connected.
+    """
+    global _token_cache
+
+    token = os.getenv("ANDROID_BRIDGE_TOKEN")
+    if token:
+        return token
+
+    cached_at, cached = _token_cache
+    now = time.monotonic()
+    if cached and (now - cached_at) < _TOKEN_CACHE_TTL:
+        return cached
+
+    resolved = _token_from_env_file() or _token_from_sessions()
+    _token_cache = (now, resolved)
+    return resolved
 
 def _relay_port() -> int:
     # Unified relay default. Override via ANDROID_RELAY_PORT or RELAY_PORT.
@@ -1229,7 +1315,10 @@ def _get_public_ip() -> str:
         return "<your-server-ip>"
 
 
-def android_setup(bridge_session_token: str) -> str:
+def android_setup(
+    bridge_session_token: Optional[str] = None,
+    pairing_code: Optional[str] = None,
+) -> str:
     """
     FALLBACK helper — tell the android_* tools about an existing session token.
 
@@ -1248,13 +1337,27 @@ def android_setup(bridge_session_token: str) -> str:
 
     The parameter name was historically ``pairing_code``, but the value is
     actually used as a long-lived bearer token, not a one-shot pairing code.
-    Renamed for clarity.
+    ``bridge_session_token`` is the canonical name; ``pairing_code`` is kept
+    as an accepted alias so older callers (and the tool schema that shipped
+    before the rename) keep working instead of raising ``TypeError``.
 
     Example: android_setup("eyJraWQiOi...long-token...")
     """
     # Local alias keeps the rest of the function readable without
-    # propagating the rename through every line.
-    pairing_code = bridge_session_token
+    # propagating the rename through every line. Either spelling is
+    # accepted; the canonical name wins when both are supplied.
+    token = bridge_session_token or pairing_code
+    if not token or not str(token).strip():
+        return json.dumps({
+            "status": "error",
+            "message": (
+                "android_setup requires a bridge session token. Pass it as "
+                "bridge_session_token (canonical) or pairing_code (legacy "
+                "alias). For a first-time pair use `hermes-pair` or "
+                "/hermes-relay-pair instead."
+            ),
+        })
+    pairing_code = str(token).strip()
     try:
         port = _relay_port()
         public_ip = _get_public_ip()
@@ -1967,16 +2070,38 @@ _SCHEMAS = {
     },
     "android_setup": {
         "name": "android_setup",
-        "description": "Start the Android bridge relay and set the pairing code. Call this when the user wants to connect their phone. The relay runs on this server — the phone connects to it remotely via WebSocket. Only needs the pairing code shown in the Hermes Bridge app on the phone.",
+        "description": (
+            "FALLBACK — teach this host's android_* tools about a bridge "
+            "session token you already have. This is NOT the pairing flow: "
+            "to pair a phone for the first time use `hermes-pair` or the "
+            "/hermes-relay-pair slash command (QR scan). Writes "
+            "ANDROID_BRIDGE_TOKEN/ANDROID_BRIDGE_URL to ~/.hermes/.env and "
+            "verifies the relay is reachable."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
+                "bridge_session_token": {
+                    "type": "string",
+                    "description": (
+                        "Long-lived bridge session token from a previous "
+                        "successful pair (not a 6-character pairing code)."
+                    ),
+                },
                 "pairing_code": {
                     "type": "string",
-                    "description": "6-character pairing code shown in the Hermes Bridge app on the phone",
+                    "description": (
+                        "Deprecated alias for bridge_session_token, accepted "
+                        "for backwards compatibility. Prefer "
+                        "bridge_session_token."
+                    ),
                 },
             },
-            "required": ["pairing_code"],
+            # Neither key is schema-required: exactly one of the two must be
+            # supplied, which JSON Schema draft-07 cannot express in a way
+            # every tool-call validator honours. The handler returns a
+            # structured error when both are missing.
+            "required": [],
         },
     },
     "android_macro": {

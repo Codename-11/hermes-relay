@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **`android_*` tools resolve a bridge token written after host startup.** Token lookup now falls back from the process environment to the local Hermes env file and then to the newest paired session, preventing paired phones from being rejected until a restart.
+- **`android_setup` accepts both its canonical and legacy schema keys.** `bridge_session_token` and `pairing_code` are accepted, while a missing token returns a structured error.
+- **Android tool setup tests use a temporary Hermes home.** Test runs no longer write bridge settings into a developer environment.
+
 ## [Android 1.15.1] - 2026-09-02
 
 ### Changed
