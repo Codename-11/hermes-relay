@@ -4346,3 +4346,53 @@ events. The workflow must exist on `main` before the approval surface is used.
 - `.github/workflows/release-plugin.yml`
 - `.github/workflows/release-cli.yml`
 - `RELEASE.md`
+
+---
+
+## ADR 73 — Release promotion reuses immutable exact-tree evidence
+
+**Status:** Accepted (2026-09-01).
+
+**Context.** A coordinated release previously compiled Android up to four
+times: local release verification, release-prep PR CI, private Play preflight,
+and public tag publication. The canonical `dev` to `main` PR also repeated the
+same path-aware matrix even when its synthetic merge produced the exact Git
+tree already tested before integration. Rebuilding identical source increased
+elapsed time without adding byte-level provenance.
+
+**Decision.** Release evidence is content-addressed by Git tree and promoted
+only through immutable GitHub Actions artifacts.
+
+- Play preflight is the one stable Android signing/build authority. It stores
+  the exact signed sideload APK, Play AAB, both R8 mappings, a manifest with
+  version/commit/tree/size/hash metadata, and checksums for public assets.
+- Stable Android publication downloads that artifact by immutable ID, verifies
+  its successful trusted workflow run and full manifest, reruns package-level
+  DEX/native checks, promotes the existing Play draft, and publishes the same
+  APK/AAB bytes. Prerelease candidates retain their independent build path.
+- Every successful Required-checks run stores a small tree-keyed proof after
+  all selected jobs pass. A canonical `dev` to `main` PR may reuse it only when
+  the simulated merge tree equals the `dev` tree exactly. Missing proof or any
+  content change automatically runs the ordinary matrix.
+- Local Android release iteration runs metadata and release-presentation tests;
+  exact pushed commits still require CI and Play preflight.
+- A coordinated approval workflow dispatches independently validated surface
+  approvals concurrently; it does not combine tags or artifact contracts.
+- Trusted desktop CI and the CLI+UI release workflow share a lockfile- and
+  exact-source-keyed Rust/Tauri target cache. Release tags may restore the
+  default branch's exact build state; cache misses retain the full build path.
+
+**Consequences.** Stable Android bytes are built once, evidence reuse fails
+closed on tree or hash drift, and release PRs avoid duplicate work without
+weakening branch protection. Actions artifact retention becomes part of the
+release window: expired evidence causes a safe rebuild/fallback, never an
+approval bypass.
+
+**Key files:**
+
+- `.github/workflows/play-preflight-android.yml`
+- `.github/workflows/release-android.yml`
+- `.github/workflows/ci-required.yml`
+- `.github/workflows/approve-release-train.yml`
+- `scripts/android_release_artifacts.py`
+- `scripts/android-prepush.py`

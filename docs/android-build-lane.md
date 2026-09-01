@@ -74,6 +74,16 @@ Check the lane without starting work:
 `status` exits 0 when idle and 1 when busy. It intentionally does not expose the
 owning process's arguments because Gradle properties can contain credentials.
 
+For Android release-note/version iteration, use the narrow release-prep lane:
+
+```powershell
+python scripts/android-prepush.py --release-prep
+```
+
+It runs repository metadata checks plus the rendered Changelog and What's New
+tests. It intentionally omits lint and assembly; after the exact commit is
+pushed, required CI and Play preflight provide those expensive proofs.
+
 Use `exec` for a connected/device workflow that must exclude every
 wrapper-managed Gradle lane, including explicit APK installation:
 
