@@ -1,0 +1,116 @@
+name: Hermes-Relay Coordinated Release Approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      android:
+        description: "Approve Hermes-Relay Android"
+        required: true
+        default: false
+        type: boolean
+      android_version:
+        description: "Android version when selected"
+        required: false
+        type: string
+      plugin:
+        description: "Approve Hermes-Relay Plugin"
+        required: true
+        default: false
+        type: boolean
+      plugin_version:
+        description: "Plugin version when selected"
+        required: false
+        type: string
+      desktop:
+        description: "Approve Hermes-Relay CLI+UI"
+        required: true
+        default: false
+        type: boolean
+      desktop_version:
+        description: "CLI+UI version when selected"
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: approve-coordinated-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate selected release surfaces
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require versions for every selected surface
+        env:
+          ANDROID: ${{ inputs.android }}
+          ANDROID_VERSION: ${{ inputs.android_version }}
+          PLUGIN: ${{ inputs.plugin }}
+          PLUGIN_VERSION: ${{ inputs.plugin_version }}
+          DESKTOP: ${{ inputs.desktop }}
+          DESKTOP_VERSION: ${{ inputs.desktop_version }}
+        run: |
+          set -euo pipefail
+          if [ "$ANDROID" != "true" ] && [ "$PLUGIN" != "true" ] && [ "$DESKTOP" != "true" ]; then
+            echo "::error::Select at least one release surface"
+            exit 1
+          fi
+          for pair in \
+            "$ANDROID:$ANDROID_VERSION:Android" \
+            "$PLUGIN:$PLUGIN_VERSION:Plugin" \
+            "$DESKTOP:$DESKTOP_VERSION:CLI+UI"; do
+            IFS=: read -r selected version label <<<"$pair"
+            if [ "$selected" = "true" ] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::$label requires a valid SemVer version"
+              exit 1
+            fi
+          done
+
+  android:
+    name: Approve Hermes-Relay Android
+    needs: validate
+    if: inputs.android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Android approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.android_version }}
+        run: gh workflow run approve-release-android.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="$VERSION"
+
+  plugin:
+    name: Approve Hermes-Relay Plugin
+    needs: validate
+    if: inputs.plugin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Plugin approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.plugin_version }}
+        run: |
+          gh workflow run approve-release-extensions.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f surface=plugin \
+            -f version="$VERSION"
+
+  desktop:
+    name: Approve Hermes-Relay CLI+UI
+    needs: validate
+    if: inputs.desktop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch CLI+UI approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.desktop_version }}
+        run: |
+          gh workflow run approve-release-extensions.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f surface=desktop \
+            -f version="$VERSION"

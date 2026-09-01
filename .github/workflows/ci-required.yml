@@ -34,6 +34,7 @@ on:
           - all-final
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -52,6 +53,8 @@ jobs:
       dashboard: ${{ steps.filter.outputs.dashboard }}
       contract: ${{ steps.filter.outputs.contract }}
       docs: ${{ steps.filter.outputs.docs }}
+      release_pr: ${{ steps.release.outputs.release_pr }}
+      tree: ${{ steps.tree.outputs.tree }}
     steps:
       - name: Checkout pull request merge
         if: github.event_name == 'pull_request'
@@ -68,6 +71,26 @@ jobs:
 
       - name: Test path classifier
         run: node .github/scripts/classify-ci-paths.test.cjs
+
+      - name: Record checked tree
+        id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Detect canonical release promotion
+        id: release
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && \
+             [ "$BASE_REF" = "main" ] && \
+             [ "$HEAD_REF" = "dev" ] && \
+             [ "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ]; then
+            echo "release_pr=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_pr=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Classify changed files
         id: filter
@@ -123,43 +146,117 @@ jobs:
             core.notice(`Changed paths: ${paths.join(', ')}`);
             core.notice(`Selected checks: ${Object.entries(outputs).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}`);
 
-  android:
+  release-proof:
+    name: Reuse exact-tree required checks
     needs: changes
-    if: needs.changes.outputs.android == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    if: needs.changes.outputs.release_pr == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.proof.outputs.reuse }}
+      artifact_id: ${{ steps.proof.outputs.artifact_id }}
+      run_id: ${{ steps.proof.outputs.run_id }}
+      tree: ${{ steps.proof.outputs.tree }}
+    steps:
+      - name: Checkout simulated release merge
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Locate exact-tree proof
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEV_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          merge_tree=$(git rev-parse 'HEAD^{tree}')
+          dev_tree=$(git rev-parse "${DEV_SHA}^{tree}")
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+          echo "tree=$dev_tree" >> "$GITHUB_OUTPUT"
+          if [ "$merge_tree" != "$dev_tree" ]; then
+            echo "Release merge changes the dev tree ($dev_tree -> $merge_tree); running full CI."
+            exit 0
+          fi
+
+          artifact_name="required-checks-${dev_tree}"
+          artifact=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${artifact_name}" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last')
+          artifact_id=$(jq -r '.id // empty' <<<"$artifact")
+          run_id=$(jq -r '.workflow_run.id // empty' <<<"$artifact")
+          if [ -z "$artifact_id" ] || [ -z "$run_id" ]; then
+            echo "No reusable proof exists for tree $dev_tree; running full CI."
+            exit 0
+          fi
+
+          run=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+          conclusion=$(jq -r '.conclusion' <<<"$run")
+          workflow_path=$(jq -r '.path' <<<"$run")
+          if [ "$workflow_path" != ".github/workflows/ci-required.yml" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::Required-check proof came from ${workflow_path} with conclusion ${conclusion}"
+            exit 1
+          fi
+          echo "artifact_id=$artifact_id" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact-tree proof
+        if: steps.proof.outputs.reuse == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.proof.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.proof.outputs.run_id }}
+          path: required-check-proof
+
+      - name: Verify exact-tree proof
+        if: steps.proof.outputs.reuse == 'true'
+        env:
+          EXPECTED_TREE: ${{ steps.proof.outputs.tree }}
+        run: |
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tree "$EXPECTED_TREE" \
+            '.schemaVersion == 1 and .repository == $repository and .tree == $tree' \
+            required-check-proof/required-checks.json
+
+  android:
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.android == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     uses: ./.github/workflows/ci-android.yml
 
   android_on_demand:
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' && inputs.android_preset != 'auto'
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.release-proof.outputs.reuse != 'true' && github.event_name == 'workflow_dispatch' && inputs.android_preset != 'auto' }}
     uses: ./.github/workflows/android-on-demand.yml
     with:
       head_sha: ${{ inputs.head_sha }}
       preset: ${{ inputs.android_preset }}
 
   desktop:
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     uses: ./.github/workflows/ci-desktop.yml
 
   plugin:
-    needs: changes
-    if: needs.changes.outputs.plugin == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.plugin == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     uses: ./.github/workflows/ci-plugin.yml
 
   dashboard:
-    needs: changes
-    if: needs.changes.outputs.dashboard == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.dashboard == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     uses: ./.github/workflows/ci-dashboard.yml
 
   contract:
-    needs: changes
-    if: needs.changes.outputs.contract == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.contract == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     uses: ./.github/workflows/ci-contract.yml
 
   docs:
     name: Build public docs
-    needs: changes
-    if: needs.changes.outputs.docs == 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto')
+    needs: [changes, release-proof]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.docs == 'true' && needs.release-proof.outputs.reuse != 'true' && (github.event_name != 'workflow_dispatch' || inputs.android_preset == 'auto') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -181,10 +278,12 @@ jobs:
   guard:
     name: Required checks
     if: always()
-    needs: [changes, android, android_on_demand, desktop, plugin, dashboard, contract, docs]
+    needs: [changes, release-proof, android, android_on_demand, desktop, plugin, dashboard, contract, docs]
     runs-on: ubuntu-latest
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
+      RELEASE_PROOF_RESULT: ${{ needs.release-proof.result }}
+      REUSED_REQUIRED_CHECKS: ${{ needs.release-proof.outputs.reuse }}
       ANDROID_RESULT: ${{ needs.android.result }}
       ANDROID_ON_DEMAND_RESULT: ${{ needs.android_on_demand.result }}
       DESKTOP_RESULT: ${{ needs.desktop.result }}
@@ -197,7 +296,7 @@ jobs:
         shell: bash
         run: |
           failed=0
-          for check in CHANGES ANDROID ANDROID_ON_DEMAND DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
+          for check in CHANGES RELEASE_PROOF ANDROID ANDROID_ON_DEMAND DESKTOP PLUGIN DASHBOARD CONTRACT DOCS; do
             result_var="${check}_RESULT"
             result="${!result_var}"
             echo "$check: $result"
@@ -207,3 +306,26 @@ jobs:
             esac
           done
           exit "$failed"
+
+      - name: Write exact-tree proof
+        if: ${{ needs.release-proof.outputs.reuse != 'true' }}
+        env:
+          CHECKED_TREE: ${{ needs.changes.outputs.tree }}
+        run: |
+          mkdir -p required-check-proof
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tree "$CHECKED_TREE" \
+            --arg commit "$GITHUB_SHA" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            '{schemaVersion: 1, repository: $repository, tree: $tree, commit: $commit, runId: $run_id}' \
+            > required-check-proof/required-checks.json
+
+      - name: Upload exact-tree proof
+        if: ${{ needs.release-proof.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: required-checks-${{ needs.changes.outputs.tree }}
+          path: required-check-proof/required-checks.json
+          if-no-files-found: error
+          retention-days: 30
