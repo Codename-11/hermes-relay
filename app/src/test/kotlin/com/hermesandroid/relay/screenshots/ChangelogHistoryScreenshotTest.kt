@@ -25,10 +25,10 @@ class ChangelogHistoryScreenshotTest {
                 ChangelogScreen(onClose = {})
             }
         }
-        compose.onNodeWithText("v1.14.0 — Connections, delegated work, Git, and voice").assertExists()
+        compose.onNodeWithText("v1.15.0 — Standard Hermes first, with clearer Relay boundaries").assertExists()
         compose.onNodeWithText("Highlights").assertExists()
         compose.onNodeWithText("Fixed").assertExists()
-        compose.onNodeWithText("Wake-word detection starts reliably").assertExists()
+        compose.onNodeWithText("Keep Standard voice after removing Relay").assertExists()
         compose.onNodeWithText("Compatibility").assertExists()
         compose.onNodeWithText("Installed").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/changelog-history.png")
