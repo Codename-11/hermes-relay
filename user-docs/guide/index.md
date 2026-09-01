@@ -16,13 +16,12 @@ Relay, and pairing Relay never replaces the upstream connection.
 
 ```
 Phone (WS)       → Hermes dashboard (:9119)    [gateway chat with live thinking]
-Phone (HTTP/SSE) → Hermes API Server (:8642)   [chat fallback, sessions, runs]
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [Direct API compatibility, sessions, runs]
 Phone (HTTP)     → Hermes dashboard (:9119)    [Manage + Vanilla Hermes voice]
 Phone (WSS/HTTP) → Relay Server (:8767)        [Bridge Core, terminal, TUI, media, relay voice]
 ```
 
-Chat prefers the dashboard gateway when Manage auth is ready and falls back to
-the Hermes API Server's SSE routes. The relay server handles Bridge Core,
+Standard Chat remains on the dashboard Gateway and asks for sign-in or retry when unavailable. API-only and explicitly selected Direct API chats use the Hermes API Server's SSE routes. The relay server handles Bridge Core,
 terminal, TUI, media, notification companion, relay sessions, and relay-backed
 voice routes. Sideload builds additionally expose Android Device Control routes.
 
@@ -30,7 +29,7 @@ voice routes. Sideload builds additionally expose Android Device Control routes.
 
 | Feature | Status |
 |---------|--------|
-| Chat (Dashboard/Gateway primary, optional API fallback) | Complete |
+| Chat (Gateway standard, explicit Direct API compatibility) | Complete |
 | Session management | Complete |
 | Profiles and personalities | Complete |
 | Markdown + syntax highlighting | Complete |

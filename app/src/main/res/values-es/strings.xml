@@ -742,11 +742,11 @@
     <string name="chat_settings_debug">Depurar</string>
     <string name="chat_settings_show_system_messages_desc">Mostrar los marcadores \" ocultos del servidor [Sistema: …]\" (cambios de modelo / personalidad). Off coincide con el escritorio/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Punto final de transmisión</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: elige la mejor ruta según lo que expone su servidor. Actualmente usando: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: las conexiones estándar usan Gateway; las conexiones solo API usan API directa. En uso: </string>
     <string name="chat_settings_gateway_suffix"> (pensamiento en vivo a través del tablero WebSocket)</string>
     <string name="chat_settings_chat_completions_suffix"> (chatear vía /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (chatear a través de /v1/runs transmitido explícitamente)</string>
-    <string name="chat_settings_gateway_desc">Gateway: pensamiento en vivo + eventos de herramientas enriquecidos en el panel WebSocket (/api/ws): lo que utiliza la aplicación de escritorio. Requiere el inicio de sesión en Administrar; vuelve a SSE por turno cuando no está disponible.</string>
+    <string name="chat_settings_gateway_desc">Gateway: pensamiento en vivo + eventos de herramientas enriquecidos por el WebSocket del panel (/api/ws), como en la aplicación de escritorio. Requiere iniciar sesión en Administrar; si no está disponible, este chat permanece en Gateway y ofrece iniciar sesión o reintentar.</string>
     <string name="chat_settings_sessions_desc">Sesiones: Hermes-nativo /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: SSE compatible con OpenAI a través de /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Ejecuciones: utilícelo solo cuando su servidor transmita /v1/runs directamente.</string>
@@ -4226,7 +4226,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">API directa</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">Define la dirección del Dashboard y Gateway que usará este teléfono. Las rutas privadas LAN y Tailscale pueden usar HTTP o HTTPS; las rutas públicas requieren HTTPS.</string>
     <string name="dashboard_address_editor_title">Dirección del gateway</string>

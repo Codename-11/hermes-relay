@@ -65,8 +65,10 @@ PR; never resolve those cases by choosing a side automatically.
 
 - **Vanilla Hermes path = upstream-only.** The standard (no-plugin) connection
   uses the upstream Dashboard/Gateway for chat, authentication, Manage, sessions,
-  and Vanilla Hermes voice. The API server is an optional automatic fallback and
-  advanced headless-compatibility surface; Relay adds optional extensions. This
+  and Vanilla Hermes voice. The API server is an explicit API-only/headless
+  compatibility surface; Relay adds optional extensions. A Gateway-owned
+  conversation never changes transport because Gateway auth or reachability
+  changes. This
   path must work against unmodified upstream hermes-agent. Server-side needs go
   through upstream PRs or the optional relay plugin, never fork patches.
 - **Verify endpoints against upstream** (`gateway/platforms/api_server.py` /

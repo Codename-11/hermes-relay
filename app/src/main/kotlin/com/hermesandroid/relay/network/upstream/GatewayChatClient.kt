@@ -278,7 +278,7 @@ class GatewayChatClient(
         .newBuilder()
         // The 10s default connectTimeout is LAN-tuned; a remote dashboard
         // reached over Tailscale (DERP cold start) can take longer to complete
-        // the WS upgrade. A failed connect drops chat to the SSE fallback and a
+        // the WS upgrade. A failed connect leaves Android on its Gateway owner and a
         // 5s cooldown, so give the first remote handshake room.
         .connectTimeout(20, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
@@ -773,7 +773,7 @@ class GatewayChatClient(
                     // Once this turn's own events are flowing (or it already
                     // finished), the prompt provably reached the server — a
                     // slow, lost, or socket-severed ack must NOT preflight-fail
-                    // into the SSE fallback, which would resubmit the same
+                    // into a second transport, which would resubmit the same
                     // prompt as a duplicate turn. Recovery belongs to the
                     // stream: the watchdog and mid-turn rejoin own it.
                     if (turn.started || turn.ended || turn.transportRecoveryStarted) {
@@ -4724,7 +4724,7 @@ data class GatewayAttachment(
     val sizeBytes: Long? = null,
 )
 
-/** Connect/auth/submit failed before the turn started — safe to fall back to SSE. */
+/** Connect/auth/submit failed before the turn started; the caller retains transport ownership. */
 internal class GatewayPreflightException(message: String) : Exception(message)
 
 /** Attachment bytes were not safely bound to a Gateway turn; never silently fall through to SSE. */

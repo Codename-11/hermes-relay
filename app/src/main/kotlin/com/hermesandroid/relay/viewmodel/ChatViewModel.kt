@@ -291,7 +291,7 @@ internal data class ResolvedGatewayActiveSessions(
     val ambiguousForCurrent: Boolean,
 )
 
-/** Resolve process-wide runtime rows without ever inventing a profile owner. */
+/** Resolve process-wide runtime rows without ever inventing an ambiguous profile owner. */
 internal fun resolveGatewayActiveSessions(
     sessions: List<GatewayActiveSession>,
     directory: Set<SessionActivityOwner>,
@@ -316,6 +316,8 @@ internal fun resolveGatewayActiveSessions(
                 currentRuntimeId == row.runtimeSessionId &&
                 currentOwner.storedSessionId == row.storedSessionId -> currentOwner
             explicitProfile != null && candidates.size == 1 -> candidates.single()
+            explicitProfile == null && currentOwner != null && candidates.singleOrNull() == currentOwner ->
+                currentOwner
             else -> null
         }
         if (owner == null) {
@@ -2121,9 +2123,12 @@ class ChatViewModel : ViewModel() {
      * RelayApp pushes the resolved value) prefers an EventSource-compatible
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
+    private var resolvedStreamingEndpoint: String = "completions"
+
     var streamingEndpoint: String = "completions"
         set(value) {
-            field = value
+            resolvedStreamingEndpoint = value
+            field = endpointForConversationOwner(value)
             // Only the gateway transport auto-names sessions server-side
             // (tui_gateway runs the turn in a HermesCLI child that calls
             // agent.title_generator.maybe_auto_title). The api_server SSE/runs/
@@ -2138,12 +2143,19 @@ class ChatViewModel : ViewModel() {
         }
 
     /**
-     * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
-     * sign-in expired, attachments present). Wired from RelayApp alongside
-     * [streamingEndpoint] as the capability-resolved SSE preference; never
-     * "auto" or "gateway".
+     * Capability-resolved endpoint for an explicitly API-owned compatibility
+     * conversation. It never acts as a fallback for a Gateway-owned chat.
      */
     var sseFallbackEndpoint: String = "completions"
+        set(value) {
+            field = value
+            if (
+                conversationBinding.value.transport == SessionTransport.SSE &&
+                resolvedStreamingEndpoint == "gateway"
+            ) {
+                streamingEndpoint = resolvedStreamingEndpoint
+            }
+        }
 
     /**
      * Gateway chat transport (dashboard `/api/ws` — live thinking). Owned and
@@ -3750,6 +3762,17 @@ class ChatViewModel : ViewModel() {
     private val bindingDisplayProfile: Profile?
         get() = conversationBinding.value.displayProfile
 
+    private fun endpointForConversationOwner(candidate: String): String =
+        when (conversationBinding.value.transport) {
+            SessionTransport.GATEWAY -> "gateway"
+            SessionTransport.SSE -> if (candidate == "gateway") sseFallbackEndpoint else candidate
+            null -> candidate
+        }
+
+    private fun reapplyConversationTransportAffinity() {
+        streamingEndpoint = resolvedStreamingEndpoint
+    }
+
     /**
      * Profile namespace owned by the conversation currently on screen. Opening a
      * row from the global All Profiles browser binds this state first; the UI
@@ -3762,6 +3785,7 @@ class ChatViewModel : ViewModel() {
 
     private fun clearOpenedSessionOwner() {
         conversationBindingController.releaseExplicitOwner()
+        reapplyConversationTransportAffinity()
     }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
@@ -4678,6 +4702,7 @@ class ChatViewModel : ViewModel() {
                 lastSessionRefreshSuccessNanos = 0L
                 _sessionListUnavailable.value = false
                 conversationBindingController.reset()
+                reapplyConversationTransportAffinity()
                 exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
@@ -4840,6 +4865,8 @@ class ChatViewModel : ViewModel() {
         } else {
             sessionProfileNameProvider()
         }
+        val targetTransport = sessionId?.let(SessionTransport::forSessionId)
+            ?: SessionTransport.forEndpoint(resolvedStreamingEndpoint)
         if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
@@ -4847,6 +4874,7 @@ class ChatViewModel : ViewModel() {
                 sessionId = sessionId,
                 displayProfile = explicitDisplayProfile,
                 lockedProfileToken = lockedProfileNameProvider(),
+                transport = targetTransport,
             )
             if (!accepted) return
         } else if (reconciliation) {
@@ -4854,6 +4882,7 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
             if (!accepted) {
                 _initialChatSettled.value = true
@@ -4864,8 +4893,10 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
         }
+        reapplyConversationTransportAffinity()
         activateSessionActivityScope()
         handler.activeAgentName = currentAgentDisplayName()
         if (
@@ -5625,7 +5656,10 @@ class ChatViewModel : ViewModel() {
         // profile/context so an All Profiles conversation becomes a fresh
         // draft for that same owner instead of falling back to the globally
         // restored default profile.
-        conversationBindingController.startFreshDraft()
+        conversationBindingController.startFreshDraft(
+            SessionTransport.forEndpoint(resolvedStreamingEndpoint),
+        )
+        reapplyConversationTransportAffinity()
         exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
@@ -5884,6 +5918,7 @@ class ChatViewModel : ViewModel() {
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
         conversationBindingController.switchSession(sessionId)
+        reapplyConversationTransportAffinity()
 
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -6000,6 +6035,7 @@ class ChatViewModel : ViewModel() {
         }
         if (handler.currentSessionId.value == null) {
             conversationBindingController.switchSession(null)
+            reapplyConversationTransportAffinity()
             onSessionChanged?.invoke(null)
         }
 
@@ -6226,10 +6262,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (
             (streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
             val message = if (streamingEndpoint == "gateway") {
-                "Gateway is unavailable and no API fallback is configured for this connection."
+                "This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry."
             } else {
                 "API fallback is not configured for this connection."
             }
@@ -6337,9 +6373,15 @@ class ChatViewModel : ViewModel() {
             ?: return VoiceMessageSubmissionResult.Rejected("Hermes chat is not ready.")
         val client = apiClient
         if ((streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
-            return VoiceMessageSubmissionResult.Rejected("Hermes is not connected.")
+            return VoiceMessageSubmissionResult.Rejected(
+                if (streamingEndpoint == "gateway") {
+                    "This chat needs the Hermes Dashboard. Sign in or reconnect, then retry."
+                } else {
+                    "The direct API connection is unavailable."
+                },
+            )
         }
         if (activeStream != null || streamRecovery != null || handler.isStreaming.value) {
             return VoiceMessageSubmissionResult.Rejected(
@@ -10106,12 +10148,11 @@ class ChatViewModel : ViewModel() {
             )
         }
 
-        // SSE dispatch shared by the three HTTP endpoints AND the gateway
-        // branch's per-turn fallback (gateway unreachable / not the resolved
-        // transport). Warns once per dispatch about any attachment it can't carry.
+        // SSE dispatch shared by the three explicit API compatibility endpoints.
+        // Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle? {
             val sseClient = client ?: run {
-                onErrorCb("Gateway unavailable and no API fallback is configured.")
+                onErrorCb("The direct API connection is unavailable.")
                 return null
             }
             val prepared = prepareTextTransportAttachments(message, attachments.orEmpty())
@@ -10256,13 +10297,13 @@ class ChatViewModel : ViewModel() {
         activeStream = when {
             effectiveEndpoint != "gateway" -> dispatchSse(effectiveEndpoint)
 
-            // Gateway turns upload ALL attachments via their typed upstream
-            // RPC (image.attach_bytes / pdf.attach / file.attach), matching the
-            // desktop client. Only a missing gateway client forces the per-turn
-            // SSE fallback (where non-image attachments are not upstream-
-            // recognized and would be dropped — graceful degradation).
-            gateway == null ->
-                dispatchSse(resolveSseFallback(handler))
+            // The conversation owner is immutable. Losing Gateway preserves
+            // the local transcript/draft and exposes Retry; it never dispatches
+            // the turn into the API server's different session database.
+            gateway == null -> {
+                onErrorCb("This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry.")
+                null
+            }
 
             else -> {
                 startImageActivityBridge()
@@ -10434,11 +10475,14 @@ class ChatViewModel : ViewModel() {
                             activeStream = null
                             settleSessionActivity(handler.currentSessionId.value)
                         } else {
-                            // Nothing started server-side — rerun this turn on
-                            // the SSE fallback. Callbacks land on the main
-                            // thread, so swapping activeStream here is safe.
-                            // The fallback turn is not steerable.
-                            activeStream = dispatchSse(resolveSseFallback(handler))
+                            // Nothing started server-side. Keep this turn bound
+                            // to Gateway and settle it as retryable local state;
+                            // API sessions are a different owner/database.
+                            onPreflightErrorCb(
+                                IllegalStateException(
+                                    "Hermes Dashboard chat is unavailable. Sign in or reconnect, then retry.",
+                                ),
+                            )
                         }
                     },
                 )
@@ -10462,8 +10506,8 @@ class ChatViewModel : ViewModel() {
         // configured transport: a gateway-configured turn forced onto SSE
         // (voice interface context, trace drain) did carry the synthetic
         // messages, and skipping the mark there re-sent them every turn.
-        // The async gateway preflight-failure fallback stays conservative:
-        // its traces are marked on the NEXT turn (at-least-once delivery).
+        // A failed Gateway preflight leaves these traces unsynced; retrying the
+        // same owner retains at-least-once delivery without crossing stores.
         if (voiceIntentMessages != null && effectiveEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
@@ -10474,18 +10518,6 @@ class ChatViewModel : ViewModel() {
     /** Adapt an SSE [EventSource] to the transport-agnostic turn handle. */
     private fun EventSource.asTurnHandle(): ActiveTurnHandle =
         ActiveTurnHandle { this.cancel() }
-
-    /**
-     * SSE endpoint for a turn that was meant for the gateway. The sessions
-     * endpoint needs an existing server session — without one, use the
-     * stateless completions path instead of failing the turn.
-     */
-    private fun resolveSseFallback(handler: ChatHandler): String =
-        if (sseFallbackEndpoint == "sessions" && handler.currentSessionId.value == null) {
-            "completions"
-        } else {
-            sseFallbackEndpoint
-        }
 
     private fun currentAgentDisplayName(
         effectiveProfileOverride: Profile? = null,

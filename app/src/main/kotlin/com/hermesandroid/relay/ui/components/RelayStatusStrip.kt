@@ -28,6 +28,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
@@ -44,7 +46,7 @@ fun RelayStatusStrip(
     /** Optional security marker rendered just before the route label. */
     securityGlyph: (@Composable () -> Unit)? = null,
     /**
-     * When true, the strip shows an amber "Reconnecting…" cue in place of the
+     * When true, the strip shows an amber "Relay reconnecting" cue in place of the
      * route label. This is where a **routine** in-progress relay reconnect
      * surfaces — the top chrome stays empty so chat content never shifts.
      */
@@ -118,7 +120,7 @@ fun RelayStatusStrip(
 }
 
 /**
- * Amber "· Reconnecting…" cue with a softly pulsing dot. This is the *only*
+ * Amber "Relay reconnecting" cue with a softly pulsing dot. This is the *only*
  * surface for a routine in-progress relay reconnect — the top of the app stays
  * empty (chat/agent status rides the chat header subtitle) so nothing shifts.
  * Pulse is frame-throttled via [rememberAmbientPhase] to avoid pinning the
@@ -142,7 +144,7 @@ private fun ReconnectingCue(modifier: Modifier = Modifier) {
                 .background(RelayRefresh.Amber),
         )
         Text(
-            text = "Reconnecting…",
+            text = stringResource(R.string.settings_relay_reconnecting),
             style = relayMetadataStyle(),
             color = RelayRefresh.Amber,
             maxLines = 1,

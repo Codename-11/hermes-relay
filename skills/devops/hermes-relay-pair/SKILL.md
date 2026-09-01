@@ -34,7 +34,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 
 ## Prerequisites
 
-1. **Hermes-Relay plugin installed into the Hermes venv.** Verify by running `python -m plugin.pair --help` — if it errors with `ModuleNotFoundError: No module named 'plugin'`, install it first: `pip install -e <path-to-hermes-relay-repo>`.
+1. **Hermes-Relay plugin installed and enabled.** Verify with `hermes pair --help`. If the command is unavailable, run `hermes plugins install Codename-11/hermes-relay/plugin --enable`. Use the full `install.sh` path instead only when the host also needs the relay service, editable package, and shell shims.
 2. **Hermes API server reachable** on `API_SERVER_HOST:API_SERVER_PORT` (default `127.0.0.1:8642`). `plugin.pair` auto-reads this from `~/.hermes/config.yaml` → `~/.hermes/.env` → env vars → defaults.
 3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. The Relay may stay host-internal: current Android pairing normally reaches it through the Dashboard's same-origin plugin transport. Tailscale Serve normally exposes dedicated HTTPS `10443` and proxies the host-local Dashboard on `9119`; a raw LAN/tailnet route may reach `9119` directly. Listener `443` is an advanced explicit override only when it is free. Without a live relay, the QR will configure chat only.
 4. **Host is Linux or macOS.** The relay uses a real PTY backend, which is POSIX-only. Windows hosts can generate API-only QRs but the terminal channel will not work.
@@ -46,7 +46,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 2. **Generate the QR** — run via the `terminal` tool:
 
    ```bash
-   python -m plugin.pair
+   hermes pair
    ```
 
    When the current Hermes surface exposes an exact Dashboard origin, pass it
@@ -65,7 +65,7 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
    explicitly selects that advanced listener and confirms it is free. Never
    substitute the API server URL or infer public port `8767`.
 
-   If `python` resolves to the wrong interpreter (plugin not found), use the Hermes venv explicitly:
+   On a full-relay or legacy editable install where an older Hermes host cannot register plugin CLI commands, use the Hermes venv explicitly:
 
    ```bash
    ~/.hermes/hermes-agent/venv/bin/python -m plugin.pair
@@ -156,7 +156,7 @@ Pass `--transport-hint wss` only when you know the relay is actually running beh
 ## Pitfalls
 
 - **Relay not running.** `plugin.pair` prints `[info] Relay not running ... QR will configure chat only` and renders an API-only QR. Terminal tab will then ask the user to paste a pairing code manually. Fix: start the relay first (`hermes relay start`) and re-run.
-- **Plugin not installed.** `ModuleNotFoundError: No module named 'plugin'`. Fix: `pip install -e <hermes-relay-repo>` into the same Python environment Hermes uses. Use `which python` / `where python` to confirm you're targeting the Hermes venv.
+- **Plugin not installed.** If `hermes pair --help` is unavailable, run `hermes plugins install Codename-11/hermes-relay/plugin --enable`. Use `install.sh` for the full relay/service/shim setup rather than constructing a manual editable install.
 - **Wrong venv.** If `hermes` CLI is global but plugin is in the Hermes venv, `python -m plugin.pair` may resolve to the wrong Python. Call the venv Python explicitly: `~/.hermes/hermes-agent/venv/bin/python -m plugin.pair`.
 - **Pairing code expired.** 10-minute TTL, one-shot. Re-run `python -m plugin.pair` to mint a fresh code; the previous code is automatically invalidated on the next run.
 - **QR won't scan on terminal.** Likely causes: terminal font too small (zoom in), dark-mode color inversion mangling the blocks, or terminal lacks Unicode half-block support. Fix: re-run with `--png` and point the camera at the saved image, or open the PNG in an image viewer on a second screen.
