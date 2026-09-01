@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "server-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Approved Plugin version"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -19,10 +25,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('server-v{0}', inputs.version) || github.ref }}
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/server-v}" >> "$GITHUB_OUTPUT"
+        env:
+          DISPATCHED_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$DISPATCHED_VERSION" ]; then
+            version="$DISPATCHED_VERSION"
+          else
+            version="${GITHUB_REF#refs/tags/server-v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Verify Plugin version sync and changelog
         run: |
@@ -61,6 +76,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('server-v{0}', inputs.version) || github.ref }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v7
@@ -99,6 +116,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('server-v{0}', inputs.version) || github.ref }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v7

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const { classifyCiPaths } = require('./classify-ci-paths.cjs');
 
 const none = {
@@ -24,6 +26,13 @@ assert.deepEqual(classifyCiPaths(['scripts/dev.bat']), { ...none, android: true 
 assert.deepEqual(classifyCiPaths(['scripts/dev.sh']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['scripts/tests/android_prepush_test.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['.github/workflows/android-on-demand.yml']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['.github/workflows/approve-release-extensions.yml']), {
+  ...none,
+  desktop: true,
+  plugin: true,
+});
+assert.deepEqual(classifyCiPaths(['.github/workflows/release-cli.yml']), { ...none, desktop: true });
+assert.deepEqual(classifyCiPaths(['.github/workflows/release-plugin.yml']), { ...none, plugin: true });
 assert.deepEqual(classifyCiPaths(['plugin/relay/server.py']), { ...none, plugin: true });
 assert.deepEqual(classifyCiPaths(['plugin/dashboard/src/App.tsx']), { ...none, dashboard: true });
 assert.deepEqual(classifyCiPaths(['user-docs/index.md']), { ...none, docs: true });
@@ -47,5 +56,31 @@ assert.deepEqual(classifyCiPaths(['.github/workflows/release-backmerge.yml']), {
   contract: true,
   docs: true,
 });
+
+const repoRoot = join(__dirname, '..', '..');
+const approvalWorkflow = readFileSync(
+  join(repoRoot, '.github', 'workflows', 'approve-release-extensions.yml'),
+  'utf8',
+);
+const cliReleaseWorkflow = readFileSync(
+  join(repoRoot, '.github', 'workflows', 'release-cli.yml'),
+  'utf8',
+);
+const pluginReleaseWorkflow = readFileSync(
+  join(repoRoot, '.github', 'workflows', 'release-plugin.yml'),
+  'utf8',
+);
+
+assert.match(approvalWorkflow, /permissions:\r?\n  contents: read/);
+assert.match(
+  approvalWorkflow,
+  /approve:[\s\S]*?permissions:\r?\n      actions: write\r?\n      contents: write/,
+);
+assert.match(
+  approvalWorkflow,
+  /ref: \$\{\{ contains\(inputs\.version, '-'\) && 'dev' \|\| 'main' \}\}/,
+);
+assert.match(cliReleaseWorkflow, /workflow_dispatch:[\s\S]*?Approved CLI\+UI version/);
+assert.match(pluginReleaseWorkflow, /workflow_dispatch:[\s\S]*?Approved Plugin version/);
 
 console.log('CI path classification tests passed.');
