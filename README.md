@@ -214,7 +214,7 @@ hermes-relay update                            # self-update via GitHub Releases
 
 It pairs against the **same relay and credential store** as the Android app — pair once from either, both work. Tagged on the `desktop-v*` [release track](https://github.com/Codename-11/hermes-relay/releases?q=desktop), with historical releases still visible under `cli-v*`.
 
-On Windows, the default installer adds the optional compact **Hermes-Relay CLI UI** tray popup for host selection and pairing, connection and daemon state, per-host Ask/Trusted/Full Access, local grant dialogs, authorized-client revocation, activity, settings, and emergency stop. It is a management surface only—chat, TUI, plugins, voice, and agent sessions remain CLI/upstream concerns.
+On Windows, the default installer adds the optional compact **Hermes-Relay CLI UI** tray popup for host selection and pairing, connection and daemon state, per-host Ask/Trusted/Full Access, local grant dialogs, authorized-client revocation, activity, settings, and emergency stop. `hermes-relay update` detects this bundle and updates the CLI and UI together; explicit CLI-only installations stay headless and continue using the standalone binary updater. The UI is a management surface only—chat, TUI, plugins, voice, and agent sessions remain CLI/upstream concerns.
 
 <table>
   <tr>

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows desktop updates keep the installed CLI and UI on one release.** `hermes-relay update` now detects a colocated management UI, reports both installed versions, and uses the verified bundle installer to replace and restart the affected surfaces together. Explicit CLI-only installations retain the standalone binary updater.
+
 ## [Android 1.15.0] - 2026-08-31
 
 ### Changed
