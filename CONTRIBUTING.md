@@ -82,6 +82,11 @@ Use the narrowest command that proves the change:
 5. `scripts/dev.bat prepush` only when full local verification is explicitly
    wanted or cloud execution is unavailable.
 
+Android release preparation uses `python scripts/android-prepush.py
+--release-prep` while version notes are changing. It keeps local feedback to
+metadata and release-presentation tests; the exact pushed commit still goes
+through required CI and Play preflight before publication.
+
 `install-fast` is intentionally phone-specific. Use `install` for a universal
 sideload debug APK or when the target ABI is not arm64. Release builds remain
 universal and are unaffected unless `-Phermes.devAbi` is explicitly supplied.

@@ -42,6 +42,28 @@ class AndroidPrepushTest(unittest.TestCase):
         self.assertIn(":app:testSideloadDebugUnitTest", gradle)
         self.assertIn(":app:testGooglePlayDebugUnitTest", gradle)
 
+    def test_release_prep_runs_only_release_presentation_tests(self) -> None:
+        calls = self.run_main("--release-prep")
+        gradle = calls[-1].args[1]
+
+        self.assertNotIn(":app:lintGooglePlayDebug", gradle)
+        self.assertNotIn("lint", gradle)
+        self.assertIn(":app:testSideloadDebugUnitTest", gradle)
+        for test_name in android_prepush.RELEASE_PREP_TESTS:
+            self.assertIn(test_name, gradle)
+        self.assertNotIn(android_prepush.FOCUSED_TESTS[0], gradle)
+
+    def test_release_prep_rejects_full_lane_flags(self) -> None:
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                ["android-prepush.py", "--release-prep", "--both-flavors"],
+            ),
+            self.assertRaises(SystemExit),
+        ):
+            android_prepush.main()
+
 
 if __name__ == "__main__":
     unittest.main()
