@@ -259,9 +259,13 @@ translations may ship as `ai-translated`; do not claim fluent review unless a
 review reference is recorded. Focused correction PRs from fluent contributors
 are the canonical way to improve wording and can advance a locale to
 `community-reviewed` or `verified` under `docs/translation-playbook.md`.
-Translated READMEs use separate `README.<locale>.md` files; `README.md` remains
-the canonical project description. User docs may be added incrementally under
-`user-docs/<locale>/`, with links back to canonical English reference material.
+Translated README entrypoints live under `docs/readme/` as
+`README.<locale>.md`; root `README.md` remains the canonical project
+description. Keep translated entrypoints concise: summarize onboarding and
+core capabilities, link to localized user docs where available, and link back
+to English for fast-moving architecture, security, and operator detail. User
+docs may be added incrementally under `user-docs/<locale>/`, with links back to
+canonical English reference material.
 
 ## Changelog & writing conventions
 
