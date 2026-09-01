@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-08-29
+Updated: 2026-08-31
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is vanilla upstream
@@ -29,25 +29,31 @@ Verified upstream source snapshot:
 - Session activity contracts were rechecked against upstream `main` at
   `d736f5d53f1d33fabad5a17cb070eb138b618fb8` in `tui_gateway/server.py`,
   `tui_gateway/methods_session.py`, and `hermes_cli/web_routers/sessions.py`.
+- Desktop media delivery was rechecked at upstream commit
+  `b20cc5f787ea816ea8645603b7b2ac8234dcb8b4` in
+  `apps/desktop/src/lib/media.ts`,
+  `apps/desktop/src/components/assistant-ui/markdown-text.tsx`, and
+  `hermes_cli/web_server.py`.
 
 ## Ownership
 
 | Surface | Owner | Requires Relay | Android usage | Notes |
 |---------|-------|----------------|---------------|-------|
-| `/v1/capabilities` | Upstream API server | No | Optional fallback capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
-| `/v1/chat/completions` | Upstream API server | No | Chat fallback | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
-| `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | Chat fallback | Structured run events and stop/approval support. |
+| `/v1/capabilities` | Upstream API server | No | Direct API capability probe | Source of truth for API-server features; current upstream advertises no audio API. |
+| `/v1/chat/completions` | Upstream API server | No | API-only compatibility chat | OpenAI-compatible streaming. Tool events may degrade to inline annotations. |
+| `/v1/runs`, `/v1/runs/{id}/events` | Upstream API server | No | API-only compatibility chat | Structured run events and stop/approval support. |
 | Dashboard `/api/health` | Upstream dashboard | No | Route/process readiness | Lightweight canonical readiness probe used by official Desktop. Android falls back to `/api/status` only for confirmed legacy hosts without this route; transient failures never trigger the heavyweight fallback. |
-| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary profile-scoped session directory/history or optional SSE fallback | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. The standard Android drawer and stored-history reader use authenticated Dashboard REST independently of `/api/ws` readiness; the Gateway socket owns live chat and activity, not whether persisted rows may be read. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
+| `/api/sessions/*` | Upstream Dashboard/Gateway and API server | No | Primary profile-scoped Dashboard directory/history or API-only compatibility storage | Native upstream session list/create/read/update/delete/messages/fork/chat/chat-stream. The standard Android drawer and stored-history reader use authenticated Dashboard REST independently of `/api/ws` readiness; the Gateway socket owns live chat and activity, not whether persisted rows may be read. Dashboard lists expose profile-stamped `pinned`/`archived`, accept `archived=exclude\|only\|include`, and PATCH either durable flag in the owning profile DB. The API-server resource also exposes and patches both fields, but its current list omits archived rows and has no archive filter; Android therefore offers restart-safe archive/restore only on the Dashboard path while API-only pinning remains valid. Newer Dashboard hosts also expose single-session JSON export and guarded bulk cleanup; Android must dry-run prune first. The bootstrap no longer injects session CRUD/messages/fork routes; only `/api/sessions/search` remains a compatibility route. |
 | `/v1/skills`, `/v1/toolsets` | Upstream API server | No | Discovery | Authenticated read-only API-server skill/toolset inventory; Android Diagnostics summarizes enabled toolsets and Relay tool visibility. |
 | Dashboard `/api/status`, `/api/auth/me` | Upstream dashboard | No | Manage auth and post-selection diagnostics | Dashboard cookie/session path; separate from API bearer. Optional status diagnostics include Nous bootstrap validity, resource pressure, and profile/gateway topology; these do not gate transport selection. |
 | Dashboard `/api/auth/ws-ticket`, `/api/ws` | Upstream dashboard/tui_gateway | No | Preferred chat transport | Vanilla Hermes gateway chat path with live reasoning/thinking events. `message.complete` is the ordinary terminal event; `session.info {running:false}` is the authoritative settle backstop when a replacement socket missed that terminal frame. A reconnect reactivates the exact live runtime with `session.activate`; durable `session.resume` remains the cold-open path and an explicit rejection never creates a replacement context. |
-| Gateway `session.active_list` | Upstream tui_gateway | No | Authoritative process-wide live activity | Returns attachable runtimes across the Gateway process, with live `id`, durable `session_key`, and `starting`, `working`, `waiting`, or `idle`. The only optional selector is `current_session_id`; rows normally carry no profile metadata. Android attributes a row only from exact foreground/detached ownership already held by that client, or from explicit profile metadata if a future upstream sends it. A bounded REST directory never proves global uniqueness. Unresolved rows remain unattributed, and absence settles a scope only after a complete, unambiguously resolved successful snapshot. Method-not-found or refresh failure is Unavailable, not Idle. Pending input outranks running work. |
+| Gateway `session.active_list` | Upstream tui_gateway | No | Authoritative process-wide live activity | Returns attachable runtimes across the Gateway process, with live `id`, durable `session_key`, and `starting`, `working`, `waiting`, or `idle`. The only optional selector is `current_session_id`; rows normally carry no profile metadata. Android attributes a row from exact foreground/detached ownership already held by that client, explicit profile metadata if a future upstream sends it, or a unique match to the currently selected passive session in the current connection directory. Duplicate same-id owners across profiles remain unresolved. An exact live/durable Idle row may settle only the same Android-owned turn and unchanged progress generation when a terminal frame is missing; it never claims a passively observed Desktop/TUI turn. Unresolved rows stay unattributed, and absence settles a scope only after a complete, unambiguously resolved successful snapshot. Method-not-found or refresh failure is Unavailable, not Idle. Pending input outranks running work. |
 | Dashboard `model.options` / `/api/model/*` | Upstream dashboard/tui_gateway | No | Provider/model inventory and selection | Source of truth for coherent provider/model identities. A reasoning boolean or exact effort list is consumed when present; clients do not infer provider identity from a model string alone. |
 | Gateway `pet.info`, `pet.gallery`, `pet.select`, `pet.disable` | Upstream tui_gateway | No | Profile-scoped animated companion | `pet.info` supplies bounded PNG/WebP sheet bytes, revision, geometry, real frame counts, loop timing, scale, and row taxonomy. Android passes `knownRevision` to avoid duplicate sheet transfer, renders the active pet through its native activity-aware companion, and keeps phone-local pet packs separate. All four RPCs carry the effective profile. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak-stream`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. Assistant text streams into upstream speech when available; older hosts fall back to whole-request speech before audio starts. API server has no `/v1/audio/*` route today. |
+| Dashboard `/api/files/download`, `/api/files/stream`, `/api/fs/read-data-url` | Upstream dashboard | No | Primary inbound files and official Desktop media/preview support | Android currently downloads host-local `MEDIA:` paths and file links through authenticated `/api/files/download`, then plays or previews the bounded local cache. Official Desktop additionally uses `/api/files/stream` for Range playback and `/api/fs/read-data-url` for bounded previews; Android does not claim those two routes yet. Direct HTTP/data URLs remain direct. |
 | Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*`, `/api/providers/custom-endpoints*` | Upstream dashboard | No | Manage | Do not proxy through Relay. MCP list/actions/OAuth carry Android's effective profile explicitly; Android detects hosted-OAuth support with a read-only missing-flow status GET and caches that capability per dashboard/profile. Hosted OAuth itself stays server-owned, opens only the returned HTTPS URL, and persists only the opaque flow id/server/profile plus a normalized non-secret dashboard/connection identity; polling is held whenever the active connection does not own that flow. Custom-endpoint routes are process-scoped in the current public contract, so Android does not claim or append profile scoping; credentials are write-only and blank edits preserve an existing key. |
-| `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
+| `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools, and additive media compatibility | Owned by `plugin/relay/server.py`; Android must gate these routes behind Relay readiness/session grants. Relay media tokens, sensitivity metadata, and older-host compatibility enhance the standard Dashboard media path; they do not make ordinary inbound files Relay-owned. |
 | `POST /relay/model-capabilities` | Hermes-Relay plugin/server | Optional | Refine reasoning-effort choices for exact upstream provider/model pairs | Never supplies model inventory or gates chat. Missing, old, unpaired, malformed, or unreachable Relay falls back to standard advisory choices. Remote calls require a paired bearer with an active `chat` grant. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab and same-origin Relay ingress | FastAPI plugin backend proxies an explicit allowlist to the independently supervised loopback Relay. HTTP requires Dashboard auth plus `X-Hermes-Relay-Session`; WebSockets require a fresh Dashboard ticket before Relay's own pairing/session frame. Loopback administration routes are never exposed. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |
@@ -60,7 +66,7 @@ second, orthogonal axis: the **build flavor**, a capability ceiling compiled
 into the APK regardless of which routes the server exposes.
 
 - `googlePlay` ("Bridge Core") ships the full Vanilla Hermes path plus the Relay
-  client (terminal, relay voice, notification companion, media, session
+  client (terminal, relay voice, notification companion, media enhancements, session
   grants), but **no** AccessibilityService Device Control.
 - `sideload` additionally compiles in phone Device Control — screen reading,
   taps, typing, screenshots, overlays, unattended control — and the Tier-C
@@ -167,9 +173,9 @@ capabilities, not identity:
 
 | Surface | Product role | Required for the standard path |
 |---------|--------------|--------------------------------|
-| Dashboard/Gateway | Primary chat, auth, sessions, Manage, and Vanilla Hermes voice | Yes |
-| API server | Automatic chat fallback and advanced headless compatibility | No |
-| Relay | Pairing, terminal, bridge/device control, media, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
+| Dashboard/Gateway | Primary chat, auth, sessions, Manage, Vanilla Hermes voice, and inbound files | Yes |
+| API server | Explicit Direct API and advanced headless compatibility | No |
+| Relay | Pairing, terminal, bridge/device control, media enhancements/legacy fallback, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
 
 Existing API-only records and headless deployments remain supported compatibility
 configurations. They do not redefine normal onboarding or make an API key a
@@ -181,12 +187,15 @@ The app should present Vanilla Hermes as the default path:
 
 1. Connect to and authenticate with the Dashboard/Gateway.
 2. Use gateway chat when `/api/ws` is ready.
-3. Discover or accept an API server as an optional automatic fallback; otherwise
-   keep the connection healthy with API fallback marked unavailable.
-4. When needed, fall back to API-server
-   SSE.
+3. Keep any discovered API server as an optional compatibility capability; it
+   does not alter the owner of the active Dashboard conversation.
+4. Use API-server SSE only for a legacy API-only record or an explicit advanced
+   Direct API selection/new chat.
 5. Use Vanilla Hermes dashboard voice when audio routes are present.
-6. Offer Relay pairing only for Relay-owned power features. Prefer the
+6. Resolve inbound files through direct sources or authenticated upstream
+   Dashboard file routes first. Use Relay only for Relay tokens, additive
+   metadata, or compatibility with older hosts.
+7. Offer Relay pairing only for Relay-owned tools and enhancements. Prefer the
    Dashboard-origin plugin ingress advertised by pairing; retain a direct Relay
    listener only as an advanced/headless/Desktop compatibility route.
 
@@ -233,7 +242,7 @@ keeping route ownership explicit:
 - Connection/profile ownership plus request generation are rechecked before
   publication, so a late response cannot populate a newer profile selection.
 
-## API Fallback Compatibility Details
+## Direct API Compatibility Details
 
 - Dashboard/API session-list `is_active` is a persistence-recency hint: an
   unended row whose `last_active` is less than five minutes old. It is not a
@@ -262,6 +271,9 @@ keeping route ownership explicit:
   owner; Stop/session-switch cancels the initial request, pending delay, and
   replacement together. A second drain or any post-event failure remains an
   explicit retry so the client cannot duplicate an admitted turn.
-- Gateway `session.create` and `session.resume` declare `source: webui`, the
-  existing upstream rich-chat platform hint. Hermes currently has no stable
-  `android` or `relay_desktop` platform hint; Relay clients must not invent one.
+- Android currently preserves its explicit `source: webui` session field for
+  wire and history compatibility only. Current official Desktop does not treat
+  `webui` as a rich-chat prompt hint; upstream removed that unused path at the
+  verified `b20cc5f` snapshot. Hermes has no stable `android` or mobile platform
+  hint, so Android must not claim Desktop parity or invent one. The upstream
+  platform-hint follow-up is tracked in `TODO.md`.

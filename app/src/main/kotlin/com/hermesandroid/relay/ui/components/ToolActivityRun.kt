@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 
 private val TOOL_ACTIVITY_PET_ROUTES = setOf("chat")
@@ -101,7 +102,8 @@ internal fun ToolCall.requiresStandaloneToolSurface(): Boolean {
         !error.isNullOrBlank() ||
         outputRisk != null ||
         normalized in FILE_EDIT_TOOLS ||
-        normalized in ATTENTION_TOOLS
+        normalized in ATTENTION_TOOLS ||
+        isImageGenerationToolName(name)
 }
 
 internal data class ToolActivityCounts(

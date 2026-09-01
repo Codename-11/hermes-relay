@@ -24,7 +24,7 @@ A plain Hermes install is enough. Chat, management, and voice all work with no p
 
 HOW IT WORKS
 
-Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. A headless API server remains an automatic compatibility fallback. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
+Chat, sessions, Manage, and voice use the Hermes Dashboard/Gateway with one sign-in. Existing API-only and headless connections remain supported as an explicit compatibility mode. Run the optional relay service and the app can pair by QR code to add power tools: remote terminal, notification companion, media handoff, relay-session management, and more voice engines.
 
 GOOGLE PLAY BUILD
 
@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.14.0 - Connections that follow you
+v1.15.0 - Standard Hermes first, with clearer Relay boundaries
 
-Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.
+Standard Chat, Voice, attachments, returned files, current-session Git, usage, and Hermes notices now prefer upstream Dashboard and Gateway support without requiring Relay. Returned media stays loaded, voice survives Relay removal, and Settings clearly separates standard Hermes from Relay tools. Supervised Mode also gains app-specific parent access and recovery.
 ```
 ## Category
 

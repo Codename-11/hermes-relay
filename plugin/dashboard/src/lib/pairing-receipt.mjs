@@ -53,7 +53,7 @@ function normalizeRoute(endpoint, index, globalPayload, endpointCount) {
   const surfaces = [
     dashboard ? { surface: "dashboard", label: "Dashboard", url: dashboard } : null,
     relay ? { surface: "relay", label: "Relay", url: relay } : null,
-    api ? { surface: "api", label: "API fallback", url: api } : null,
+    api ? { surface: "api", label: "Direct API", url: api } : null,
   ].filter(Boolean);
   const issues = [];
 
@@ -72,7 +72,7 @@ function normalizeRoute(endpoint, index, globalPayload, endpointCount) {
       issues.push("public: Relay must use WSS");
     }
     if (api && !api.startsWith("https://")) {
-      issues.push("public: API fallback must use HTTPS");
+      issues.push("public: Direct API must use HTTPS");
     }
   } else if (normalizedRole === "public_legacy") {
     if (!relay) issues.push("public_legacy: missing Relay route");

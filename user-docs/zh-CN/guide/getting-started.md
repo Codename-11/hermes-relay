@@ -21,8 +21,8 @@ Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
 |---|---|---|
 | 适合 | 大多数用户 | 需要 Device Control 的用户 |
 | 更新 | 自动 | 手动更新 APK |
-| Chat、Voice、Manage | 包含 | 包含 |
-| 配合 Relay 的终端、媒体和通知 | 包含 | 包含 |
+| Chat、Voice、Manage、入站文件 | 包含 | 包含 |
+| 配合 Relay 的终端、媒体增强和通知 | 包含 | 包含 |
 | 读取屏幕、点击、输入和导航 | 不包含 | 包含 |
 
 <StoreBadge />
@@ -34,9 +34,10 @@ Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
 ## 2. 让手机可以访问 Hermes
 
 Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 Chat、
-会话、登录、Manage 和标准 Voice。请使用 `hermes dashboard` 启动，并确保手机可访问。
+会话、登录、Manage、标准 Voice 和经过身份验证的入站文件。请使用
+`hermes dashboard` 启动，并确保手机可访问。
 
-`:8642` 上的 API 服务器是可选的，仅用于 Chat 自动 fallback 或高级 headless
+`:8642` 上的 API 服务器是可选的，仅用于明确配置的 Direct API 或高级 headless
 兼容。只有配置该可选端点时才需要 API 密钥。`API_SERVER_KEY` 由服务器运维人员创建，Dashboard 不会提供该密钥。
 
 ::: warning 保护网络访问
@@ -59,13 +60,13 @@ HTTPS 回调：`<公共-dashboard-origin>/auth/callback`。Hermes 通常从受�
 3. 按提示登录 Dashboard。
 4. 点击 **Connect** 并确认显示 **Chat · Ready**。
 5. 在 **完成设置** 中，如需后台聊天提醒，请启用 Android 通知。相机、麦克风和其他功能仍为可选，并可逐项设置；选择 **暂不** 可直接继续。
-6. 如有需要，稍后在 **Advanced** 中添加 API fallback、Relay 或远程路由。
+6. 如有需要，稍后在 **Advanced** 中添加 Direct API、Relay 或远程路由。
 
 `hermes-relay-tailscale enable` 会在 tailnet 的专用 `:10443` 发布
 `https://host.ts.net:10443`，并将它连同同源 Relay 路径代理到本地 Dashboard
 `:9119`。也可以使用有意直接开放的 `http://100.x.y.z:9119` 路由，但它没有应用层 TLS。
 
-同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 API fallback 不可用都是正常状态。
+同一个登录会启用 Chat、会话、Manage 和 Voice。Relay 未配对或 Direct API 不可用都是正常状态。
 
 ## 建议：使用 Relay 完成设置 {#relay-server-optional}
 

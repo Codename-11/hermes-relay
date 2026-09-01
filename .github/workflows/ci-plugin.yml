@@ -101,6 +101,7 @@ jobs:
       - name: Run focused Plugin tests
         run: |
           python -m pytest \
+            plugin/tests/test_manifest_compatibility.py \
             plugin/tests/test_relay_security.py \
             plugin/tests/test_voice_routes.py \
             plugin/tests/test_session_grants.py \

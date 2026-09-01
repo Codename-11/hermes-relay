@@ -1,0 +1,14 @@
+{
+  "name": "initial_history_bind",
+  "live_session_id": "fixture-live-history",
+  "stored_session_id": "20260829_120000_bot_chat",
+  "profile": "research",
+  "contract_requirements": [
+    "gateway.session_resume_durable"
+  ],
+  "initial_history": [
+    {"id": 1, "role": "user", "content": "Open the durable Bot Chat.", "timestamp": 1.0},
+    {"id": 2, "role": "assistant", "content": "Durable Bot Chat history is ready.", "timestamp": 2.0, "finish_reason": "stop"}
+  ],
+  "turns": []
+}

@@ -93,7 +93,7 @@ scripts/dev.bat run      # Build + install + launch (requires connected device)
 
 Hermes-Relay can use two upstream Hermes surfaces:
 
-- **Dashboard/Gateway** on `:9119` — primary Chat, sessions, sign-in, Manage, and standard voice
+- **Dashboard/Gateway** on `:9119` — primary Chat, sessions, sign-in, Manage, standard voice, and inbound files
 - **API server** on `:8642` — optional Chat fallback and advanced headless compatibility
 
 ::: tip Already have a Hermes server — or someone set one up for you?
@@ -108,9 +108,9 @@ instance with the Dashboard/Gateway enabled. The optional API server is a
 fallback or headless compatibility surface. The Relay power-user plugin
 (step 4) additionally needs Python 3.11+ on the server.
 
-::::details Advanced: add the optional API fallback
+::::details Advanced: add optional Direct API
 The standard app path does not require the API server or an API key. Enable this
-surface when you want automatic SSE fallback or an API-only headless
+surface when you want an explicit API-only/headless compatibility
 configuration. Installing Hermes and choosing a provider/model is ordinary
 Hermes setup, so we defer that to the official docs
 ([Installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation),
@@ -148,7 +148,7 @@ hermes gateway
 iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 hermes setup --portal                      # log in / pick a provider — skip if already configured
 
-# You, the server operator, create this key for the optional API fallback.
+# You, the server operator, create this key for optional Direct API.
 # Hermes Dashboard does not supply an API_SERVER_KEY.
 # Current Hermes requires a usable key of at least 16 characters when the API
 # server is enabled.
@@ -200,7 +200,8 @@ Three easy ways to get the key onto your phone (no 64-character typing required)
 ::::
 
 **Standard setup — enable the Dashboard/Gateway.** This one upstream surface
-provides primary Chat, sessions, Manage, authentication, and standard voice.
+provides primary Chat, sessions, Manage, authentication, standard voice, and
+authenticated inbound file delivery.
 
 ::::details Enable Manage (Skills, Cron, Models, Keys) — run the dashboard
 Run the Hermes dashboard on a phone-reachable URL. Because your
@@ -243,7 +244,7 @@ reads and writes `~/.hermes/.env`, which holds your keys and secrets.)
 Dashboard sign-in on `:9119` uses a native bearer on current gateways, or
 exact-origin cookies on compatibility gateways, plus short-lived `/api/ws`
 tickets. It is sufficient for the standard connection. An API key authenticates
-only the optional API fallback on `:8642`; dashboard login does not create one,
+only optional Direct API on `:8642`; dashboard login does not create one,
 and you should not enter a fake key when no API endpoint is configured.
 :::
 ::::
@@ -259,7 +260,7 @@ On first launch:
    - **Scan setup QR** → scan a current payload with an explicit
      Dashboard/Gateway URL. Existing API-first QRs remain accepted for legacy
      and headless configurations.
-3. Optional: add API fallback, Relay, or remote routes under **Advanced**.
+3. Optional: add Direct API, Relay, or remote routes under **Advanced**.
 4. Tap **Connect**.
 5. On **Finish setup**, enable Android notifications if you want background
    chat alerts. Camera, microphone, notification companion, and Device Control
@@ -301,10 +302,10 @@ More: [Troubleshooting](/guide/troubleshooting) · [Chat guide](/guide/chat) ·
 ## 4. Recommended — complete the setup with Relay {#relay-server-optional}
 
 The unmodified Hermes Dashboard/Gateway remains authoritative for Chat,
-sessions, Manage, sign-in, and standard voice. The Relay plugin is an encouraged
+sessions, Manage, sign-in, standard voice, and ordinary inbound files. The Relay plugin is an encouraged
 extension for capabilities upstream Hermes does not yet expose: Terminal/TUI,
-notifications, media handoff, desktop tools, Relay sessions, enhanced voice,
-and optional Device Control.
+notifications, desktop tools, Relay sessions, enhanced voice, optional Device
+Control, and media compatibility or sensitivity metadata.
 
 Hermes-Relay follows an upstream-first rule: when upstream Hermes ships a
 compatible capability, the standard path should move there and Relay should
@@ -363,7 +364,7 @@ signed pairing contract as the Web Dashboard.
 - Or choose **Show Relay code** in Android, run the displayed
   `hermes pair --register-code <code>` command on the host, then tap **Connect**.
 
-Keep manual URL, port, TLS, API fallback, and route-priority overrides under the
+Keep manual URL, port, TLS, Direct API, and route-priority overrides under the
 advanced path. The Dashboard's **Auto** pairing mode and the app's confirmed QR
 receipt should be the default.
 
@@ -467,7 +468,7 @@ back to API-server SSE when it is not.
 1. On the **Connect** page, tap **Hermes**.
 2. Type your Dashboard/Gateway URL — e.g. `http://192.168.1.100:9119` — or discover it on LAN.
 3. Sign in through the dashboard's configured provider when prompted.
-4. Optional: expand **Advanced** to add an API fallback URL/key or Relay route.
+4. Optional: expand **Advanced** to add a Direct API URL/key or Relay route.
 5. Tap **Connect**.
 
 **After onboarding:** open **Settings → Gateways** and select a Hermes host.

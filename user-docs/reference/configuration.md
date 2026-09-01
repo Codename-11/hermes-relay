@@ -9,10 +9,10 @@ These are configured during onboarding or from the **Settings → Gateways** scr
 Hermes-Relay now treats connection auth as three related but separate contexts:
 
 - **Dashboard sign-in** (`:9119`) — upstream-preferred remote identity for the vanilla dashboard/desktop path. Current gateways use a native bearer when `native_pkce` is advertised; compatibility gateways use exact-origin cookies. Both mint short-lived `/api/ws` tickets for Chat, sessions, Manage, and standard voice. Android supports username/password and redirect providers such as Nous/OIDC for this surface.
-- **API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key and uses it for API-server SSE fallback paths.
-- **Pairing** (`:8767`) — relay grants for Terminal, Bridge, relay sessions, media relay inspection, and profile memory file editing. Pairing is not required for vanilla dashboard/API use, but it is required for relay power tools.
+- **Direct API connection** (`:8642`) — OpenAI-compatible chat, sessions, and portable API calls for API-only/headless compatibility. If the Hermes API server is configured with `API_SERVER_KEY`, Android stores that bearer key only for Direct API paths.
+- **Pairing** (`:8767`) — Relay grants for Terminal, Bridge, proactive Threads, Relay sessions, media inspection/enhancements, and profile memory file editing. Pairing is not required for vanilla Dashboard/API use, but it is required for Relay tools.
 
-**Chat** is the home screen. **Manage** is reached from **Settings → Hermes management**, and **Terminal** and **Bridge** from **Settings → Power tools** (and deep links); Manage and Bridge each keep a back arrow to Chat. Unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those relay-only screens load.
+**Chat** is the home screen. **Manage** is reached from **Settings → Hermes management**, **Media** sits with the standard Hermes settings, and **Terminal** and **Bridge** live under **Settings → Relay tools** (and deep links); Manage and Bridge each keep a back arrow to Chat. Unpaired devices see a clear **Requires pairing** / **Pair to unlock** gate before those Relay-only screens load.
 
 **Manage** uses the dashboard session, not relay pairing. It covers Skills, Cron jobs, MCP servers, the MCP catalog, Profiles, Models, and Config. Actions that write dashboard state use upstream dashboard endpoints; profile SOUL is view-only here, while SOUL/memory file editing remains a paired power tool.
 
@@ -26,7 +26,7 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 - **Routes** — **Dashboard & Gateway** shows the normal required address used by Manage, Gateway chat, sessions, voice, and sign-in, with edit and re-check actions. Optional LAN/Tailscale access paths and direct API/Relay compatibility details live below it. Each advertised surface is probed independently; an authenticated Dashboard origin cannot replace API or Relay ownership.
 - **Security** — reports protection and credential ownership per surface. Only surfaces currently in use affect the rollup; an available or unreachable fallback stays neutral. Dashboard authentication and Relay pairing tokens/per-channel grants remain separate even when transports share one authority.
 - **Advanced** — compatibility and endpoint overrides that most Dashboard/Gateway users do not need:
-  - **Optional direct API fallback** — API Server URL and API Key with **Save & Test**. This preserves the direct host/API-key path for headless and compatibility installs.
+  - **Optional Direct API** — API Server URL and API Key with **Save & Test**. This preserves the direct host/API-key path for API-only, headless, and compatibility installs.
   - **Direct Relay endpoint** — an explicit standalone Relay URL override with a reachability test and **Disconnect**. Normal same-origin Relay pairing does not require exposing a second user-facing port.
   - **Pair Relay** — opens the shared connection-scoped flow for QR scan, entering a server-issued code, or showing a phone-generated code. Advanced does not maintain a second inline pairing state machine.
   - **Allow plain (unencrypted) connections** toggle — first enable opens a consent dialog with a reason picker (LAN only / Tailscale or VPN / Local dev only). Reason is stored for later but the Transport Security badge usually derives a more accurate label from the live active-route role. Operator intent is the trust model — the toggle gates the UI's ability to save `ws://` / `http://` URLs, nothing server-side.
@@ -35,8 +35,8 @@ Hermes-Relay now treats connection auth as three related but separate contexts:
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
-| API Server URL | EncryptedSharedPreferences | Optional advanced/legacy compatibility endpoint for API-only records or fallback Chat. Normal Dashboard onboarding does not require it, and an unavailable API fallback does not degrade Dashboard/Gateway readiness. |
-| API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Android Chat fallback, not by dashboard login. |
+| API Server URL | EncryptedSharedPreferences | Optional advanced/legacy compatibility endpoint for API-only records or explicit Direct API Chat. Normal Dashboard onboarding does not require it, and an unavailable Direct API route does not degrade Dashboard/Gateway readiness. |
+| API Key | EncryptedSharedPreferences | Bearer token for API-server authentication. Used by Direct API, not by dashboard login. |
 | Dashboard URL | DataStore | The Dashboard/Gateway route entered during normal onboarding; it may be LAN, Tailscale, or public. Redirect providers must still return to the externally reachable Dashboard origin registered as `<public-dashboard-origin>/auth/callback`. Hermes normally derives this from trusted proxy headers; operators use upstream `dashboard.public_url` / `HERMES_DASHBOARD_PUBLIC_URL` only when that reconstruction is unreliable. Native PKCE uses a different advertised origin only for its browser transaction. On the older cookie compatibility flow Android verifies the installation and asks before saving a different authenticated Dashboard origin. Normal setup therefore does not require a second public sign-in field. Public origins require HTTPS, while same-origin or explicitly reviewed literal LAN/Tailscale/loopback HTTP retains upstream's trusted-network mode. |
 | Dashboard session cookies | EncryptedSharedPreferences | Compatibility auth cookies for the dashboard/admin server, stored separately from native bearer tokens, API keys, and Relay sessions. Every interactive provider, including password providers, uses native PKCE whenever `/api/status.auth_flows` advertises it; older gateways and client-local native failures use the cookie flow. Cookies stay on the exact host that issued them and are never copied between LAN, Tailscale, public, or derived Dashboard hosts. |
 | Relay URL | EncryptedSharedPreferences | Optional Hermes-Relay transport address for Bridge, Terminal, device tools, and Relay sessions. It is recorded only after explicit configuration or pairing; Android does not assume an exposed port, and Dashboard auth never substitutes for Relay pairing/grants. |
@@ -69,7 +69,7 @@ Per-channel grants (`chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:
 
 ### Relay sessions
 
-**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Power tools → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. This is a relay power tool: if the current connection is not paired, Android shows **Requires pairing** with a **Pair to unlock** action instead of an empty session list. When paired, the screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
+**Settings → Connections → [active card] → Security → Relay sessions** (or **Settings → Relay tools → Relay sessions**) opens a full-screen list of every phone currently paired with the relay. This is a Relay tool: if the current connection is not paired, Android shows **Requires pairing** with a **Pair to unlock** action instead of an empty session list. When paired, the screen leads with a short intro paragraph explaining that each row is a server-side session (not a Bluetooth pairing, not an account), then renders one card per session:
 
 - Device name + device ID
 - **Current device** badge if this is the device you're looking at the list on
@@ -93,9 +93,15 @@ Available in **Settings > Chat**.
 | Tool call display | `Detailed` | How tool calls appear: Off, Compact, or Detailed |
 | Personality | Server default | Active personality from `config.agent.personalities` via `GET /api/config` |
 
-## Inbound Media Settings
+## Media Settings
 
-Available in **Settings > Inbound media**. Controls how the app fetches and caches files the agent sends back through chat (screenshots from `android_screenshot`, and any future media-producing tool). Requires a running relay — files are served out-of-band by `plugin/relay/` via the new `POST /media/register` + `GET /media/{token}` routes, so the agent only needs to emit a `MEDIA:hermes-relay://<token>` marker in its chat response and the app handles the fetch + render. Bytes land in the app's cache directory and are shared with external viewers via `FileProvider` (authority `${applicationId}.fileprovider`).
+Available in **Settings → Hermes → Media**. Controls how the app fetches,
+protects, and caches files the agent sends back through chat. Current upstream
+Dashboard file/download/stream routes are preferred for ordinary `MEDIA:` paths,
+generated files, audio, video, and file links. A paired Relay can still resolve
+explicit `hermes-relay://` tokens, add sensitivity metadata, and support older
+hosts. Both routes land bytes in the same app cache and share them with external
+viewers through `FileProvider` (authority `${applicationId}.fileprovider`).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -111,9 +117,17 @@ Available in **Settings > Inbound media**. Controls how the app fetches and cach
 - Session replay across relay restarts. The `MediaRegistry` is in-memory on the relay side, so tokens stored in persisted message history become stale when the relay restarts. Scrolling back into a prior session renders a `⚠️ Image unavailable` placeholder for any stale token. Phone-side persistent caching (indexed by token or content hash) is the planned fix; filed as a follow-up.
 - Auto-fetch threshold enforcement (see table above).
 
-**Bare-path markers (`MEDIA:/abs/path.ext`) — the LLM's native format.** Upstream `hermes-agent/agent/prompt_builder.py` instructs the LLM to emit markers in this form directly in its response text. The app parses bare-path markers and fetches bytes via `GET /media/by-path` on the relay (same bearer auth, same path sandbox as `/media/register`). The tool-side `MEDIA:hermes-relay://<token>` form remains available for tools that want to pre-register explicitly.
+**Bare-path markers (`MEDIA:/abs/path.ext`) — the LLM's native format.**
+Upstream Hermes instructs the agent to emit markers in this form. Android first
+resolves them through the authenticated Dashboard file routes, matching official
+Desktop. Relay `GET /media/by-path` is an older-host compatibility fallback;
+`MEDIA:hermes-relay://<token>` remains available for tools that intentionally
+pre-register a Relay file.
 
-**If the relay isn't reachable** or the file isn't in the allowed roots, the app shows an inline `⚠️ Image unavailable` card with the specific reason (relay offline / sandbox violation / file not found) instead of raw marker text.
+**If no compatible source is available**, the app shows one stable, path-free
+file-unavailable card instead of raw marker text or a global Relay error.
+Upstream authentication/policy failures remain actionable; an unconfigured
+optional Relay is not itself a transfer failure.
 
 ## Appearance Settings
 
@@ -210,7 +224,10 @@ For Docker, systemd, and TLS setup, see [docs/relay-server.md](https://github.co
 
 ### Phone Threads (proactive messaging) — Beta
 
-The optional **phone platform** lets the Hermes agent proactively message your paired device — `send_message target=phone`, cron `deliver=phone`, and named Threads in chat. It is off by default; opt in via `~/.hermes/.env` and restart the gateway:
+Available under **Settings → Relay tools → Threads**. The optional **phone
+platform** lets the Hermes agent proactively message your paired device —
+`send_message target=phone`, cron `deliver=phone`, and named Threads in chat. It
+is off by default; opt in via `~/.hermes/.env` and restart the gateway:
 
 ```bash
 PHONE_ENABLED=1
@@ -308,5 +325,5 @@ The app permits cleartext at the Android network-security layer so LAN, emulator
 
 For remote access, prefer `hermes-relay-tailscale enable`, which maps dedicated
 tailnet HTTPS `:10443` to local Dashboard `:9119` and its same-origin Relay
-ingress without colliding with a reverse proxy on `:443`. The API fallback on
+ingress without colliding with a reverse proxy on `:443`. Direct API on
 `:8642` is optional; direct Relay `:8767` is legacy-only.

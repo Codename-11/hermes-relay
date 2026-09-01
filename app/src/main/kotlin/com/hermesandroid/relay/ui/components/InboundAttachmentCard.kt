@@ -206,29 +206,49 @@ private fun FailedCard(
     modifier: Modifier,
     maxWidth: Dp
 ) {
+    val hostOnly = attachment.errorMessage == ChatViewModel.MEDIA_HOST_ONLY
     Surface(
         shape = appearanceRoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.errorContainer,
+        color = if (hostOnly) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.errorContainer,
         modifier = modifier
             .widthIn(max = maxWidth)
-            .clickable { onRetry() }
+            .then(if (hostOnly) Modifier else Modifier.clickable { onRetry() })
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(text = "\u26A0\uFE0F", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = if (hostOnly) "\uD83D\uDCCE" else "\u26A0\uFE0F",
+                style = MaterialTheme.typography.titleMedium,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = attachment.errorMessage ?: stringResource(R.string.inbound_attach_failed),
+                    text = if (hostOnly) {
+                        stringResource(R.string.inbound_attach_host_only)
+                    } else {
+                        attachment.errorMessage ?: stringResource(R.string.inbound_attach_failed)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onErrorContainer
+                    color = if (hostOnly) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    },
                 )
                 Text(
-                    text = stringResource(R.string.inbound_attach_tap_retry),
+                    text = if (hostOnly) {
+                        stringResource(R.string.inbound_attach_host_only_help)
+                    } else {
+                        stringResource(R.string.inbound_attach_tap_retry)
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                    color = if (hostOnly) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    } else {
+                        MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                    },
                 )
             }
         }

@@ -1,6 +1,6 @@
 # Relay Server
 
-The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media, sessions, and voice routes in Hermes-Relay. Chat never touches the relay — it rides your vanilla Hermes surfaces, preferring the dashboard gateway (`/api/ws`, live thinking) when Manage auth is ready and falling back to the API server's SSE routes otherwise.
+The relay server is a lightweight Python WSS/HTTP service that enables **terminal** (remote shell), **bridge** (agent-driven phone control), media enhancements/compatibility, sessions, and voice routes in Hermes-Relay. Chat and ordinary inbound files do not require it: they use vanilla Hermes Dashboard/Gateway surfaces first.
 
 This page covers deployment and operation. Start with the
 [Relay API contract](./relay-api.html) for route ownership, authentication
@@ -11,11 +11,12 @@ detail.
 
 | Feature | Relay required? | Auth path |
 |---------|-----------------|-----------|
-| Chat | No | Dashboard/Gateway session; API bearer only for optional fallback |
+| Chat | No | Dashboard/Gateway session; API bearer only for explicit Direct API |
 | Vanilla Hermes Voice Mode | No | Dashboard session from Manage |
 | Relay voice extras | Yes for relay TTS/STT/realtime endpoints; pairing optional when the API key is present | Hermes API bearer or relay session |
 | Realtime Agent voice engine | Yes; experimental `/voice/realtime-agent/*` broker | Hermes API bearer or relay session with `voice:realtime` |
-| Inbound media (screenshots from tools) | Yes | Relay session |
+| Ordinary inbound files | No | Authenticated Dashboard file routes |
+| Explicit Relay tokens and phone-control screenshots | Yes | Relay session |
 | Terminal | Yes | Relay session |
 | Bridge (sideload track only) | Yes | Relay session |
 
@@ -294,7 +295,7 @@ hermes relay compat [status|install|remove]
 
 The bridge channel has two scopes:
 
-- **Bridge Core** is available on Google Play and sideload builds. It covers relay pairing/status plus non-device-control channels such as terminal/TUI relay, voice, media handoff, sessions, and notification companion.
+- **Bridge Core** is available on Google Play and sideload builds. It covers relay pairing/status plus non-device-control channels such as terminal/TUI relay, voice, explicit Relay media enhancements, sessions, and notification companion. Standard inbound files remain Dashboard-owned.
 - **Device Control** is sideload-only. It publishes the HTTP surface below for Hermes `android_*` plugin tools. Every route is proxied over the phone's WSS connection to the in-app `BridgeCommandHandler` and runs through the safety pipeline (blocklist → destructive-verb confirmation → auto-disable reschedule) before any gesture fires.
 
 As of v0.4 the Device Control surface is **34 routes** (33 excluding the legacy `/apps` alias) covering gestures, accessibility-tree reads, clipboard, media control, raw intents, an event stream, a phone-utility tier (send_sms, call, search_contacts, location, share_media, send_mms), and a self-foreground route (`/return_to_hermes`). Google Play Bridge Core phones report `bridge.device_control_supported=false`; the plugin hides the `android_*` Device Control tools, and direct command probes fail closed with `403` / `error_code: device_control_sideload_only`.

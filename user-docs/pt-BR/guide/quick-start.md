@@ -5,8 +5,8 @@ canonical_source: /guide/quick-start
 
 # Início rápido
 
-Instale → conecte → converse. O caminho padrão continua upstream; o plugin
-Relay é recomendado para a experiência completa do Hermes-Relay.
+Comece pela conexão padrão upstream. Depois, pareie o Relay quando quiser as
+ferramentas e os aprimoramentos adicionais que ele oferece.
 
 <AndroidSetupPath mode="quick" />
 
@@ -30,8 +30,19 @@ instale o APK assinado de **Sideload**. As duas versões podem ficar instaladas 
 O Dashboard/Gateway do Hermes precisa estar ativo e acessível pelo celular. Se
 necessário, inicie-o com `hermes dashboard`. Consulte
 [Instalação e configuração](/pt-BR/guide/getting-started) para preparar o servidor.
+Essa é toda a configuração do servidor necessária para Chat, sessões, Manage,
+voz e arquivos recebidos padrão.
 
-Para o caminho completo recomendado, instale também:
+## 3. Adicione a conexão padrão {#other-supported-paths}
+
+No Android, abra **Connect**. Use **Find Hermes on LAN** ou informe manualmente
+o endereço do Dashboard, normalmente `http://<host>:9119`. Entre quando
+solicitado. Isso cria uma conexão padrão completa sem plugin nem URL do Relay.
+
+## 4. Opcional: instale e pareie o Relay
+
+Para a experiência completa recomendada, instale o Relay depois que a conexão
+padrão estiver funcionando:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -42,34 +53,24 @@ hermes relay start --no-ssl
 Use `--no-ssl` somente em uma LAN ou VPN confiável. Para acesso fora de casa,
 [o Tailscale é recomendado](/guide/remote-access).
 
-## 3. Conecte {#other-supported-paths}
-
-Abra o aplicativo e vá até **Connect**. Você pode:
-
-1. No Web Dashboard, abra **Relay → Connect mobile app** e leia o QR sem
-   credenciais em Android **Connect → Scan Hermes setup QR**.
-2. Depois abra **Relay → Pair new device** e leia o QR de uso único em
-   **Settings → Connections → Pair Hermes Relay**.
-3. Sem o plugin do Dashboard, use **Find Hermes on LAN** ou informe manualmente
-   o endereço como `http://<host>:9119`.
-4. Sem câmera, `hermes pair` gera o mesmo QR e um convite copiável; URL e código
-   continuam disponíveis como fallback manual.
-5. Entre com o provedor do dashboard quando solicitado.
+Depois, abra **Relay → Pair new device** no Web Dashboard e leia o QR de uso
+único em **Settings → Connections → Pair Hermes Relay**.
 
 O servidor de API continua sendo um fallback opcional. Relay não é obrigatório
-para upstream, mas é recomendado para Terminal/TUI, notificações, mídia,
-ferramentas de desktop, voz avançada e Device Control.
+para upstream, mas é recomendado para Terminal/TUI, notificações, ferramentas
+de desktop, voz avançada, sessões Relay, Device Control e compatibilidade ou
+metadados de mídia. Arquivos recebidos comuns usam as rotas atuais do Dashboard.
 
-## 4. Confira o status
+## 5. Confira o status
 
 - **Chat · Ready** significa que você já pode enviar mensagens.
 - **Manage** pode pedir login no dashboard.
 - **Voice** é liberado pela mesma sessão do dashboard.
-- **API fallback** pode ficar indisponível sem bloquear o Chat.
+- **Direct API** pode ficar indisponível sem bloquear o Chat.
 - **Relay · Paired** confirma as extensões recomendadas; uma falha do Relay não
   deve bloquear o caminho upstream padrão.
 
-## 5. Envie a primeira mensagem
+## 6. Envie a primeira mensagem
 
 Abra o Chat e envie uma mensagem. O indicador verde no cabeçalho confirma que a
 conexão ativa com o Hermes está disponível.

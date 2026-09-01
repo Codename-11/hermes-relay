@@ -5,8 +5,8 @@ canonical_source: /guide/quick-start
 
 # クイックスタート
 
-インストール → 接続 → 会話。標準経路は upstream を維持し、完全な
-Hermes-Relay 体験には Relay plugin を推奨します。
+まず標準の upstream Dashboard/Gateway 接続を設定します。その後、追加の
+ツールや拡張が必要な場合に Relay をペアリングします。
 
 <AndroidSetupPath mode="quick" />
 
@@ -30,8 +30,18 @@ Hermes に画面の読み取り、タップ、文字入力、アプリ操作を�
 Hermes Dashboard/Gateway が起動し、スマートフォンから到達できる必要があります。
 必要に応じて `hermes dashboard` で起動します。サーバーの準備は
 [インストールと設定](/ja/guide/getting-started)を参照してください。
+これだけで標準の Chat、セッション、Manage、Voice、受信ファイルを利用できます。
 
-推奨される完全な経路では、追加で次を実行します。
+## 3. 標準 Hermes 接続を追加する {#other-supported-paths}
+
+Android で **Connect** を開き、**Find Hermes on LAN** を使うか、通常は
+`http://<host>:9119` となる Dashboard アドレスを手入力します。求められたら
+ログインします。これで plugin や Relay URL のない完全な標準接続が作成されます。
+
+## 4. オプション: Relay をインストールしてペアリングする
+
+標準接続が動作することを確認してから、推奨される完全な体験のために
+Relay をインストールします。
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -42,34 +52,24 @@ hermes relay start --no-ssl
 `--no-ssl` は信頼できる LAN または VPN でのみ使用してください。外出先からの
 アクセスには [Tailscale を推奨します](/guide/remote-access)。
 
-## 3. 接続する {#other-supported-paths}
-
-アプリを開いて **Connect** へ進み、次のいずれかを使用します。
-
-1. Web Dashboard の **Relay → Connect mobile app** を開き、Android の
-   **Connect → Scan Hermes setup QR** から資格情報を含まない QR を読み取る。
-2. 次に **Relay → Pair new device** を開き、**Settings → Connections →
-   Pair Hermes Relay** から 1 回限りの QR を読み取る。
-3. Dashboard plugin がない場合は **Find Hermes on LAN**、または
-   `http://<host>:9119` のような Dashboard アドレスの手入力を使う。
-4. カメラが使えない場合は `hermes pair` で同じ QR とコピー可能な招待を
-   生成し、URL とコードを手動フォールバックとして使う。
-5. 求められた場合は Dashboard のプロバイダーでログインする。
+その後、Web Dashboard で **Relay → Pair new device** を開き、**Settings →
+Connections → Pair Hermes Relay** から 1 回限りの QR を読み取ります。
 
 API サーバーは任意のフォールバックです。Relay は upstream 標準経路には
-必須ではありませんが、Terminal/TUI、通知、メディア、デスクトップツール、
-拡張 Voice、Device Control のために推奨されます。
+必須ではありませんが、Terminal/TUI、通知、デスクトップツール、拡張 Voice、
+Relay セッション、Device Control、メディア互換性やメタデータのために推奨されます。
+通常の受信ファイルには現在の Dashboard ルートを使用します。
 
-## 4. 状態を確認する
+## 5. 状態を確認する
 
 - **Chat · Ready** ならメッセージを送信できます。
 - **Manage** ではダッシュボードへのログインを求められる場合があります。
 - **Voice** も同じダッシュボードセッションで有効になります。
-- **API fallback** が利用不可でも Chat はブロックされません。
+- **Direct API** が利用不可でも Chat はブロックされません。
 - **Relay · Paired** は推奨拡張が有効であることを示します。Relay の障害が
   upstream 標準経路を妨げてはいけません。
 
-## 5. 最初のメッセージを送る
+## 6. 最初のメッセージを送る
 
 Chat を開いてメッセージを送信します。ヘッダーの緑色の接続表示は、現在の
 Hermes 接続が利用可能であることを示します。

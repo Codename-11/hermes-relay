@@ -271,7 +271,11 @@ class ContextInjectionTests(_IsolatedEnvMixin, unittest.TestCase):
             work_media = work_ctx.sections["hermes-relay.media-sensitivity"]
             work_phone = work_ctx.sections["hermes-relay.phone-platform"]
             self.assertEqual(work_media({}), "")  # type: ignore[operator]
-            self.assertEqual(work_phone({}), PHONE_PLATFORM_INSTRUCTION)  # type: ignore[operator]
+            self.assertEqual(work_phone({}), "")  # type: ignore[operator]
+            self.assertEqual(
+                work_phone({"tools": {"messaging": ["send_message"]}}),
+                PHONE_PLATFORM_INSTRUCTION,
+            )  # type: ignore[operator]
 
             # Unloading the disposable manager cannot erase root ownership.
             work_ctx.sections.clear()
@@ -356,8 +360,8 @@ class ContextInjectedRouteTests(_IsolatedEnvMixin, unittest.IsolatedAsyncioTestC
 
 
 class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
-    def _block_names(self) -> list[str]:
-        return [b["name"] for b in get_injected_context_blocks()]
+    def _block_names(self, session_info=None) -> list[str]:
+        return [b["name"] for b in get_injected_context_blocks(session_info)]
 
     def test_phone_helpers_defaults(self) -> None:
         # Platform off by default; the per-block hint defaults on (only matters
@@ -369,19 +373,32 @@ class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
         # Context layer is on by default, but PHONE_ENABLED is unset → no hint.
         self.assertNotIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
 
-    def test_phone_block_present_when_platform_enabled(self) -> None:
+    def test_phone_block_absent_when_platform_enabled_without_callable(self) -> None:
         self._set_env(plugin_config.PHONE_ENABLED, "1")
-        self.assertIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+        self.assertNotIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+
+    def test_phone_block_present_when_platform_and_callable_are_available(self) -> None:
+        self._set_env(plugin_config.PHONE_ENABLED, "1")
+        self.assertIn(
+            PHONE_PLATFORM_BLOCK_NAME,
+            self._block_names({"tools": {"messaging": ["send_message"]}}),
+        )
 
     def test_phone_block_suppressed_by_per_block_flag(self) -> None:
         self._set_env(plugin_config.PHONE_ENABLED, "1")
         self._set_env(plugin_config.RELAY_CONTEXT_PHONE_PLATFORM, "0")
-        self.assertNotIn(PHONE_PLATFORM_BLOCK_NAME, self._block_names())
+        self.assertNotIn(
+            PHONE_PLATFORM_BLOCK_NAME,
+            self._block_names({"tools": {"messaging": ["send_message"]}}),
+        )
 
     def test_phone_block_absent_when_context_layer_off(self) -> None:
         self._set_env(plugin_config.PHONE_ENABLED, "1")
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "0")
-        self.assertEqual(get_injected_context_blocks(), [])
+        self.assertEqual(
+            get_injected_context_blocks({"tools": {"messaging": ["send_message"]}}),
+            [],
+        )
 
     def test_phone_block_appends_labeled_fence(self) -> None:
         agent_class = self._agent_class()
@@ -390,7 +407,9 @@ class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
         self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
         self._set_env(plugin_config.PHONE_ENABLED, "1")
 
-        prompt = agent_class()._build_system_prompt()
+        agent = agent_class()
+        agent.tools = [{"function": {"name": "send_message"}}]
+        prompt = agent._build_system_prompt()
 
         self.assertIn(
             "<!-- hermes-relay:phone-platform -->\n"
@@ -400,7 +419,7 @@ class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
         )
         self.assertEqual(prompt.count("<!-- hermes-relay:phone-platform -->"), 1)
 
-    def test_audit_payload_includes_phone_block(self) -> None:
+    def test_audit_payload_omits_session_specific_phone_block(self) -> None:
         self._set_env(plugin_config.RELAY_AGENT_CONTEXT_ENABLED, "1")
         self._set_env(plugin_config.RELAY_CONTEXT_MEDIA_SENSITIVITY, "0")
         self._set_env(plugin_config.PHONE_ENABLED, "1")
@@ -408,10 +427,7 @@ class PhonePlatformContextBlockTests(_IsolatedEnvMixin, unittest.TestCase):
         payload = injected_context_payload()
 
         self.assertTrue(payload["enabled"])
-        self.assertEqual(
-            payload["blocks"],
-            [{"name": PHONE_PLATFORM_BLOCK_NAME, "text": PHONE_PLATFORM_INSTRUCTION}],
-        )
+        self.assertEqual(payload["blocks"], [])
 
     def _agent_class(self) -> type:
         class DummyAgent:

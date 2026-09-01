@@ -132,6 +132,19 @@ or network failure simply preserves the advisory behavior.
 These routes are upstream Dashboard routes. Every `/voice/*` route belongs to
 the optional Relay server instead.
 
+### Files and media
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/files/download` | Managed download for an allowed host-local file |
+| `GET` | `/api/files/stream` | Range-capable audio/video streaming |
+| `GET` | `/api/fs/read-data-url` | Bounded Desktop-compatible preview when the managed routes cannot represent it |
+
+Android uses these authenticated Dashboard routes for ordinary `MEDIA:` paths,
+generated files, audio/video, and file links. Explicit HTTP(S) or bounded
+`data:` sources stay direct. Relay media routes are used only for explicit Relay
+tokens, additive metadata, or older-host compatibility.
+
 ## Failure and fallback rules
 
 - A failed dashboard login does not invalidate API-server chat.
@@ -139,6 +152,8 @@ the optional Relay server instead.
 - A missing native session API falls back to completions or runs.
 - A `404` on a Manage route means unsupported; it does not authorize a Relay
   compatibility write.
+- An unsupported Dashboard file route may fall back to a paired Relay for an
+  older host. Missing Relay configuration is not a standard-connection error.
 - Profile-aware session history must stay on the dashboard/profile-aware
   transport rather than being mixed with a different database surface.
 

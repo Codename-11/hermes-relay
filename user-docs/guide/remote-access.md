@@ -6,12 +6,12 @@ Hermes-Relay can keep one paired phone connected as it moves between LAN, Tailsc
 
 Vanilla Hermes setup saves the Dashboard/Gateway address as the standard route.
 Remote LAN, Tailscale, VPN, or public routes can be added to the same connection
-and Android uses the highest-priority reachable one. API fallback and Relay
+and Android uses the highest-priority reachable one. Direct API and Relay
 routes remain independently optional:
 
 - **Chat, sessions, Manage, and standard voice** use the Dashboard/Gateway route and its dashboard session.
-- **API fallback/headless compatibility** uses the API server URL and bearer only when configured.
-- **Terminal, bridge, TUI, media/session management, clipboard, profile writes, Android control, and relay-token voice fallback** use the relay URL and require a paired relay session token.
+- **Direct API/headless compatibility** uses the API server URL and bearer only for explicitly selected API-only chats.
+- **Terminal, bridge, TUI, Relay session management, clipboard, profile writes, Android control, explicit Relay media tokens, and relay-token voice fallback** use the relay URL and require a paired relay session token. Ordinary inbound files use the authenticated Dashboard route.
 
 The app stores these capabilities under one stable connection identity. One
 Hermes connection can therefore use LAN at home and Tailscale away from home
@@ -28,7 +28,7 @@ hermes pair --mode auto --prefer tailscale
 
 The recommended Tailscale stack listens on dedicated HTTPS `:10443` and proxies the local
 Dashboard/Gateway on `:9119`, including the plugin's same-origin Relay
-transport. Port `8642` remains an optional API fallback. The Relay process
+transport. Port `8642` remains optional Direct API. The Relay process
 still listens internally on `:8767`, but direct serving of that port is legacy
 compatibility for already-paired clients and is not part of new QRs.
 
@@ -103,7 +103,7 @@ both Secure Link and Tailscale Serve in one pairing invite for failover.
 One Secure Link origin carries fixed Relay, API, and authenticated Dashboard
 namespaces, but it does not merge their trust domains. Relay pairing/session
 auth, API bearer auth, and Dashboard cookie/native bearer auth remain separate.
-Chat, Manage, voice, and API fallback may therefore use the Secure Link
+Chat, Manage, voice, and Direct API may therefore use the Secure Link
 namespaces when their own credentials are present, or use independent direct or
 Tailscale HTTPS fallback routes. Tailscale Serve remains the normal recommended
 setup; Secure Link is opt-in.
@@ -151,7 +151,7 @@ Normal connection and route fields use the **Dashboard/Gateway** address. On
 LAN that is commonly local `:9119`; recommended Tailscale uses the external
 dedicated HTTPS `:10443` listener that proxies local `:9119`. Relay rides the selected
 Dashboard origin under the plugin transport path. Advanced endpoint settings
-expose optional API fallback (`8642`). Direct Relay (`8767`) is legacy-only; do
+expose optional Direct API (`8642`). Direct Relay (`8767`) is legacy-only; do
 not substitute it for a Dashboard or API address. The editor previews every
 resolved surface before saving.
 
@@ -220,7 +220,7 @@ optional capabilities you use:
 - Dashboard/Gateway: `https://...` to local `127.0.0.1:9119`
 - Relay: the Dashboard origin's `/api/plugins/hermes-relay/transport` base,
   which derives `/ws` and `/health` and proxies internally to `127.0.0.1:8767`
-- Optional API fallback: `https://...` to local `127.0.0.1:8642`
+- Optional Direct API: `https://...` to local `127.0.0.1:8642`
 
 Plain `ws://` and `http://` are acceptable only on a LAN or VPN you trust. The app requires explicit plain-transport consent before it uses those routes. Do not expose plain relay or API ports to the open internet.
 
@@ -237,7 +237,7 @@ https://<tailnet-host>.ts.net:8642/health
 ```
 
 If the optional API health check fails while Dashboard/Gateway works, standard
-chat remains available and only API fallback is unavailable. If Relay health
+chat remains available and only Direct API is unavailable. If Relay health
 fails, terminal/bridge and Relay voice extensions are unavailable without
 affecting the standard upstream path.
 

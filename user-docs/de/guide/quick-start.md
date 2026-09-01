@@ -5,8 +5,8 @@ canonical_source: /guide/quick-start
 
 # Schnellstart
 
-Installieren → verbinden → chatten. Der Standardweg bleibt upstream-basiert;
-für die vollständige Hermes-Relay-Erfahrung wird das Relay-Plugin empfohlen.
+Beginne mit der standardmäßigen Upstream-Verbindung. Kopple Relay anschließend,
+wenn du dessen zusätzliche Werkzeuge und Erweiterungen nutzen möchtest.
 
 <AndroidSetupPath mode="quick" />
 
@@ -29,10 +29,22 @@ gleichzeitig auf demselben Gerät installiert sein.
 ## 2. Hermes starten
 
 Auf dem Host muss das Hermes Dashboard/Gateway laufen und vom Telefon erreichbar
-sein. Starte es bei Bedarf mit `hermes dashboard`. Die ausführliche Einrichtung steht unter
+sein. Starte es bei Bedarf mit `hermes dashboard`. Das ist die gesamte
+serverseitige Einrichtung für Standard-Chat, Sitzungen, Manage, Voice und
+eingehende Dateien. Die ausführliche Einrichtung steht unter
 [Installation & Einrichtung](/de/guide/getting-started).
 
-Für den empfohlenen vollständigen Weg installiere zusätzlich:
+## 3. Standardverbindung hinzufügen {#other-supported-paths}
+
+Öffne in Android **Connect**. Nutze **Find Hermes on LAN** oder trage die
+Dashboard-Adresse, normalerweise `http://<host>:9119`, manuell ein. Melde dich
+bei Aufforderung an. Damit entsteht eine vollständige Standardverbindung ohne
+Plugin oder Relay-URL.
+
+## 4. Optional: Relay installieren und koppeln
+
+Installiere Relay für die empfohlene vollständige Erfahrung erst, nachdem die
+Standardverbindung funktioniert:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -43,34 +55,25 @@ hermes relay start --no-ssl
 Nutze `--no-ssl` nur in einem vertrauenswürdigen LAN oder VPN. Für den Zugriff
 von unterwegs wird [Tailscale empfohlen](/guide/remote-access).
 
-## 3. Verbinden {#other-supported-paths}
-
-Öffne die App und gehe zu **Connect**. Nutze eine der folgenden Möglichkeiten:
-
-1. Öffne im Web Dashboard **Relay → Connect mobile app** und scanne den
-   tokenlosen QR über Android **Connect → Scan Hermes setup QR**.
-2. Öffne danach **Relay → Pair new device** und scanne den einmaligen QR über
-   **Settings → Connections → Pair Hermes Relay**.
-3. Ohne Dashboard-Plugin nutze **Find Hermes on LAN** oder trage die
-   Dashboard-Adresse wie `http://<host>:9119` manuell ein.
-4. Ohne Kamera erzeugt `hermes pair` denselben QR und eine kopierbare Einladung;
-   URL und Code bleiben als manueller Fallback verfügbar.
-5. Melde dich bei Aufforderung über den konfigurierten Dashboard-Anbieter an.
+Öffne danach im Web Dashboard **Relay → Pair new device** und scanne den
+einmaligen QR über **Settings → Connections → Pair Hermes Relay**.
 
 Der API-Server bleibt ein optionaler Fallback. Relay ist für den Upstream-Weg
-nicht erforderlich, wird aber für Terminal/TUI, Benachrichtigungen, Medien,
-Desktop-Werkzeuge, erweiterte Voice und Device Control empfohlen.
+nicht erforderlich, wird aber für Terminal/TUI, Benachrichtigungen,
+Desktop-Werkzeuge, erweiterte Voice, Relay-Sitzungen, Device Control sowie
+Medienkompatibilität und -metadaten empfohlen. Gewöhnliche eingehende Dateien
+nutzen die aktuellen Dashboard-Routen.
 
-## 4. Status prüfen
+## 5. Status prüfen
 
 - **Chat · Ready** bedeutet, dass du Nachrichten senden kannst.
 - **Manage** kann noch eine Dashboard-Anmeldung verlangen.
 - **Voice** wird mit derselben Dashboard-Anmeldung freigeschaltet.
-- **API fallback** darf als nicht verfügbar angezeigt werden, ohne Chat zu blockieren.
+- **Direct API** darf als nicht verfügbar angezeigt werden, ohne Chat zu blockieren.
 - **Relay · Paired** bestätigt die empfohlenen Zusatzfunktionen; ein Relay-Ausfall
   darf den Upstream-Standardweg nicht blockieren.
 
-## 5. Erste Nachricht senden
+## 6. Erste Nachricht senden
 
 Öffne Chat und sende eine Nachricht. Ein grüner Verbindungspunkt im Kopfbereich
 bestätigt, dass die aktive Hermes-Verbindung erreichbar ist.

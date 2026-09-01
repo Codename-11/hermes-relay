@@ -2,14 +2,14 @@
 
 <ExpandableImage
   src="/architecture-homepage.svg"
-  alt="How Hermes-Relay connects: upstream Hermes owns standard chat, Manage and voice; the encouraged Relay extension fills current gaps for terminal, notifications, media, desktop tools, enhanced voice and Relay sessions; Device Control also needs the sideload build."
+  alt="How Hermes-Relay connects: upstream Hermes owns standard chat, Manage, voice and inbound files; the encouraged Relay extension fills current gaps for terminal, notifications, desktop tools, enhanced voice and Relay sessions; Device Control also needs the sideload build."
   caption="Select the diagram to inspect it at full size."
 />
 
 ## Connection Model
 
-The app maintains independent connection paths — chat over the upstream Hermes
-surfaces (preferring the Dashboard Gateway, falling back to API-server SSE), and
+The app maintains independent connection paths — standard chat over the upstream
+Dashboard Gateway, explicit API-only chat over Direct API, and
 persistent WSS for Relay extensions. Relay is optional for the upstream standard
 path but encouraged for the full current feature set; compatible upstream
 surfaces take precedence as they ship.
@@ -20,8 +20,8 @@ For a compact shareable reference covering connection paths, transport boundarie
 
 | Path | Protocol | Server | Purpose |
 |------|----------|--------|---------|
-| Chat (preferred) | WS | Dashboard origin (local target commonly `:9119`) | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
-| Chat (fallback) | HTTP/SSE | API Server `:8642` | Streaming conversations via the Sessions / runs / completions APIs |
+| Chat (standard) | WS | Dashboard origin (local target commonly `:9119`) | Gateway chat via `/api/ws` (`tui_gateway`) — live thinking/reasoning |
+| Chat (Direct API) | HTTP/SSE | API Server `:8642` | API-only compatibility conversations via Sessions / runs / completions |
 | Terminal | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | Remote shell via tmux (Phase 2) |
 | Bridge | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | Device control via AccessibilityService + MediaProjection (Phase 3) |
 | Notifications | WS/WSS | Selected Dashboard origin · same-origin Relay ingress | `NotificationListenerService` forwards posted notifications over a bounded channel |
@@ -50,7 +50,7 @@ Traefik, Caddy, or nginx listener on `:443`.
 
 ## Chat Message Flow
 
-When the dashboard gateway is available, the turn rides the `/api/ws` WebSocket (`GatewayChatClient`) and the same lifecycle events arrive over JSON-RPC, with live reasoning. The flow below is the **API-server SSE fallback**, used when there's no dashboard auth yet or the server is older:
+Standard chats ride the `/api/ws` WebSocket (`GatewayChatClient`) and receive lifecycle events over JSON-RPC with live reasoning. The flow below is the explicit **Direct API** path for API-only/headless compatibility connections:
 
 <HermesFlow diagram="chat-flow" height="300px" />
 
@@ -94,12 +94,12 @@ Pairing codes use the full `A-Z / 0-9` alphabet (36 chars). The pair command (`h
 
 ## Vanilla Hermes chat vs Relay
 
-Chat uses vanilla upstream Hermes either way (gateway preferred, API-server SSE as fallback); the relay is a separate, optional surface for bridge/terminal/notifications.
+Chat uses vanilla upstream Hermes either way (Gateway for standard connections, Direct API for API-only compatibility); the relay is a separate, optional surface for bridge/terminal/notifications.
 
-| Aspect | Vanilla Hermes Chat (gateway / API fallback) | Relay (Bridge/Terminal/Notifications) |
+| Aspect | Vanilla Hermes Chat (Gateway / Direct API) | Relay (Bridge/Terminal/Notifications) |
 |--------|----------------------------------------|------------------------|
-| Protocol | WS (`/api/ws`) preferred · HTTP/SSE fallback | WSS |
-| Connection | Persistent gateway socket · per-request on SSE fallback | Persistent |
-| Auth | Dashboard ws-ticket (gateway) · API bearer token (SSE fallback) | Pairing code + session token. Voice endpoints may also accept the API bearer token. |
+| Protocol | WS (`/api/ws`) for Gateway · HTTP/SSE for Direct API | WSS |
+| Connection | Persistent Gateway socket · per-request on Direct API | Persistent |
+| Auth | Dashboard ws-ticket (Gateway) · API bearer token (Direct API) | Pairing code + session token. Voice endpoints may also accept the API bearer token. |
 | Server | Hermes Dashboard origin · Hermes API `:8642` | Dashboard origin → local `:9119` → internal Relay `:8767` |
-| Live reasoning | Yes on gateway · post-hoc only on SSE fallback | — |
+| Live reasoning | Yes on Gateway · post-hoc only on Direct API | — |

@@ -77,6 +77,29 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         await rejected.release()
         await ws.close()
 
+    async def test_initial_history_is_available_before_session_resume(self) -> None:
+        fixture, base_url = await self.start("initial_history_bind")
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+            params={"profile": "research", "limit": 500, "offset": 0, "order": "asc"},
+        ) as response:
+            history = await response.json()
+        self.assertEqual(
+            ["Open the durable Bot Chat.", "Durable Bot Chat history is ready."],
+            [row["content"] for row in history["messages"]],
+        )
+
+        ws, _ = await self.connect(base_url)
+        await self.rpc(
+            ws,
+            1,
+            "session.resume",
+            {"session_id": fixture.scenario.stored_session_id, "profile": "research"},
+        )
+        resumed = (await ws.receive_json())["result"]
+        self.assertEqual(fixture.scenario.live_session_id, resumed["session_id"])
+        self.assertEqual(fixture.scenario.stored_session_id, resumed["stored_session_id"])
+
     async def test_ordinary_turn_persists_authoritative_history(self) -> None:
         fixture, base_url = await self.start("ordinary_turn")
         ws, _ = await self.connect(base_url)
@@ -100,6 +123,23 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_compaction_status_repeats_before_terminal_completion(self) -> None:
+        fixture, base_url = await self.start("compaction_status")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "message.complete",
+        )
+        events = [frame["params"] for frame in frames if frame.get("method") == "event"]
+        compacting = [
+            event for event in events
+            if event.get("type") == "status.update"
+            and event.get("payload", {}).get("kind") == "compacting"
+        ]
+        self.assertEqual(2, len(compacting))
+        self.assertEqual("message.complete", events[-1]["type"])
+
     async def test_cross_client_observer_never_claims_or_interrupts_producer(self) -> None:
         fixture, base_url = await self.start("cross_client_observation")
         producer, _ = await self.connect(base_url)
@@ -115,6 +155,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         await self.rpc(observer, 3, "session.active_list")
         active = (await observer.receive_json())["result"]["sessions"]
         self.assertEqual("working", active[0]["status"])
+        self.assertNotIn("profile", active[0])
         async with self.session.get(
             f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
             params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
@@ -197,6 +238,37 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(events[-1]["payload"]["running"])
         self.assertEqual(fixture.scenario.live_session_id, events[-1]["session_id"])
         self.assertNotIn("message.complete", [event["type"] for event in events])
+
+    async def test_active_list_idle_settles_without_message_complete(self) -> None:
+        fixture, base_url = await self.start("terminal_gap_active_list")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "message.delta",
+        )
+        for _ in range(50):
+            async with self.session.get(f"{base_url}/__fixture__/state") as response:
+                state = await response.json()
+            if not state["running"]:
+                break
+            await asyncio.sleep(0.01)
+        self.assertFalse(state["running"])
+
+        await self.rpc(
+            ws,
+            2,
+            "session.active_list",
+            {"current_session_id": fixture.scenario.live_session_id},
+        )
+        snapshot = (await ws.receive_json())["result"]["sessions"]
+        self.assertEqual("idle", snapshot[0]["status"])
+        self.assertEqual(fixture.scenario.live_session_id, snapshot[0]["id"])
+        self.assertEqual(fixture.scenario.stored_session_id, snapshot[0]["session_key"])
+        self.assertNotIn(
+            "message.complete",
+            [frame.get("params", {}).get("type") for frame in frames],
+        )
 
     async def test_queued_follow_up_runs_after_first_turn(self) -> None:
         _, base_url = await self.start("queued_follow_up")
@@ -307,10 +379,12 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_profile_scope",
             "active_status_unsupported",
             "cross_client_observation",
+            "initial_history_bind",
             "ordinary_turn",
             "rapid_tools_interims",
             "subagent_child_preview",
             "terminal_gap_activate",
+            "terminal_gap_active_list",
             "terminal_gap_session_info",
             "queued_follow_up",
             "scope_rejection_inputs",
@@ -334,7 +408,11 @@ class ScenarioTestCase(unittest.TestCase):
             from vanilla_gateway.scenario import Scenario
             Scenario.from_dict(scenario)
 
-    def test_terminal_gap_manifests_select_upstream_contracts(self) -> None:
+    def test_contract_manifests_select_upstream_contracts(self) -> None:
+        self.assertEqual(
+            ("gateway.session_resume_durable",),
+            load_scenario("initial_history_bind").contract_requirements,
+        )
         self.assertEqual(
             (
                 "gateway.message_complete",
@@ -342,6 +420,10 @@ class ScenarioTestCase(unittest.TestCase):
                 "gateway.session_activate_live",
             ),
             load_scenario("terminal_gap_activate").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_active_list",),
+            load_scenario("terminal_gap_active_list").contract_requirements,
         )
         self.assertEqual(
             ("gateway.settled_session_info",),

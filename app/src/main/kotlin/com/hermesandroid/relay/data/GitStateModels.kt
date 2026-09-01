@@ -3,7 +3,7 @@ package com.hermesandroid.relay.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** A repository discovered by the plugin's /git/repos endpoint. */
+/** A current-session upstream repository or a Relay-discovered repository. */
 @Serializable
 data class GitRepo(
     val id: String,
@@ -11,9 +11,19 @@ data class GitRepo(
     val root: String,
     @SerialName("current_branch") val currentBranch: String? = null,
     val dirty: Boolean = false,
+    val route: GitRepositoryRoute = GitRepositoryRoute.RELAY,
 )
 
-/** Working-tree status from /git/status. */
+@Serializable
+enum class GitRepositoryRoute {
+    @SerialName("relay")
+    RELAY,
+
+    @SerialName("upstream")
+    UPSTREAM,
+}
+
+/** Normalized working-tree status from upstream or Relay Git routes. */
 @Serializable
 data class GitStatus(
     val counts: GitStatusCounts = GitStatusCounts(),

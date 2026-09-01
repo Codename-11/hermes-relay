@@ -294,7 +294,55 @@ fun VersionNotesBlock(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val highlight = entry.highlight
-        if (highlight == null) {
+        if (entry.changes.isNotEmpty()) {
+            if (showVersionLine) {
+                Text(
+                    text = entry.versionLine(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                entry.title?.takeIf { it.isNotBlank() }?.let { title ->
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            entry.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+
+            val highlights = entry.highlightedChanges()
+            if (highlights.isNotEmpty()) {
+                ReleaseSectionTitle(stringResource(R.string.changelog_highlights))
+                ReleaseChangeList(highlights)
+            }
+
+            listOf(
+                CHANGE_KIND_ADDED to R.string.changelog_added,
+                CHANGE_KIND_IMPROVED to R.string.changelog_improved,
+                CHANGE_KIND_FIXED to R.string.changelog_fixed,
+            ).forEach { (kind, label) ->
+                val changes = entry.remainingChangesOfKind(kind)
+                if (changes.isNotEmpty()) {
+                    ReleaseSectionTitle(stringResource(label))
+                    ReleaseChangeList(changes)
+                }
+            }
+
+            if (entry.compatibility.isNotEmpty()) {
+                ReleaseSectionTitle(stringResource(R.string.changelog_compatibility))
+                VersionNotesBody(
+                    listOf(WhatsNewGroup(header = null, bullets = entry.compatibility)),
+                )
+            }
+        } else if (highlight == null) {
             if (showVersionLine) {
                 Text(
                     text = entry.subtitle(),
@@ -340,6 +388,47 @@ fun VersionNotesBlock(
     }
 }
 
+@Composable
+private fun ReleaseSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun ColumnScope.ReleaseChangeList(changes: List<ChangelogChange>) {
+    changes.forEach { change ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "•",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = change.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                change.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Structured changelog model + loader (kotlinx.serialization).
 // ──────────────────────────────────────────────────────────────────────────
@@ -363,9 +452,27 @@ data class ChangelogHighlight(
 @Serializable
 data class ChangelogToastDigest(
     val additionalFeatureCount: Int = 0,
+    val improvementCount: Int = 0,
     val fixCount: Int = 0,
     val preview: List<String> = emptyList(),
 )
+
+const val CHANGE_KIND_ADDED = "added"
+const val CHANGE_KIND_IMPROVED = "improved"
+const val CHANGE_KIND_FIXED = "fixed"
+
+/** One complete, user-visible change in a release. */
+@Serializable
+data class ChangelogChange(
+    val id: String,
+    val kind: String,
+    val title: String,
+    val summary: String? = null,
+    val highlight: Boolean = false,
+) {
+    fun fallbackText(): String =
+        summary?.takeIf { it.isNotBlank() }?.let { "$title — $it" } ?: title
+}
 
 /** A single released version's user-facing notes. */
 @Serializable
@@ -373,6 +480,9 @@ data class ChangelogVersion(
     val version: String,
     val title: String? = null,
     val date: String? = null,
+    val summary: String? = null,
+    val changes: List<ChangelogChange> = emptyList(),
+    val compatibility: List<String> = emptyList(),
     val highlight: ChangelogHighlight? = null,
     val improvements: List<String> = emptyList(),
     val toastDigest: ChangelogToastDigest? = null,
@@ -393,8 +503,48 @@ data class ChangelogVersion(
         return "v$version$datePart"
     }
 
+    fun highlightedChanges(): List<ChangelogChange> = changes.filter { it.highlight }
+
+    fun remainingChanges(): List<ChangelogChange> = changes.filterNot { it.highlight }
+
+    fun remainingChangesOfKind(kind: String): List<ChangelogChange> =
+        remainingChanges().filter { it.kind == kind }
+
+    /** Derive compact toast metadata from the same changes the expanded view renders. */
+    fun resolvedToastDigest(): ChangelogToastDigest? {
+        if (changes.isEmpty()) return toastDigest
+        val remaining = remainingChanges()
+        if (remaining.isEmpty()) return null
+        return ChangelogToastDigest(
+            additionalFeatureCount = remaining.count { it.kind == CHANGE_KIND_ADDED },
+            improvementCount = remaining.count { it.kind == CHANGE_KIND_IMPROVED },
+            fixCount = remaining.count { it.kind == CHANGE_KIND_FIXED },
+            preview = remaining.take(2).map { it.title },
+        )
+    }
+
     fun toGroups(): List<WhatsNewGroup> =
-        highlight?.let { curated ->
+        if (changes.isNotEmpty()) {
+            buildList {
+                val highlights = highlightedChanges()
+                if (highlights.isNotEmpty()) {
+                    add(WhatsNewGroup("Highlights", highlights.map { it.fallbackText() }))
+                }
+                listOf(
+                    CHANGE_KIND_ADDED to "Added",
+                    CHANGE_KIND_IMPROVED to "Improved",
+                    CHANGE_KIND_FIXED to "Fixed",
+                ).forEach { (kind, label) ->
+                    val items = remainingChangesOfKind(kind)
+                    if (items.isNotEmpty()) {
+                        add(WhatsNewGroup(label, items.map { it.fallbackText() }))
+                    }
+                }
+                if (compatibility.isNotEmpty()) {
+                    add(WhatsNewGroup("Compatibility", compatibility))
+                }
+            }
+        } else highlight?.let { curated ->
             buildList {
                 add(WhatsNewGroup(curated.title.takeIf { it.isNotBlank() }, curated.bullets))
                 if (improvements.isNotEmpty()) {

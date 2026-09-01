@@ -1,8 +1,5 @@
 package com.hermesandroid.relay.ui.screens
 
-import android.app.Activity
-import android.app.KeyguardManager
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -52,7 +49,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +64,9 @@ import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
+import com.hermesandroid.relay.data.SupervisedParentAuthStatus
+import com.hermesandroid.relay.data.SupervisedParentAuthStore
+import com.hermesandroid.relay.data.SupervisedParentEnrollment
 import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.data.SupervisedVisibilityPreset
 import com.hermesandroid.relay.ui.components.avatar.LocalAvailablePets
@@ -77,6 +79,7 @@ import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
 
 /**
  * The settings surface available while supervised mode is locked.
@@ -100,28 +103,29 @@ fun SupervisedSettingsScreen(
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
     val profileAlias by connectionViewModel.profileDisplayAlias.collectAsState()
     val isDarkTheme = LocalBrand.current.isDark
+    val parentAuthStore = remember(context) { SupervisedParentAuthStore(context) }
+    val parentAuthStatus by produceState<SupervisedParentAuthStatus?>(
+        initialValue = null,
+        key1 = parentAuthStore,
+    ) {
+        parentAuthStore.statusFlow.collect { value = it }
+    }
     var authError by remember { mutableStateOf<String?>(null) }
+    var parentAuthDialog by remember { mutableStateOf<ParentAuthDialog?>(null) }
+    var pendingEnrollment by remember { mutableStateOf<SupervisedParentEnrollment?>(null) }
     var showAbout by remember { mutableStateOf(false) }
 
-    val credentialLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            authError = null
-            onParentAccessGranted()
-        }
-    }
-
     fun requestParentAccess() {
-        val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        val intent = keyguard?.createConfirmDeviceCredentialIntent(
-            "Parent access",
-            "Unlock full Hermes settings and supervised-mode controls. Device credentials verify an enrolled device user, not a distinct parent identity.",
-        )
-        if (intent == null) {
-            authError = "Set a device screen lock before using parent access."
-        } else {
-            credentialLauncher.launch(intent)
+        when (parentAuthStatus) {
+            SupervisedParentAuthStatus.Configured -> parentAuthDialog = ParentAuthDialog.Verify
+            SupervisedParentAuthStatus.Missing -> {
+                authError = "This legacy supervised policy has no app-specific parent credential and stays locked. " +
+                    "Reset this app's local data, reconnect, and configure parent access before enabling Supervised Mode again."
+            }
+            SupervisedParentAuthStatus.Corrupt -> {
+                authError = "Parent access data is unavailable. Supervised Mode remains locked."
+            }
+            null -> authError = "Parent access is still loading."
         }
     }
 
@@ -186,7 +190,7 @@ fun SupervisedSettingsScreen(
             SupervisedNavigationRow(
                 icon = Icons.Filled.Lock,
                 title = "Parent access",
-                subtitle = "Unlock full settings with the device screen lock",
+                subtitle = "Unlock full settings with the app parent PIN or password",
                 onClick = ::requestParentAccess,
                 isDarkTheme = isDarkTheme,
             )
@@ -214,6 +218,38 @@ fun SupervisedSettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showAbout = false }) { Text("Close") }
+            },
+        )
+    }
+
+    when (parentAuthDialog) {
+        ParentAuthDialog.Verify -> SupervisedParentVerifyDialog(
+            store = parentAuthStore,
+            onDismiss = { parentAuthDialog = null },
+            onVerified = {
+                parentAuthDialog = null
+                authError = null
+                onParentAccessGranted()
+            },
+            onUseRecoveryCode = { parentAuthDialog = ParentAuthDialog.Recovery },
+        )
+        ParentAuthDialog.Recovery -> SupervisedParentRecoveryDialog(
+            store = parentAuthStore,
+            onDismiss = { parentAuthDialog = null },
+            onReset = { enrollment ->
+                parentAuthDialog = null
+                pendingEnrollment = enrollment
+            },
+        )
+        else -> Unit
+    }
+    pendingEnrollment?.let { enrollment ->
+        SupervisedParentRecoveryCodeDialog(
+            enrollment = enrollment,
+            onDone = {
+                pendingEnrollment = null
+                authError = null
+                onParentAccessGranted()
             },
         )
     }
@@ -293,42 +329,41 @@ fun SupervisedControlsScreen(
     onReturnToSupervisedView: () -> Unit,
 ) {
     val context = LocalContext.current
-    val keyguardManager = remember(context) {
-        context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+    val parentAuthStore = remember(context) { SupervisedParentAuthStore(context) }
+    val parentAuthStatus by produceState<SupervisedParentAuthStatus?>(
+        initialValue = null,
+        key1 = parentAuthStore,
+    ) {
+        parentAuthStore.statusFlow.collect { value = it }
     }
-    val deviceSecure = keyguardManager?.isDeviceSecure == true
     val isDarkTheme = LocalBrand.current.isDark
     val appearanceShape by connectionViewModel.appearanceShape.collectAsState()
     var showProfilePicker by remember { mutableStateOf(false) }
     var sessionActionsExpanded by remember { mutableStateOf(false) }
     var enableAuthError by remember { mutableStateOf<String?>(null) }
-    var enableRequested by remember { mutableStateOf(false) }
-    val enableCredentialLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val shouldEnable = enableRequested && mayEnableSupervisedMode(
-            policy = policy,
-            deviceSecure = deviceSecure,
-            deviceCredentialConfirmed = result.resultCode == Activity.RESULT_OK,
-        )
-        enableRequested = false
-        if (shouldEnable) {
-            enableAuthError = null
-            onPolicyChange(policy.copy(enabled = true))
-        }
-    }
+    var parentAuthDialog by remember { mutableStateOf<ParentAuthDialog?>(null) }
+    var pendingEnrollment by remember { mutableStateOf<SupervisedParentEnrollment?>(null) }
+    var enableAfterEnrollment by remember { mutableStateOf(false) }
+    var showRemoveCredentialConfirm by remember { mutableStateOf(false) }
+    var removeCredentialBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     fun requestFirstEnable() {
-        val intent = keyguardManager?.createConfirmDeviceCredentialIntent(
-            "Enable supervised mode",
-            "Confirm with an enrolled device credential. This does not verify a distinct parent identity.",
-        )
-        if (!deviceSecure || intent == null) {
-            enableAuthError = "Set a secure device screen lock before enabling supervised mode."
+        if (!policy.isConfigured) {
+            enableAuthError = "Choose an agent profile before enabling Supervised Mode."
             return
         }
-        enableRequested = true
-        enableCredentialLauncher.launch(intent)
+        when (parentAuthStatus) {
+            SupervisedParentAuthStatus.Missing -> {
+                enableAfterEnrollment = true
+                parentAuthDialog = ParentAuthDialog.Setup
+            }
+            SupervisedParentAuthStatus.Configured -> parentAuthDialog = ParentAuthDialog.Verify
+            SupervisedParentAuthStatus.Corrupt -> {
+                enableAuthError = "Parent access data is unavailable. Reset local app data before enabling Supervised Mode."
+            }
+            null -> enableAuthError = "Parent access is still loading."
+        }
     }
 
     Scaffold(
@@ -360,14 +395,18 @@ fun SupervisedControlsScreen(
                     subtitle = when {
                         policy.pinnedProfileName.isNullOrBlank() ->
                             "Choose an agent profile before enabling"
-                        !deviceSecure ->
-                            "Set a device screen lock before enabling"
+                        parentAuthStatus == SupervisedParentAuthStatus.Missing ->
+                            "Set an app-specific parent PIN or password"
                         else ->
                             "Show only the approved Android chat surfaces"
                     },
                     checked = policy.enabled,
                     enabled = policy.enabled ||
-                        (!policy.pinnedProfileName.isNullOrBlank() && deviceSecure),
+                        (!policy.pinnedProfileName.isNullOrBlank() &&
+                            parentAuthStatus in setOf(
+                                SupervisedParentAuthStatus.Missing,
+                                SupervisedParentAuthStatus.Configured,
+                            )),
                     onCheckedChange = { enabled ->
                         if (enabled) requestFirstEnable()
                         else onPolicyChange(policy.copy(enabled = false))
@@ -404,7 +443,7 @@ fun SupervisedControlsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "Android device credentials authenticate an enrolled device user; they do not establish a separate parent identity. Use a parent-only device credential or managed-device policy where that distinction matters.",
+                "Parent access uses an app-specific PIN or password, separate from the supervised user's Android screen lock and biometrics.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -713,13 +752,41 @@ fun SupervisedControlsScreen(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Column(Modifier.padding(start = 12.dp)) {
-                        Text("Device authentication", style = MaterialTheme.typography.titleSmall)
+                        Text("App parent credential", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Full features require the device screen lock. This verifies an enrolled device user, not a distinct parent identity.",
+                            when (parentAuthStatus) {
+                                SupervisedParentAuthStatus.Configured -> "A parent PIN or password is configured for this app."
+                                SupervisedParentAuthStatus.Missing -> "Set a parent PIN or password before enabling Supervised Mode."
+                                SupervisedParentAuthStatus.Corrupt -> "Parent access data is unavailable and fails closed."
+                                null -> "Loading parent access…"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                when (parentAuthStatus) {
+                    SupervisedParentAuthStatus.Missing -> OutlinedButton(
+                        onClick = {
+                            enableAfterEnrollment = false
+                            parentAuthDialog = ParentAuthDialog.Setup
+                        },
+                    ) { Text("Set parent PIN or password") }
+                    SupervisedParentAuthStatus.Configured -> {
+                        OutlinedButton(onClick = { parentAuthDialog = ParentAuthDialog.Change }) {
+                            Text("Change parent PIN or password")
+                        }
+                        TextButton(onClick = { parentAuthDialog = ParentAuthDialog.Recovery }) {
+                            Text("Reset with recovery phrase")
+                        }
+                        TextButton(onClick = { showRemoveCredentialConfirm = true }) {
+                            Text(
+                                "Remove parent credential",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    else -> Unit
                 }
                 HorizontalDivider()
                 SupervisedSwitchRow(
@@ -794,6 +861,118 @@ fun SupervisedControlsScreen(
             },
         )
     }
+
+    if (showRemoveCredentialConfirm) {
+        RemoveParentCredentialDialog(
+            busy = removeCredentialBusy,
+            onDismiss = { showRemoveCredentialConfirm = false },
+            onConfirm = {
+                removeCredentialBusy = true
+                scope.launch {
+                    val result = parentAuthStore.clearCredentialAndDisablePolicies()
+                    removeCredentialBusy = false
+                    result.fold(
+                        onSuccess = {
+                            showRemoveCredentialConfirm = false
+                            enableAuthError = null
+                            onBack()
+                        },
+                        onFailure = {
+                            enableAuthError = "Parent access could not be removed. Try again."
+                        },
+                    )
+                }
+            },
+        )
+    }
+
+    when (parentAuthDialog) {
+        ParentAuthDialog.Verify -> SupervisedParentVerifyDialog(
+            store = parentAuthStore,
+            onDismiss = { parentAuthDialog = null },
+            onVerified = {
+                parentAuthDialog = null
+                enableAuthError = null
+                if (mayEnableSupervisedMode(policy, parentCredentialConfirmed = true)) {
+                    onPolicyChange(policy.copy(enabled = true))
+                }
+            },
+            onUseRecoveryCode = { parentAuthDialog = ParentAuthDialog.Recovery },
+        )
+        ParentAuthDialog.Setup -> SupervisedParentSetupDialog(
+            store = parentAuthStore,
+            currentSecretRequired = false,
+            onDismiss = {
+                parentAuthDialog = null
+                enableAfterEnrollment = false
+            },
+            onEnrolled = { enrollment ->
+                parentAuthDialog = null
+                pendingEnrollment = enrollment
+            },
+        )
+        ParentAuthDialog.Change -> SupervisedParentSetupDialog(
+            store = parentAuthStore,
+            currentSecretRequired = true,
+            onDismiss = { parentAuthDialog = null },
+            onEnrolled = { enrollment ->
+                parentAuthDialog = null
+                pendingEnrollment = enrollment
+            },
+        )
+        ParentAuthDialog.Recovery -> SupervisedParentRecoveryDialog(
+            store = parentAuthStore,
+            onDismiss = { parentAuthDialog = null },
+            onReset = { enrollment ->
+                parentAuthDialog = null
+                pendingEnrollment = enrollment
+            },
+        )
+        null -> Unit
+    }
+    pendingEnrollment?.let { enrollment ->
+        SupervisedParentRecoveryCodeDialog(
+            enrollment = enrollment,
+            onDone = {
+                pendingEnrollment = null
+                enableAuthError = null
+                if (enableAfterEnrollment && mayEnableSupervisedMode(policy, parentCredentialConfirmed = true)) {
+                    onPolicyChange(policy.copy(enabled = true))
+                }
+                enableAfterEnrollment = false
+            },
+        )
+    }
+}
+
+@Composable
+internal fun RemoveParentCredentialDialog(
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Remove parent credential?") },
+        text = {
+            Text(
+                "This disables Supervised Mode on every connection and removes the app-wide " +
+                    "PIN or password and recovery phrase. Your supervised settings and toggles are kept. " +
+                    "Hermes sessions and server history are not deleted.",
+            )
+        },
+        confirmButton = {
+            TextButton(enabled = !busy, onClick = onConfirm) {
+                Text(
+                    if (busy) "Removing…" else "Remove",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -982,6 +1161,13 @@ private fun sessionActionsSummary(actions: SupervisedSessionActions): String = w
     actions.allEnabled -> "All allowed"
     actions.noneEnabled -> "None allowed"
     else -> "${actions.enabledCount} of ${SupervisedSessionActions.TOTAL} allowed"
+}
+
+private enum class ParentAuthDialog {
+    Verify,
+    Setup,
+    Change,
+    Recovery,
 }
 
 @Composable

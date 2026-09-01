@@ -34,14 +34,16 @@ other clients. Open the agent sheet from Chat and use **Agent icon**:
   profile avatar. The decoded file must be no larger than 2,000,000 bytes.
 - **Clear shared Hermes avatar** removes only the server copy. Your device
   fallback remains available.
-- **Import from agent host** copies a conventional image from the active Hermes
-  profile on a paired Relay host. Put `avatar.png`, `avatar.jpg`, `profile.png`,
+- **Import legacy host image** is an optional Relay enhancement that copies a
+  conventional image from the active Hermes profile into this phone's local
+  fallback. It does not replace the shared upstream profile asset. Put
+  `avatar.png`, `avatar.jpg`, `profile.png`,
   or `profile.jpg` directly in `~/.hermes/` for the root Server default, or in
   `~/.hermes/profiles/<name>/` for a named profile. If Hermes' `active_profile`
   marker selects a named profile as Server default, use that named profile's
   directory. JPEG, PNG, WebP, and GIF are supported, including `.jpeg`.
 
-The Relay-host imported copy stays on the phone and is scoped to that Connection
+The legacy Relay-host imported copy stays on the phone and is scoped to that Connection
 and profile. Changing or removing the host file later does not silently change
 the phone icon; tap import again to refresh it or explicitly upload it to Hermes.
 Older Hermes versions keep this local/import behavior when shared asset methods

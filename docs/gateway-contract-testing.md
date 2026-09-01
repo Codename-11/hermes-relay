@@ -66,11 +66,14 @@ the upstream contract identifiers it depends on.
 
 | Scenario | Contract exercised |
 |---|---|
+| `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `compaction_status` | Compaction status is client-visible before terminal completion and may repeat as a heartbeat |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
 | `scope_rejection_inputs` | Exact, foreign, and unscoped event inputs |
 | `terminal_gap_activate` | Socket closes after live output; replacement `session.activate` reports `running=false`; history is authoritative |
+| `terminal_gap_active_list` | An exact Android-owned turn receives deltas but no terminal; `session.active_list` reports the same live/durable owner idle; history is authoritative |
 | `terminal_gap_session_info` | Scoped `session.info {running:false}` settles a turn without `message.complete` |
 | `active_status_lifecycle` | `session.active_list` reports starting, working, waiting, and idle, then a complete empty process-wide snapshot permits removal of unambiguously owned prior rows |
 | `active_status_profile_scope` | A row has no profile metadata and a caller profile hint has no effect; the client must use exact client-held ownership and reject invented attribution |
@@ -110,8 +113,8 @@ turn is live. The external lane consumes the shared Python fixture and reads
 its authoritative history over HTTP.
 
 ```powershell
-.\gradlew.bat :app:compileSideloadDebugAndroidTestKotlin
-.\gradlew.bat :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
+.\scripts\android-lane.ps1 gradle :app:compileSideloadDebugAndroidTestKotlin
+.\scripts\android-lane.ps1 gradle :app:assembleSideloadDebug :app:assembleSideloadDebugAndroidTest
 ```
 
 The external test is opt-in through the instrumentation argument
@@ -125,7 +128,7 @@ transport ID, targets only `com.axiomlabs.hermesrelay.sideload`, and performs no
 installation unless its corresponding install flag is supplied.
 
 ```powershell
-python scripts/android-gateway-certify.py `
+.\scripts\android-lane.ps1 exec python scripts/android-gateway-certify.py `
   --transport-id <adb-transport-id> `
   --apk app/build/outputs/apk/sideload/debug/<sideload-apk> `
   --test-apk app/build/outputs/apk/androidTest/sideload/debug/<test-apk> `

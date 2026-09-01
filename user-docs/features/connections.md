@@ -8,7 +8,7 @@ Each connection has a stable ID for one Hermes install and can hold several
 independent capabilities:
 
 - Dashboard/Gateway URL (`http(s)://host:9119`) and dashboard session for primary Chat, sessions, Manage, and standard voice
-- Optional API server URL (`http(s)://host:8642`) and API key for automatic chat fallback or advanced headless compatibility
+- Optional API server URL (`http(s)://host:8642`) and API key for explicit Direct API or advanced headless compatibility
 - Optional Relay URL (`ws(s)://host:8767`) and pairing record for Terminal, Bridge, and relay-only power tools
 - Connection-scoped Dashboard cookies or native sign-in tokens, API credentials,
   and Relay session credentials; authentication never carries into another
@@ -36,7 +36,7 @@ The whole thing takes under a second on a healthy connection.
 
 Open **Settings → Connections** for the connection **list**. Each card shows the
 connection's label, an **Active** badge on the one in use, a one-line status, and
-a compact capability summary (Chat · Manage · Voice · API fallback · Relay) so you can scan the
+a compact capability summary (Gateway · Manage · Voice · Direct API · Relay) so you can scan the
 health of every server at a glance. Tap a card to open its **detail** screen.
 
 With two or more saved connections, **On app start** defaults to **Last used**.
@@ -50,8 +50,8 @@ The detail screen is organized into tabs:
 - **Routes** — shows the primary Dashboard route even when no API or Relay is
   configured. LAN, Tailscale (`100.x` or `.ts.net`), and public Dashboard routes
   can be added and tested without API configuration. Optional API routes are
-  only for direct chat fallback on the same networks.
-- **Advanced** — optional direct API fallback credentials, an explicit direct
+  only for explicit Direct API chat on the same networks.
+- **Advanced** — optional Direct API credentials, an explicit direct
   Relay endpoint override, and the development-only insecure-connection toggle.
   Dashboard addresses stay under **Routes**. **Pair Relay** opens the same shared
   QR / enter-code / show-code flow used everywhere else.
@@ -108,7 +108,7 @@ To validate a local CA on a device or emulator:
    proxy to present the leaf certificate plus any required intermediate chain.
 5. Add the HTTPS Dashboard address in Hermes-Relay. Verify Dashboard discovery
    and sign-in, start a Chat reply to exercise the Gateway WSS route, open
-   Manage, and run a Standard Voice preview. If API fallback or Relay uses the
+   Manage, and run a Standard Voice preview. If Direct API or Relay uses the
    same private CA, test those capabilities from the connection detail screen.
 6. Negative-check hostname verification by trying the same server through an
    address absent from the certificate SAN. It must still fail with a certificate
@@ -121,7 +121,7 @@ Pairing and live reachability are shown separately. A connection can still be
 Relay row shows **Relay unreachable - tap to reconnect** rather than treating
 the saved session as proof of a live server.
 
-Tap the Dashboard/Gateway, API fallback, Relay, or Session rows in the active connection's **Overview**
+Tap the Dashboard/Gateway, Direct API, Relay, or Session rows in the active connection's **Overview**
 tab to open detail sheets with a compact **Recent activity** tail. The tail shows
 sanitized API, route, relay, session, and voice events such as health timeouts,
 selected routes, reconnect attempts, and voice relay checks. Raw payloads, query
@@ -144,7 +144,7 @@ rather than being incorrectly marked current.
 Connection feedback sits where it matters and never covers the nav or shifts the
 screen. There are really two connections, shown in two places:
 
-- **Your agent** (the Dashboard/Gateway chat connection, or API fallback when used) shows in the header **subtitle under the agent
+- **Your agent** (the Dashboard/Gateway chat connection, or Direct API when explicitly used) shows in the header **subtitle under the agent
   name** — the model line swaps to **Reconnecting…** / **Connecting…** /
   **Disconnected** (amber or red) and fades back to the model once it recovers, the
   same place messaging apps show "connecting…". This is the one that tells you whether
@@ -162,9 +162,9 @@ A pairing QR can carry multiple endpoint candidates for the same server: LAN, Ta
 
 The split is intentional:
 
-- Standard Chat, sessions, Manage, and voice use the Dashboard/Gateway route.
-- Optional API fallback uses its own route and bearer only when configured.
-- Terminal, bridge, TUI, media, clipboard, profile-file operations, Android
+- Standard Chat, sessions, Manage, voice, and ordinary inbound files use the Dashboard/Gateway route.
+- Direct API uses its own route and bearer only for explicitly selected API-only compatibility.
+- Terminal, bridge, TUI, explicit Relay media/enhancements, clipboard, profile-file operations, Android
   control, and Relay voice extensions use the Relay route and require a paired
   Relay session.
 
@@ -177,7 +177,7 @@ hermes pair --mode auto --prefer tailscale
 
 The helper publishes dedicated tailnet HTTPS `:10443` for local Dashboard
 `:9119` and its same-origin Relay path. The dedicated port avoids conflicts
-with Traefik, Caddy, or nginx on `:443`. The API fallback remains optional on
+with Traefik, Caddy, or nginx on `:443`. Direct API remains optional on
 `:8642`; direct Relay `:8767` is legacy compatibility. A manually exposed
 `http://100.x.y.z:9119` Dashboard also works over the encrypted tailnet, but it
 is not the recommended helper route and has no application TLS.

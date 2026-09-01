@@ -36,10 +36,10 @@ Com o helper recomendado, abra `https://<host-do-tailnet>:10443/api/health`: o H
 - Confira a URL do Dashboard/Gateway, a sessão e `/api/ws`.
 - Se aparecer um erro, toque em **Retry** uma vez.
 - Verifique os logs do servidor Hermes.
-- O API fallback opcional é diagnosticado separadamente; sua falha não bloqueia um Gateway saudável.
+- A Direct API opcional é diagnosticada separadamente; sua falha não bloqueia um Gateway saudável.
 - Modelos locais podem levar vários minutos; se o Android interromper a conexão em segundo plano, a resposta concluída será recuperada ao reconectar.
 
-Se o API fallback configurado intencionalmente estiver indisponível, confira
+Se a Direct API configurada intencionalmente estiver indisponível, confira
 `API_SERVER_ENABLED`, o endereço de bind, `http://<host>:8642/health`, a chave
 `API_SERVER_KEY` criada pelo operador e o firewall. O login do Dashboard não cria essa chave.
 

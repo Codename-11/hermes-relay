@@ -91,26 +91,19 @@ enum class GatewayApprovalModeCapability {
  * is unit-testable without an AndroidViewModel. ConnectionViewModel
  * delegates here with its live state.
  *
- * Manual picks pass through untouched (ChatViewModel handles per-turn
- * fallback when a "gateway" pick can't serve a send); "auto" prefers the
- * gateway while the dashboard probe is unresolved or ready. A capability-
- * preferred SSE fallback is selected only after a definitive unavailable,
- * unsupported, or sign-in-required verdict.
+ * Manual picks pass through untouched. "auto" follows the saved connection's
+ * stable owner: Dashboard/Gateway for a standard connection, or the
+ * capability-preferred SSE surface for a true API-only compatibility record.
+ * Live reachability and sign-in state never change the owner of an open chat.
  */
 fun resolveStreamingEndpointPreference(
     preference: String,
     gateway: GatewayAvailability,
     capabilities: ServerCapabilities,
+    gatewayOwned: Boolean = true,
 ): String = when (preference) {
     "sessions", "completions", "runs", "gateway" -> preference
-    else -> if (
-        gateway == GatewayAvailability.Ready ||
-        gateway == GatewayAvailability.Unknown
-    ) {
-        "gateway"
-    } else {
-        capabilities.preferredChatEndpoint()
-    }
+    else -> if (gatewayOwned) "gateway" else capabilities.preferredChatEndpoint()
 }
 
 /**
@@ -261,6 +254,16 @@ data class GatewayToolOutputRisk(
     val risk: String,
     val findings: List<String>,
     val redacted: Boolean,
+)
+
+/** Official upstream `notification.show` AgentNotice payload. */
+data class GatewayAgentNotice(
+    val text: String,
+    val level: String? = null,
+    val kind: String? = null,
+    val ttlMs: Long? = null,
+    val key: String? = null,
+    val id: String? = null,
 )
 
 /**
@@ -734,6 +737,10 @@ class GatewayTurnCallbacks(
     val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
     /** Clear a transient status only when [kind] still owns the visible status slot. */
     val onStatusClear: (kind: String) -> Unit = { _ -> },
+    /** Official upstream account/agent notice; distinct from Relay proactive messages. */
+    val onNoticeShow: (GatewayAgentNotice) -> Unit = { _ -> },
+    /** Exact-key dismissal for an upstream notice. */
+    val onNoticeClear: (key: String) -> Unit = { _ -> },
 )
 
 /**

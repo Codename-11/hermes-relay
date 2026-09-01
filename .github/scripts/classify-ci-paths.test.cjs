@@ -18,6 +18,12 @@ assert.deepEqual(classifyCiPaths(['relay-core/src/main/kotlin/Wire.kt']), { ...n
 assert.deepEqual(classifyCiPaths(['scripts/check-android-release-notes.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['scripts/check-android-native-compat.py']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['scripts/tests/check_android_native_compat_test.py']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/android-lane.ps1']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/android-prepush.py']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/dev.bat']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/dev.sh']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/tests/android_prepush_test.py']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['.github/workflows/android-on-demand.yml']), { ...none, android: true });
 assert.deepEqual(classifyCiPaths(['plugin/relay/server.py']), { ...none, plugin: true });
 assert.deepEqual(classifyCiPaths(['plugin/dashboard/src/App.tsx']), { ...none, dashboard: true });
 assert.deepEqual(classifyCiPaths(['user-docs/index.md']), { ...none, docs: true });

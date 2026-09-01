@@ -1,20 +1,20 @@
 # Quick Start
 
-The recommended setup uses the Hermes Web Dashboard and two clearly separated
-QR actions: first add the standard upstream connection, then pair Relay for the
-capabilities Hermes does not yet expose upstream.
+Start with the standard upstream Dashboard/Gateway connection. Then pair Relay
+when you want the additional tools and enhancements it provides.
 
 <AndroidSetupPath mode="quick" />
 
 ::: tip Upstream first, Relay encouraged
 Chat, sessions, Manage, sign-in, and standard voice use the unmodified Hermes
 Dashboard/Gateway. The Relay plugin is an encouraged extension for Terminal and
-TUI, notifications, media handoff, desktop tools, Relay sessions, enhanced
-voice, and optional Device Control. When upstream Hermes provides a compatible
+TUI, notifications, desktop tools, Relay sessions, enhanced voice, optional
+Device Control, and media compatibility or metadata. Ordinary inbound files use
+current upstream Dashboard routes. When upstream Hermes provides a compatible
 surface, Hermes-Relay prefers it instead of duplicating it.
 :::
 
-## Recommended full setup
+## Standard setup, then optional Relay enhancements
 
 ### 1. Install the Android app
 
@@ -27,15 +27,31 @@ require Android Device Control.
 Choose the signed **Sideload** APK only when you also want Hermes to read and
 operate the phone screen. [Compare the builds and verify the APK →](./getting-started#_1-install-the-app)
 
-### 2. Start Hermes and install the Relay extension
+### 2. Start Hermes
 
-The Dashboard/Gateway must be running and reachable from the phone:
+The Dashboard/Gateway must be running and reachable from the phone. This is all
+the server-side setup required for standard Chat, sessions, Manage, voice, and
+inbound files:
 
 ```bash
 hermes dashboard
 ```
 
-For the recommended full setup, install and start Relay on the Hermes host:
+### 3. Add the standard Hermes connection
+
+In Android **Connect**, choose **Find Hermes on LAN**. If discovery cannot find
+the host, choose **Enter your Hermes address** and enter the Dashboard URL you
+open in a browser, normally `http://<host>:9119`. Sign in when prompted.
+
+This creates a complete standard connection with no plugin or Relay URL. If the
+Relay Dashboard page is already installed, its **Connect mobile app** action can
+instead provide the same tokenless Dashboard-address setup by QR; that QR does
+not pair Relay or contain a password, cookie, or API key.
+
+### 4. Optional: install and pair Relay
+
+For the recommended complete experience, install and start Relay on the Hermes
+host after the standard connection works:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -44,30 +60,11 @@ hermes relay start --no-ssl
 ```
 
 Use `--no-ssl` only on a trusted LAN or VPN. For away-from-home access,
-[Tailscale is the recommended route](./remote-access).
-Refresh or restart the Dashboard/Gateway plugin catalog after installation; a
-**Relay** page should appear before you continue.
+[Tailscale is the recommended route](./remote-access). Refresh or restart the
+Dashboard/Gateway plugin catalog after installation; a **Relay** page should
+appear.
 
-Relay still runs as its own supervised loopback service, but current Android
-pairing normally reaches it through the Dashboard's existing address. Port
-`8767` is therefore an internal/advanced compatibility detail rather than a
-second address most users must configure.
-
-### 3. Add the standard Hermes connection by QR
-
-1. Open the Hermes Web Dashboard in a browser.
-2. Open **Relay** and click **Connect mobile app**.
-3. In Android, open **Connect** and choose **Scan Hermes setup QR**.
-4. Scan the Dashboard QR and sign in if prompted.
-
-This tokenless QR contains only the Dashboard address. The app verifies it and
-uses the upstream Dashboard/Gateway for Chat, sessions, Manage, sign-in, and
-standard voice. It does **not** contain a password, cookie, API key, or Relay
-pairing code.
-
-### 4. Pair Relay by QR
-
-Back in the Web Dashboard's **Relay** page:
+In the Web Dashboard's **Relay** page:
 
 1. Click **Pair new device** and leave mode on **Auto** unless you need a
    specific route.
@@ -77,8 +74,8 @@ Back in the Web Dashboard's **Relay** page:
 The QR is single-use and normally advertises the Dashboard-origin Relay ingress,
 plus any configured direct compatibility routes. It can carry LAN, Tailscale,
 and public candidates so the phone can choose the best reachable route. Pairing unlocks Terminal/TUI,
-notifications, media handoff, Relay sessions, enhanced voice, desktop-tool
-handoff, and—on the Sideload build—Device Control.
+notifications, Relay sessions, enhanced voice, desktop-tool handoff,
+media enhancements, and—on the Sideload build—Device Control.
 
 ### 5. Confirm success and talk
 
@@ -93,15 +90,6 @@ experience, but an unavailable Relay must not block upstream Chat, Manage, or
 standard voice.
 
 ## Other supported paths
-
-::: details Use upstream Hermes without Relay
-In Android **Connect**, choose **Find Hermes on LAN**. If discovery cannot find
-the host, choose **Enter your Hermes address** and enter the Dashboard URL you
-open in a browser, normally `http://<host>:9119`. Sign in when prompted.
-
-This path provides Chat, sessions, Manage, and standard voice without installing
-the Relay plugin. You can pair Relay later from **Settings → Connections**.
-:::
 
 ::: details Generate the QR from a terminal
 On the Hermes host, run:

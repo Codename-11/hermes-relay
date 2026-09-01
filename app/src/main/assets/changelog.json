@@ -1,55 +1,222 @@
 {
- "schema": 2,
+ "schema": 3,
  "versions": [
   {
-   "version": "1.14.0",
-   "title": "Connections that follow you",
-   "date": "2026-08-30",
-   "highlight": {
-    "title": "Reliable routes",
-    "summary": "Move between LAN, Tailscale, and public HTTPS without mixing Dashboard or Relay authentication.",
-    "bullets": [
-     "Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.",
-     "Preview delegated agent work and use the optional native Git workspace.",
-     "Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls."
-    ]
-   },
-   "improvements": [
-    "Wake-word detection now packages a compatible native runtime for every supported ABI.",
-    "Protected Relay health checks no longer appear as broken routes."
-   ],
-   "toastDigest": {
-    "additionalFeatureCount": 2,
-    "fixCount": 10,
-    "preview": [
-     "delegated-agent previews",
-     "safer voice and sessions"
-    ]
-   },
-   "playNotes": "Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.",
-   "sections": [
+   "version": "1.15.0",
+   "title": "Standard Hermes first, with clearer Relay boundaries",
+   "date": "2026-08-31",
+   "summary": "Chat, voice, attachments, inbound files, current-session Git, usage, and Hermes notices now prefer current upstream Dashboard and Gateway support. Relay stays optional for compatibility and the tools it uniquely provides.",
+   "changes": [
     {
-     "header": "Use the best available route",
-     "bullets": [
-      "Resolve Dashboard, Relay, and optional API health independently across LAN, Tailscale, and public HTTPS.",
-      "Keep same-origin Relay ingress on the exact Dashboard origin that owns authentication."
-     ]
+     "id": "upstream-standard-surfaces",
+     "kind": "improved",
+     "title": "Use standard Hermes without Relay prompts",
+     "summary": "Chat attachments, inbound files, current-session Git, Nous usage, and Hermes notices use upstream routes first.",
+     "highlight": true
     },
     {
-     "header": "Follow active work",
-     "bullets": [
-      "Preview delegated-agent lifecycle, progress, tools, and available read-only child history from the parent chat.",
-      "Review Git status, diffs, branches, staging, commits, and remotes through the optional Relay plugin."
-     ]
+     "id": "stable-inbound-media",
+     "kind": "fixed",
+     "title": "Keep returned files loaded",
+     "summary": "Images, audio, video, and documents download through the Dashboard and no longer flash Relay errors or return to Loading.",
+     "highlight": true
     },
     {
-     "header": "Keep voice and conversations owned correctly",
-     "bullets": [
-      "Serialize microphone handoff and keep Voice Focus Stop and steering accessible across active phases.",
-      "Preserve fresh profile drafts, provisional Thread ownership, Clarify answers, passive observation, and Assistant privacy through reconnects."
-     ]
+     "id": "supervised-parent-access",
+     "kind": "improved",
+     "title": "Use app-specific parent access",
+     "summary": "A parent PIN or password plus recovery phrase protects Supervised Mode without trusting the phone unlock credential.",
+     "highlight": true
+    },
+    {
+     "id": "settings-relay-boundaries",
+     "kind": "improved",
+     "title": "See which features need Relay",
+     "summary": "Media sits with standard Hermes settings while Threads, Terminal, notifications, enhanced voice, and device tools stay under Relay tools."
+    },
+    {
+     "id": "complete-release-history",
+     "kind": "improved",
+     "title": "Read the complete release record",
+     "summary": "What's New shows one release summary, selected highlights, every remaining change, and relevant compatibility notes."
+    },
+    {
+     "id": "relay-removal-voice",
+     "kind": "fixed",
+     "title": "Keep Standard voice after removing Relay",
+     "summary": "Dashboard voice remains ready, temporary outages preserve choices, and shared default-profile settings stay isolated."
+    },
+    {
+     "id": "passive-external-activity",
+     "kind": "fixed",
+     "title": "Observe another client's activity safely",
+     "summary": "A uniquely matched Desktop or TUI turn can show Working or Waiting without Android taking control."
+    },
+    {
+     "id": "chat-transport-ownership",
+     "kind": "fixed",
+     "title": "Keep each chat on its chosen transport",
+     "summary": "Dashboard chats preserve their transcript, draft, profile, and session through sign-out or outages instead of silently changing databases."
+    },
+    {
+     "id": "history-auth-recovery",
+     "kind": "fixed",
+     "title": "Preserve completed replies at sign-in expiry",
+     "summary": "A Dashboard history authentication failure keeps completed text visible and opens the existing sign-in recovery path."
+    },
+    {
+     "id": "compaction-watchdog",
+     "kind": "fixed",
+     "title": "Let long context compaction finish",
+     "summary": "Visible compaction activity refreshes the turn watchdog instead of being interrupted as idle."
+    },
+    {
+     "id": "bot-chat-binding",
+     "kind": "fixed",
+     "title": "Render Bot Chat history immediately",
+     "summary": "Route-owned Bot Chats observe their bound history from first composition."
+    },
+    {
+     "id": "missing-terminal-recovery",
+     "kind": "fixed",
+     "title": "Settle turns after a lost terminal frame",
+     "summary": "An exact idle live-session snapshot reconciles the Android-owned turn and drains its queued follow-up."
+    },
+    {
+     "id": "supervised-gateway-setup",
+     "kind": "fixed",
+     "title": "Keep Gateway setup parent-owned",
+     "summary": "Relock and back navigation cancel the exact pending setup without bypassing parent authority."
+    },
+    {
+     "id": "generated-image-retention",
+     "kind": "fixed",
+     "title": "Keep completed generated images visible",
+     "summary": "Generated media survives marker persistence lag and retains its intended Chat animation."
     }
-   ]
+   ],
+   "compatibility": [
+    "Current upstream Hermes provides standard Chat, sessions, Manage, voice, attachments, inbound files, current-session Git reads, usage, and notices without the optional Hermes-Relay Plugin.",
+    "Hermes-Relay Plugin 1.11.1 remains required for Terminal, proactive Threads and offline delivery, Notification Companion, Relay sessions, enhanced voice, Secure Link, and phone or device control.",
+    "Granular Device Control and the system Voice Focus overlay remain sideload-only."
+   ],
+   "playNotes": "Standard Chat, Voice, attachments, returned files, current-session Git, usage, and Hermes notices now prefer upstream Dashboard and Gateway support without requiring Relay. Returned media stays loaded, voice survives Relay removal, and Settings clearly separates standard Hermes from Relay tools. Supervised Mode also gains app-specific parent access and recovery.",
+   "sections": []
+  },
+  {
+   "version": "1.14.0",
+   "title": "Connections, delegated work, Git, and voice",
+   "date": "2026-08-30",
+   "summary": "Connections now recover cleanly across networks. You can also follow delegated agents, work with Git repositories, and rely on steadier voice, sessions, Threads, profiles, Assistant, and Clarify controls.",
+   "changes": [
+    {
+     "id": "route-aware-connections",
+     "kind": "improved",
+     "title": "Connections recover independently",
+     "summary": "Move between LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication.",
+     "highlight": true
+    },
+    {
+     "id": "delegated-agent-previews",
+     "kind": "added",
+     "title": "Follow delegated-agent activity",
+     "summary": "See lifecycle, progress, tool previews, and available read-only child history from the parent chat.",
+     "highlight": true
+    },
+    {
+     "id": "native-git-workspace",
+     "kind": "added",
+     "title": "Work with repositories from Android",
+     "summary": "Review status, diffs, branches, staging, commits, and remotes from Chat or Settings.",
+     "highlight": true
+    },
+    {
+     "id": "voice-focus-controls",
+     "kind": "improved",
+     "title": "Steer voice at any time",
+     "summary": "Stop or redirect Hermes while it is Thinking, Transcribing, or Speaking, including with accessibility controls.",
+     "highlight": true
+    },
+    {
+     "id": "non-blocking-release-notice",
+     "kind": "improved",
+     "title": "Release notes stay out of your way",
+     "summary": "A dismissible post-update notice keeps startup usable and leaves the complete history available from Settings."
+    },
+    {
+     "id": "single-chat-presentation",
+     "kind": "improved",
+     "title": "Chat uses one consistent presentation",
+     "summary": "The overlapping clean-focus mode was removed while the separate Voice Focus experience remains available."
+    },
+    {
+     "id": "wake-word-runtime",
+     "kind": "fixed",
+     "title": "Wake-word detection starts reliably",
+     "summary": "Compatible native voice components are now packaged for every supported phone architecture."
+    },
+    {
+     "id": "sphere-motion",
+     "kind": "fixed",
+     "title": "The visible Sphere keeps moving smoothly",
+     "summary": "Foreground animation no longer falls back to a stepped ambient pulse."
+    },
+    {
+     "id": "continuous-microphone-handoff",
+     "kind": "fixed",
+     "title": "Continuous voice keeps the microphone",
+     "summary": "The next listening turn waits for barge-in recording to release cleanly."
+    },
+    {
+     "id": "fresh-profile-drafts",
+     "kind": "fixed",
+     "title": "New chats keep the selected profile",
+     "summary": "Fresh drafts no longer reopen an older session or carry a Thread route into another profile."
+    },
+    {
+     "id": "provisional-thread-removal",
+     "kind": "fixed",
+     "title": "Provisional Threads can be removed safely",
+     "summary": "Local removal and later session promotion no longer risk duplicate rows or server history."
+    },
+    {
+     "id": "clarify-custom-answers",
+     "kind": "fixed",
+     "title": "Clarify keeps custom answers reachable",
+     "summary": "Other answers, keyboard Send, and expired prompts now behave consistently."
+    },
+    {
+     "id": "passive-session-observation",
+     "kind": "fixed",
+     "title": "Browsing no longer interrupts another client",
+     "summary": "Passive Android observation does not claim a turn owned by Desktop, TUI, or another client."
+    },
+    {
+     "id": "assistant-recovery-privacy",
+     "kind": "fixed",
+     "title": "Assistant sessions recover more clearly",
+     "summary": "No-speech feedback, recreated session state, and keyguard privacy now remain intact."
+    },
+    {
+     "id": "relay-auth-boundaries",
+     "kind": "fixed",
+     "title": "Protected Relay routes report the right problem",
+     "summary": "Authentication challenges are no longer presented as outages, while unsafe routes still fail closed."
+    },
+    {
+     "id": "connection-session-readiness",
+     "kind": "fixed",
+     "title": "Connections and sessions become ready sooner",
+     "summary": "Unavailable optional API and Relay routes no longer delay a healthy Dashboard or authenticated session history."
+    }
+   ],
+   "compatibility": [
+    "Standard Chat, sessions, profiles, Manage, and standard voice continue to work without the optional Hermes-Relay Plugin.",
+    "The Git workspace and same-origin Relay extensions require Hermes-Relay Plugin 1.11.0.",
+    "Granular Device Control and the system Voice Focus overlay remain available only in the sideload build."
+   ],
+   "playNotes": "Connections now recover independently across LAN, Tailscale, and public HTTPS without mixing Dashboard and Relay authentication. Preview delegated agents, use the optional native Git workspace, and get safer Continuous voice, Voice Focus, Assistant, Threads, profile drafts, and Clarify controls. Wake-word detection also packages a compatible native runtime.",
+   "sections": []
   },
   {
    "version": "1.13.2",

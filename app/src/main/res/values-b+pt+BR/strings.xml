@@ -288,7 +288,7 @@
     <string name="cw_cloud_subtitle">Conecte ao seu agente hospedado</string>
     <string name="cw_server_vps_title">Gateway remoto</string>
     <string name="cw_server_vps_subtitle">Informe o endereço do Dashboard</string>
-    <string name="cw_relay_optional_note">Endereços privados LAN e Tailscale podem usar HTTP ou HTTPS. Endereços públicos exigem HTTPS. Relay e fallback da API são opcionais.</string>
+    <string name="cw_relay_optional_note">Endereços privados LAN e Tailscale podem usar HTTP ou HTTPS. Endereços públicos exigem HTTPS. Relay e API direta são opcionais.</string>
     <string name="cw_cloud_entry_title">Conectar ao Hermes hospedado pela Nous</string>
     <string name="cw_cloud_entry_description">Insira o endereço do agente mostrado no Nous Portal. Você entrará com segurança depois que o Hermes for encontrado.</string>
     <string name="cw_cloud_agent_name">Endereço do agente</string>
@@ -373,7 +373,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 ou http://your-server:8642</string>
     <string name="cw_api_url_supporting">API do Hermes usada pelo Chat e pelas sessões — a porta 8642 da API e http:// são presumidos para hosts sem esquema (a porta 9119 do painel é determinada separadamente)</string>
     <string name="cw_scan_message">Procurando o painel/a API do Hermes nesta LAN…</string>
-    <string name="cw_dashboard_signin_hint">Entre pelo painel para liberar Gerenciar e voz — a chave da API é usada apenas no fallback opcional pela API direta.</string>
+    <string name="cw_dashboard_signin_hint">Entre pelo painel para liberar Gerenciar e voz — a chave da API é usada apenas em conexões explícitas pela API direta.</string>
     <string name="cw_pair_relay_section">Parear o Relay (opcional)</string>
     <string name="cw_pair_relay_section_desc">O plugin do Relay já está em execução? Faça o pareamento aqui para ativar Terminal, Bridge e permissões de canais.</string>
     <string name="cw_pair_relay_url_label">URL do Relay</string>
@@ -584,6 +584,11 @@
     <string name="changelog_state_collapsed">Recolhido</string>
     <string name="changelog_installed">Instalado</string>
     <string name="changelog_also_improved">Também melhorado</string>
+    <string name="changelog_highlights">Destaques</string>
+    <string name="changelog_added">Adicionado</string>
+    <string name="changelog_improved">Melhorado</string>
+    <string name="changelog_fixed">Corrigido</string>
+    <string name="changelog_compatibility">Compatibilidade</string>
     <string name="changelog_toast_also">Também: %1$s</string>
     <string name="changelog_view_all">Ver tudo</string>
     <plurals name="changelog_additional_feature_count">
@@ -593,6 +598,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d correção</item>
         <item quantity="other">%1$d correções</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d melhoria</item>
+        <item quantity="other">%1$d melhorias</item>
     </plurals>
     <!-- DiagnosticsScreen -->
     <string name="diag_title">Diagnóstico</string>
@@ -656,12 +665,12 @@
     <string name="settings_hermes_management">Gerenciamento do Hermes</string>
     <string name="settings_hermes_management_desc">Recursos do painel: habilidades, cron, MCP, perfis e modelos</string>
     <string name="settings_chat">Chat</string>
-    <string name="settings_chat_desc">Comportamento do chat, Gateway, fallback da API, exibição de ferramentas e tamanho das mensagens</string>
+    <string name="settings_chat_desc">Comportamento do chat, Gateway, API direta, exibição de ferramentas e tamanho das mensagens</string>
     <string name="settings_voice_mode">Modo de voz</string>
     <string name="settings_voice_mode_desc">Voz do painel, opções de relay em tempo real e provedores</string>
     <string name="settings_threads">Threads</string>
-    <string name="settings_threads_desc">Permita que o agente inicie conversas com você (desativado por padrão)</string>
-    <string name="settings_power_tools">Ferramentas avançadas</string>
+    <string name="settings_threads_desc">Conversas iniciadas pelo Relay e entrega proativa (desativado por padrão)</string>
+    <string name="settings_power_tools">Ferramentas do Relay</string>
     <string name="settings_terminal">Terminal</string>
     <string name="settings_terminal_desc">Acesso ao shell do servidor por uma sessão pareada do relay</string>
     <string name="settings_bridge">Bridge</string>
@@ -673,7 +682,7 @@
     <string name="settings_notification_companion">Assistente de notificações</string>
     <string name="settings_notification_companion_desc">Notificações compartilhadas do celular para ferramentas pareadas do relay</string>
     <string name="settings_media">Mídia</string>
-    <string name="settings_media_desc">Anexos recebidos pelo Relay, busca automática e limite do cache</string>
+    <string name="settings_media_desc">Anexos do chat, downloads, privacidade e cache</string>
     <string name="settings_bridge_safety">Segurança do Bridge</string>
     <string name="settings_bridge_safety_desc">Lista de bloqueio, confirmação de verbos destrutivos e desativação automática</string>
     <string name="settings_sideload">Sideload</string>
@@ -766,11 +775,11 @@
     <string name="chat_settings_debug">Depuração</string>
     <string name="chat_settings_show_system_messages_desc">Mostre os marcadores ocultos \"[System: …]\" do servidor (alterações de modelo/personalidade). Desativado corresponde ao desktop/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Endpoint de streaming</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: escolhe o melhor caminho com base no que seu servidor oferece. Em uso no momento: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Automático: conexões padrão usam o Gateway; conexões somente API usam a API direta. Em uso no momento: </string>
     <string name="chat_settings_gateway_suffix"> (pensamento ao vivo pelo WebSocket do painel)</string>
     <string name="chat_settings_chat_completions_suffix"> (chat por /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (chat transmitido explicitamente por /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Gateway: pensamento ao vivo + eventos avançados de ferramentas pelo WebSocket do painel (/api/ws) — o mesmo usado pelo app para desktop. Exige login em Gerenciar; quando indisponível, usa SSE como alternativa em cada turno.</string>
+    <string name="chat_settings_gateway_desc">Gateway: pensamento ao vivo + eventos avançados de ferramentas pelo WebSocket do painel (/api/ws) — o mesmo usado pelo app para desktop. Exige login em Gerenciar; quando indisponível, este chat permanece no Gateway e oferece login ou nova tentativa.</string>
     <string name="chat_settings_sessions_desc">Sessões: fluxo nativo do Hermes em /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: SSE compatível com OpenAI por /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Runs: use somente quando seu servidor transmitir /v1/runs diretamente.</string>
@@ -1153,8 +1162,8 @@
     <!-- P1: MediaSettingsScreen -->
     <string name="media_title">Mídia</string>
     <string name="media_back">Voltar</string>
-    <string name="media_intro_1">Controla como o app lida com arquivos enviados pelos resultados de ferramentas (capturas de tela, PDFs etc.) pelo relay.</string>
-    <string name="media_intro_2">Somente Relay — estas configurações não afetam as imagens que você anexa no chat nem nada em uma conexão padrão (sem Relay).</string>
+    <string name="media_intro_1">Controla como o app baixa, protege e armazena em cache os arquivos enviados pelo Hermes no chat.</string>
+    <string name="media_intro_2">A mídia padrão do Dashboard é priorizada. Quando pareado, o Relay pode acrescentar entrega de compatibilidade e metadados de sensibilidade.</string>
     <string name="media_max_inbound">Tamanho máximo dos anexos recebidos</string>
     <string name="media_max_inbound_value">%1$d MB</string>
     <string name="media_max_inbound_desc">Arquivos maiores que isso são rejeitados após o download.</string>
@@ -2071,7 +2080,8 @@
     <string name="session_path_signin_for_gateway">Entre em Gerenciar para usar o Gateway com pensamento ao vivo.</string>
     <string name="session_path_gateway_api_server">Disponível no transporte do Gateway — esta sessão transmite pelo servidor API.</string>
     <string name="session_path_relay_not_connected">Relay pareado, mas desconectado.</string>
-    <string name="session_path_pair_relay_media">Pareie o relay para enviar e receber mídia.</string>
+    <string name="session_path_pair_relay_media">Pareie o Relay para compatibilidade de mídia em hosts Hermes mais antigos.</string>
+    <string name="session_path_media_not_ready">Atualize o Hermes para entrega de mídia padrão ou pareie o Relay para compatibilidade.</string>
     <string name="session_path_pair_relay_terminal">Pareie o relay para acessar o terminal.</string>
     <string name="session_path_voice_not_ready">A voz não está pronta nesta conexão.</string>
     <string name="session_path_threads_pair_relay">Pareie o relay e ative \"Permitir que o Hermes me envie mensagens\" para o agente poder abrir Threads.</string>
@@ -2669,6 +2679,8 @@
     <string name="inbound_attach_downloading">Baixando…%1$s</string>
     <string name="inbound_attach_failed">Falha no anexo</string>
     <string name="inbound_attach_tap_retry">Toque para tentar novamente</string>
+    <string name="inbound_attach_host_only">O arquivo está no seu host Hermes</string>
+    <string name="inbound_attach_host_only_help">Atualize o Hermes para downloads padrão ou pareie o Relay para compatibilidade.</string>
     <string name="inbound_attach_open">Abrir externamente</string>
     <string name="inbound_attach_share">Compartilhar</string>
     <string name="inbound_attach_save">Salvar no dispositivo</string>
@@ -3142,6 +3154,8 @@
     <string name="diag_check_ready_with">Pronto com %s</string>
     <string name="diag_check_relay_active">Relay ativo</string>
     <string name="diag_check_relay_not_configured">Relay não configurado</string>
+    <string name="diag_relay_tools_optional">Ferramentas do Relay (opcionais)</string>
+    <string name="diag_relay_tools_not_paired">Não pareado</string>
     <string name="diag_check_relay_server">Verificar servidor relay</string>
     <string name="diag_check_relay_plugin">Plugin do Relay</string>
     <string name="diag_plugin_not_configured">O plugin opcional não está configurado</string>
@@ -3171,8 +3185,8 @@
     <string name="inbound_attach_cd_cancel">Cancelar</string>
     <string name="inbound_attach_open_failed">Não foi possível abrir o anexo</string>
     <string name="inbound_attach_share_failed">Não foi possível compartilhar o anexo</string>
-    <string name="injected_context_media_no_relay">A mídia exige uma conexão ativa com o Relay</string>
-    <string name="injected_context_media_relay_active">Relay ativo para mídia</string>
+    <string name="injected_context_media_no_relay">Nenhuma instrução extra de mídia — a entrega padrão continua sob responsabilidade do servidor</string>
+    <string name="injected_context_media_relay_active">Aprimoramento de mídia do Relay disponível</string>
     <string name="injected_context_media_title">Compartilhamento de mídia</string>
     <string name="injected_context_persona_not_set">Nenhuma persona definida</string>
     <string name="injected_context_persona_server_side">Persona no servidor</string>
@@ -3239,7 +3253,7 @@
     <string name="whats_new_full_history">Ver histórico completo</string>
     <string name="whats_new_no_notes">Nenhuma nota de versão disponível</string>
     <string name="whats_new_title">Novidades</string>
-    <string name="whats_new_subtitle">Destaques da versão mais recente</string>
+    <string name="whats_new_subtitle">Destaques e detalhes completos da versão</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Acesso temporário à tela expirou</string>
     <string name="bridge_notification_auto_disabled_body">Inspeção e controle da tela foram desativados após ociosidade. As outras permissões não mudaram.</string>
@@ -3330,7 +3344,7 @@
     <string name="active_section_dashboard_unreachable">Inacessível</string>
     <string name="active_section_no_fallback_routes">Ainda não há rotas alternativas</string>
     <string name="active_section_no_fallback_routes_desc">Adicione uma rota de API opcional para chat direto alternativo e troca de rede.</string>
-    <string name="active_section_add_api_fallback">Adicionar rota alternativa</string>
+    <string name="active_section_add_api_fallback">Adicionar rota de API direta</string>
     <string name="active_section_security_authentication">Autenticação</string>
     <string name="active_section_dashboard_session">Sessão do Dashboard</string>
     <string name="active_section_credential_storage">Armazenamento de credenciais</string>
@@ -3355,7 +3369,7 @@
     <string name="cw_timeline_authenticated">Autenticação verificada</string>
     <string name="cw_timeline_ready">Conexão pronta</string>
     <string name="cw_timeline_ready_detail">Chat, Manage e Voice podem usar este Dashboard</string>
-    <string name="active_section_optional_api_fallback">Fallback opcional pela API direta</string>
+    <string name="active_section_optional_api_fallback">API direta opcional</string>
     <string name="active_section_api_not_required">Não é necessário quando esta conexão usa o Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Onde obtenho essa chave?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY é criada no seu servidor Hermes; este aplicativo não fornece a chave. Configure-a somente ao ativar o servidor de API opcional, que exige uma chave utilizável, e insira aqui o mesmo valor.</string>
@@ -4323,7 +4337,7 @@
     <string name="chat_git_deletions">%1$d exclusões</string>
     <plurals name="chat_git_change_count"><item quantity="one">%1$d alteração</item><item quantity="other">%1$d alterações</item></plurals>
     <string name="settings_git_workspace">Espaço de trabalho Git</string>
-    <string name="settings_git_workspace_desc">Revise alterações, branches, commits e remotos</string>
+    <string name="settings_git_workspace_desc">Git da sessão atual primeiro, com descoberta opcional do host</string>
     <string name="current_chat_activity_title">Atividade atual do chat</string>
     <string name="current_chat_activity_subtitle">Detalhes ao vivo e somente leitura deste chat</string>
     <string name="current_chat_activity_open">Visualizar atividade atual do chat</string>
@@ -4358,7 +4372,7 @@
     <string name="agent_activity_child_role_task">Tarefa</string>
     <string name="agent_activity_child_role_agent">Agente</string>
     <string name="agent_activity_child_role_system">Sistema</string>
-    <string name="settings_git_workspace_off_desc">Desativado · A verificação de repositórios no host é opcional</string>
+    <string name="settings_git_workspace_off_desc">Somente repositório da sessão · A descoberta do host é opcional</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>
@@ -4369,7 +4383,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">API direta</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">Defina o endereço do Dashboard e do Gateway que este telefone deve usar. Rotas privadas de LAN e Tailscale podem usar HTTP ou HTTPS; rotas públicas exigem HTTPS.</string>
     <string name="dashboard_address_editor_title">Endereço do gateway</string>
@@ -4386,7 +4400,7 @@
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
-    <string name="network_routes_summary">Rotas LAN, Tailscale e públicas são formas de acessar este Gateway. O fallback da API e as extensões Relay são opcionais.</string>
+    <string name="network_routes_summary">Rotas LAN, Tailscale e públicas são formas de acessar este Gateway. A API direta e as extensões Relay são opcionais.</string>
     <string name="network_routes_title">Network routes</string>
     <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>

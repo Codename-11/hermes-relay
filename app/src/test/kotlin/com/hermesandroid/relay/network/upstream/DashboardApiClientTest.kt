@@ -562,17 +562,24 @@ class DashboardApiClientTest {
     }
 
     @Test
-    fun signInRequiredClassifierAcceptsNoCookieButRejectsForbidden() {
+    fun signInRequiredClassifierAcceptsEveryUnauthorizedShapeButRejectsForbidden() {
         val noCookie = DashboardHttpException(
             401,
             "Session failed - HTTP 401: {\"reason\":\"no_cookie\",\"detail\":\"Unauthorized\"}",
         )
+        val expired = DashboardHttpException(
+            401,
+            "Session failed - HTTP 401: {\"reason\":\"session_expired\",\"detail\":\"invalid_or_expired_session\"}",
+        )
+        val generic = DashboardHttpException(401, "Session failed - HTTP 401: Unauthorized")
         val forbidden = DashboardHttpException(
             403,
             "Session failed - HTTP 403: forbidden",
         )
 
         assertTrue(noCookie.isDashboardSignInRequiredFailure())
+        assertTrue(expired.isDashboardSignInRequiredFailure())
+        assertTrue(generic.isDashboardSignInRequiredFailure())
         assertFalse(forbidden.isDashboardSignInRequiredFailure())
     }
 
@@ -2024,6 +2031,61 @@ class DashboardApiClientTest {
         val apply = server.takeRequest()
         assertEquals("/api/messaging/whatsapp/onboarding/pair-1/apply", apply.requestUrl!!.encodedPath)
         assertTrue(apply.body.readUtf8().contains(""""profile":"worker""""))
+    }
+
+    @Test
+    fun downloadManagedFile_usesUpstreamPathRouteAndPreservesMetadata() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "audio/mpeg")
+                .setHeader("Content-Disposition", "attachment; filename*=UTF-8''voice%20reply.mp3")
+                .setBody("audio-bytes"),
+        )
+
+        val fetched = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadManagedFile("/tmp/Hermes audio/voice reply.mp3", 1024)
+            .getOrThrow()
+
+        assertEquals("audio/mpeg", fetched.contentType)
+        assertEquals("voice reply.mp3", fetched.fileName)
+        assertEquals("audio-bytes", fetched.bytes.decodeToString())
+        val request = server.takeRequest()
+        assertEquals("/api/files/download", request.requestUrl!!.encodedPath)
+        assertEquals("/tmp/Hermes audio/voice reply.mp3", request.requestUrl!!.queryParameter("path"))
+    }
+
+    @Test
+    fun downloadManagedFile_rejectsDeclaredLengthAboveCallerCap() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Length", 2048))
+
+        val result = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadManagedFile("/tmp/large.bin", 1024)
+
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun managedFileFallbackClassificationDistinguishesMissingRouteFromMissingFile() {
+        assertTrue(
+            DashboardHttpException(
+                404,
+                "Dashboard media download failed - HTTP 404: {\"detail\":\"Not Found\"}",
+            ).isDashboardManagedFilesUnsupported(),
+        )
+        assertFalse(
+            DashboardHttpException(
+                404,
+                "Dashboard media download failed - HTTP 404: {\"detail\":\"File not found\"}",
+            ).isDashboardManagedFilesUnsupported(),
+        )
+        assertFalse(
+            DashboardHttpException(403, "Access to sensitive files is not allowed")
+                .isDashboardManagedFilesUnsupported(),
+        )
+        assertFalse(
+            DashboardHttpException(500, "Managed file read failed")
+                .isDashboardManagedFilesUnsupported(),
+        )
     }
 }
 

@@ -52,6 +52,7 @@ import okhttp3.Response
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -311,6 +312,19 @@ data class ElevenLabsVoices(
 )
 
 /**
+ * Bytes fetched from upstream's authenticated managed-files surface.
+ *
+ * The Dashboard applies its own managed-root, sensitive-file, and maximum-size
+ * policy before these bytes leave the Hermes host. Android applies the user's
+ * stricter inbound-media cap while reading the response as a second boundary.
+ */
+data class DashboardFetchedFile(
+    val bytes: ByteArray,
+    val contentType: String,
+    val fileName: String?,
+)
+
+/**
  * Native client for the Hermes dashboard/admin server (:9119).
  *
  * This is deliberately separate from [HermesApiClient] and all relay pairing
@@ -379,6 +393,75 @@ class DashboardApiClient(
             .get()
             .build()
         executeJsonElement(request, normalized)
+    }
+
+    /**
+     * Download a server-local artifact through current upstream Hermes.
+     *
+     * This is the same authenticated `/api/files/download` route official
+     * Desktop uses for remote gateway files. The caller supplies its display
+     * cap so a malicious or stale Content-Length cannot cause an unbounded
+     * allocation. Audio/video are downloaded into Android's local media cache;
+     * local playback supplies seeking, so `/api/files/stream` is unnecessary
+     * on this path.
+     */
+    suspend fun downloadManagedFile(
+        serverPath: String,
+        maxBytes: Long,
+    ): Result<DashboardFetchedFile> = withContext(Dispatchers.IO) {
+        if (serverPath.isBlank()) {
+            return@withContext Result.failure(IOException("Media path is empty"))
+        }
+        if (maxBytes <= 0L) {
+            return@withContext Result.failure(IOException("Media download limit is invalid"))
+        }
+        val httpUrl = resolveUrl("/api/files/download")
+            ?.newBuilder()
+            ?.addQueryParameter("path", serverPath)
+            ?.build()
+            ?: return@withContext Result.failure(invalidUrlException())
+        val request = Request.Builder().url(httpUrl).get().build()
+
+        executeCancellable(request, "Dashboard media download") { response ->
+            val body = response.body
+            val declaredLength = body.contentLength().takeIf { it >= 0L }
+            if (declaredLength != null && declaredLength > maxBytes) {
+                throw IOException("File exceeds the configured download limit")
+            }
+            val initialSize = declaredLength
+                ?.coerceAtMost(Int.MAX_VALUE.toLong())
+                ?.toInt()
+                ?: DEFAULT_BUFFER_SIZE
+            val output = ByteArrayOutputStream(initialSize)
+            body.byteStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var readTotal = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    readTotal += count
+                    if (readTotal > maxBytes) {
+                        throw IOException("File exceeds the configured download limit")
+                    }
+                    output.write(buffer, 0, count)
+                }
+                if (declaredLength != null && readTotal != declaredLength) {
+                    throw IOException("Media file changed while it was being downloaded")
+                }
+            }
+            DashboardFetchedFile(
+                bytes = output.toByteArray(),
+                contentType = response.header("Content-Type")
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.takeIf(String::isNotEmpty)
+                    ?: "application/octet-stream",
+                fileName = response.header("Content-Disposition")
+                    ?.let(::contentDispositionFileName)
+                    ?: serverPath.substringAfterLast('/').substringAfterLast('\\')
+                        .takeIf(String::isNotBlank),
+            )
+        }
     }
 
     suspend fun postJsonObject(
@@ -2405,6 +2488,23 @@ private fun Response.readJsonElement(json: Json): JsonElement {
     return json.parseToJsonElement(raw)
 }
 
+private fun contentDispositionFileName(header: String): String? {
+    val encoded = Regex("""filename\*=UTF-8''([^;]+)""", RegexOption.IGNORE_CASE)
+        .find(header)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() }
+    val plain = Regex("""filename=\"([^\"]+)\"|filename=([^;]+)""", RegexOption.IGNORE_CASE)
+        .find(header)
+        ?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }
+        ?.trim()
+        ?.trim('"')
+    return (encoded ?: plain)
+        ?.substringAfterLast('/')
+        ?.substringAfterLast('\\')
+        ?.takeIf(String::isNotBlank)
+}
+
 internal class DashboardHttpException(
     val statusCode: Int,
     message: String,
@@ -2436,15 +2536,39 @@ internal fun Throwable.isDashboardSignInRequiredFailure(): Boolean {
         java.util.IdentityHashMap<Throwable, Boolean>(),
     )
     while (current != null && seen.add(current)) {
-        if (
-            current is DashboardHttpException &&
-            current.statusCode == 401 &&
-            (
-                current.message.orEmpty().contains("no_cookie", ignoreCase = true) ||
-                    current.message.orEmpty().contains("unauthenticated", ignoreCase = true)
-                )
-        ) {
+        // Every 401 from an authenticated Dashboard route means the saved
+        // browser/native session can no longer authorize this request. Older
+        // gateways used `no_cookie`/`unauthenticated`; current builds may return
+        // reason codes such as `session_expired`, or no structured body at all.
+        if (current is DashboardHttpException && current.statusCode == 401) {
             return true
+        }
+        current = current.cause
+    }
+    return false
+}
+
+/** True only when the managed-file route itself is absent on this Hermes build. */
+internal fun Throwable.isDashboardManagedFilesUnsupported(): Boolean {
+    var current: Throwable? = this
+    val seen = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && seen.add(current)) {
+        if (current is DashboardHttpException) {
+            if (current.statusCode in setOf(405, 501)) return true
+            if (current.statusCode == 404) {
+                val detail = current.message.orEmpty()
+                // FastAPI's missing-route response is the generic "Not Found".
+                // A real managed-file miss says "File not found" and must not
+                // silently escape to Relay's broader path policy.
+                val isManagedFileMiss = detail.contains("File not found", ignoreCase = true) ||
+                    detail.contains("Path not found", ignoreCase = true)
+                val isGenericRouteMiss = detail.trim().endsWith(": not found", ignoreCase = true) ||
+                    detail.contains("\"detail\":\"Not Found\"", ignoreCase = true) ||
+                    detail.contains("\"detail\": \"Not Found\"", ignoreCase = true)
+                if (!isManagedFileMiss && isGenericRouteMiss) return true
+            }
         }
         current = current.cause
     }

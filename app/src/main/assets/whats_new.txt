@@ -1,10 +1,29 @@
-v1.14.0 - Connections that follow you
+v1.15.0 - Standard Hermes first, with clearer Relay boundaries
 
-Reliable routes
-* Keep Chat and sessions on the trusted Dashboard while optional Relay routes recover independently.
-* Preview delegated agent work and use the optional native Git workspace.
-* Use more reliable Continuous voice, Voice Focus, Assistant, Threads, profiles, and Clarify controls.
+Summary
+* Chat, voice, attachments, inbound files, current-session Git, usage, and Hermes notices now prefer current upstream Dashboard and Gateway support. Relay stays optional for compatibility and the tools it uniquely provides.
 
-Also improved
-* Wake-word detection now packages a compatible native runtime for every supported ABI.
-* Protected Relay health checks no longer appear as broken routes.
+Highlights
+* Use standard Hermes without Relay prompts — Chat attachments, inbound files, current-session Git, Nous usage, and Hermes notices use upstream routes first.
+* Keep returned files loaded — Images, audio, video, and documents download through the Dashboard and no longer flash Relay errors or return to Loading.
+* Use app-specific parent access — A parent PIN or password plus recovery phrase protects Supervised Mode without trusting the phone unlock credential.
+
+Improved
+* See which features need Relay — Media sits with standard Hermes settings while Threads, Terminal, notifications, enhanced voice, and device tools stay under Relay tools.
+* Read the complete release record — What's New shows one release summary, selected highlights, every remaining change, and relevant compatibility notes.
+
+Fixed
+* Keep Standard voice after removing Relay — Dashboard voice remains ready, temporary outages preserve choices, and shared default-profile settings stay isolated.
+* Observe another client's activity safely — A uniquely matched Desktop or TUI turn can show Working or Waiting without Android taking control.
+* Keep each chat on its chosen transport — Dashboard chats preserve their transcript, draft, profile, and session through sign-out or outages instead of silently changing databases.
+* Preserve completed replies at sign-in expiry — A Dashboard history authentication failure keeps completed text visible and opens the existing sign-in recovery path.
+* Let long context compaction finish — Visible compaction activity refreshes the turn watchdog instead of being interrupted as idle.
+* Render Bot Chat history immediately — Route-owned Bot Chats observe their bound history from first composition.
+* Settle turns after a lost terminal frame — An exact idle live-session snapshot reconciles the Android-owned turn and drains its queued follow-up.
+* Keep Gateway setup parent-owned — Relock and back navigation cancel the exact pending setup without bypassing parent authority.
+* Keep completed generated images visible — Generated media survives marker persistence lag and retains its intended Chat animation.
+
+Compatibility
+* Current upstream Hermes provides standard Chat, sessions, Manage, voice, attachments, inbound files, current-session Git reads, usage, and notices without the optional Hermes-Relay Plugin.
+* Hermes-Relay Plugin 1.11.1 remains required for Terminal, proactive Threads and offline delivery, Notification Companion, Relay sessions, enhanced voice, Secure Link, and phone or device control.
+* Granular Device Control and the system Voice Focus overlay remain sideload-only.

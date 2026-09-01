@@ -1,0 +1,226 @@
+name: Android On-Demand
+
+run-name: Android ${{ inputs.preset }} · ${{ inputs.head_sha }}
+
+on:
+  workflow_call:
+    inputs:
+      head_sha:
+        required: true
+        type: string
+      preset:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-on-demand-${{ inputs.head_sha }}-${{ inputs.preset }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate exact SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate input shape
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.head_sha }}
+          REQUESTED_PRESET: ${{ inputs.preset }}
+        run: |
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "head_sha must be a full lowercase 40-character commit SHA" >&2
+            exit 2
+          fi
+          case "$REQUESTED_PRESET" in
+            focused|lint|assemble-debug|release-smoke|all-final) ;;
+            *)
+              echo "unsupported Android preset: $REQUESTED_PRESET" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+          fetch-depth: 1
+
+      - name: Confirm checkout identity
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.head_sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+
+  focused:
+    name: Focused Android checks
+    needs: validate
+    if: ${{ inputs.preset == 'focused' || inputs.preset == 'all-final' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Run repository checks and focused sideload tests
+        run: python3 scripts/android-prepush.py --skip-lint
+
+      - name: Run the same focused tests for Google Play
+        shell: bash
+        run: |
+          mapfile -t focused_tests < <(python3 -c \
+            "import runpy; print(*runpy.run_path('scripts/android-prepush.py')['FOCUSED_TESTS'], sep='\n')")
+          test_args=()
+          for test_name in "${focused_tests[@]}"; do
+            test_args+=(--tests "$test_name")
+          done
+          ./gradlew :app:testGooglePlayDebugUnitTest "${test_args[@]}" --console=plain
+
+      - name: Upload failed test reports
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: focused-test-reports-${{ inputs.head_sha }}
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  lint:
+    name: Android lint
+    needs: validate
+    if: ${{ inputs.preset == 'lint' || inputs.preset == 'all-final' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Validate Android repository inputs
+        run: |
+          python3 scripts/check-android-locales.py
+          python3 scripts/check-user-docs-locales.py
+          python3 scripts/check-android-collection-apis.py
+          python3 scripts/check-android-release-notes.py
+          python3 scripts/check-version-tracks.py
+          if [[ -f scripts/tests/android_prepush_test.py ]]; then
+            python3 -m unittest scripts.tests.android_prepush_test
+          fi
+          python3 -m unittest scripts.tests.check_android_release_notes_test
+          python3 -m unittest scripts.tests.check_android_native_compat_test
+
+      - name: Run Android lint
+        run: ./gradlew lint --console=plain
+
+      - name: Upload lint reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: lint-reports-${{ inputs.head_sha }}
+          path: app/build/reports/lint-results*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  assemble-debug:
+    name: Assemble both debug flavors
+    needs: validate
+    if: ${{ inputs.preset == 'assemble-debug' || inputs.preset == 'all-final' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Build debug APKs
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: Verify packaged native compatibility
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/debug/*.apk \
+            app/build/outputs/apk/sideload/debug/*.apk
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: debug-apks-${{ inputs.head_sha }}
+          path: app/build/outputs/apk/*/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  release-smoke:
+    name: Release build smoke
+    needs: validate
+    if: ${{ inputs.preset == 'release-smoke' || inputs.preset == 'all-final' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_sha }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Build release bundles and APKs
+        run: ./gradlew bundleRelease assembleRelease --console=plain
+
+      - name: Scan release DEX for unsupported collection APIs
+        run: |
+          python3 scripts/check-android-collection-apis.py \
+            --apk app/build/outputs/apk/googlePlay/release/*.apk \
+            --apk app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Verify packaged native compatibility
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/release/*.apk \
+            app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Upload release smoke artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-smoke-${{ inputs.head_sha }}
+          path: |
+            app/build/outputs/apk/*/release/*.apk
+            app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+          retention-days: 7

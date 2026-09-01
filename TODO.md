@@ -6,6 +6,31 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Restore the plugin manifest v2 declaration after the Hermes installer fix ships
+
+Hermes installers in affected stable releases reject `manifest_version: 2`
+before the v2-capable runtime loader can inspect the plugin. Track upstream
+[PR #85893](https://github.com/NousResearch/hermes-agent/pull/85893). Restore
+`plugin/plugin.yaml` to `manifest_version: 2` only after that fix ships in a
+stable Hermes release that Hermes-Relay can treat as its minimum supported
+version. Until then, keep the v1 compatibility declaration and the additive
+metadata consumed by newer hosts.
+
+---
+
+## Consider hosted Android emulator execution
+
+The local API 36 Gradle Managed Device lanes are intentionally on demand and
+individually selected. The current Android On-Demand workflow covers hosted
+source, unit, lint, and build verification only; it does not run emulators. If
+local emulator capacity becomes a recurring constraint, evaluate a separately
+approved hosted-emulator design with explicit cost, concurrency, artifact
+retention, and trigger policy. Do not schedule the full form-factor matrix or
+add a device farm until that policy is approved; keep live-server mutation tests
+outside any automatic matrix.
+
+---
+
 ## Upstream a public Dashboard plugin WebSocket admission seam
 
 The same-origin Relay ingress follows current upstream's bundled Dashboard
@@ -20,6 +45,32 @@ compatibility route.
 
 ---
 
+## Upstream an Android Gateway platform hint
+
+Android currently identifies its standard Gateway sessions with the legacy
+`webui` source because upstream has no stable Android/mobile session platform.
+Current upstream deliberately removed the unused `webui` prompt hint and only
+ships renderer-verified `desktop` and `tui` guidance. Do not relabel Android as
+Desktop: that would also advertise Desktop-only inline widgets and directives.
+Propose an upstream Android/mobile platform hint, or a bounded authenticated
+client-surface context contract, that accurately describes mobile Markdown,
+standard upstream media/file delivery, and concise-response expectations. Once
+that contract is available in the supported Hermes baseline, adopt it and add
+Gateway conformance coverage proving the exact prompt bytes and session source.
+
+---
+
+## Scope sensitive-media prompt guidance to capable clients
+
+The Relay plugin's sensitive-media prompt section currently describes the
+Android `||![...](...)||` and alt-text conventions profile-wide. Before
+expanding that behavior, make the section depend on an authoritative client
+capability or replace it with a portable convention verified against every
+renderer that receives the profile prompt. Do not make Desktop/TUI sessions
+emit Android-only spoiler syntax merely because the Relay plugin is installed.
+
+---
+
 ## Certify Android session activity across lifecycle and profile boundaries
 
 The contract fixture now covers every upstream live status, complete-snapshot
@@ -28,8 +79,11 @@ and older Gateways without `session.active_list`. Before calling the status
 model device-certified:
 
 - Exercise working, quiet tool-heavy work, each pending-input surface, normal
-  completion, Stop, reconnect, app restart, and process recreation against
-  current vanilla upstream.
+  completion, a lost terminal followed by an exact active-list Idle row, Stop,
+  reconnect, app restart, and process recreation against current vanilla
+  upstream. Confirm the lost-terminal path preserves the partial transcript,
+  settles composer/steering state, and drains or cancels queued corrections
+  exactly once according to the owning turn outcome.
 - Verify All Profiles with duplicate session ids across two profiles and two
   saved connections; no late snapshot or old socket generation may mark the
   wrong row live.

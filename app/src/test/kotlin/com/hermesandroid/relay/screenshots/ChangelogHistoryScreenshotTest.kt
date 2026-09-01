@@ -19,13 +19,17 @@ import org.robolectric.annotation.GraphicsMode
 class ChangelogHistoryScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun latestReleaseIsCuratedAndInstalled() {
+    @Test fun latestReleaseShowsHighlightsAndCompleteDetails() {
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 ChangelogScreen(onClose = {})
             }
         }
-        compose.onNodeWithText("Supervised Mode").assertExists()
+        compose.onNodeWithText("v1.15.0 — Standard Hermes first, with clearer Relay boundaries").assertExists()
+        compose.onNodeWithText("Highlights").assertExists()
+        compose.onNodeWithText("Fixed").assertExists()
+        compose.onNodeWithText("Keep Standard voice after removing Relay").assertExists()
+        compose.onNodeWithText("Compatibility").assertExists()
         compose.onNodeWithText("Installed").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/changelog-history.png")
     }

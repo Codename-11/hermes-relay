@@ -136,6 +136,8 @@ import com.hermesandroid.relay.data.BridgeSafetyPreferencesRepository
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.CandidateBuild
 import com.hermesandroid.relay.data.Connection
+import com.hermesandroid.relay.data.SessionTransport
+import com.hermesandroid.relay.data.chatTransportForPreference
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.SupervisedModePolicy
@@ -144,6 +146,7 @@ import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -282,6 +285,8 @@ internal fun resolveAppChatRuntimeStatus(
     connection: Connection?,
     gatewayAvailability: GatewayAvailability,
     apiHealth: ConnectionViewModel.HealthStatus,
+    streamingEndpoint: String = "auto",
+    conversationOwner: SessionTransport? = null,
 ): ChatRuntimeStatus {
     val capabilities = connection?.capabilities
     val gateway = when {
@@ -297,7 +302,11 @@ internal fun resolveAppChatRuntimeStatus(
             apiHealth == ConnectionViewModel.HealthStatus.Probing -> ChatTransportReadiness.Connecting
         else -> ChatTransportReadiness.Unavailable
     }
-    return resolveChatRuntimeStatus(gateway = gateway, apiSse = api)
+    val owner = when (conversationOwner ?: connection?.chatTransportForPreference(streamingEndpoint)) {
+        SessionTransport.SSE -> ChatTransportPath.ApiSse
+        else -> ChatTransportPath.Gateway
+    }
+    return resolveChatRuntimeStatus(gateway = gateway, apiSse = api, owner = owner)
 }
 
 internal fun shouldSettleStartupUnreachable(
@@ -359,7 +368,7 @@ internal fun resolveFooterRouteCandidate(
  *
  * Endpoint roles are operator and wire metadata, so an internal role such as
  * `authenticated_dashboard` must never leak into this constrained surface.
- * Gateway labels describe how the Dashboard is reached; API fallback keeps
+ * Gateway labels describe how the Dashboard is reached; Direct API keeps
  * the route's ordinary transport label.
  */
 internal fun resolveFooterRouteLabel(
@@ -738,6 +747,10 @@ fun RelayApp() {
     val pendingAddConnectionJobs = remember {
         mutableMapOf<String, kotlinx.coroutines.Job>()
     }
+    var pendingAddConnectionTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingAddConnectionAbortJobs = remember {
+        mutableMapOf<String, kotlinx.coroutines.Job>()
+    }
     val prepareAddConnection: (String, Boolean) -> Unit = { id, retryRequested ->
         val existingJob = pendingAddConnectionJobs[id]
         if (shouldStartPairPreparation(existingJob?.isActive == true, retryRequested)) {
@@ -756,6 +769,25 @@ fun RelayApp() {
             }
             pendingAddConnectionJobs[id] = job
             job.start()
+        }
+    }
+    val abortAddConnection: (String) -> kotlinx.coroutines.Job = { id ->
+        pendingAddConnectionAbortJobs[id] ?: connectionSwitchScope.launch {
+            try {
+                pendingAddConnectionJobs.remove(id)?.cancelAndJoin()
+                connectionViewModel.discardPlaceholderConnection(id)
+            } finally {
+                if (pendingAddConnectionTargetId == id) {
+                    pendingAddConnectionTargetId = null
+                }
+            }
+        }.also { job ->
+            pendingAddConnectionAbortJobs[id] = job
+            job.invokeOnCompletion {
+                if (pendingAddConnectionAbortJobs[id] === job) {
+                    pendingAddConnectionAbortJobs.remove(id)
+                }
+            }
         }
     }
 
@@ -983,6 +1015,17 @@ fun RelayApp() {
         chatSessions.firstOrNull { it.sessionId == currentChatSessionId }
     }
 
+    LaunchedEffect(
+        gitOwnerKey,
+        activeChatSession?.gitRepoRoot,
+        activeChatSession?.workingDirectory,
+    ) {
+        gitStateViewModel.setSessionWorkspace(
+            repoRoot = activeChatSession?.gitRepoRoot,
+            workingDirectory = activeChatSession?.workingDirectory,
+        )
+    }
+
     // Bind Git to the active coding session when upstream supplies its exact
     // workspace metadata. CWD fallback only matches a path-segment descendant;
     // an ambiguous multi-repo catalog stays unselected until the user chooses.
@@ -999,7 +1042,7 @@ fun RelayApp() {
         }
     }
 
-    val gitWorkspaceAvailable = gitRepoScanningEnabled &&
+    val gitWorkspaceAvailable =
         (gitReposState as? GitStateUiState.Ready)?.repos?.isNotEmpty() == true
     val gitWorkspaceSummary = remember(
         gitReposState,
@@ -1351,6 +1394,9 @@ fun RelayApp() {
                 currentRoute = currentRoute,
             )
             if (redirect) {
+                pendingAddConnectionTargetId?.let { targetId ->
+                    abortAddConnection(targetId).join()
+                }
                 navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                     popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
                     launchSingleTop = true
@@ -1566,6 +1612,7 @@ fun RelayApp() {
         // evidence alone left a window where the reveal showed the CTA for
         // the few hundred ms until the client-based health verdict landed.
         val chatReady by connectionViewModel.chatReady.collectAsState()
+        val conversationOwner by connectionViewModel.activeConversationTransport.collectAsState()
         var startupGateMinElapsed by remember { mutableStateOf(false) }
         var startupGateTimedOut by remember { mutableStateOf(false) }
         var startupGateReleased by remember { mutableStateOf(false) }
@@ -1592,6 +1639,8 @@ fun RelayApp() {
             connection = activeConnection,
             gatewayAvailability = gatewayAvailability,
             apiHealth = apiHealth,
+            streamingEndpoint = streamingEndpoint,
+            conversationOwner = conversationOwner,
         )
         // A Dashboard/Gateway-only connection is a complete standard Hermes
         // connection. Startup readiness follows the same transport-neutral
@@ -2098,7 +2147,9 @@ fun RelayApp() {
                             ?: stringResource(R.string.status_no_route),
                     )
                     val transportStatus = resolveChatTransportStatus(
-                        streamingEndpoint = streamingEndpoint,
+                        streamingEndpoint = connectionViewModel.resolveActiveStreamingEndpoint(
+                            streamingEndpoint,
+                        ),
                         gatewayAvailability = gatewayAvailability,
                         serverCapabilities = serverCapabilities,
                     )
@@ -2113,10 +2164,20 @@ fun RelayApp() {
                         ?: AgentDisplay.displayModelName(serverModelName)
                         ?: stringResource(R.string.status_model_pending)
                     val footerModelLabel = compactFooterModelLabel(modelLabel)
-                    val openConnections = {
-                        navController.navigate(Screen.ConnectionsSettings.route) {
-                            launchSingleTop = true
+                    val openConnections: (() -> Unit)? = if (
+                        isSupervisedRouteContentAllowed(
+                            supervisedEnabled = supervisedPolicy.enabled,
+                            parentAccessUnlocked = parentAccessForCurrentRoute,
+                            currentRoute = Screen.ConnectionsSettings.route,
+                        )
+                    ) {
+                        {
+                            navController.navigate(Screen.ConnectionsSettings.route) {
+                                launchSingleTop = true
+                            }
                         }
+                    } else {
+                        null
                     }
                     RelayStatusStrip(
                         leadingBadge = {
@@ -2930,7 +2991,12 @@ fun RelayApp() {
                 }
                 composable(Screen.AdvancedSettings.route) {
                     if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
-                        LaunchedEffect(Unit) { navController.popBackStack() }
+                        LaunchedEffect(Unit) {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
                     } else {
                         AdvancedSettingsScreen(
                             supervisedPolicy = supervisedPolicy,
@@ -2961,7 +3027,12 @@ fun RelayApp() {
                 }
                 composable(Screen.SupervisedControls.route) {
                     if (!parentAccessForCurrentRoute && supervisedPolicy.enabled) {
-                        LaunchedEffect(Unit) { navController.popBackStack() }
+                        LaunchedEffect(Unit) {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
                     } else {
                         SupervisedControlsScreen(
                             connectionViewModel = connectionViewModel,
@@ -3203,16 +3274,34 @@ fun RelayApp() {
                         addConnectionEnabled = mayStartAddConnection(
                             supervisedEnabled = supervisedPolicy.enabled,
                             parentAccessUnlocked = parentAccessForCurrentRoute,
+                            activeTargetId = pendingAddConnectionTargetId,
                         ),
-                        onAddConnection = {
-                            val id = java.util.UUID.randomUUID().toString()
+                        onAddConnection = addConnection@{
+                            val liveConnectionId = connectionViewModel.activeConnectionId.value
+                            val livePolicyState = supervisedPolicyState.value
+                                ?.takeIf { (ownerId, _) -> ownerId == liveConnectionId }
+                            val livePolicy = when {
+                                liveConnectionId == null -> SupervisedModePolicy()
+                                livePolicyState != null -> livePolicyState.second
+                                else -> return@addConnection
+                            }
+                            val liveRoute = navController.currentDestination?.route
+                            val liveParentAccess = parentAccessUnlocked &&
+                                !shouldRelockParentAccess(
+                                    supervisedEnabled = livePolicy.enabled,
+                                    parentAccessUnlocked = parentAccessUnlocked,
+                                    route = liveRoute,
+                                )
                             runAddConnectionAction(
-                                supervisedEnabled = supervisedPolicy.enabled,
-                                parentAccessUnlocked = parentAccessForCurrentRoute,
-                                navigateToPair = {
+                                supervisedEnabled = livePolicy.enabled,
+                                parentAccessUnlocked = liveParentAccess,
+                                activeTargetId = pendingAddConnectionTargetId,
+                                allocateTarget = { java.util.UUID.randomUUID().toString() },
+                                recordTarget = { id -> pendingAddConnectionTargetId = id },
+                                navigateToPair = { id ->
                                     navController.navigate(Screen.Pair.route(connectionId = id))
                                 },
-                                prepareConnection = { prepareAddConnection(id, false) },
+                                prepareConnection = { id -> prepareAddConnection(id, false) },
                             )
                         },
                         onBack = { navController.popBackStack() },
@@ -3356,9 +3445,15 @@ fun RelayApp() {
                             if (connectionIdArg != null && pairDraftId == connectionIdArg) {
                                 connectionSwitchScope.launch {
                                     connectionViewModel.commitConnectionDraft(connectionIdArg)
+                                    if (pendingAddConnectionTargetId == connectionIdArg) {
+                                        pendingAddConnectionTargetId = null
+                                    }
                                     navController.popBackStack()
                                 }
                             } else {
+                                if (pendingAddConnectionTargetId == connectionIdArg) {
+                                    pendingAddConnectionTargetId = null
+                                }
                                 navController.popBackStack()
                             }
                         },
@@ -3378,6 +3473,9 @@ fun RelayApp() {
                                     runCatching {
                                         connectionViewModel.commitConnectionDraft(targetId)
                                     }.onSuccess {
+                                        if (pendingAddConnectionTargetId == targetId) {
+                                            pendingAddConnectionTargetId = null
+                                        }
                                         android.util.Log.i(
                                             "GatewayPairFlow",
                                             "Opening Dashboard sign-in for staged gateway",
@@ -3414,14 +3512,12 @@ fun RelayApp() {
                             // never got a pairedAt stamp.
                             if (connectionIdArg != null) {
                                 connectionSwitchScope.launch {
-                                    // If Back wins the race with background
-                                    // preparation, wait until the placeholder
-                                    // exists before attempting to discard it.
-                                    pendingAddConnectionJobs.remove(connectionIdArg)?.join()
-                                    connectionViewModel.discardPlaceholderConnection(connectionIdArg)
+                                    abortAddConnection(connectionIdArg).join()
+                                    navController.popBackStack()
                                 }
+                            } else {
+                                navController.popBackStack()
                             }
-                            navController.popBackStack()
                         },
                     )
                 }

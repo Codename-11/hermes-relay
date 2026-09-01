@@ -249,6 +249,58 @@ android {
             it.systemProperty("roborazzi.test.record", "true")
             it.maxHeapSize = "2g"
         }
+
+        // On-demand only. Keep each form factor as an individually selected
+        // Gradle-managed device; there is deliberately no aggregate matrix
+        // task or scheduled emulator job. See docs/android-emulator-testing.md.
+        managedDevices {
+            localDevices {
+                create("compactPhoneApi36") {
+                    device = "Pixel 2"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+                create("standardPhoneApi36") {
+                    device = "Pixel 6"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+                create("largePhoneApi36") {
+                    device = "Pixel 7 Pro"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+                create("foldableApi36") {
+                    device = "Pixel Fold"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+                create("tabletApi36") {
+                    device = "Pixel Tablet"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+                create("futureApi37Ps16k") {
+                    device = "Pixel 7 Pro"
+                    apiLevel = 37
+                    systemImageSource = "google_apis_playstore"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                    pageAlignment =
+                        com.android.build.api.dsl.ManagedVirtualDevice.PageAlignment.FORCE_16KB_PAGES
+                }
+            }
+        }
     }
 }
 
@@ -390,6 +442,12 @@ dependencies {
     // Konsist — enforces the ADR 34 upstream/relay/shared package fence as a JUnit test
     testImplementation(libs.konsist)
     androidTestImplementation(libs.compose.ui.test.junit4)
+    // Compose UI Test still declares Espresso 3.5.0 transitively. API 37
+    // removed the reflected InputManager.getInstance() seam; Espresso 3.7.0
+    // uses Context.getSystemService and is the current stable AndroidX line.
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
     // On-device vanilla-Gateway contract tests exercise the production
     // Dashboard ticket + WebSocket stack over real loopback sockets.
     androidTestImplementation(libs.okhttp.mockwebserver)
@@ -399,8 +457,8 @@ dependencies {
     // [POC] Roborazzi host-side screenshot rendering (src/test, Robolectric).
     // Renders real composables on the JVM at an exact canvas — no device, no
     // status bar, no clipping. See StoreScreenshotTest.
-    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.72.0")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.72.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.73.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.73.0")
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.compose.ui.test.manifest)
     testImplementation("androidx.test.ext:junit:1.3.0")

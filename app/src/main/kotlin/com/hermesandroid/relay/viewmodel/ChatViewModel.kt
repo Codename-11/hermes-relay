@@ -70,6 +70,7 @@ import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
 import com.hermesandroid.relay.network.upstream.GatewayAsk
 import com.hermesandroid.relay.network.upstream.GatewayAskExpiry
 import com.hermesandroid.relay.network.upstream.GatewayAskResponse
+import com.hermesandroid.relay.network.upstream.GatewayAgentNotice
 import com.hermesandroid.relay.network.upstream.GatewayActiveSession
 import com.hermesandroid.relay.network.upstream.GatewayActiveSessionStatus
 import com.hermesandroid.relay.network.upstream.GatewayActiveSessionsResult
@@ -82,6 +83,7 @@ import com.hermesandroid.relay.network.upstream.GatewayCompressResult
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.GatewayReconnectDisposition
 import com.hermesandroid.relay.network.upstream.isDashboardSignInRequiredFailure
+import com.hermesandroid.relay.network.upstream.isDashboardManagedFilesUnsupported
 import com.hermesandroid.relay.network.upstream.GatewayEventMapper
 import com.hermesandroid.relay.network.upstream.GatewayInboundTurnRegistration
 import com.hermesandroid.relay.network.upstream.GatewayModelProvider
@@ -98,11 +100,13 @@ import com.hermesandroid.relay.network.upstream.resolveReasoningEffortAvailabili
 import com.hermesandroid.relay.network.upstream.GatewayAttachment
 import com.hermesandroid.relay.network.upstream.GatewayRpcException
 import com.hermesandroid.relay.network.upstream.GatewayTurnCallbacks
+import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.ApiModelOption
 import com.hermesandroid.relay.network.upstream.ApiModelRoutingErrorCode
 import com.hermesandroid.relay.network.upstream.ApiModelRoutingException
 import com.hermesandroid.relay.network.upstream.ApiModelSelectionAck
 import com.hermesandroid.relay.network.upstream.HermesApiClient
+import com.hermesandroid.relay.network.upstream.ToolsetInfo
 import com.hermesandroid.relay.network.upstream.isCurrentModelOptionsResponse
 import com.hermesandroid.relay.network.upstream.modelOptionsIdentityToPublish
 import com.hermesandroid.relay.network.upstream.parsePersonalityPrompts
@@ -126,6 +130,9 @@ import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
+import com.hermesandroid.relay.ui.UiMessageBus
+import com.hermesandroid.relay.ui.UiMessageSeverity
+import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import com.hermesandroid.relay.voice.VoiceIntentSyncBuilder
@@ -174,6 +181,39 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 internal const val SESSION_DIRECTORY_PAGE_SIZE = 50
+
+internal data class GatewayNoticePresentation(
+    val text: String,
+    val severity: UiMessageSeverity,
+    val ttlMillis: Long,
+    val key: String?,
+)
+
+private val LEADING_NOTICE_GLYPH = Regex("^[•⚠✕✗✓]\uFE0F?\\s*")
+
+internal fun gatewayNoticePresentation(notice: GatewayAgentNotice): GatewayNoticePresentation {
+    val severity = when (notice.level?.trim()?.lowercase()) {
+        "success" -> UiMessageSeverity.Success
+        "warn", "warning", "error" -> UiMessageSeverity.Warning
+        else -> UiMessageSeverity.Info
+    }
+    val ttl = when (notice.kind?.trim()?.lowercase()) {
+        "ttl" -> notice.ttlMs?.takeIf { it > 0L }
+            ?.coerceAtMost(60_000L)
+            ?: UiMessageBus.DEFAULT_TTL_MS
+        // Official Desktop keeps every non-TTL notice until an exact keyed
+        // notification.clear arrives. This includes kind="agent" startup
+        // notices whose lifetime is owned by the gateway, not a client timer.
+        else -> 0L
+    }
+    return GatewayNoticePresentation(
+        text = notice.text.trim().replaceFirst(LEADING_NOTICE_GLYPH, "").trim(),
+        severity = severity,
+        ttlMillis = ttl,
+        key = notice.key?.trim()?.takeIf(String::isNotEmpty)
+            ?: notice.id?.trim()?.takeIf(String::isNotEmpty),
+    )
+}
 
 data class SessionDirectoryReadyEvent(
     val contextKey: String?,
@@ -290,7 +330,7 @@ internal data class ResolvedGatewayActiveSessions(
     val ambiguousForCurrent: Boolean,
 )
 
-/** Resolve process-wide runtime rows without ever inventing a profile owner. */
+/** Resolve process-wide runtime rows without ever inventing an ambiguous profile owner. */
 internal fun resolveGatewayActiveSessions(
     sessions: List<GatewayActiveSession>,
     directory: Set<SessionActivityOwner>,
@@ -315,6 +355,8 @@ internal fun resolveGatewayActiveSessions(
                 currentRuntimeId == row.runtimeSessionId &&
                 currentOwner.storedSessionId == row.storedSessionId -> currentOwner
             explicitProfile != null && candidates.size == 1 -> candidates.single()
+            explicitProfile == null && currentOwner != null && candidates.singleOrNull() == currentOwner ->
+                currentOwner
             else -> null
         }
         if (owner == null) {
@@ -351,6 +393,22 @@ internal fun voiceTurnTransportRejection(
     null
 }
 
+internal fun buildMediaCapabilityHint(
+    upstreamAvailable: Boolean,
+    relayAvailable: Boolean,
+): String? = listOfNotNull(
+    ChatViewModel.UPSTREAM_MEDIA_HINT.takeIf { upstreamAvailable },
+    ChatViewModel.RELAY_MEDIA_HINT.takeIf { relayAvailable },
+).joinToString("\n\n").ifBlank { null }
+
+internal fun eligibleSseToolNames(toolsets: List<ToolsetInfo>?): Set<String>? =
+    toolsets
+        ?.asSequence()
+        ?.filter { it.enabled && it.configured }
+        ?.flatMap { it.tools.asSequence() }
+        ?.filter { it.isNotBlank() }
+        ?.toSet()
+
 class ChatViewModel : ViewModel() {
     /**
      * Active Android-only supervision policy. RelayApp replaces this snapshot
@@ -373,6 +431,8 @@ class ChatViewModel : ViewModel() {
 
     private var apiClient: HermesApiClient? = null
     private var chatHandler: ChatHandler? = null
+    private var sseToolCatalogJob: Job? = null
+    private val _sseToolNames = MutableStateFlow<Set<String>?>(null)
 
     /**
      * The in-flight chat turn, transport-agnostic: SSE turns wrap their
@@ -649,6 +709,7 @@ class ChatViewModel : ViewModel() {
 
     // --- Media dependencies (wired via initializeMedia from RelayApp) ---
     private var relayHttpClient: RelayHttpClient? = null
+    private var dashboardMediaClientProvider: (() -> DashboardApiClient?)? = null
     private var mediaSettingsRepo: MediaSettingsRepository? = null
     private var mediaCacheWriter: MediaCacheWriter? = null
     private var appContext: Context? = null
@@ -671,6 +732,7 @@ class ChatViewModel : ViewModel() {
         // `send()` below for the construction site.
         // === END PHASE3-status ===
         const val MEDIA_TAP_TO_DOWNLOAD = "Tap to download"
+        const val MEDIA_HOST_ONLY = "File is on your Hermes host"
         private const val MEDIA_FETCH_TIMEOUT_MS = 120_000L
         private val WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX = Regex("""^[A-Za-z]:[\\/].+""")
 
@@ -690,21 +752,18 @@ class ChatViewModel : ViewModel() {
         private const val MAX_CHECKPOINT_MOA_LABEL_CHARS = 120
         private const val MAX_CHECKPOINT_MOA_TEXT_CHARS = 16_000
 
-        /**
-         * One-line capability nudge appended to the SSE `system_message` when a
-         * relay route is configured, so the agent knows it can surface images/
-         * files by absolute server path (the client fetches them over the relay
-         * `/media/by-path` channel and renders them inline). SSE-only: the
-         * gateway transport has no per-turn system slot, so this can't ride a
-         * gateway turn — there the upstream prompt_builder's own `MEDIA:`
-         * instruction plus the client-side render fallback cover it.
-         */
+        /** Upstream-first file/media capability for SSE fallback turns. */
+        const val UPSTREAM_MEDIA_HINT =
+            "Media display: this client supports standard upstream Hermes file delivery. " +
+                "To show a host-local image, audio, video, or file, put its absolute path " +
+                "on its own line as `MEDIA:/absolute/path`. The client fetches it through " +
+                "the authenticated upstream Dashboard file routes and renders it inline."
+
+        /** Additive Relay compatibility/metadata capability for SSE fallback turns. */
         const val RELAY_MEDIA_HINT =
-            "Media display: this client can render images and files you reference by " +
-                "absolute server path. To show one to the user, put its absolute path on " +
-                "its own line as `MEDIA:/absolute/path`, or use a markdown image " +
-                "`![description](/absolute/path)`. The client fetches it over the secure " +
-                "relay channel and shows it inline."
+            "Relay enhancement: a paired Relay may add legacy-path compatibility and " +
+                "sensitivity metadata when standard upstream delivery cannot serve an " +
+                "artifact. Relay is not required for ordinary upstream media delivery."
     }
 
     /** Callback to persist session ID — set by RelayApp */
@@ -2120,9 +2179,12 @@ class ChatViewModel : ViewModel() {
      * RelayApp pushes the resolved value) prefers an EventSource-compatible
      * OpenAI chat path instead of assuming `/v1/runs` is an SSE stream.
      */
+    private var resolvedStreamingEndpoint: String = "completions"
+
     var streamingEndpoint: String = "completions"
         set(value) {
-            field = value
+            resolvedStreamingEndpoint = value
+            field = endpointForConversationOwner(value)
             // Only the gateway transport auto-names sessions server-side
             // (tui_gateway runs the turn in a HermesCLI child that calls
             // agent.title_generator.maybe_auto_title). The api_server SSE/runs/
@@ -2137,12 +2199,19 @@ class ChatViewModel : ViewModel() {
         }
 
     /**
-     * SSE endpoint used when a "gateway" turn can't run (gateway unreachable,
-     * sign-in expired, attachments present). Wired from RelayApp alongside
-     * [streamingEndpoint] as the capability-resolved SSE preference; never
-     * "auto" or "gateway".
+     * Capability-resolved endpoint for an explicitly API-owned compatibility
+     * conversation. It never acts as a fallback for a Gateway-owned chat.
      */
     var sseFallbackEndpoint: String = "completions"
+        set(value) {
+            field = value
+            if (
+                conversationBinding.value.transport == SessionTransport.SSE &&
+                resolvedStreamingEndpoint == "gateway"
+            ) {
+                streamingEndpoint = resolvedStreamingEndpoint
+            }
+        }
 
     /**
      * Gateway chat transport (dashboard `/api/ws` — live thinking). Owned and
@@ -3082,6 +3151,8 @@ class ChatViewModel : ViewModel() {
             onStatusClear = { kind ->
                 if (acceptsEvent()) handler.clearTurnStatus(kind)
             },
+            onNoticeShow = ::showGatewayNotice,
+            onNoticeClear = ::clearGatewayNotice,
         )
         return GatewayInboundTurnRegistration(
             callbacks = callbacks,
@@ -3183,6 +3254,7 @@ class ChatViewModel : ViewModel() {
     ) {
         val handler = chatHandler ?: return
         if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) return
+        val contextKey = activeProfileContextKey
         gatewayHistoryReconcileJob?.cancel()
         gatewayHistoryReconcileJob = viewModelScope.launch {
             val expected = expectedAssistantText?.trim()?.takeIf { it.isNotEmpty() }
@@ -3215,7 +3287,28 @@ class ChatViewModel : ViewModel() {
                 }
 
                 val transcriptSnapshot = handler.messages.value
-                val serverMessages = loadGatewaySessionHistory(storedSessionId)
+                val serverMessages = try {
+                    loadGatewaySessionHistory(
+                        sessionId = storedSessionId,
+                        requireProfileScope = true,
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A live completion is already visible and settled locally.
+                    // History auth loss must retain that transcript and promote
+                    // the existing sign-in recovery instead of escaping this
+                    // Main-scope coroutine and crashing the app.
+                    if (
+                        chatHandler === handler &&
+                        activeProfileContextKey == contextKey &&
+                        handler.currentSessionId.value == storedSessionId
+                    ) {
+                        publishHistoryLoadFailure(storedSessionId, e)
+                    }
+                    gatewayHistoryReconcileJob = null
+                    return@launch
+                }
                 if (chatHandler !== handler || handler.currentSessionId.value != storedSessionId) {
                     return@launch
                 }
@@ -3533,6 +3626,21 @@ class ChatViewModel : ViewModel() {
     private val _transientNotice = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val transientNotice: SharedFlow<String> = _transientNotice.asSharedFlow()
 
+    private fun showGatewayNotice(notice: GatewayAgentNotice) {
+        val presentation = gatewayNoticePresentation(notice)
+        if (presentation.text.isEmpty()) return
+        UiMessageBus.post(
+            text = presentation.text,
+            severity = presentation.severity,
+            ttlMillis = presentation.ttlMillis,
+            key = presentation.key,
+        )
+    }
+
+    private fun clearGatewayNotice(key: String) {
+        UiMessageBus.clear(key)
+    }
+
     fun reactToMessage(message: ChatMessage, emoji: String?) {
         val gateway = gatewayClient ?: return
         val role = message.role
@@ -3727,6 +3835,17 @@ class ChatViewModel : ViewModel() {
     private val bindingDisplayProfile: Profile?
         get() = conversationBinding.value.displayProfile
 
+    private fun endpointForConversationOwner(candidate: String): String =
+        when (conversationBinding.value.transport) {
+            SessionTransport.GATEWAY -> "gateway"
+            SessionTransport.SSE -> if (candidate == "gateway") sseFallbackEndpoint else candidate
+            null -> candidate
+        }
+
+    private fun reapplyConversationTransportAffinity() {
+        streamingEndpoint = resolvedStreamingEndpoint
+    }
+
     /**
      * Profile namespace owned by the conversation currently on screen. Opening a
      * row from the global All Profiles browser binds this state first; the UI
@@ -3739,6 +3858,7 @@ class ChatViewModel : ViewModel() {
 
     private fun clearOpenedSessionOwner() {
         conversationBindingController.releaseExplicitOwner()
+        reapplyConversationTransportAffinity()
     }
 
     /** Process ownership is profile+session scoped; stored IDs alone are not globally unique. */
@@ -3846,6 +3966,12 @@ class ChatViewModel : ViewModel() {
         lister: suspend (String?, Int, Int) -> Result<List<SessionItem>>?,
     ) {
         profileSessionPageLister = lister
+    }
+
+    private var dashboardSignInRequiredHandler: (() -> Unit)? = null
+
+    fun setDashboardSignInRequiredHandler(handler: () -> Unit) {
+        dashboardSignInRequiredHandler = handler
     }
 
     /**
@@ -4236,7 +4362,19 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun publishHistoryLoadFailure(sessionId: String, error: Throwable) {
-        if (error.isDashboardSignInRequiredFailure()) return
+        if (error.isDashboardSignInRequiredFailure()) {
+            dashboardSignInRequiredHandler?.invoke()
+            DiagnosticsLog.record(
+                category = DiagnosticCategory.Auth,
+                severity = DiagnosticSeverity.Warning,
+                title = "Dashboard sign-in required for chat history",
+                detail = "stored_session=$sessionId; dashboard_auth=required",
+                operation = "load chat history",
+                endpointRole = "gateway",
+                suggestion = "Sign in to Dashboard on the active route, then retry this conversation.",
+            )
+            return
+        }
         val rawError = error.message?.takeIf { it.isNotBlank() }
             ?: "The active profile's conversation history could not be reached."
         _chatFailure.value = ChatFailureNotice(
@@ -4402,6 +4540,7 @@ class ChatViewModel : ViewModel() {
         fetchSkills()
         fetchPersonalities()
         fetchModels()
+        refreshSseToolCatalog(apiClient)
         // Keep the tool-call history in sync with the active chat handler's
         // messages. Subscribed on every initialize() call so a replaced
         // handler (connection switch) picks up fresh events without leaking
@@ -4468,6 +4607,8 @@ class ChatViewModel : ViewModel() {
      * repeatedly; re-subscribes the tool-call history collector.
      */
     fun bindDemoHandler(handler: ChatHandler) {
+        sseToolCatalogJob?.cancel()
+        _sseToolNames.value = null
         this.chatHandler = handler
         backgroundProcessSessionJob?.cancel()
         selectBackgroundProcessSession(null)
@@ -4510,7 +4651,8 @@ class ChatViewModel : ViewModel() {
         context: Context,
         relayHttpClient: RelayHttpClient,
         mediaSettingsRepo: MediaSettingsRepository,
-        mediaCacheWriter: MediaCacheWriter
+        mediaCacheWriter: MediaCacheWriter,
+        dashboardMediaClientProvider: () -> DashboardApiClient? = { null },
     ) {
         this.appContext = context.applicationContext
         if (chatTurnCheckpointStore == null) {
@@ -4518,6 +4660,7 @@ class ChatViewModel : ViewModel() {
         }
         ensureCheckpointObservers()
         this.relayHttpClient = relayHttpClient
+        this.dashboardMediaClientProvider = dashboardMediaClientProvider
         if (_modelProviders.value.isNotEmpty()) refreshRelayReasoningCapabilities()
         this.mediaSettingsRepo = mediaSettingsRepo
         this.mediaCacheWriter = mediaCacheWriter
@@ -4559,6 +4702,16 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    private fun refreshSseToolCatalog(client: HermesApiClient?) {
+        sseToolCatalogJob?.cancel()
+        _sseToolNames.value = null
+        if (client == null) return
+        sseToolCatalogJob = viewModelScope.launch {
+            val names = eligibleSseToolNames(client.getToolsets().getOrNull())
+            if (apiClient === client) _sseToolNames.value = names
+        }
+    }
+
     fun updateApiClient(client: HermesApiClient?) {
         // A route handoff / reconnect rebuilds the HTTP API client. An SSE turn
         // is bound to the OLD client, so it must be cancelled. A GATEWAY turn
@@ -4588,6 +4741,7 @@ class ChatViewModel : ViewModel() {
         fetchSkills()
         fetchPersonalities()
         fetchModels()
+        refreshSseToolCatalog(client)
     }
 
     /**
@@ -4637,6 +4791,7 @@ class ChatViewModel : ViewModel() {
                 lastSessionRefreshSuccessNanos = 0L
                 _sessionListUnavailable.value = false
                 conversationBindingController.reset()
+                reapplyConversationTransportAffinity()
                 exitProvisionalThread()
                 relayCapabilityGeneration.incrementAndGet()
                 relayReasoningCapabilities.value = emptyMap()
@@ -4799,6 +4954,8 @@ class ChatViewModel : ViewModel() {
         } else {
             sessionProfileNameProvider()
         }
+        val targetTransport = sessionId?.let(SessionTransport::forSessionId)
+            ?: SessionTransport.forEndpoint(resolvedStreamingEndpoint)
         if (explicitBinding) {
             val accepted = conversationBindingController.openExplicit(
                 contextKey = contextKey,
@@ -4806,6 +4963,7 @@ class ChatViewModel : ViewModel() {
                 sessionId = sessionId,
                 displayProfile = explicitDisplayProfile,
                 lockedProfileToken = lockedProfileNameProvider(),
+                transport = targetTransport,
             )
             if (!accepted) return
         } else if (reconciliation) {
@@ -4813,6 +4971,7 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
             if (!accepted) {
                 _initialChatSettled.value = true
@@ -4823,8 +4982,10 @@ class ChatViewModel : ViewModel() {
                 contextKey = contextKey,
                 profileName = targetProfileName,
                 sessionId = sessionId,
+                transport = targetTransport,
             )
         }
+        reapplyConversationTransportAffinity()
         activateSessionActivityScope()
         handler.activeAgentName = currentAgentDisplayName()
         if (
@@ -5382,6 +5543,7 @@ class ChatViewModel : ViewModel() {
                                     // recovery state. Preserve cached history and
                                     // mark the directory unavailable without also
                                     // emitting a generic turn/error toast.
+                                    dashboardSignInRequiredHandler?.invoke()
                                 } else if (scoped != null) {
                                     // The shared API list belongs to the launch/default
                                     // database. Preserve the current profile's rows and
@@ -5404,7 +5566,9 @@ class ChatViewModel : ViewModel() {
                             )
                             retryUnavailable = true
                             retryReadiness = retryReadiness || !e.isSessionReadTimeout()
-                            if (!e.isDashboardSignInRequiredFailure()) {
+                            if (e.isDashboardSignInRequiredFailure()) {
+                                dashboardSignInRequiredHandler?.invoke()
+                            } else {
                                 emitError(
                                     e,
                                     context = if (profileSessionLister != null) {
@@ -5581,7 +5745,10 @@ class ChatViewModel : ViewModel() {
         // profile/context so an All Profiles conversation becomes a fresh
         // draft for that same owner instead of falling back to the globally
         // restored default profile.
-        conversationBindingController.startFreshDraft()
+        conversationBindingController.startFreshDraft(
+            SessionTransport.forEndpoint(resolvedStreamingEndpoint),
+        )
+        reapplyConversationTransportAffinity()
         exitProvisionalThread()
 
         // Gateway turns continue as detached siblings; SSE remains exclusive.
@@ -5840,6 +6007,7 @@ class ChatViewModel : ViewModel() {
         val contextKey = activeProfileContextKey
         val profileName = currentSessionProfileName()
         conversationBindingController.switchSession(sessionId)
+        reapplyConversationTransportAffinity()
 
         handler.setSessionId(sessionId)
         publishQueuedMessages()
@@ -5956,6 +6124,7 @@ class ChatViewModel : ViewModel() {
         }
         if (handler.currentSessionId.value == null) {
             conversationBindingController.switchSession(null)
+            reapplyConversationTransportAffinity()
             onSessionChanged?.invoke(null)
         }
 
@@ -6182,10 +6351,10 @@ class ChatViewModel : ViewModel() {
         val client = apiClient
         if (
             (streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
             val message = if (streamingEndpoint == "gateway") {
-                "Gateway is unavailable and no API fallback is configured for this connection."
+                "This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry."
             } else {
                 "API fallback is not configured for this connection."
             }
@@ -6293,9 +6462,15 @@ class ChatViewModel : ViewModel() {
             ?: return VoiceMessageSubmissionResult.Rejected("Hermes chat is not ready.")
         val client = apiClient
         if ((streamingEndpoint != "gateway" && client == null) ||
-            (streamingEndpoint == "gateway" && gatewayClient == null && client == null)
+            (streamingEndpoint == "gateway" && gatewayClient == null)
         ) {
-            return VoiceMessageSubmissionResult.Rejected("Hermes is not connected.")
+            return VoiceMessageSubmissionResult.Rejected(
+                if (streamingEndpoint == "gateway") {
+                    "This chat needs the Hermes Dashboard. Sign in or reconnect, then retry."
+                } else {
+                    "The direct API connection is unavailable."
+                },
+            )
         }
         if (activeStream != null || streamRecovery != null || handler.isStreaming.value) {
             return VoiceMessageSubmissionResult.Rejected(
@@ -7823,13 +7998,39 @@ class ChatViewModel : ViewModel() {
                     if (!queuedSuccessorPending.get()) {
                         val expectedSessionId = checkpoint.sessionId
                         viewModelScope.launch {
-                            val history = loadSessionHistory(expectedSessionId)
-                            if (handler.currentSessionId.value == expectedSessionId && history.isNotEmpty()) {
-                                handler.loadMessageHistory(history)
-                                refreshSessions()
-                                scheduleTitleReconcile(expectedSessionId)
+                            try {
+                                val history = loadSessionHistory(expectedSessionId)
+                                if (
+                                    handler.currentSessionId.value == expectedSessionId &&
+                                    history.isNotEmpty()
+                                ) {
+                                    handler.loadMessageHistory(history)
+                                    clearMatchingHistoryLoadFailure(expectedSessionId)
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // Recovery completion has already settled the
+                                // local turn. Keep it visible and route an
+                                // expired Dashboard session to sign-in.
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
+                                    publishHistoryLoadFailure(expectedSessionId, e)
+                                }
+                            } finally {
+                                if (
+                                    chatHandler === handler &&
+                                    activeProfileContextKey == checkpoint.contextKey &&
+                                    handler.currentSessionId.value == expectedSessionId
+                                ) {
+                                    refreshSessions()
+                                    scheduleTitleReconcile(expectedSessionId)
+                                }
+                                drainQueue()
                             }
-                            drainQueue()
                         }
                     }
                 }
@@ -7910,6 +8111,8 @@ class ChatViewModel : ViewModel() {
             onStatusClear = { kind ->
                 if (owns()) handler.clearTurnStatus(kind)
             },
+            onNoticeShow = ::showGatewayNotice,
+            onNoticeClear = ::clearGatewayNotice,
         )
     }
 
@@ -9256,11 +9459,7 @@ class ChatViewModel : ViewModel() {
         val personaPrompt: String?,
         val appContext: String?,
         val interfaceContext: String?,
-        /**
-         * Relay media-capability hint — tells the agent it can surface images/
-         * files by absolute server path. Non-null only on SSE turns when a relay
-         * route is configured (the gateway has no system slot to carry it).
-         */
+        /** Upstream-first media capability plus any additive Relay enhancement. */
         val mediaCapability: String?,
         /**
          * Relay-plugin-owned server-side context blocks that are injected into
@@ -9315,13 +9514,23 @@ class ChatViewModel : ViewModel() {
                 selected != _defaultPersonality.value -> personalityPrompts[selected]
             else -> null
         }
-        val appContextRaw = buildPromptBlock(appContextSettings, capturePhoneSnapshot())
-        // Tell the agent it can surface images/files by absolute server path —
-        // but only on SSE (the gateway carries no system_message) and only when
-        // a relay route is configured (otherwise the client can't fetch them).
+        val availableTools = if (gateway) {
+            gatewayClient?.serverTools?.value
+        } else {
+            _sseToolNames.value
+        }
+        val appContextRaw = buildPromptBlock(
+            settings = appContextSettings,
+            snapshot = capturePhoneSnapshot(),
+            availableTools = availableTools,
+        )
+        // Gateway has no per-turn system slot. SSE carries the standard
+        // Dashboard route first, then the optional Relay enhancement.
+        val upstreamMediaAvailable = dashboardMediaClientProvider?.invoke() != null
         val relayMediaAvailable = relayHttpClient?.mediaUrlConfigured() == true
         val mediaCapability: String? =
-            RELAY_MEDIA_HINT.takeIf { !gateway && relayMediaAvailable }
+            buildMediaCapabilityHint(upstreamMediaAvailable, relayMediaAvailable)
+                .takeIf { !gateway }
         // combinedSystemMessage appends the media hint after the phone-status
         // block (a stable environment fact, like phone status) and before the
         // per-turn interface context. The per-block fields below null out blanks
@@ -9561,12 +9770,13 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val observedImageToolStates = mutableMapOf<String, String>()
+        val nativeImageToolProgressObserved = AtomicBoolean(false)
         val handleToolCallStart = { toolCallId: String, toolName: String, argsPreview: String? ->
             markTransportAccepted()
             ensurePostInterimMessage()
             streamDeltas.flushNow()
             val alreadyObserved =
-                toolName == "image_generate" &&
+                isImageGenerationToolName(toolName) &&
                     observedImageToolStates.putIfAbsent(toolCallId, "running") != null
             if (!alreadyObserved) {
                 handler.onToolCallStart(currentMessageId, toolCallId, toolName, argsPreview)
@@ -9574,10 +9784,16 @@ class ChatViewModel : ViewModel() {
             scheduleCheckpointWrite(immediate = true)
         }
         val onToolCallStartCb = { toolCallId: String, toolName: String ->
+            if (isImageGenerationToolName(toolName)) {
+                nativeImageToolProgressObserved.set(true)
+            }
             handleToolCallStart(toolCallId, toolName, null)
         }
         val onGatewayToolCallStartCb =
             { toolCallId: String, toolName: String, argsPreview: String? ->
+                if (isImageGenerationToolName(toolName)) {
+                    nativeImageToolProgressObserved.set(true)
+                }
                 handleToolCallStart(toolCallId, toolName, argsPreview)
             }
         val onToolCallDoneCb = { toolCallId: String, resultPreview: String? ->
@@ -9610,10 +9826,18 @@ class ChatViewModel : ViewModel() {
         }
         fun startImageActivityBridge() {
             val relay = relayHttpClient ?: return
+            if (!relay.mediaUrlConfigured()) return
             stopImageActivityBridge()
             imageActivityJob = viewModelScope.launch {
+                // Current upstream emits native tool progress. Give that
+                // authoritative path the first opportunity to identify image
+                // work; Relay polling is compatibility-only for older hosts
+                // whose stream omitted those events.
+                delay(1_000)
+                if (nativeImageToolProgressObserved.get()) return@launch
                 var consecutiveErrors = 0
                 while (true) {
+                    if (nativeImageToolProgressObserved.get()) break
                     val activeSessionId = handler.currentSessionId.value
                     if (activeSessionId.isNullOrBlank()) {
                         delay(250)
@@ -9635,7 +9859,7 @@ class ChatViewModel : ViewModel() {
                     snapshot.activities.forEach { activity ->
                         val prior = observedImageToolStates[activity.callId]
                         if (prior == null) {
-                            onToolCallStartCb(activity.callId, activity.toolName)
+                            handleToolCallStart(activity.callId, activity.toolName, null)
                         }
                         if (
                             activity.state == "completed" &&
@@ -9693,6 +9917,7 @@ class ChatViewModel : ViewModel() {
             // tool.complete. The structured reload recovers those calls without ever
             // parsing assistant prose and retains the profile-aware history boundary.
             val sid = handler.currentSessionId.value
+            val historyContextKey = activeProfileContextKey
             // A turn that ended in an error (gateway ❌ lifecycle → "Error" badge)
             // has NO assistant message persisted server-side, so reconciling the
             // server transcript would WIPE the just-shown error bubble (the user
@@ -9711,34 +9936,54 @@ class ChatViewModel : ViewModel() {
                     )
                 }
                 viewModelScope.launch {
-                    if (!turnErrored && !gatewayHistoryReconcileRequired) {
-                        // Profile-aware read: a gateway turn on a non-default profile
-                        // persists into THAT profile's own state.db, so the bare
-                        // api_server `/api/sessions/{id}/messages` 404s → emptyList()
-                        // → a silent wipe of the just-finished turn. loadSessionHistory
-                        // prefers the `?profile=` dashboard loader on gateway connections.
-                        val serverMessages = loadSessionHistory(sid)
-                        val missingPersistedToolActivity =
-                            completedTransport == "gateway" &&
-                                handler.hasMissingPersistedToolActivity(serverMessages)
-                        if (shouldReloadHistoryAfterSuccessfulTurn(
-                                actualTransport = completedTransport,
-                                gatewayReconcileRequired = gatewayHistoryReconcileRequired,
-                                missingPersistedToolActivity = missingPersistedToolActivity,
-                            )
-                        ) {
-                            handler.loadMessageHistory(serverMessages)
+                    try {
+                        if (!turnErrored && !gatewayHistoryReconcileRequired) {
+                            // Profile-aware read: a gateway turn on a non-default profile
+                            // persists into THAT profile's own state.db, so the bare
+                            // api_server `/api/sessions/{id}/messages` 404s → emptyList()
+                            // → a silent wipe of the just-finished turn. loadSessionHistory
+                            // prefers the `?profile=` dashboard loader on gateway connections.
+                            val serverMessages = loadSessionHistory(sid)
+                            val missingPersistedToolActivity =
+                                completedTransport == "gateway" &&
+                                    handler.hasMissingPersistedToolActivity(serverMessages)
+                            if (shouldReloadHistoryAfterSuccessfulTurn(
+                                    actualTransport = completedTransport,
+                                    gatewayReconcileRequired = gatewayHistoryReconcileRequired,
+                                    missingPersistedToolActivity = missingPersistedToolActivity,
+                                )
+                            ) {
+                                handler.loadMessageHistory(serverMessages)
+                                clearMatchingHistoryLoadFailure(sid)
+                            }
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
+                            publishHistoryLoadFailure(sid, e)
+                        }
+                    } finally {
+                        // Re-sync the drawer now that the turn is persisted server-side.
+                        // The only other auto-refresh fires ~160ms after session creation
+                        // (RelayApp) — mid-stream, BEFORE the new session's first message
+                        // is persisted, so a brand-new chat would otherwise stay missing
+                        // from the drawer (carried only by the optimistic row) until a
+                        // manual reload. By message.complete the dashboard list includes it.
+                        if (
+                            chatHandler === handler &&
+                            activeProfileContextKey == historyContextKey &&
+                            handler.currentSessionId.value == sid
+                        ) {
+                            refreshSessions()
+                            scheduleTitleReconcile(sid)
+                        }
+                        drainQueue()
                     }
-                    // Re-sync the drawer now that the turn is persisted server-side.
-                    // The only other auto-refresh fires ~160ms after session creation
-                    // (RelayApp) — mid-stream, BEFORE the new session's first message
-                    // is persisted, so a brand-new chat would otherwise stay missing
-                    // from the drawer (carried only by the optimistic row) until a
-                    // manual reload. By message.complete the dashboard list includes it.
-                    refreshSessions()
-                    scheduleTitleReconcile(sid)
-                    drainQueue()
                 }
                 Unit
             } else {
@@ -10015,12 +10260,11 @@ class ChatViewModel : ViewModel() {
             )
         }
 
-        // SSE dispatch shared by the three HTTP endpoints AND the gateway
-        // branch's per-turn fallback (gateway unreachable / not the resolved
-        // transport). Warns once per dispatch about any attachment it can't carry.
+        // SSE dispatch shared by the three explicit API compatibility endpoints.
+        // Warns once per dispatch about any attachment it can't carry.
         fun dispatchSse(endpoint: String): ActiveTurnHandle? {
             val sseClient = client ?: run {
-                onErrorCb("Gateway unavailable and no API fallback is configured.")
+                onErrorCb("The direct API connection is unavailable.")
                 return null
             }
             val prepared = prepareTextTransportAttachments(message, attachments.orEmpty())
@@ -10165,13 +10409,13 @@ class ChatViewModel : ViewModel() {
         activeStream = when {
             effectiveEndpoint != "gateway" -> dispatchSse(effectiveEndpoint)
 
-            // Gateway turns upload ALL attachments via their typed upstream
-            // RPC (image.attach_bytes / pdf.attach / file.attach), matching the
-            // desktop client. Only a missing gateway client forces the per-turn
-            // SSE fallback (where non-image attachments are not upstream-
-            // recognized and would be dropped — graceful degradation).
-            gateway == null ->
-                dispatchSse(resolveSseFallback(handler))
+            // The conversation owner is immutable. Losing Gateway preserves
+            // the local transcript/draft and exposes Retry; it never dispatches
+            // the turn into the API server's different session database.
+            gateway == null -> {
+                onErrorCb("This chat belongs to the Hermes Dashboard. Sign in or reconnect, then retry.")
+                null
+            }
 
             else -> {
                 startImageActivityBridge()
@@ -10322,6 +10566,8 @@ class ChatViewModel : ViewModel() {
                         onStatusClear = { kind ->
                             handler.clearTurnStatus(kind)
                         },
+                        onNoticeShow = ::showGatewayNotice,
+                        onNoticeClear = ::clearGatewayNotice,
                     ),
                     attachments = (attachments.orEmpty() + gatewayOnlyAttachments)
                         .map { it.toGatewayAttachment() },
@@ -10343,11 +10589,14 @@ class ChatViewModel : ViewModel() {
                             activeStream = null
                             settleSessionActivity(handler.currentSessionId.value)
                         } else {
-                            // Nothing started server-side — rerun this turn on
-                            // the SSE fallback. Callbacks land on the main
-                            // thread, so swapping activeStream here is safe.
-                            // The fallback turn is not steerable.
-                            activeStream = dispatchSse(resolveSseFallback(handler))
+                            // Nothing started server-side. Keep this turn bound
+                            // to Gateway and settle it as retryable local state;
+                            // API sessions are a different owner/database.
+                            onPreflightErrorCb(
+                                IllegalStateException(
+                                    "Hermes Dashboard chat is unavailable. Sign in or reconnect, then retry.",
+                                ),
+                            )
                         }
                     },
                 )
@@ -10371,8 +10620,8 @@ class ChatViewModel : ViewModel() {
         // configured transport: a gateway-configured turn forced onto SSE
         // (voice interface context, trace drain) did carry the synthetic
         // messages, and skipping the mark there re-sent them every turn.
-        // The async gateway preflight-failure fallback stays conservative:
-        // its traces are marked on the NEXT turn (at-least-once delivery).
+        // A failed Gateway preflight leaves these traces unsynced; retrying the
+        // same owner retains at-least-once delivery without crossing stores.
         if (voiceIntentMessages != null && effectiveEndpoint != "gateway") {
             if (hasVoiceIntents) handler.markVoiceIntentsSynced()
             if (hasCardDispatches) handler.markCardDispatchesSynced()
@@ -10383,18 +10632,6 @@ class ChatViewModel : ViewModel() {
     /** Adapt an SSE [EventSource] to the transport-agnostic turn handle. */
     private fun EventSource.asTurnHandle(): ActiveTurnHandle =
         ActiveTurnHandle { this.cancel() }
-
-    /**
-     * SSE endpoint for a turn that was meant for the gateway. The sessions
-     * endpoint needs an existing server session — without one, use the
-     * stateless completions path instead of failing the turn.
-     */
-    private fun resolveSseFallback(handler: ChatHandler): String =
-        if (sseFallbackEndpoint == "sessions" && handler.currentSessionId.value == null) {
-            "completions"
-        } else {
-            sseFallbackEndpoint
-        }
 
     private fun currentAgentDisplayName(
         effectiveProfileOverride: Profile? = null,
@@ -10502,6 +10739,8 @@ class ChatViewModel : ViewModel() {
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
 
         // 1. Insert LOADING placeholder.
         val placeholder = Attachment(
@@ -10539,8 +10778,19 @@ class ChatViewModel : ViewModel() {
             }
 
             // 3. Fetch + cache.
-            performFetchWith(handler, messageId, token, settings) {
-                relay.fetchMedia(token)
+            performFetchWith(
+                handler,
+                messageId,
+                token,
+                settings,
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { _ ->
+                if (relay.mediaUrlConfigured()) {
+                    relay.fetchMedia(token, maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1L) * 1024L * 1024L)
+                } else {
+                    Result.failure(MediaRouteUnavailableException())
+                }
             }
         }
     }
@@ -10567,6 +10817,9 @@ class ChatViewModel : ViewModel() {
         val att = msg.attachments.getOrNull(attachmentIndex) ?: return
         val fetchKey = att.relayToken ?: return
         val expectedRole = msg.role
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
 
         // Flip back to a pure LOADING spinner (drop the CTA marker) so the
         // user gets immediate feedback that the download kicked off.
@@ -10587,14 +10840,20 @@ class ChatViewModel : ViewModel() {
                 fetchKey,
                 settings,
                 expectedRole = expectedRole,
-            ) {
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { maxBytes ->
                 if (
                     fetchKey.startsWith("/") ||
                     WINDOWS_ABSOLUTE_MEDIA_PATH_REGEX.matches(fetchKey)
                 ) {
-                    relay.fetchMediaByPath(fetchKey)
+                    fetchServerPath(fetchKey, maxBytes, upstreamMediaClient)
                 } else {
-                    relay.fetchMedia(fetchKey)
+                    if (relay.mediaUrlConfigured()) {
+                        relay.fetchMedia(fetchKey, maxBytes = maxBytes)
+                    } else {
+                        Result.failure(MediaRouteUnavailableException())
+                    }
                 }
             }
         }
@@ -10634,14 +10893,24 @@ class ChatViewModel : ViewModel() {
         if (supervisedModePolicy.enabled &&
             !supervisedModePolicy.capabilities.generatedImages
         ) return ServerImageResult.Failure("Generated images are disabled in supervised mode")
-        val relay = relayHttpClient
-            ?: return ServerImageResult.Failure("Relay not configured on this connection")
-        // fetchMediaByPath returns Result<MediaBytes>; fold it ONCE, right here,
-        // into a non-Result type. The resolver boundary must not return
-        // kotlin.Result from a suspend fun (see [ServerImageResult]).
-        return relay.fetchMediaByPath(serverPath).fold(
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
+        val maxBytes = mediaSettingsRepo?.settings?.first()?.maxInboundSizeMb
+            ?.toLong()
+            ?.coerceAtLeast(1L)
+            ?.times(1024L * 1024L)
+            ?: 25L * 1024L * 1024L
+        val result = fetchServerPath(serverPath, maxBytes, upstreamMediaClient)
+        if (
+            routeOwner != activeProfileContextKey ||
+            historyGeneration != historyLoadGeneration.get()
+        ) {
+            return ServerImageResult.Failure("Connection changed while loading image")
+        }
+        return result.fold(
             onSuccess = { ServerImageResult.Success(it.bytes, it.sensitive) },
-            onFailure = { ServerImageResult.Failure(it.message ?: "relay fetch failed") },
+            onFailure = { ServerImageResult.Failure(it.message ?: "Image unavailable") },
         )
     }
 
@@ -10685,6 +10954,9 @@ class ChatViewModel : ViewModel() {
         val relay = relayHttpClient
         val repo = mediaSettingsRepo
         val cache = mediaCacheWriter
+        val routeOwner = activeProfileContextKey
+        val historyGeneration = historyLoadGeneration.get()
+        val upstreamMediaClient = dashboardMediaClientProvider?.invoke()
 
         val placeholder = Attachment(
             contentType = if (expectedRole == MessageRole.USER) {
@@ -10741,11 +11013,57 @@ class ChatViewModel : ViewModel() {
                 originalPath,
                 settings,
                 expectedRole = expectedRole,
-            ) {
-                relay.fetchMediaByPath(originalPath)
+                expectedContextKey = routeOwner,
+                expectedHistoryGeneration = historyGeneration,
+            ) { maxBytes ->
+                fetchServerPath(originalPath, maxBytes, upstreamMediaClient)
             }
         }
     }
+
+    /**
+     * Resolve a gateway-local path upstream-first. Relay is an additive
+     * compatibility route for older hosts or paths outside upstream's managed
+     * file policy; it is never required when current upstream can serve the
+     * file directly.
+     */
+    private suspend fun fetchServerPath(
+        serverPath: String,
+        maxBytes: Long,
+        upstream: DashboardApiClient?,
+    ): Result<RelayHttpClient.FetchedMedia> {
+        if (upstream != null) {
+            val upstreamResult = upstream.downloadManagedFile(serverPath, maxBytes)
+                .map { fetched ->
+                    RelayHttpClient.FetchedMedia(
+                        contentType = fetched.contentType,
+                        bytes = fetched.bytes,
+                        fileName = fetched.fileName,
+                        sensitive = false,
+                    )
+                }
+            if (upstreamResult.isSuccess) return upstreamResult
+            val upstreamFailure = upstreamResult.exceptionOrNull()
+            if (upstreamFailure?.isDashboardManagedFilesUnsupported() != true) {
+                return upstreamResult
+            }
+            val relay = relayHttpClient
+            if (relay?.mediaUrlConfigured() == true) {
+                return relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+            }
+            return Result.failure(MediaRouteUnavailableException(upstreamFailure))
+        }
+
+        val relay = relayHttpClient
+        return if (relay?.mediaUrlConfigured() == true) {
+            relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+        } else {
+            Result.failure(MediaRouteUnavailableException())
+        }
+    }
+
+    private class MediaRouteUnavailableException(cause: Throwable? = null) :
+        java.io.IOException(MEDIA_HOST_ONLY, cause)
 
     private fun persistedImageContentType(path: String): String =
         when (path.substringAfterLast('.').lowercase()) {
@@ -10776,13 +11094,15 @@ class ChatViewModel : ViewModel() {
         fetchKey: String,
         settings: MediaSettings,
         expectedRole: MessageRole = MessageRole.ASSISTANT,
-        fetch: suspend () -> Result<RelayHttpClient.FetchedMedia>,
+        expectedContextKey: String? = activeProfileContextKey,
+        expectedHistoryGeneration: Int = historyLoadGeneration.get(),
+        fetch: suspend (maxBytes: Long) -> Result<RelayHttpClient.FetchedMedia>,
     ) {
         val cache = mediaCacheWriter ?: return
         val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
 
         val result = try {
-            withTimeout(MEDIA_FETCH_TIMEOUT_MS) { fetch() }
+            withTimeout(MEDIA_FETCH_TIMEOUT_MS) { fetch(maxBytes) }
         } catch (e: TimeoutCancellationException) {
             Result.failure(java.io.IOException("Media download timed out"))
         } catch (e: CancellationException) {
@@ -10790,6 +11110,11 @@ class ChatViewModel : ViewModel() {
         } catch (e: Exception) {
             Result.failure(e)
         }
+        if (
+            chatHandler !== handler ||
+            activeProfileContextKey != expectedContextKey ||
+            historyLoadGeneration.get() != expectedHistoryGeneration
+        ) return
         result.fold(
             onSuccess = { fetched ->
                 if (fetched.bytes.size > maxBytes) {
@@ -10842,6 +11167,15 @@ class ChatViewModel : ViewModel() {
                 }
             },
             onFailure = { err ->
+                if (err is MediaRouteUnavailableException) {
+                    updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
+                        att.copy(
+                            state = AttachmentState.FAILED,
+                            errorMessage = MEDIA_HOST_ONLY,
+                        )
+                    }
+                    return@fold
+                }
                 val human = classifyError(err, context = "media_fetch", ctx = appContext)
                 updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                     att.copy(

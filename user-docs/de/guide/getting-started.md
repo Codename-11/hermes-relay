@@ -23,8 +23,8 @@ Server-, TLS- und Betreiberoptionen stehen in der
 |---|---|---|
 | Empfohlen für | Die meisten Nutzer | Nutzer von Device Control |
 | Updates | Automatisch | APK manuell aktualisieren |
-| Chat, Voice, Manage | Enthalten | Enthalten |
-| Terminal, Medien, Benachrichtigungen mit Relay | Enthalten | Enthalten |
+| Chat, Voice, Manage, eingehende Dateien | Enthalten | Enthalten |
+| Terminal, Medienerweiterungen, Benachrichtigungen mit Relay | Enthalten | Enthalten |
 | Bildschirm lesen, tippen, schreiben, navigieren | Nicht enthalten | Enthalten |
 
 <StoreBadge />
@@ -36,11 +36,12 @@ nicht die `.aab`-Datei herunter; sie ist nur für Google Play bestimmt.
 ## 2. Hermes erreichbar machen
 
 Android verwendet standardmäßig das Hermes Dashboard/Gateway unter `:9119`.
-Es stellt Chat, Sitzungen, Anmeldung, Manage und Standard-Voice bereit. Starte
+Es stellt Chat, Sitzungen, Anmeldung, Manage, Standard-Voice und authentifizierte
+eingehende Dateien bereit. Starte
 es mit `hermes dashboard` und mache diese Adresse für das Telefon erreichbar.
 
-Der API-Server unter `:8642` ist optional: Er dient als automatischer
-Chat-Fallback oder für erweiterte headless Kompatibilität. Einen API-Schlüssel
+Der API-Server unter `:8642` ist optional: Er dient als explizite Direct-API-
+Verbindung oder für erweiterte headless Kompatibilität. Einen API-Schlüssel
 brauchst du nur, wenn du diesen optionalen Endpunkt konfigurierst. Der
 Serverbetreiber erstellt `API_SERVER_KEY` selbst; das Dashboard stellt keinen bereit.
 
@@ -67,7 +68,7 @@ unzuverlässig ist; Android prüft eine abweichende Anmeldeadresse vor dem Speic
 3. Melde dich bei Aufforderung am Dashboard an.
 4. Tippe auf **Connect** und prüfe **Chat · Ready**.
 5. Aktiviere unter **Einrichtung abschließen** Android-Benachrichtigungen, wenn du Chat-Hinweise im Hintergrund erhalten möchtest. Kamera, Mikrofon und weitere Funktionen bleiben optional und werden einzeln eingerichtet; mit **Jetzt nicht** kannst du direkt fortfahren.
-6. Füge API-Fallback, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
+6. Füge Direct API, Relay oder weitere Remote-Routen bei Bedarf später unter **Advanced** hinzu.
 
 `hermes-relay-tailscale enable` veröffentlicht `https://host.ts.net:10443` auf
 einem dedizierten Tailnet-Port und leitet an das lokale Dashboard `:9119` samt
@@ -75,7 +76,7 @@ gleichnamigem Relay-Pfad weiter. So bleibt `:443` für Traefik, Caddy oder nginx
 `http://100.x.y.z:9119` funktioniert ebenfalls, besitzt aber kein Anwendungs-TLS.
 
 Dieselbe Anmeldung schaltet Chat, Sitzungen, Manage und Voice frei. Ein
-ungepaartes Relay und ein nicht verfügbarer API-Fallback sind normal.
+ungepaartes Relay und eine nicht verfügbare Direct API sind normal.
 
 ## Empfohlen: Mit Relay vervollständigen {#relay-server-optional}
 

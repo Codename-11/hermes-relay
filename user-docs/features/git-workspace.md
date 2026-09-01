@@ -1,22 +1,26 @@
 # Git workspace
 
-Hermes-Relay Android can review and operate a host repository through a native
-Git workspace. The Android interface is first-party Compose UI; the optional
-Hermes-Relay plugin supplies the authenticated, repository-scoped Git API.
+Hermes-Relay Android starts from the active session's upstream `cwd`, repository
+root, and branch metadata. The native Git workspace then uses the optional
+Hermes-Relay plugin for broader host discovery, working-tree detail, diffs, and
+guarded write operations.
 
 ![Native Git workspace](/git-workspace.png)
 
 ## Requirements
 
-- The Hermes-Relay plugin must be installed and enabled on the selected Hermes
-  connection and profile.
+- A standard Dashboard connection can identify the active session's repository
+  and branch without Relay.
+- The Hermes-Relay plugin must be installed and enabled for full repository
+  discovery, status/diffs, and write operations.
 - The Dashboard must expose the plugin's `git/*` API routes.
 - Repositories must be below the host's configured Git discovery root.
 - Turn on **Host repository scanning** for this saved connection. It is off by
   default and does not carry to another Hermes connection.
 - Write actions require the plugin's **Allow changes** grant.
 
-Enabling discovery lets Android ask that Hermes host to scan its configured Git
+The active session's upstream metadata is always considered first. Enabling
+discovery lets Android ask the Relay plugin to scan its configured Git
 root and return repository paths, branches, and change status. The scan starts
 only while the Git workspace is open; it is not part of app, connection, Chat,
 or session startup. Git write permission remains separate.
@@ -38,8 +42,8 @@ scanning**. The same switch can turn discovery back off and immediately clear
 the connection's locally presented repository state.
 
 When the active chat session reports an exact repository root or working
-directory, Android selects the matching repository. If several repositories
-are possible, choose one from the repository picker.
+directory, Android selects that context first. Relay discovery can then match it
+to a richer repository row or offer other repositories in the picker.
 
 ## Chat controls
 

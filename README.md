@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/play-store-feature-1024x500.png" alt="Hermes-Relay — your Hermes agent, in your pocket" width="800">
+  <img src="assets/readme-hero-v2.jpg" alt="Hermes-Relay — Your Hermes agent. Wherever you are. Android, Voice, Desktop." width="1000">
 </p>
 
 <p align="center">
@@ -38,10 +38,10 @@ Hermes-Relay puts your [Hermes agent](https://github.com/NousResearch/hermes-age
 - **📱 Android app** — streaming chat, hands-free voice, native plugin pages, and the full Hermes dashboard (models, keys, skills, profiles), rebuilt native. Add a floating Petdex companion or optionally make Hermes your Android assistant; sideload builds can also let the agent read and act on your screen.
 - **⌨️ Hermes-Relay CLI** *(beta)* — a single binary that gives the agent **hands on any machine you pair**: files, terminal, search, screenshots — consent-gated.
 
-A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough for the upstream standard path: chat, management, voice, Petdex, and ordinary installed-plugin pages. The Hermes-Relay plugin is optional for that base but encouraged for the complete current experience: Terminal/TUI, notifications, media, desktop tools, enhanced voice, Relay sessions, page drafts, and optional Device Control. Hermes-Relay prefers compatible upstream surfaces as they become available instead of keeping duplicate extension paths. **Connect Hermes first, then grant Hermes-Relay separately; the same one-time invite contract pairs Android or the Desktop CLI.**
+A vanilla [hermes-agent](https://github.com/NousResearch/hermes-agent) install is enough for the upstream standard path: chat, management, voice, inbound files, Petdex, and ordinary installed-plugin pages. The Hermes-Relay plugin is optional for that base but encouraged for the complete current experience: Terminal/TUI, notifications, desktop tools, enhanced voice, Relay sessions, page drafts, optional Device Control, and media compatibility or metadata. Hermes-Relay prefers compatible upstream surfaces as they become available instead of keeping duplicate extension paths. **Connect Hermes first, then grant Hermes-Relay separately; the same one-time invite contract pairs Android or the Desktop CLI.**
 
 <p align="center">
-  <img src="docs/diagrams/architecture-homepage.png" alt="How Hermes-Relay connects — upstream Hermes owns Chat, Manage, and standard Voice; the encouraged Relay extension fills current gaps for Terminal, notifications, media, enhanced voice, sessions, desktop tools, and optional Device Control." width="900">
+  <img src="assets/readme-connection-map-v2.png" alt="How Hermes-Relay connects — Dashboard and Gateway own the standard Android path for Chat, Manage, Voice, and inbound files; the optional Relay plugin separately adds Android enhancements plus CLI and UI tools; sideload adds Device Control." width="1000">
 </p>
 
 ## Quick Start (Android)
@@ -50,7 +50,7 @@ Install → connect → talk, in about two minutes.
 
 ### 1 · Install the app
 
-- **Google Play** *(easiest — auto-updates)* — [**install from Google Play**](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay). Chat, voice, sessions, and Manage work with standard Hermes; pairing the Hermes-Relay plugin adds Terminal/TUI, media, notifications, and Relay sessions.
+- **Google Play** *(easiest — auto-updates)* — [**install from Google Play**](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay). Chat, voice, sessions, Manage, and inbound files work with standard Hermes; pairing the Hermes-Relay plugin adds Terminal/TUI, notifications, Relay sessions, and media enhancements.
 - **APK** *(full phone-control feature set)* — download the file ending in **`-sideload-release.apk`** from the newest `android-v*` release on [GitHub Releases](https://github.com/Codename-11/hermes-relay/releases) and open it (allow your browser to install unknown apps the first time). Integrity verification, signing fingerprint, and per-build details are in the [Sideload guide](https://hermes-relay.dev/docs/guide/getting-started.html#sideload-apk).
 
 Sideload builds check GitHub for updates and show a one-tap banner when you're behind; Play builds update through the Store. See [Release tracks](https://hermes-relay.dev/docs/guide/release-tracks) for the capability matrix.
@@ -58,7 +58,7 @@ Sideload builds check GitHub for updates and show a one-tap banner when you're b
 ### 2 · Have the Hermes Dashboard running
 
 The normal Android connection uses the upstream Hermes Dashboard/Gateway for
-chat, sign-in, sessions, Manage, and voice. Installing Hermes and choosing a
+chat, sign-in, sessions, Manage, voice, and inbound files. Installing Hermes and choosing a
 provider is vanilla Hermes setup:
 
 ```bash
@@ -77,15 +77,14 @@ the [remote-access guide](https://hermes-relay.dev/docs/guide/remote-access/).
 
 ### 3 · Connect and talk
 
-For a plugin-enabled host, open the Web Dashboard's **Relay** page, click
-**Connect mobile app**, and scan that tokenless QR from Android **Connect → Scan
-Hermes setup QR**. It contains only the Dashboard address and configures the
-upstream Chat, sessions, Manage, sign-in, and standard voice connection.
-
-Without the Dashboard plugin, use **Find Hermes on LAN** or enter the Dashboard
-address manually (conventionally `http://<host>:9119`). Sign in through the
+Use **Find Hermes on LAN** or enter the Dashboard address manually
+(conventionally `http://<host>:9119`). Sign in through the
 Dashboard's configured provider when prompted. The app probes the available
 upstream capabilities and finishes with a connection summary.
+
+If the Relay Dashboard page is already installed, **Connect mobile app** offers
+the same standard connection as a tokenless QR. It contains only the Dashboard
+address and does not install, enable, or pair Relay.
 
 The separate API server can be discovered automatically or added later under
 **Advanced** as a chat fallback or for a headless compatibility setup. Its API
@@ -99,7 +98,7 @@ The wizard probes everything and finishes with a capability card:
 | **Chat** | Dashboard/Gateway ready — you can talk |
 | **Manage** | Models, keys, skills, and profiles are available from the phone |
 | **Voice** | Speech ready via your server (or one Manage sign-in away) |
-| **API fallback** | Optional API route available/unavailable |
+| **Direct API** | Optional API-only compatibility route available/unavailable |
 | **Relay** | Recommended extensions paired/unpaired; never blocks the upstream path |
 
 One dashboard sign-in unlocks Chat, Manage, sessions, and standard voice. That's
@@ -109,9 +108,9 @@ the whole Vanilla Hermes setup.
 
 ### 4 · Recommended: pair Relay for the complete experience
 
-Install Relay for Terminal/TUI, notifications, media handoff, desktop tools,
-enhanced voice, Relay sessions, approval-gated page drafts, and optional Device
-Control:
+Install Relay for Terminal/TUI, notifications, desktop tools, enhanced voice,
+Relay sessions, approval-gated page drafts, optional Device Control, and media
+compatibility or sensitivity metadata:
 
 ```bash
 hermes plugins install Codename-11/hermes-relay/plugin --enable
@@ -140,7 +139,7 @@ manual fallbacks when QR or clipboard transfer is unavailable.
 [Desktop CLI pairing](https://hermes-relay.dev/docs/desktop/pairing) ·
 [server, TLS, legacy install, and uninstall reference](https://hermes-relay.dev/docs/reference/relay-server)
 
-**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the Dashboard/Gateway enabled · Python 3.11+ when installing the Hermes-Relay plugin. The API fallback is optional; the Hermes-Relay plugin is encouraged for the complete experience.
+**Requirements:** Android 8.0+ (SDK 26) · current upstream [hermes-agent](https://github.com/NousResearch/hermes-agent) with the Dashboard/Gateway enabled · Python 3.11+ when installing the Hermes-Relay plugin. Direct API is optional; the Hermes-Relay plugin is encouraged for the complete experience.
 
 ## Screenshots
 
@@ -161,7 +160,7 @@ manual fallbacks when QR or clipboard transfer is unavailable.
 
 <p align="center">
   <img src="assets/screenshots/supplemental/15_git_workspace.png" alt="Native Git workspace showing repository changes, an inline diff, and staging controls" width="260"><br>
-  <sub><b>Native Git workspace</b> — optional Hermes-Relay plugin</sub>
+  <sub><b>Native Git workspace</b> — upstream session context with optional Relay discovery and operations</sub>
 </p>
 
 ### Simplified Chinese
@@ -239,17 +238,17 @@ remote tool surface. See the [desktop tools guide](https://hermes-relay.dev/docs
 ## How It Works
 
 ```
-Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, vanilla voice]
-Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [chat fallback, sessions, runs]
-Phone        (WSS/HTTP) --> Relay             (:8767)   [terminal, bridge, media, relay voice, sessions]
+Phone        (HTTP/WSS) --> Hermes Dashboard  (:9119)   [chat gateway, manage, vanilla voice, inbound files]
+Phone        (HTTP/SSE) --> Hermes API Server (:8642)   [Direct API chat, sessions, runs]
+Phone        (WSS/HTTP) --> Relay             (:8767)   [terminal, bridge, media enhancements, relay voice, sessions]
 CLI          (WSS)      --> Relay             (:8767)   [machine tools, tui, terminal]
 ```
 
-Chat prefers the Hermes dashboard gateway when Manage auth is ready, then falls
-back to the upstream API server SSE path with the API key. Manage and Vanilla Hermes
+Standard connections keep Chat on the Hermes Dashboard/Gateway. Explicit API-only
+connections use the upstream Direct API SSE path with an API key. Manage and Vanilla Hermes
 voice ride the Hermes dashboard with its own one-time sign-in, so a vanilla
-install needs no plugin for either. The optional relay on `:8767` adds the power
-surfaces: terminal, bridge phone control, media handoff, machine tools, and
+install needs no plugin for those surfaces or ordinary inbound files. The optional relay on `:8767` adds
+terminal, bridge phone control, media compatibility/metadata, machine tools, and
 relay-side voice, which is preferred automatically when paired. One QR can
 configure API, dashboard, and relay routes without merging their auth models.
 

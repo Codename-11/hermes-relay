@@ -145,7 +145,7 @@
     <string name="chat_failure_details_guidance">Hermes reported this error. The app won’t switch routes or models automatically.</string>
     <string name="chat_failure_copy_details">Copy details</string>
     <string name="chat_failure_route_gateway">Gateway</string>
-    <string name="chat_failure_route_api">API fallback</string>
+    <string name="chat_failure_route_api">Direct API</string>
     <string name="chat_open_settings">Open Settings</string>
     <string name="chat_connect_hermes">Connect Hermes</string>
     <string name="chat_try_demo">Try the demo</string>
@@ -315,7 +315,7 @@
     <string name="cw_cloud_subtitle">Connect to your hosted agent</string>
     <string name="cw_server_vps_title">Remote gateway</string>
     <string name="cw_server_vps_subtitle">Enter its Dashboard address</string>
-    <string name="cw_relay_optional_note">Private LAN and Tailscale addresses may use HTTP or HTTPS. Public addresses require HTTPS. Relay and API fallback are optional.</string>
+    <string name="cw_relay_optional_note">Private LAN and Tailscale addresses may use HTTP or HTTPS. Public addresses require HTTPS. Relay and Direct API are optional.</string>
     <string name="cw_cloud_entry_title">Connect to Nous-hosted Hermes</string>
     <string name="cw_cloud_entry_description">Enter the agent address shown in Nous Portal. You’ll sign in securely after Hermes is found.</string>
     <string name="cw_cloud_agent_name">Agent address</string>
@@ -387,7 +387,7 @@
     <string name="cw_back">Back</string>
     <string name="cw_connect_button">Connect</string>
     <string name="cw_hermes_label">Hermes</string>
-    <string name="cw_hermes_label_desc">Use this for Chat and Manage. Pair Relay later only when you enable Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the preferred upstream auth path; the API key remains the Android Chat fallback.</string>
+    <string name="cw_hermes_label_desc">Use this for Chat and Manage. Pair Relay later only when you enable Terminal, Bridge, Relay sessions, or grants. Dashboard sign-in is the standard upstream auth path; an API key is only for explicit Direct API connections.</string>
     <string name="cw_api_url_label">API server URL or host</string>
     <string name="cw_api_key_label">API key</string>
     <string name="cw_api_key_placeholder">Value from API_SERVER_KEY</string>
@@ -419,7 +419,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 or http://your-server:8642</string>
     <string name="cw_api_url_supporting">Hermes API used by Chat and sessions — API port 8642 and http:// assumed for bare hosts (the dashboard\'s 9119 is derived separately)</string>
     <string name="cw_scan_message">Scanning this LAN for Hermes dashboard/API…</string>
-    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for the optional direct API fallback.</string>
+    <string name="cw_dashboard_signin_hint">Sign in via the dashboard to unlock Manage and voice — the API key is only for optional Direct API compatibility.</string>
     <string name="cw_pair_relay_section">Pair Relay (optional)</string>
     <string name="cw_pair_relay_for">Pair Relay with %1$s</string>
     <string name="cw_pair_relay_scoped_desc">Add the optional Relay extension to this saved Hermes connection. This does not add or replace a server.</string>
@@ -666,6 +666,11 @@
     <string name="changelog_state_collapsed">Collapsed</string>
     <string name="changelog_installed">Installed</string>
     <string name="changelog_also_improved">Also improved</string>
+    <string name="changelog_highlights">Highlights</string>
+    <string name="changelog_added">Added</string>
+    <string name="changelog_improved">Improved</string>
+    <string name="changelog_fixed">Fixed</string>
+    <string name="changelog_compatibility">Compatibility</string>
     <string name="changelog_toast_also">Also: %1$s</string>
     <string name="changelog_view_all">View all</string>
     <plurals name="changelog_additional_feature_count">
@@ -675,6 +680,10 @@
     <plurals name="changelog_fix_count">
         <item quantity="one">%1$d fix</item>
         <item quantity="other">%1$d fixes</item>
+    </plurals>
+    <plurals name="changelog_improvement_count">
+        <item quantity="one">%1$d improvement</item>
+        <item quantity="other">%1$d improvements</item>
     </plurals>
 
     <!-- DiagnosticsScreen -->
@@ -742,12 +751,12 @@
     <string name="settings_hermes_management">Hermes management</string>
     <string name="settings_hermes_management_desc">Dashboard features: skills, cron, MCP, profiles, models</string>
     <string name="settings_chat">Chat</string>
-    <string name="settings_chat_desc">Chat behavior, Gateway, API fallback, tool display, message length</string>
+    <string name="settings_chat_desc">Chat behavior, Gateway, Direct API, tool display, message length</string>
     <string name="settings_voice_mode">Voice mode</string>
     <string name="settings_voice_mode_desc">Dashboard voice, realtime relay options, providers</string>
     <string name="settings_threads">Threads</string>
-    <string name="settings_threads_desc">Let the agent start conversations with you (off by default)</string>
-    <string name="settings_power_tools">Power tools</string>
+    <string name="settings_threads_desc">Relay-started conversations and proactive delivery (off by default)</string>
+    <string name="settings_power_tools">Relay tools</string>
     <string name="settings_terminal">Terminal</string>
     <string name="settings_terminal_desc">Server shell access through a paired relay session</string>
     <string name="settings_bridge">Bridge</string>
@@ -759,7 +768,7 @@
     <string name="settings_notification_companion">Notification companion</string>
     <string name="settings_notification_companion_desc">Shared phone notifications for paired relay tools</string>
     <string name="settings_media">Media</string>
-    <string name="settings_media_desc">Relay inbound attachments, auto-fetch, cache cap</string>
+    <string name="settings_media_desc">Chat attachments, download behavior, privacy, and cache</string>
     <string name="settings_bridge_safety">Bridge safety</string>
     <string name="settings_bridge_safety_desc">Blocklist, destructive-verb confirmation, auto-disable</string>
     <string name="settings_sideload">Sideload</string>
@@ -863,11 +872,11 @@
     <string name="chat_settings_debug">Debug</string>
     <string name="chat_settings_show_system_messages_desc">Show the server\'s hidden \"[System: …]\" markers (model / personality changes). Off matches the desktop/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Streaming endpoint</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Auto: picks the best path based on what your server exposes. Currently using: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Auto: standard connections use Gateway; API-only connections use Direct API. Currently using: </string>
     <string name="chat_settings_gateway_suffix"> (live thinking via the dashboard WebSocket)</string>
     <string name="chat_settings_chat_completions_suffix"> (chat via /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (chat via explicitly streamed /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Gateway: live thinking + rich tool events over the dashboard WebSocket (/api/ws) — what the desktop app uses. Requires Manage sign-in; falls back to SSE per turn when unavailable.</string>
+    <string name="chat_settings_gateway_desc">Gateway: live thinking + rich tool events over the dashboard WebSocket (/api/ws) — what the desktop app uses. Requires Manage sign-in; when unavailable, this chat stays on Gateway and offers sign-in or retry.</string>
     <string name="chat_settings_sessions_desc">Sessions: Hermes-native /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: OpenAI-compatible SSE via /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Runs: use only when your server streams /v1/runs directly.</string>
@@ -1018,14 +1027,14 @@
     <string name="active_section_primary_dashboard">Primary Dashboard</string>
     <string name="dashboard_gateway_title">Dashboard &amp; Gateway</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">Direct API</string>
     <string name="active_section_in_use">In use</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="dashboard_gateway_configured">Configured address</string>
     <string name="dashboard_gateway_secure_origin">Authenticated Dashboard address</string>
     <string name="dashboard_gateway_oidc_explainer">The configured route may be LAN, Tailscale, or public. Hermes owns the OIDC callback; Android does not require a second sign-in address.</string>
     <string name="network_routes_title">Network routes</string>
-    <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. API fallback and Relay extensions are optional.</string>
+    <string name="network_routes_summary">LAN, Tailscale, and public routes are ways to reach this Gateway. Direct API and Relay extensions are optional.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
     <string name="active_section_using_now">Using now</string>
@@ -1045,7 +1054,7 @@
     <string name="active_section_dashboard_unreachable">Not reachable</string>
     <string name="active_section_no_fallback_routes">No fallback routes yet</string>
     <string name="active_section_no_fallback_routes_desc">Add a LAN, Tailscale, or public address to keep this connection available when networks change.</string>
-    <string name="active_section_add_api_fallback">Add fallback route</string>
+    <string name="active_section_add_api_fallback">Add Direct API route</string>
     <string name="active_section_security_authentication">Authentication</string>
     <string name="active_section_dashboard_session">Dashboard session</string>
     <string name="active_section_credential_storage">Credential storage</string>
@@ -1060,7 +1069,7 @@
     <string name="active_section_route_selection">Route selection</string>
     <string name="active_section_automatic">Automatic</string>
     <string name="active_section_api_access">API access</string>
-    <string name="active_section_optional_api_fallback">Optional direct API fallback</string>
+    <string name="active_section_optional_api_fallback">Optional Direct API</string>
     <string name="active_section_api_not_required">Not required when this connection uses the Hermes Dashboard.</string>
     <string name="active_section_where_api_key">Where do I get this?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY is created on your Hermes server; it is not supplied by this app. Configure it only when you enable the optional API server, which requires a usable key, then enter the same value here.</string>
@@ -1374,8 +1383,8 @@
     <!-- P1: MediaSettingsScreen -->
     <string name="media_title">Media</string>
     <string name="media_back">Back</string>
-    <string name="media_intro_1">Controls how the app handles files sent by tool results (screenshots, PDFs, etc.) over the relay.</string>
-    <string name="media_intro_2">Relay only — these settings don\'t affect images you attach in chat or anything on a standard (no-Relay) connection.</string>
+    <string name="media_intro_1">Controls how the app downloads, protects, and caches files Hermes sends in chat.</string>
+    <string name="media_intro_2">Standard Dashboard media is preferred. When paired, Relay can add compatibility delivery and sensitivity metadata.</string>
     <string name="media_max_inbound">Max inbound attachment size</string>
     <string name="media_max_inbound_value">%1$d MB</string>
     <string name="media_max_inbound_desc">Files larger than this are rejected after download.</string>
@@ -2504,7 +2513,8 @@
     <string name="session_path_signin_for_gateway">Sign in under Manage for the live-thinking gateway.</string>
     <string name="session_path_gateway_api_server">Available on the gateway transport — this session streams over the API server.</string>
     <string name="session_path_relay_not_connected">Relay paired but not connected.</string>
-    <string name="session_path_pair_relay_media">Pair the relay to send and receive media.</string>
+    <string name="session_path_pair_relay_media">Pair Relay for media compatibility on older Hermes hosts.</string>
+    <string name="session_path_media_not_ready">Update Hermes for standard media delivery, or pair Relay for compatibility.</string>
     <string name="session_path_pair_relay_terminal">Pair the relay for terminal access.</string>
     <string name="session_path_voice_not_ready">Voice not ready on this connection.</string>
     <string name="session_path_threads_pair_relay">Pair the relay and turn on "Let Hermes message me" so the agent can open Threads.</string>
@@ -3152,6 +3162,8 @@
     <string name="inbound_attach_downloading">Downloading&#8230;%1$s</string>
     <string name="inbound_attach_failed">Attachment failed</string>
     <string name="inbound_attach_tap_retry">Tap to retry</string>
+    <string name="inbound_attach_host_only">File is on your Hermes host</string>
+    <string name="inbound_attach_host_only_help">Update Hermes for standard downloads, or pair Relay for compatibility.</string>
     <string name="inbound_attach_open">Open externally</string>
     <string name="inbound_attach_share">Share</string>
     <string name="inbound_attach_save">Save to device</string>
@@ -3680,6 +3692,8 @@
     <string name="diag_check_ready_with">Ready with %s</string>
     <string name="diag_check_relay_active">Relay active</string>
     <string name="diag_check_relay_not_configured">Relay not configured</string>
+    <string name="diag_relay_tools_optional">Relay tools (optional)</string>
+    <string name="diag_relay_tools_not_paired">Not paired</string>
     <string name="diag_check_relay_server">Check relay server</string>
     <string name="diag_check_relay_plugin">Relay plugin</string>
     <string name="diag_plugin_not_configured">Optional plugin is not configured</string>
@@ -3711,8 +3725,8 @@
     <string name="inbound_attach_cd_cancel">Cancel</string>
     <string name="inbound_attach_open_failed">Couldn\u0027t open attachment</string>
     <string name="inbound_attach_share_failed">Couldn\u0027t share attachment</string>
-    <string name="injected_context_media_no_relay">Media requires an active Relay connection</string>
-    <string name="injected_context_media_relay_active">Relay active for media</string>
+    <string name="injected_context_media_no_relay">No extra media instruction — standard delivery stays server-owned</string>
+    <string name="injected_context_media_relay_active">Relay media enhancement available</string>
     <string name="injected_context_media_title">Media sharing</string>
     <string name="injected_context_persona_not_set">No persona set</string>
     <string name="injected_context_persona_server_side">Server-side persona</string>
@@ -3781,7 +3795,7 @@
     <string name="whats_new_full_history">View full history</string>
     <string name="whats_new_no_notes">No release notes available</string>
     <string name="whats_new_title">What\u0027s new</string>
-    <string name="whats_new_subtitle">Latest release highlights</string>
+    <string name="whats_new_subtitle">Highlights and complete release details</string>
     <!-- Localization guardrail additions for current dev surfaces -->
     <string name="bridge_notification_auto_disabled_title">Timed screen access expired</string>
     <string name="bridge_notification_auto_disabled_body">Screen inspection and control are off after being idle. Other grants are unchanged.</string>
@@ -4246,7 +4260,7 @@
     <string name="voice_overlay_notification_body">Microphone access remains available while Hermes is over another app.</string>
     <string name="voice_overlay_notification_stop">Stop voice</string>
     <string name="conn_info_profile_api_key_title">Profile API key</string>
-    <string name="conn_info_profile_api_key_hint">Used only for this profile’s shared multiplex API fallback. Stored encrypted; the connection key is never reused.</string>
+    <string name="conn_info_profile_api_key_hint">Used only for this profile’s shared multiplex Direct API route. Stored encrypted; the connection key is never reused.</string>
     <string name="conn_info_profile_api_key_stored">A key is stored</string>
     <string name="conn_info_profile_api_key_not_stored">No key stored</string>
     <string name="conn_info_profile_api_key_save">Save key</string>
@@ -4577,6 +4591,6 @@
     <string name="provider_usage_capability_basic_title">Basic usage from Hermes</string>
     <string name="provider_usage_capability_basic_body">Install or update the Relay plugin for credential pools, structured Nous balances, and OpenCode Go.</string>
     <string name="settings_git_workspace">Git workspace</string>
-    <string name="settings_git_workspace_desc">Review changes, branches, commits, and remotes</string>
-    <string name="settings_git_workspace_off_desc">Off · Host repository scanning is opt-in</string>
+    <string name="settings_git_workspace_desc">Current-session Git first, with optional host discovery</string>
+    <string name="settings_git_workspace_off_desc">Session repository only · Host discovery is opt-in</string>
 </resources>

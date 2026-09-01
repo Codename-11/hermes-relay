@@ -1,15 +1,15 @@
 # Vanilla Hermes Chat Transport
 
-Hermes-Relay talks to your Hermes server's own surfaces for chat — no Hermes-Relay relay plugin is ever in the chat path. By default it **prefers the dashboard gateway** (`/api/ws`, the same `tui_gateway` transport hermes-desktop and the TUI speak) when your Manage sign-in is ready, because that's the only Vanilla Hermes path with **live thinking/reasoning** as it streams. When the gateway isn't available — no dashboard auth yet, an older server, or a forced override — it **falls back to the API server's SSE routes**.
+Hermes-Relay talks to your Hermes server's own surfaces for chat — no Hermes-Relay relay plugin is ever in the chat path. Standard connections use the dashboard **Gateway** (`/api/ws`, the same `tui_gateway` transport Hermes Desktop and the TUI speak), because that's the Vanilla Hermes path with live thinking/reasoning and full attachment support. That owner is stable: if sign-in expires or Gateway is temporarily unavailable, Android preserves the conversation and offers sign-in or retry instead of sending the turn to another database. Legacy API-only and explicitly selected **Direct API** chats keep using the API server's SSE routes.
 
 ## How It Works
 
 ```
-Phone (WS)       → Hermes dashboard (:9119)    [preferred — gateway chat, live thinking]
-Phone (HTTP/SSE) → Hermes API Server (:8642)   [fallback — sessions / runs / completions]
+Phone (WS)       → Hermes dashboard (:9119)    [standard — Gateway chat, live thinking]
+Phone (HTTP/SSE) → Hermes API Server (:8642)   [Direct API — sessions / runs / completions]
 ```
 
-Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The Relay plugin is not the owner of standard chat. It is the encouraged extension for current upstream gaps such as Terminal/TUI, notifications, media handoff, desktop tools, Relay sessions, enhanced voice, and optional Device Control; compatible upstream surfaces take precedence as they become available.
+Both paths are **vanilla upstream Hermes** surfaces. The dashboard gateway `/api/ws` is *not* the Hermes-Relay relay (`:8767`); it's a vanilla dashboard endpoint, reached with a short-lived ticket minted from your Manage dashboard session. The Relay plugin is not the owner of standard chat or ordinary inbound files. It is the encouraged extension for current upstream gaps such as Terminal/TUI, notifications, desktop tools, Relay sessions, enhanced voice, optional Device Control, and additive media compatibility or metadata; compatible upstream surfaces take precedence as they become available.
 
 ## Share into a new chat
 
@@ -22,7 +22,7 @@ were omitted. Multi-text shares preserve each supplied text item in source order
 Nothing is sent automatically: edit, remove, reorder, or discard the draft, then
 tap Send when it is ready.
 
-When it falls back, the app uses the Hermes `/api/sessions` REST API:
+For an API-only or explicitly selected Direct API chat, the app uses the Hermes `/api/sessions` REST API:
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
@@ -43,15 +43,15 @@ the API server starts. The app sends that server-created value as:
 Authorization: Bearer <API_SERVER_KEY>
 ```
 
-The direct API fallback itself is optional. If you enable it, generate a strong
+Direct API itself is optional. If you enable it, generate a strong
 server-side key (for example, `openssl rand -hex 32`; upstream requires at least
 16 characters) and enter the same value in Android.
 
 When provided, the key is stored in Android's `EncryptedSharedPreferences` using AES-256-GCM encryption backed by the Android Keystore.
 
-## SSE Streaming (fallback path)
+## SSE Streaming (Direct API path)
 
-On the API-server fallback, chat responses stream via Server-Sent Events with these Hermes-native event types. (On the preferred gateway path the same lifecycle arrives over the `/api/ws` WebSocket instead, with live `reasoning.delta`/`thinking.delta` as the model reasons — the API-server SSE surface only surfaces reasoning after the fact via `tool.progress` and the final `run.completed` messages.)
+On Direct API, chat responses stream via Server-Sent Events with these Hermes-native event types. (On Gateway the same lifecycle arrives over the `/api/ws` WebSocket instead, with live `reasoning.delta`/`thinking.delta` as the model reasons — the API-server SSE surface only surfaces reasoning after the fact via `tool.progress` and the final `run.completed` messages.)
 
 | Event | Description | Key Fields |
 |-------|-------------|------------|
@@ -71,4 +71,4 @@ On the API-server fallback, chat responses stream via Server-Sent Events with th
 
 ## Why two paths?
 
-Chat always rides vanilla upstream Hermes — never the Hermes-Relay relay plugin. The gateway `/api/ws` path is preferred because it's the only Vanilla Hermes surface with **live** reasoning streaming and full attachment support, matching what hermes-desktop and the Hermes TUI use. The API-server SSE path is the resilient fallback: it needs only the API server (no dashboard sign-in), works on older builds, and aligns with how other Hermes frontends talk to the API. The app probes both and picks the best available on each connect, so you get live thinking when your server can serve it and a working chat either way.
+Chat always rides vanilla upstream Hermes — never the Hermes-Relay relay plugin. Gateway `/api/ws` is the standard owner because it provides live reasoning streaming and full attachment support, matching Hermes Desktop and the Hermes TUI. Direct API remains useful for existing API-only/headless deployments, compatibility testing, and an explicit advanced selection. The app probes both surfaces for diagnostics, but reachability never changes the owner of an open conversation.
