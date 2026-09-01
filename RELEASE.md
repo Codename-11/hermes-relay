@@ -820,6 +820,10 @@ The release workflow rejects version drift and requires prerelease tags to be
 contained in `origin/dev` and stable tags to be contained in `origin/main`. It
 reruns CLI tests, builds all four standalone binaries, tests and packages the
 Windows tray, generates checksums, and publishes the GitHub Release.
+Trusted desktop CI and the release installer job share a Cargo/target cache
+keyed by the lockfile and exact tray sources. A `main` push for the release tree
+warms the exact cache before the immutable tag build; a miss safely performs the
+ordinary Rust/Tauri build.
 
 ### 6. Play review and publishing behavior
 

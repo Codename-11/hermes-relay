@@ -4378,6 +4378,9 @@ only through immutable GitHub Actions artifacts.
   exact pushed commits still require CI and Play preflight.
 - A coordinated approval workflow dispatches independently validated surface
   approvals concurrently; it does not combine tags or artifact contracts.
+- Trusted desktop CI and the CLI+UI release workflow share a lockfile- and
+  exact-source-keyed Rust/Tauri target cache. Release tags may restore the
+  default branch's exact build state; cache misses retain the full build path.
 
 **Consequences.** Stable Android bytes are built once, evidence reuse fails
 closed on tree or hash drift, and release PRs avoid duplicate work without

@@ -14,6 +14,9 @@ simulated merge tree is byte-identical; missing evidence or any tree change
 falls back to the full path-aware matrix. Local Android release iteration now
 uses a metadata-and-presentation lane, and a coordinated approval workflow can
 start independent Android, Plugin, and CLI+UI release jobs concurrently.
+The Windows tray lane also carries an exact-source Cargo/target cache from
+trusted branch CI into the tag installer build, with lockfile-scoped incremental
+fallback when tray sources change.
 
 ## 2026-09-01 — Unified Windows desktop update contract
 
