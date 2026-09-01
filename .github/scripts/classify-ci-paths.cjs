@@ -29,12 +29,16 @@ function classifyCiPaths(paths) {
     ]),
     desktop: forceAll || under(['desktop/']) || exact([
       '.github/workflows/ci-desktop.yml',
+      '.github/workflows/approve-release-extensions.yml',
+      '.github/workflows/release-cli.yml',
     ]),
     plugin: forceAll || paths.some((path) => /^plugin\/[^/]+\.py$/.test(path)) ||
       under(['plugin/relay/', 'plugin/tools/', 'plugin/tests/', 'relay_server/', 'hermes_relay_bootstrap/']) || exact([
         'plugin/plugin.yaml', 'pyproject.toml', 'scripts/check-plugin-version-sync.py',
         'scripts/check-server-version-sync.py', 'scripts/bump-plugin-version.sh',
         'scripts/bump-server-version.sh', '.github/workflows/ci-plugin.yml',
+        '.github/workflows/approve-release-extensions.yml',
+        '.github/workflows/release-plugin.yml',
       ]),
     dashboard: forceAll || under(['plugin/dashboard/']) || exact([
       '.github/workflows/ci-dashboard.yml',

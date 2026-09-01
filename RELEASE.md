@@ -743,14 +743,19 @@ git commit -m "release(server): server-v0.6.2"
 git push origin dev
 
 # Open the release PR (dev -> main) and merge with --no-ff.
-# After merge, tag from the new main tip:
-git checkout main
-git pull --ff-only origin main
-git tag server-v0.6.2
-git push origin server-v0.6.2
+# Then run "Hermes-Relay Plugin and CLI+UI Release Approval" from main,
+# select plugin, and enter 0.6.2. The workflow selects and validates main
+# before it creates server-v0.6.2 and starts the immutable-tag release workflow.
 ```
 
-Pushing `server-v*` triggers `.github/workflows/release-plugin.yml`, which
+For a Plugin prerelease, keep the release-prepared commit on `dev` and run the
+same trusted approval workflow from `main`; the version suffix makes it select
+and validate the exact `origin/dev` tip before creating the tag. Stable versions
+select `origin/main` instead.
+Direct `server-v*` tag pushes remain a recovery path and are guarded by the same
+branch-containment and metadata checks.
+
+The approval workflow dispatches `.github/workflows/release-plugin.yml`, which
 validates all plugin-owned version metadata with
 `scripts/check-plugin-version-sync.py`. Run
 `python scripts/check-version-tracks.py` locally before tagging when a change
@@ -781,20 +786,21 @@ git add desktop/package.json desktop/package-lock.json desktop/src/version.ts `
 git commit -m "release(desktop): desktop-v0.4.0-alpha.2"
 git push origin dev
 
-# Open the release PR (dev -> main) and merge with --no-ff.
-# After merge, tag from main:
-git switch main
-git pull --ff-only origin main
-cd desktop
-npm run check:version-sync -- --expect 0.4.0-alpha.2
-cd ..
-git tag desktop-v0.4.0-alpha.2
-git push origin desktop-v0.4.0-alpha.2
+# This is a prerelease: run "Hermes-Relay Plugin and CLI+UI Release Approval"
+# from main, select desktop, and enter 0.4.0-alpha.2. The workflow validates dev
+# before it creates the tag and starts the immutable-tag release workflow.
 ```
 
-The tag workflow rejects version drift and tags whose commit is not in
-`origin/main`, reruns CLI tests, builds all four standalone binaries, tests and
-packages the Windows tray, generates checksums, and publishes the GitHub Release.
+For a stable CLI+UI version, first merge the release PR from `dev` to `main`,
+then run the approval workflow from `main`. The version determines the source:
+prereleases select the exact `origin/dev` tip and stable releases select the
+exact `origin/main` tip before creating any tag. Direct `desktop-v*` tag pushes
+remain a recovery path.
+
+The release workflow rejects version drift and requires prerelease tags to be
+contained in `origin/dev` and stable tags to be contained in `origin/main`. It
+reruns CLI tests, builds all four standalone binaries, tests and packages the
+Windows tray, generates checksums, and publishes the GitHub Release.
 
 ### 6. Play review and publishing behavior
 
@@ -924,7 +930,8 @@ On every push of a tag matching `android-v*`, `.github/workflows/release-android
    containing a dash (e.g. `android-v0.2.0-beta.1`) as a prerelease automatically.
 8. Prints a `$GITHUB_STEP_SUMMARY` with the release and Play result.
 
-On every push of a tag matching `server-v*`,
+On every direct push of a tag matching `server-v*`, or after an approved
+dispatch from `.github/workflows/approve-release-extensions.yml`,
 `.github/workflows/release-plugin.yml`:
 
 1. Verifies a stable tag commit is contained in `main`, or a prerelease tag is
@@ -937,7 +944,8 @@ On every push of a tag matching `server-v*`,
 5. Creates a GitHub Release named `Hermes-Relay Plugin v<version>` with the wheel,
    sdist, and checksum file attached.
 
-On every push of a tag matching `desktop-v*`,
+On every direct push of a tag matching `desktop-v*`, or after an approved
+dispatch from `.github/workflows/approve-release-extensions.yml`,
 `.github/workflows/release-cli.yml` builds and publishes the CLI binaries and
 Windows tray installer. Its GitHub Release body comes from `CLI_RELEASE_NOTES.md`
 (rewritten per release — the CLI counterpart of `RELEASE_NOTES.md`); the workflow
