@@ -369,14 +369,12 @@ jobs:
         run: |
           echo "## Hermes-Relay Android v${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PRERELEASE" = "true" ] && [ -n "$HERMES_KEYSTORE_BASE64" ]; then
-            echo "✅ **Release-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$PRERELEASE" = "true" ]; then
-            echo "⚠️ **Debug-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PRERELEASE" != "true" ]; then
+            echo "✅ **Published the exact signed Play-preflight artifacts**" >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "$HERMES_KEYSTORE_BASE64" ]; then
-            echo "✅ **Signed with release keystore** — suitable for Play Store upload" >> "$GITHUB_STEP_SUMMARY"
+            echo "✅ **Release-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "⚠️ **Debug-signed** (no \`HERMES_KEYSTORE_BASE64\` secret) — NOT suitable for Play Store. Add the secret in repo settings to enable release signing." >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ **Debug-signed HR Candidate app** — separate package ID; never uploaded to Play" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Artifacts" >> "$GITHUB_STEP_SUMMARY"
