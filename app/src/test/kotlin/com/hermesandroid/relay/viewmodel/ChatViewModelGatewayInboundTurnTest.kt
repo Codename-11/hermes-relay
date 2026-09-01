@@ -517,6 +517,40 @@ class ChatViewModelGatewayInboundTurnTest {
         )
     }
 
+    @Test
+    fun ownershipErrorAfterFreshSubmitStaysVisibleWithoutHistoryRecovery() {
+        val ownershipError =
+            "Session 20260612_120000_abc123 already has a live owner (webui, pid 42, running 0m). " +
+                "Only one surface at a time may run a session, because a second one would reason from stale history."
+        val historyReads = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            historyReads.incrementAndGet()
+            Result.success(emptyList())
+        }
+        viewModel.createNewChat()
+
+        viewModel.sendMessage("Keep this retryable")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "error",
+                buildJsonObject { put("message", ownershipError) },
+                "live-1",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.rawError == ownershipError }
+        assertFalse(handler.isStreaming.value)
+        assertFalse(viewModel.recoveringAnswer.value)
+        assertEquals(0, historyReads.get())
+        assertTrue(handler.messages.value.any { it.content == "Keep this retryable" })
+        assertFalse(
+            handler.messages.value.any {
+                it.content.contains("unfinished message was not found", ignoreCase = true)
+            },
+        )
+    }
+
     @After
     fun tearDown() {
         DiagnosticsLog.clear()

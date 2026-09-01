@@ -10531,6 +10531,10 @@ class ChatViewModel : ViewModel() {
                             _steerableTurn.value = false
                             onPreflightErrorCb(Exception(reason))
                         },
+                        onSubmitRejected = { reason ->
+                            _steerableTurn.value = false
+                            onPreflightErrorCb(Exception(reason))
+                        },
                         onFailure = { failure ->
                             val confirmedModel = gateway.serverModel.value
                                 ?.takeIf { it.isNotBlank() }

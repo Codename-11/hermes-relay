@@ -741,6 +741,12 @@ class GatewayTurnCallbacks(
     val onNoticeShow: (GatewayAgentNotice) -> Unit = { _ -> },
     /** Exact-key dismissal for an upstream notice. */
     val onNoticeClear: (key: String) -> Unit = { _ -> },
+    /**
+     * The Gateway authoritatively refused `prompt.submit` before a model turn
+     * began. The composed user row remains local and retryable; callers must
+     * not treat this as a dropped stream or reconcile it from history.
+     */
+    val onSubmitRejected: (String) -> Unit = onError,
 )
 
 /**

@@ -44,6 +44,7 @@ class GatewayEventMapperTest {
         var usage: UsageInfo? = null
         var usageCalls = 0
         val errors = mutableListOf<String>()
+        val submitRejections = mutableListOf<String>()
 
         val callbacks = GatewayTurnCallbacks(
             onSessionId = { sessionIds += it },
@@ -74,6 +75,7 @@ class GatewayEventMapperTest {
             onStatusClear = { statusClears += it },
             onNoticeShow = { notices += it },
             onNoticeClear = { noticeClears += it },
+            onSubmitRejected = { submitRejections += it },
         )
     }
 
@@ -483,8 +485,29 @@ class GatewayEventMapperTest {
         val mapper = mapperWith(r)
         mapper.onEvent("error", obj("""{"message":"model exploded"}"""))
         assertEquals(listOf("model exploded"), r.errors)
+        assertTrue(r.submitRejections.isEmpty())
         assertTrue(mapper.turnEnded)
         assertEquals(0, r.completes)
+    }
+
+    @Test
+    fun `session ownership error is an authoritative submit rejection`() {
+        val r = Recorder()
+        val mapper = mapperWith(r)
+        val message =
+            "Session fresh-1 already has a live owner (webui, pid 42, running 0m). " +
+                "Only one surface at a time may run a session, because a second one would reason from stale history."
+
+        mapper.onEvent(
+            "error",
+            obj(
+                """{"message":"Session fresh-1 already has a live owner (webui, pid 42, running 0m). Only one surface at a time may run a session, because a second one would reason from stale history."}""",
+            ),
+        )
+
+        assertEquals(listOf(message), r.submitRejections)
+        assertTrue(r.errors.isEmpty())
+        assertTrue(mapper.turnEnded)
     }
 
     // --- Tools ---

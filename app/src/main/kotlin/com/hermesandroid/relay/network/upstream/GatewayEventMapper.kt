@@ -279,7 +279,12 @@ class GatewayEventMapper(
 
             "error" -> {
                 turnEnded = true
-                callbacks.onError(payload.string("message") ?: "Gateway error")
+                val message = payload.string("message") ?: "Gateway error"
+                if (isSessionOwnershipRejection(message)) {
+                    callbacks.onSubmitRejected(message)
+                } else {
+                    callbacks.onError(message)
+                }
             }
 
             "subagent.spawn_requested", "subagent.start", "subagent.thinking", "subagent.tool",
@@ -469,6 +474,19 @@ class GatewayEventMapper(
         private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
         private val TERMINAL_EVENTS = setOf("message.complete", "error")
+
+        /**
+         * Isolated-turn paths can acknowledge `prompt.submit` and then emit
+         * the ownership refusal as a plain terminal `error` event. That event
+         * has no JSON-RPC code or structured reason, so match both stable
+         * clauses from upstream's canonical message.
+         */
+        internal fun isSessionOwnershipRejection(message: String): Boolean {
+            val normalized = message.lowercase()
+            return "already has a live owner (" in normalized &&
+                "only one surface at a time may run a session" in normalized
+        }
+
         internal fun isFailedMoaReference(text: String): Boolean {
             val normalized = text.trimStart().lowercase()
             return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
