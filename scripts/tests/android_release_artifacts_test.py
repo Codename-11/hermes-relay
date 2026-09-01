@@ -65,7 +65,10 @@ class AndroidReleaseArtifactsTest(unittest.TestCase):
         manifest = json.loads(
             (self.output / MODULE.MANIFEST_NAME).read_text(encoding="utf-8")
         )
-        self.assertEqual(set(MODULE.EXPECTED_ROLES), {item["role"] for item in manifest["artifacts"]})
+        self.assertEqual(
+            set(MODULE.EXPECTED_ROLES),
+            {item["role"] for item in manifest["artifacts"]},
+        )
         checksums = (self.output / MODULE.CHECKSUMS_NAME).read_text(encoding="utf-8")
         self.assertIn(self.apk.name, checksums)
         self.assertIn(self.aab.name, checksums)

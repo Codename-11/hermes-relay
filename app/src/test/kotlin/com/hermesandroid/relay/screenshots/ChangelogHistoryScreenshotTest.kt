@@ -29,7 +29,7 @@ class ChangelogHistoryScreenshotTest {
                 ChangelogScreen(onClose = {})
             }
         }
-        compose.onNodeWithText("v${latest.version} — ${latest.title}").assertExists()
+        compose.onNodeWithText("v${latest.version} — ${requireNotNull(latest.title)}").assertExists()
         compose.onNodeWithText("Highlights").assertExists()
         latest.remainingChangesOfKind("fixed").firstOrNull()?.let { fixed ->
             compose.onNodeWithText("Fixed").assertExists()

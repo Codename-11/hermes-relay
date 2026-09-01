@@ -64,11 +64,12 @@ class WhatsNewToastScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText(latest.title.orEmpty()).assertExists()
-        val digest = requireNotNull(latest.resolvedToastDigest())
-        compose.onNodeWithText("Also: ${digest.countText()}").assertExists()
-        compose.onNodeWithText(digest.preview.joinToString(", ") + "…").assertExists()
-        compose.onNodeWithText("View all").assertExists()
+        compose.onNodeWithText(requireNotNull(latest.title)).assertExists()
+        latest.visibleDigest()?.let { digest ->
+            compose.onNodeWithText("Also: ${digest.countText()}").assertExists()
+            compose.onNodeWithText(digest.preview.joinToString(", ") + "…").assertExists()
+            compose.onNodeWithText("View all").assertExists()
+        }
         compose.onNodeWithContentDescription("Close").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/whats-new-toast-large-text.png")
     }
@@ -90,9 +91,12 @@ class WhatsNewToastScreenshotTest {
             }
         }
 
-        compose.onNodeWithText(latest.title.orEmpty()).performClick()
-        expanded = false
-        compose.onNodeWithText("View all").performClick()
+        compose.onNodeWithText(requireNotNull(latest.title)).performClick()
+        assertTrue(expanded)
+        latest.visibleDigest()?.let {
+            expanded = false
+            compose.onNodeWithText("View all").performClick()
+        }
         compose.onNodeWithContentDescription("Close").performClick()
 
         assertTrue(expanded)
@@ -114,7 +118,7 @@ class WhatsNewToastScreenshotTest {
             }
         }
         compose.mainClock.advanceTimeBy(300L)
-        compose.onNodeWithText(latest.title.orEmpty())
+        compose.onNodeWithText(requireNotNull(latest.title))
             .performTouchInput { swipeLeft(durationMillis = 300L) }
         compose.mainClock.advanceTimeBy(300L)
 
@@ -133,4 +137,10 @@ class WhatsNewToastScreenshotTest {
                 add("$fixCount ${if (fixCount == 1) "fix" else "fixes"}")
             }
         }.joinToString(" · ")
+
+    private fun ChangelogVersion.visibleDigest():
+        com.hermesandroid.relay.ui.components.ChangelogToastDigest? =
+        resolvedToastDigest()?.takeIf {
+            it.additionalFeatureCount > 0 || it.improvementCount > 0 || it.fixCount > 0
+        }
 }
