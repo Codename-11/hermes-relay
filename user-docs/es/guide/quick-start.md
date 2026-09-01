@@ -69,7 +69,7 @@ las rutas actuales del Dashboard.
 - **Chat · Ready** significa que ya puedes enviar mensajes.
 - **Manage** puede pedir que inicies sesión en el dashboard.
 - **Voice** se habilita con esa misma sesión del dashboard.
-- **API fallback** puede no estar disponible sin bloquear Chat.
+- **Direct API** puede no estar disponible sin bloquear Chat.
 - **Relay · Paired** confirma las extensiones recomendadas; un fallo de Relay no
   debe bloquear el recorrido upstream estándar.
 

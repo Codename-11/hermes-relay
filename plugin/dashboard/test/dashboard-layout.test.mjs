@@ -41,7 +41,7 @@ test("remote access presents Dashboard ingress and keeps direct Relay explicitly
   const source = read("../src/tabs/RemoteAccess.jsx");
 
   assert.match(source, /Dashboard → host :9119/);
-  assert.match(source, /API fallback → host :8642/);
+  assert.match(source, /Direct API → host :8642/);
   assert.match(source, /Direct Relay → host :8767/);
   assert.match(source, /serve_services/);
   assert.match(source, /listen_ports/);

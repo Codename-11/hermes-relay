@@ -29,8 +29,8 @@ Run this from the `hermes-android/` repo root, or wherever `relay_server/` is lo
 ### As a Hermes plugin + relay
 
 ```bash
-# 1. Install the Android plugin (18 android_* tools)
-cp -r plugin ~/.hermes/plugins/hermes-relay
+# 1. Install and enable the native Hermes plugin
+hermes plugins install Codename-11/hermes-relay/plugin --enable
 
 # 2. Install relay dependencies
 pip install -r relay_server/requirements.txt

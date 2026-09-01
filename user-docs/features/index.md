@@ -8,7 +8,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 
 | Feature | Description |
 |---------|-------------|
-| [Vanilla Hermes Chat Transport](/features/direct-api) | Gateway `/api/ws` (live thinking) preferred, API-server SSE fallback — never the relay |
+| [Vanilla Hermes Chat Transport](/features/direct-api) | Gateway `/api/ws` for standard chats; explicit Direct API for API-only compatibility — never the relay |
 | Inbound files and media | Authenticated Dashboard download/stream routes first; Relay tokens and compatibility are additive |
 | [Voice Mode](/features/voice) | Real-time voice conversation — you talk, the agent answers aloud via your server's configured TTS/STT providers |
 | [Markdown Rendering](/features/markdown) | Full markdown with syntax-highlighted code blocks |
@@ -19,7 +19,7 @@ A **<span class="track-badge track-badge--sideload">Sideload only</span>** badge
 | [Personalities](/features/personalities) | Dynamic from `GET /api/config` — picker, agent name on bubbles |
 | [Command Palette](/guide/chat#slash-commands) | Searchable command browser — 29 gateway commands, personalities, 90+ skills |
 | [Slash Commands](/guide/chat#slash-commands) | Inline autocomplete as you type `/` |
-| [Vanilla Hermes Setup](/guide/getting-started#_3-connect-chat) | Connect through the Dashboard/Gateway; add API fallback or Relay later when needed |
+| [Vanilla Hermes Setup](/guide/getting-started#_3-connect-chat) | Connect through the Dashboard/Gateway; add Direct API or Relay later when needed |
 | [Token Tracking](/features/tokens) | Per-message usage and cost |
 | [Tool Progress](/features/tools) | Configurable display — Off, Compact, or Detailed |
 | [Plugins](/features/plugins) | Native reactive pages, including Relay-assisted agent-created previews |

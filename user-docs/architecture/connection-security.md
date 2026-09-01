@@ -145,7 +145,7 @@ The `hermes-relay-tailscale` helper configures a dedicated HTTPS listener
 (`:10443` by default) for local Dashboard `:9119`, including the plugin's
 same-origin Relay transport. This avoids conflicts when Traefik, Caddy, nginx,
 or another service already owns `:443`.
-The API fallback on `:8642` remains optional:
+Direct API on `:8642` remains optional:
 
 ```bash
 hermes-relay-tailscale enable

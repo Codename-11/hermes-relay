@@ -73,6 +73,7 @@ the upstream contract identifiers it depends on.
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
 | `scope_rejection_inputs` | Exact, foreign, and unscoped event inputs |
 | `terminal_gap_activate` | Socket closes after live output; replacement `session.activate` reports `running=false`; history is authoritative |
+| `terminal_gap_active_list` | An exact Android-owned turn receives deltas but no terminal; `session.active_list` reports the same live/durable owner idle; history is authoritative |
 | `terminal_gap_session_info` | Scoped `session.info {running:false}` settles a turn without `message.complete` |
 | `active_status_lifecycle` | `session.active_list` reports starting, working, waiting, and idle, then a complete empty process-wide snapshot permits removal of unambiguously owned prior rows |
 | `active_status_profile_scope` | A row has no profile metadata and a caller profile hint has no effect; the client must use exact client-held ownership and reject invented attribution |

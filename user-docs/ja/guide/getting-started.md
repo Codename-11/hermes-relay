@@ -38,7 +38,7 @@ Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat
 セッション、ログイン、Manage、標準 Voice、認証済み受信ファイルを提供します。`hermes dashboard`
 で起動し、スマートフォンから到達できるようにします。
 
-`:8642` の API サーバーはオプションです。Chat の自動フォールバックまたは
+`:8642` の API サーバーはオプションです。明示的な Direct API 接続または
 高度な headless 互換用途でのみ設定し、その場合だけ API キーが必要です。
 `API_SERVER_KEY` はサーバー管理者が作成するもので、Dashboard からは発行されません。
 
@@ -65,7 +65,7 @@ Android は異なるサインイン origin を保存前に検証します。
 3. 求められた場合はダッシュボードへログインします。
 4. **Connect** をタップし、**Chat · Ready** を確認します。
 5. **セットアップを完了** で、バックグラウンドのチャット通知が必要なら Android の通知を有効にします。カメラ、マイク、その他の機能は引き続き任意で、個別に設定できます。すぐ進む場合は **今はしない** を選びます。
-6. 必要なら後から **Advanced** で API fallback、Relay、リモートルートを追加します。
+6. 必要なら後から **Advanced** で Direct API、Relay、リモートルートを追加します。
 
 `hermes-relay-tailscale enable` は tailnet の専用 `:10443` に
 `https://host.ts.net:10443` を公開し、同一 origin の Relay パスとともにローカル
@@ -73,7 +73,7 @@ Dashboard `:9119` へ転送します。意図的に直接公開した
 `http://100.x.y.z:9119` も使用できますが、アプリケーション TLS はありません。
 
 同じログインで Chat、セッション、Manage、Voice が有効になります。Relay が
-未ペアリングでも、API fallback が利用不可でも正常です。
+未ペアリングでも、Direct API が利用不可でも正常です。
 
 ## 推奨: Relay でセットアップを完成する {#relay-server-optional}
 

@@ -5,9 +5,8 @@ import org.junit.Test
 
 /**
  * Resolution matrix for [resolveStreamingEndpointPreference] — the gateway
- * tier sits above the capability-preferred SSE endpoint for "auto". An
- * unresolved cold-start probe remains on Gateway until it produces a
- * definitive fallback verdict.
+ * tier is a stable owner for standard "auto" conversations. API capability
+ * ordering applies only to true API-only compatibility connections.
  */
 class GatewayEndpointResolutionTest {
 
@@ -44,28 +43,63 @@ class GatewayEndpointResolutionTest {
     }
 
     @Test
-    fun `auto falls back after a definitive non-ready verdict`() {
+    fun `standard auto remains gateway owned after auth expiry or outage`() {
         listOf(
             GatewayAvailability.SignInRequired,
             GatewayAvailability.Unreachable,
             GatewayAvailability.Unsupported,
         ).forEach { availability ->
             assertEquals(
-                "expected SSE fallback for $availability",
-                "sessions",
+                "expected Gateway affinity for $availability",
+                "gateway",
                 resolveStreamingEndpointPreference("auto", availability, fullCaps),
             )
         }
     }
 
     @Test
-    fun `auto fallback respects capability ordering`() {
+    fun `API-only auto respects capability ordering`() {
+        assertEquals(
+            "sessions",
+            resolveStreamingEndpointPreference(
+                "auto",
+                GatewayAvailability.SignInRequired,
+                fullCaps,
+                gatewayOwned = false,
+            ),
+        )
         assertEquals(
             "completions",
             resolveStreamingEndpointPreference(
                 "auto",
                 GatewayAvailability.SignInRequired,
                 portableOnlyCaps,
+                gatewayOwned = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `standard auto does not consult API health when gateway is unavailable`() {
+        assertEquals(
+            "gateway",
+            resolveStreamingEndpointPreference(
+                "auto",
+                GatewayAvailability.Unreachable,
+                ServerCapabilities.DISCONNECTED,
+                gatewayOwned = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual API selection remains explicit compatibility mode`() {
+        assertEquals(
+            "sessions",
+            resolveStreamingEndpointPreference(
+                "sessions",
+                GatewayAvailability.SignInRequired,
+                fullCaps,
             ),
         )
     }

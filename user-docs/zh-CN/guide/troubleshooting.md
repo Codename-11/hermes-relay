@@ -34,10 +34,10 @@ HTTPS `:10443` 会代理到本地 Dashboard `:9119`。
 - 检查 Dashboard/Gateway URL、登录会话和 `/api/ws`。
 - 如果出现错误提示，只点击一次 **Retry**。
 - 查看 Hermes 服务器日志。
-- 可选 API fallback 应单独诊断；其故障不会阻止正常的 Gateway 连接。
+- 可选 Direct API 应单独诊断；其故障不会阻止正常的 Gateway 连接。
 - 本地模型可能需要数分钟。如果 Android 在后台断开连接，重新连接后会读取已完成的响应。
 
-如果主动配置的 API fallback 不可用，请检查 `API_SERVER_ENABLED`、bind 地址、
+如果主动配置的 Direct API 不可用，请检查 `API_SERVER_ENABLED`、bind 地址、
 `http://<host>:8642/health`、运维人员创建的 `API_SERVER_KEY` 和防火墙。Dashboard 登录不会创建该密钥。
 
 ## Manage 和 Voice

@@ -259,6 +259,46 @@ class GatewayForegroundRecoveryInstrumentedTest {
     }
 
     @Test
+    fun terminalGapActiveList_settlesExactOwnedTurnAndRendersAuthoritativeHistory() {
+        viewModel.sendMessage("Run an Android-owned task")
+        fixture.awaitRpc("prompt.submit")
+        serverSocket.send(fixture.event("message.start", null, LIVE_SESSION_ID))
+        serverSocket.send(
+            fixture.event(
+                "message.delta",
+                buildJsonObject { put("text", PARTIAL_ANSWER) },
+                LIVE_SESSION_ID,
+            ),
+        )
+        compose.waitUntil(5_000) { handler.isStreaming.value }
+        compose.onNodeWithTag("stream-state").assertTextEquals("STREAMING")
+
+        persistedHistory = listOf(
+            MessageItem(
+                id = PERSISTED_ANSWER_ID,
+                sessionId = STORED_SESSION_ID,
+                role = "assistant",
+                content = JsonPrimitive(AUTHORITATIVE_ANSWER),
+            ),
+        )
+        fixture.activeSessionStatus = "idle"
+        runBlocking { gatewayClient.listActiveSessions() }
+
+        compose.waitUntil(5_000) {
+            !handler.isStreaming.value &&
+                !gatewayClient.hasActiveTurn() &&
+                handler.messages.value.singleOrNull()?.id == PERSISTED_ANSWER_ID
+        }
+        compose.onNodeWithTag("stream-state").assertTextEquals("IDLE")
+        compose.onNodeWithTag("message-$PERSISTED_ANSWER_ID")
+            .assertTextEquals("${MessageRole.ASSISTANT.name}:$AUTHORITATIVE_ANSWER")
+        assertEquals(1, fixture.rpcCount("prompt.submit"))
+        assertEquals(0, fixture.rpcCount("session.interrupt"))
+        assertEquals(0, fixture.rpcCount("session.activate"))
+        assertEquals(0, fixture.requestsTo("/v1/chat/completions"))
+    }
+
+    @Test
     fun desktopOwnedTurn_remainsReadOnlyAcrossAndroidForegroundLifecycle() {
         viewModel.setChatVisible(false)
         viewModel.updateGatewayClient(null)

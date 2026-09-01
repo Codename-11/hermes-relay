@@ -141,7 +141,7 @@
     <string name="chat_failure_details_guidance">Hermes hat diesen Fehler gemeldet. Die App wechselt Routen oder Modelle nicht automatisch.</string>
     <string name="chat_failure_copy_details">Details kopieren</string>
     <string name="chat_failure_route_gateway">Gateway</string>
-    <string name="chat_failure_route_api">API-Fallback</string>
+    <string name="chat_failure_route_api">Direct API</string>
     <string name="chat_open_settings">Einstellungen öffnen</string>
     <string name="chat_connect_hermes">Hermes verbinden</string>
     <string name="chat_try_demo">Demo ausprobieren</string>
@@ -309,7 +309,7 @@
     <string name="cw_cloud_subtitle">Mit deinem gehosteten Agenten verbinden</string>
     <string name="cw_server_vps_title">Remote-Gateway</string>
     <string name="cw_server_vps_subtitle">Dashboard-Adresse eingeben</string>
-    <string name="cw_relay_optional_note">Private LAN- und Tailscale-Adressen dürfen HTTP oder HTTPS verwenden. Öffentliche Adressen erfordern HTTPS. Relay und API-Fallback sind optional.</string>
+    <string name="cw_relay_optional_note">Private LAN- und Tailscale-Adressen dürfen HTTP oder HTTPS verwenden. Öffentliche Adressen erfordern HTTPS. Relay und Direct API sind optional.</string>
     <string name="cw_cloud_entry_title">Mit von Nous gehostetem Hermes verbinden</string>
     <string name="cw_cloud_entry_description">Gib die im Nous Portal angezeigte Agentenadresse ein. Nach dem Auffinden von Hermes meldest du dich sicher an.</string>
     <string name="cw_cloud_agent_name">Agentenadresse</string>
@@ -396,7 +396,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 oder http://dein-server:8642</string>
     <string name="cw_api_url_supporting">Von Chat und Sitzungen verwendete Hermes-API — bei reinen Hosts werden API-Port 8642 und http:// angenommen (Dashboard-Port 9119 wird separat abgeleitet)</string>
     <string name="cw_scan_message">Dieses LAN wird nach Hermes-Dashboard/API durchsucht…</string>
-    <string name="cw_dashboard_signin_hint">Melde dich über das Dashboard an, um Verwaltung und Sprache freizuschalten — der API-Schlüssel gilt nur für den optionalen direkten API-Fallback.</string>
+    <string name="cw_dashboard_signin_hint">Melde dich über das Dashboard an, um Verwaltung und Sprache freizuschalten — der API-Schlüssel gilt nur für eine explizite Direct-API-Verbindung.</string>
     <string name="cw_pair_relay_section">Relay koppeln (optional)</string>
     <string name="cw_pair_relay_for">Relay mit %1$s koppeln</string>
     <string name="cw_pair_relay_scoped_desc">Füge dieser gespeicherten Hermes-Verbindung die optionale Relay-Erweiterung hinzu. Dadurch wird kein Server hinzugefügt oder ersetzt.</string>
@@ -706,7 +706,7 @@
     <string name="settings_hermes_management">Hermes-Verwaltung</string>
     <string name="settings_hermes_management_desc">Dashboard-Funktionen: Skills, Cron, MCP, Profile, Modelle</string>
     <string name="settings_chat">Chat</string>
-    <string name="settings_chat_desc">Chatverhalten, Gateway, API-Fallback, Werkzeuganzeige, Nachrichtenlänge</string>
+    <string name="settings_chat_desc">Chatverhalten, Gateway, Direct API, Werkzeuganzeige, Nachrichtenlänge</string>
     <string name="settings_voice_mode">Sprachmodus</string>
     <string name="settings_voice_mode_desc">Dashboard-Sprache, Echtzeit-Relay-Optionen, Anbieter</string>
     <string name="settings_threads">Threads</string>
@@ -817,11 +817,11 @@
     <string name="chat_settings_debug">Debug</string>
     <string name="chat_settings_show_system_messages_desc">Verborgene \"[System: …]\"-Markierungen des Servers anzeigen (Modell-/Personawechsel). Aus entspricht Desktop/TUI.</string>
     <string name="chat_settings_streaming_endpoint">Streaming-Endpunkt</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">Automatisch: wählt anhand der Serverfunktionen den besten Pfad. Derzeit verwendet: </string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">Automatisch: Standardverbindungen verwenden Gateway; reine API-Verbindungen verwenden Direct API. Derzeit verwendet: </string>
     <string name="chat_settings_gateway_suffix"> (Live-Denken über den Dashboard-WebSocket)</string>
     <string name="chat_settings_chat_completions_suffix"> (Chat über /v1/chat/completions)</string>
     <string name="chat_settings_runs_suffix"> (Chat über ausdrücklich gestreamte /v1/runs)</string>
-    <string name="chat_settings_gateway_desc">Gateway: Live-Denken + umfangreiche Werkzeugereignisse über den Dashboard-WebSocket (/api/ws), wie in der Desktop-App. Erfordert Anmeldung unter Verwalten; weicht bei Nichtverfügbarkeit pro Durchlauf auf SSE aus.</string>
+    <string name="chat_settings_gateway_desc">Gateway: Live-Denken + umfangreiche Werkzeugereignisse über den Dashboard-WebSocket (/api/ws), wie in der Desktop-App. Erfordert Anmeldung unter Verwalten; bei Nichtverfügbarkeit bleibt dieser Chat auf Gateway und bietet Anmeldung oder Wiederholen an.</string>
     <string name="chat_settings_sessions_desc">Sitzungen: Hermes-eigener Endpunkt /api/sessions/{id}/chat/stream.</string>
     <string name="chat_settings_chat_desc">Chat: OpenAI-kompatibles SSE über /v1/chat/completions.</string>
     <string name="chat_settings_runs_desc">Durchläufe: nur verwenden, wenn dein Server /v1/runs direkt streamt.</string>
@@ -3525,7 +3525,7 @@
     <string name="active_section_dashboard_unreachable">Nicht erreichbar</string>
     <string name="active_section_no_fallback_routes">Noch keine Ausweichrouten</string>
     <string name="active_section_no_fallback_routes_desc">Füge optional eine API-Route für direkten Chat-Ausweichbetrieb und Netzwerkwechsel hinzu.</string>
-    <string name="active_section_add_api_fallback">Ausweichroute hinzufügen</string>
+    <string name="active_section_add_api_fallback">Direct-API-Route hinzufügen</string>
     <string name="active_section_security_authentication">Authentifizierung</string>
     <string name="active_section_dashboard_session">Dashboard-Sitzung</string>
     <string name="active_section_credential_storage">Anmeldedatenspeicher</string>
@@ -3589,7 +3589,7 @@
     <string name="cw_timeline_authenticated">Authentifizierung bestätigt</string>
     <string name="cw_timeline_ready">Verbindung bereit</string>
     <string name="cw_timeline_ready_detail">Chat, Manage und Voice können dieses Dashboard verwenden</string>
-    <string name="active_section_optional_api_fallback">Optionaler direkter API-Fallback</string>
+    <string name="active_section_optional_api_fallback">Optionale Direct API</string>
     <string name="active_section_api_not_required">Nicht erforderlich, wenn diese Verbindung das Hermes Dashboard verwendet.</string>
     <string name="active_section_where_api_key">Wo erhalte ich diesen Schlüssel?</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY wird auf deinem Hermes-Server erstellt und nicht von dieser App bereitgestellt. Konfiguriere ihn nur für den optionalen API-Server, der einen verwendbaren Schlüssel verlangt, und gib hier denselben Wert ein.</string>
@@ -4540,7 +4540,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">Direct API</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">Lege die Dashboard- und Gateway-Adresse für dieses Telefon fest. Private LAN- und Tailscale-Routen dürfen HTTP oder HTTPS verwenden; öffentliche Routen erfordern HTTPS.</string>
     <string name="dashboard_address_editor_title">Gateway-Adresse</string>
@@ -4557,7 +4557,7 @@
     <string name="dashboard_oauth_canonical_origin">Hermes is signing in through %1$s. You’ll review this address before it is saved.</string>
     <string name="network_routes_empty">No additional network routes</string>
     <string name="network_routes_empty_desc">Add a LAN, Tailscale, public, API, or Relay address when this phone needs another path to Hermes.</string>
-    <string name="network_routes_summary">LAN-, Tailscale- und öffentliche Routen sind Wege zu diesem Gateway. API-Fallback und Relay-Erweiterungen sind optional.</string>
+    <string name="network_routes_summary">LAN-, Tailscale- und öffentliche Routen sind Wege zu diesem Gateway. Direct API und Relay-Erweiterungen sind optional.</string>
     <string name="network_routes_title">Network routes</string>
     <string name="security_sheet_available_mechanism">Available fallback · %1$s</string>
     <string name="security_sheet_unavailable_mechanism">Unavailable · %1$s</string>

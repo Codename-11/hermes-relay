@@ -36,10 +36,10 @@ Tailnet-HTTPS `:10443` leitet an das lokale Dashboard `:9119` weiter.
 - Prüfe Dashboard/Gateway-URL, Anmeldung und `/api/ws`.
 - Tippe bei einem Fehlerbanner einmal auf **Retry**.
 - Prüfe die Hermes-Serverprotokolle.
-- Ein optionaler API-Fallback wird separat geprüft; sein Ausfall blockiert eine gesunde Gateway-Verbindung nicht.
+- Eine optionale Direct API wird separat geprüft; ihr Ausfall blockiert eine gesunde Gateway-Verbindung nicht.
 - Bei langen lokalen Modellläufen kann Android die Verbindung im Hintergrund trennen; die fertige Antwort wird nach der Wiederverbindung geladen.
 
-Wenn der bewusst konfigurierte API-Fallback nicht verfügbar ist, prüfe
+Wenn die bewusst konfigurierte Direct API nicht verfügbar ist, prüfe
 `API_SERVER_ENABLED`, die Bind-Adresse, `http://<host>:8642/health`, den
 vom Serverbetreiber erstellten `API_SERVER_KEY` und die Firewall. Die Dashboard-Anmeldung erzeugt diesen Schlüssel nicht.
 

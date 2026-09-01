@@ -141,7 +141,7 @@
     <string name="chat_failure_details_guidance">Hermes 报告了此错误。应用不会自动切换路由或模型。</string>
     <string name="chat_failure_copy_details">复制详情</string>
     <string name="chat_failure_route_gateway">网关</string>
-    <string name="chat_failure_route_api">API 回退</string>
+    <string name="chat_failure_route_api">Direct API</string>
     <string name="chat_open_settings">打开设置</string>
     <string name="chat_connect_hermes">连接 Hermes</string>
     <string name="chat_try_demo">体验演示</string>
@@ -396,7 +396,7 @@
     <string name="cw_api_url_placeholder">192.168.1.10 或 http://你的服务器:8642</string>
     <string name="cw_api_url_supporting">聊天和会话使用的 Hermes API——裸主机名默认使用 API 端口 8642 和 http://（仪表盘的 9119 端口单独推导）</string>
     <string name="cw_scan_message">正在扫描本局域网寻找 Hermes 仪表盘/API…</string>
-    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥仅用于可选的直接 API 回退。</string>
+    <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥仅用于明确配置的 Direct API 连接。</string>
     <string name="cw_pair_relay_section">配对 Relay（可选）</string>
     <string name="cw_pair_relay_for">为 %1$s 配对 Relay</string>
     <string name="cw_pair_relay_scoped_desc">为这个已保存的 Hermes 连接添加可选的 Relay 扩展。这不会添加或替换服务器。</string>
@@ -703,7 +703,7 @@
     <string name="settings_hermes_management">Hermes 管理</string>
     <string name="settings_hermes_management_desc">仪表盘功能：技能、定时任务、MCP、配置文件、模型</string>
     <string name="settings_chat">聊天</string>
-    <string name="settings_chat_desc">聊天行为、Gateway、API 回退、工具显示、消息长度</string>
+    <string name="settings_chat_desc">聊天行为、Gateway、Direct API、工具显示、消息长度</string>
     <string name="settings_voice_mode">语音模式</string>
     <string name="settings_voice_mode_desc">仪表盘语音、实时 Relay 选项、提供商</string>
     <string name="settings_threads">话题</string>
@@ -814,11 +814,11 @@
     <string name="chat_settings_debug">调试</string>
     <string name="chat_settings_show_system_messages_desc">显示服务器隐藏的 \"[System: …]\" 标记（模型/人格更改）。关闭则与桌面/TUI 一致。</string>
     <string name="chat_settings_streaming_endpoint">流式端点</string>
-    <string name="chat_settings_streaming_endpoint_auto_prefix">自动：根据服务器暴露的内容选择最佳路径。当前使用：</string>
+    <string name="chat_settings_streaming_endpoint_auto_prefix">自动：标准连接使用网关；仅 API 连接使用直接 API。当前使用：</string>
     <string name="chat_settings_gateway_suffix">（通过仪表盘 WebSocket 实时思考）</string>
     <string name="chat_settings_chat_completions_suffix">（通过 /v1/chat/completions 聊天）</string>
     <string name="chat_settings_runs_suffix">（通过显式流式 /v1/runs 聊天）</string>
-    <string name="chat_settings_gateway_desc">网关：通过仪表盘 WebSocket（/api/ws）实时思考+丰富工具事件——桌面应用使用的方式。需要管理登录；不可用时每轮回退到 SSE。</string>
+    <string name="chat_settings_gateway_desc">网关：通过仪表盘 WebSocket（/api/ws）提供实时思考和丰富工具事件——桌面应用也使用此路径。需要“管理”登录；不可用时，此聊天仍保留在网关，并提示登录或重试。</string>
     <string name="chat_settings_sessions_desc">会话：Hermes 原生 /api/sessions/{id}/chat/stream。</string>
     <string name="chat_settings_chat_desc">聊天：通过 /v1/chat/completions 的 OpenAI 兼容 SSE。</string>
     <string name="chat_settings_runs_desc">Runs：仅在服务器直接流式传输 /v1/runs 时使用。</string>
@@ -3455,7 +3455,7 @@
     <string name="active_section_dashboard_unreachable">无法访问</string>
     <string name="active_section_no_fallback_routes">尚无备用路由</string>
     <string name="active_section_no_fallback_routes_desc">可添加 API 路由，用于直接聊天回退和网络切换。</string>
-    <string name="active_section_add_api_fallback">添加备用路由</string>
+    <string name="active_section_add_api_fallback">添加 Direct API 路由</string>
     <string name="active_section_security_authentication">身份验证</string>
     <string name="active_section_dashboard_session">Dashboard 会话</string>
     <string name="active_section_credential_storage">凭据存储</string>
@@ -3521,7 +3521,7 @@
     <string name="cw_timeline_authenticated">身份验证已确认</string>
     <string name="cw_timeline_ready">连接已就绪</string>
     <string name="cw_timeline_ready_detail">Chat、Manage 和 Voice 可以使用此 Dashboard</string>
-    <string name="active_section_optional_api_fallback">可选的直接 API 回退</string>
+    <string name="active_section_optional_api_fallback">可选 Direct API</string>
     <string name="active_section_api_not_required">此连接使用 Hermes Dashboard 时不需要配置。</string>
     <string name="active_section_where_api_key">从哪里获取此密钥？</string>
     <string name="active_section_api_key_explainer">API_SERVER_KEY 需要在 Hermes 服务器上创建，并非由此应用提供。仅在启用可选 API 服务器时配置；该服务器需要可用密钥，并在此输入相同的值。</string>
@@ -4464,7 +4464,7 @@
     <string name="active_section_not_checked_separately">Not checked separately</string>
     <string name="active_section_protection_unavailable">Protection unavailable</string>
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
-    <string name="api_fallback_title">API fallback</string>
+    <string name="api_fallback_title">直接 API</string>
     <string name="current_surface_paths_title">Current paths</string>
     <string name="dashboard_address_editor_body">设置此手机使用的 Dashboard 和 Gateway 地址。私有 LAN 与 Tailscale 路由可使用 HTTP 或 HTTPS；公共路由必须使用 HTTPS。</string>
     <string name="dashboard_address_editor_title">网关地址</string>

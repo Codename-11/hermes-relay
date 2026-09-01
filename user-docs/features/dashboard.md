@@ -82,7 +82,7 @@ For support, open **Settings → Diagnostics** and filter to **Auth**. Native si
 
 This is separate from Relay pairing and from `API_SERVER_KEY`. A dashboard
 session does not become an API bearer token: Android uses it for primary Gateway
-chat and asks for an API bearer only when the optional API fallback is configured.
+chat and asks for an API bearer only when the optional Direct API is configured.
 Relay-only capabilities — Terminal, Bridge, Relay sessions, Media inspector, and
 profile memory file editing — stay under **Settings → Relay tools** and show
 **Requires pairing** until the phone has a paired Relay session. Profile
@@ -213,7 +213,7 @@ the full backward-compatible wire format.
 mint again with **Auto**. Dashboard commonly listens locally on `:9119`; the
 recommended Tailscale route is dedicated external HTTPS `:10443` → local
 `:9119`. Old `:443`/`:9119` routes remain explicit migration compatibility.
-Port `:8642` is the optional API fallback. The Relay process may still listen
+Port `:8642` is the optional Direct API. The Relay process may still listen
 internally on `:8767`, but that direct port is legacy pairing compatibility and
 is not advertised in new QRs. Re-pair old clients before explicitly disabling
 a served `:8767` route.

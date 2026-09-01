@@ -613,7 +613,7 @@ private fun CapabilityRow(
 
 /**
  * Advanced compatibility and override content:
- *  - optional direct API fallback URL/key
+ *  - optional Direct API URL/key
  *  - explicit direct Relay endpoint override/test
  *  - allow-insecure-connections development toggle
  *

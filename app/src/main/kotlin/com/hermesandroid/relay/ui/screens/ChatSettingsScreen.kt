@@ -787,7 +787,7 @@ fun ChatSettingsScreen(
                         serverCaps,
                     ) {
                         resolveChatTransportStatus(
-                            streamingEndpoint = streamingEndpoint,
+                            streamingEndpoint = resolvedStreamingEndpoint,
                             gatewayAvailability = gatewayAvailability,
                             serverCapabilities = serverCaps,
                         )

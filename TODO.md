@@ -6,6 +6,18 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Restore the plugin manifest v2 declaration after the Hermes installer fix ships
+
+Hermes installers in affected stable releases reject `manifest_version: 2`
+before the v2-capable runtime loader can inspect the plugin. Track upstream
+[PR #85893](https://github.com/NousResearch/hermes-agent/pull/85893). Restore
+`plugin/plugin.yaml` to `manifest_version: 2` only after that fix ships in a
+stable Hermes release that Hermes-Relay can treat as its minimum supported
+version. Until then, keep the v1 compatibility declaration and the additive
+metadata consumed by newer hosts.
+
+---
+
 ## Consider hosted Android emulator execution
 
 The local API 36 Gradle Managed Device lanes are intentionally on demand and
@@ -67,8 +79,11 @@ and older Gateways without `session.active_list`. Before calling the status
 model device-certified:
 
 - Exercise working, quiet tool-heavy work, each pending-input surface, normal
-  completion, Stop, reconnect, app restart, and process recreation against
-  current vanilla upstream.
+  completion, a lost terminal followed by an exact active-list Idle row, Stop,
+  reconnect, app restart, and process recreation against current vanilla
+  upstream. Confirm the lost-terminal path preserves the partial transcript,
+  settles composer/steering state, and drains or cancels queued corrections
+  exactly once according to the owning turn outcome.
 - Verify All Profiles with duplicate session ids across two profiles and two
   saved connections; no late snapshot or old socket generation may mark the
   wrong row live.

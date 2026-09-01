@@ -66,7 +66,7 @@ metadados de mídia. Arquivos recebidos comuns usam as rotas atuais do Dashboard
 - **Chat · Ready** significa que você já pode enviar mensagens.
 - **Manage** pode pedir login no dashboard.
 - **Voice** é liberado pela mesma sessão do dashboard.
-- **API fallback** pode ficar indisponível sem bloquear o Chat.
+- **Direct API** pode ficar indisponível sem bloquear o Chat.
 - **Relay · Paired** confirma as extensões recomendadas; uma falha do Relay não
   deve bloquear o caminho upstream padrão.
 

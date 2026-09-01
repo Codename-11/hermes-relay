@@ -1,0 +1,33 @@
+{
+  "name": "terminal_gap_active_list",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260831_112003_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.session_active_list"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {"op": "event", "type": "message.start"},
+        {"op": "event", "type": "message.delta", "payload": {"text": "Persisted without a terminal frame."}},
+        {
+          "op": "persist",
+          "messages": [
+            {"id": 1, "role": "user", "content": "Exercise active-list settlement.", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "Persisted without a terminal frame.", "timestamp": 2.0, "finish_reason": "stop"}
+          ]
+        },
+        {"op": "set_running", "value": false}
+      ]
+    }
+  ],
+  "active_list": {
+    "supported": true,
+    "snapshots": [
+      [
+        {"id": "fixture-live-1", "session_key": "20260831_112003_fixture", "status": "idle", "current": true}
+      ]
+    ]
+  }
+}

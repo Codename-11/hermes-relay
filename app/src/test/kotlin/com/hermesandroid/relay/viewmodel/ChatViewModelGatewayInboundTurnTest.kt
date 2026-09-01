@@ -195,7 +195,7 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(STORED_SESSION_ID, failure?.sessionId)
         assertEquals(ChatFailureRoute.GATEWAY, failure?.route)
         assertTrue(failure?.recoverable == true)
-        assertTrue(failure?.rawError.orEmpty().contains("no API fallback"))
+        assertTrue(failure?.rawError.orEmpty().contains("belongs to the Hermes Dashboard"))
         assertEquals("Retry this after reconnect", handler.lastSentMessage.value)
         assertTrue(handler.messages.value.isEmpty())
         val diagnostic = DiagnosticsLog.recent(setOf(DiagnosticCategory.Session), 1).single()
@@ -1651,6 +1651,39 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun gatewayOwnedConversationDoesNotDispatchToReachableApiWhenGatewayIsMissing() {
+        viewModel.streamingEndpoint = "gateway"
+        viewModel.updateGatewayClient(null)
+        val apiRequestsBefore = apiCompletionsRequestCount.get()
+
+        viewModel.sendMessage("Keep this turn on Victor")
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(apiRequestsBefore, apiCompletionsRequestCount.get())
+        assertTrue(handler.messages.value.none { it.role == MessageRole.ASSISTANT })
+        assertEquals(
+            ChatFailureRoute.GATEWAY,
+            viewModel.chatFailure.value?.route,
+        )
+        assertEquals(STORED_SESSION_ID, handler.currentSessionId.value)
+    }
+
+    @Test
+    fun boundGatewaySessionRejectsAResolverTransportFlipUntilExplicitNewChat() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+
+        viewModel.streamingEndpoint = "sessions"
+
+        assertEquals("gateway", viewModel.streamingEndpoint)
+        assertEquals(SessionTransport.GATEWAY, viewModel.conversationBinding.value.transport)
+
+        viewModel.createNewChat()
+
+        assertEquals("sessions", viewModel.streamingEndpoint)
+        assertEquals(SessionTransport.SSE, viewModel.conversationBinding.value.transport)
+    }
+
+    @Test
     fun gatewayRichCardActionStaysOnGatewayInsteadOfDrainingThroughSessionsApi() {
         viewModel.sseFallbackEndpoint = "sessions"
         val cardMessageId = "card-message"
@@ -2982,6 +3015,51 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun queuedCorrectionDrainsOnceAfterOwnedTurnSettlesFromActiveSessionIdle() = runBlocking {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        gatewayHarness.redirectStatus = "rejected"
+        viewModel.sendMessage("Original Android turn")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.delta",
+                buildJsonObject { put("text", "Answer without terminal") },
+                "live-resumed",
+            ),
+        )
+        awaitCondition { handler.isStreaming.value }
+
+        viewModel.sendMessage("Queued correction")
+        gatewayHarness.awaitRpc("session.redirect")
+        awaitCondition { viewModel.queuedMessages.value == listOf("Queued correction") }
+        persistedHistory = persistedAnswerHistory("Answer without terminal", "settled-answer")
+        gatewayHarness.activeSessionListPayload = buildJsonObject {
+            put("sessions", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "live-resumed")
+                    put("session_key", STORED_SESSION_ID)
+                    put("status", "idle")
+                    put("last_active", 1_777_000_000.0)
+                })
+            })
+        }
+
+        gatewayClient.listActiveSessions()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        awaitCondition {
+            gatewayHarness.rpcLog.count { (method, params) ->
+                method == "prompt.submit" &&
+                    params["text"] == JsonPrimitive("Queued correction") &&
+                    params["queued"] == JsonPrimitive(true)
+            } == 1
+        }
+        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertTrue(viewModel.steerableTurn.value)
+    }
+
+    @Test
     fun multipleQueuedMessagesDrainAsAnOwnedRunChain() {
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", null),
@@ -3738,6 +3816,16 @@ class ChatViewModelGatewayInboundTurnTest {
         viewModel.prewarmGateway()
         awaitCondition {
             gatewayHarness.rpcLog.count { it.first == "session.active_list" } > baselineActiveList
+        }
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
+                SessionActivityState.Working
+        }
+        gatewayHarness.activeSessionListPayload = activeSessionPayload("waiting")
+        viewModel.requestSessionActivityRefresh()
+        awaitCondition {
+            viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
+                SessionActivityState.NeedsInput
         }
         persistedHistory = listOf(
             MessageItem(
