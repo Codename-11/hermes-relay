@@ -2,10 +2,11 @@
 #
 # Run manually from the final dev or untagged main tree before creating
 # android-v*. The job
-# builds the same signed release artifacts, scans final DEX, and uploads the
-# Google Play bundle as a production DRAFT. A successful upload is the automated
-# Play gate while no public GitHub Release or sideload APK exists. Console-only
-# pre-review and pre-launch reports are informational and do not block release.
+# builds the signed release artifacts once, scans the final packages, and uploads
+# the Google Play bundle as a production DRAFT. The exact signed APK/AAB,
+# mappings, manifest, and checksums remain private Actions artifacts until
+# approval publishes those same bytes. Console-only pre-review and pre-launch
+# reports are informational and do not block release.
 
 name: Hermes-Relay Android Play Preflight
 
@@ -98,13 +99,24 @@ jobs:
           HERMES_KEYSTORE_PASSWORD: ${{ secrets.HERMES_KEYSTORE_PASSWORD }}
           HERMES_KEY_ALIAS: ${{ secrets.HERMES_KEY_ALIAS }}
           HERMES_KEY_PASSWORD: ${{ secrets.HERMES_KEY_PASSWORD }}
-        run: ./gradlew bundleRelease assembleRelease --console=plain
+        run: |
+          ./gradlew \
+            :app:bundleGooglePlayRelease \
+            :app:assembleGooglePlayRelease \
+            :app:assembleSideloadRelease \
+            --console=plain
 
       - name: Scan final release DEX
         run: |
           python3 scripts/check-android-collection-apis.py \
             --apk app/build/outputs/apk/googlePlay/release/*.apk \
             --apk app/build/outputs/apk/sideload/release/*.apk
+
+      - name: Verify packaged native compatibility
+        run: |
+          python3 scripts/check-android-native-compat.py \
+            app/build/outputs/apk/googlePlay/release/*.apk \
+            app/build/outputs/apk/sideload/release/*.apk
 
       - name: Upload private production draft to Play
         env:
@@ -121,27 +133,27 @@ jobs:
             --resolution-strategy=ignore \
             --release-name="Hermes-Relay Android v${{ steps.metadata.outputs.version }}"
 
-      - name: Record successful preflight for the exact commit
+      - name: Package immutable preflight artifacts
         run: |
-          mkdir -p app/build/reports
-          cat > app/build/reports/play-preflight.json <<EOF
-          {
-            "version": "${{ steps.metadata.outputs.version }}",
-            "versionCode": "${{ steps.metadata.outputs.version_code }}",
-            "commit": "$GITHUB_SHA",
-            "tree": "${{ steps.metadata.outputs.tree }}",
-            "track": "production",
-            "status": "draft"
-          }
-          EOF
+          python3 scripts/android_release_artifacts.py package \
+            --version "${{ steps.metadata.outputs.version }}" \
+            --version-code "${{ steps.metadata.outputs.version_code }}" \
+            --commit "$GITHUB_SHA" \
+            --tree "${{ steps.metadata.outputs.tree }}" \
+            --sideload-apk app/build/outputs/apk/sideload/release/*.apk \
+            --google-play-aab app/build/outputs/bundle/googlePlayRelease/*.aab \
+            --sideload-mapping app/build/outputs/mapping/sideloadRelease/mapping.txt \
+            --google-play-mapping app/build/outputs/mapping/googlePlayRelease/mapping.txt \
+            --output app/build/preflight-artifacts
 
-      - name: Upload preflight proof
+      - name: Upload immutable preflight artifacts
         uses: actions/upload-artifact@v7
         with:
           name: play-preflight-${{ steps.metadata.outputs.version }}-${{ steps.metadata.outputs.tree }}
-          path: app/build/reports/play-preflight.json
+          path: app/build/preflight-artifacts/*
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
 
       - name: Preflight summary
         run: |
@@ -152,4 +164,4 @@ jobs:
           echo "- Release tree: \`${{ steps.metadata.outputs.tree }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Play track/status: **Production draft**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The signed build, DEX scan, and Play draft upload passed. Ensure this exact release tree is on main, then run **Hermes-Relay Android Release Approval** from main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"
+          echo "The signed build, package scans, and Play draft upload passed. Approval will publish these exact private artifacts if the unchanged tree reaches main. Console-only reports are informational and non-blocking." >> "$GITHUB_STEP_SUMMARY"

@@ -56,13 +56,21 @@ jobs:
           RELEASE_TREE: ${{ steps.metadata.outputs.tree }}
         run: |
           ARTIFACT_NAME="play-preflight-${VERSION}-${RELEASE_TREE}"
-          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
-            --jq '[.artifacts[] | select(.expired == false)] | length')
-          if [ "$COUNT" -lt 1 ]; then
+          ARTIFACT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last')
+          RUN_ID=$(jq -r '.workflow_run.id // empty' <<<"$ARTIFACT")
+          if [ -z "$RUN_ID" ]; then
             echo "::error::No successful Play preflight found for version $VERSION with tree $RELEASE_TREE"
             exit 1
           fi
-          echo "Verified Play preflight proof: $ARTIFACT_NAME"
+          RUN=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          CONCLUSION=$(jq -r '.conclusion' <<<"$RUN")
+          WORKFLOW_PATH=$(jq -r '.path' <<<"$RUN")
+          if [ "$WORKFLOW_PATH" != ".github/workflows/play-preflight-android.yml" ] || [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Preflight artifact came from ${WORKFLOW_PATH} with conclusion ${CONCLUSION}"
+            exit 1
+          fi
+          echo "Verified immutable Play preflight artifacts: $ARTIFACT_NAME (run $RUN_ID)"
 
       - name: Ensure release tag does not already exist
         env:
