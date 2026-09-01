@@ -33,6 +33,32 @@ compatibility route.
 
 ---
 
+## Upstream an Android Gateway platform hint
+
+Android currently identifies its standard Gateway sessions with the legacy
+`webui` source because upstream has no stable Android/mobile session platform.
+Current upstream deliberately removed the unused `webui` prompt hint and only
+ships renderer-verified `desktop` and `tui` guidance. Do not relabel Android as
+Desktop: that would also advertise Desktop-only inline widgets and directives.
+Propose an upstream Android/mobile platform hint, or a bounded authenticated
+client-surface context contract, that accurately describes mobile Markdown,
+standard upstream media/file delivery, and concise-response expectations. Once
+that contract is available in the supported Hermes baseline, adopt it and add
+Gateway conformance coverage proving the exact prompt bytes and session source.
+
+---
+
+## Scope sensitive-media prompt guidance to capable clients
+
+The Relay plugin's sensitive-media prompt section currently describes the
+Android `||![...](...)||` and alt-text conventions profile-wide. Before
+expanding that behavior, make the section depend on an authoritative client
+capability or replace it with a portable convention verified against every
+renderer that receives the profile prompt. Do not make Desktop/TUI sessions
+emit Android-only spoiler syntax merely because the Relay plugin is installed.
+
+---
+
 ## Certify Android session activity across lifecycle and profile boundaries
 
 The contract fixture now covers every upstream live status, complete-snapshot

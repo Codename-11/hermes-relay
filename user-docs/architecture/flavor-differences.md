@@ -1,6 +1,6 @@
 # Flavor Differences
 
-Hermes-Relay ships as two product flavors from the same codebase: **googlePlay** and **sideload**. Both share chat, profiles, voice, relay pairing, terminal/TUI relay, media handoff, notification companion, sessions, and status. They diverge on Device Control.
+Hermes-Relay ships as two product flavors from the same codebase: **googlePlay** and **sideload**. Both share chat, profiles, voice, standard inbound files, relay pairing, terminal/TUI relay, Relay media enhancements, notification companion, sessions, and status. They diverge on Device Control.
 
 ## Track model
 

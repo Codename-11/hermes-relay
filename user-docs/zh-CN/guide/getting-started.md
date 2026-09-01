@@ -21,8 +21,8 @@ Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
 |---|---|---|
 | 适合 | 大多数用户 | 需要 Device Control 的用户 |
 | 更新 | 自动 | 手动更新 APK |
-| Chat、Voice、Manage | 包含 | 包含 |
-| 配合 Relay 的终端、媒体和通知 | 包含 | 包含 |
+| Chat、Voice、Manage、入站文件 | 包含 | 包含 |
+| 配合 Relay 的终端、媒体增强和通知 | 包含 | 包含 |
 | 读取屏幕、点击、输入和导航 | 不包含 | 包含 |
 
 <StoreBadge />
@@ -34,7 +34,8 @@ Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
 ## 2. 让手机可以访问 Hermes
 
 Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 Chat、
-会话、登录、Manage 和标准 Voice。请使用 `hermes dashboard` 启动，并确保手机可访问。
+会话、登录、Manage、标准 Voice 和经过身份验证的入站文件。请使用
+`hermes dashboard` 启动，并确保手机可访问。
 
 `:8642` 上的 API 服务器是可选的，仅用于 Chat 自动 fallback 或高级 headless
 兼容。只有配置该可选端点时才需要 API 密钥。`API_SERVER_KEY` 由服务器运维人员创建，Dashboard 不会提供该密钥。

@@ -4,7 +4,7 @@ Hermes-Relay connects only to your own machines — no cloud accounts, no hosted
 
 ## Track split
 
-- **Google Play:** Bridge Core only — chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, and status. No AccessibilityService, screen reading, taps, typing, screenshots, SMS, calls, contacts, location, overlay, or unattended phone control.
+- **Google Play:** Bridge Core only — chat, voice, standard inbound files, terminal/TUI relay, notification companion, Relay media enhancements, relay sessions, and status. No AccessibilityService, screen reading, taps, typing, screenshots, SMS, calls, contacts, location, overlay, or unattended phone control.
 - **Sideload:** Device Control — the separate sideload track can include AccessibilityService-backed phone control and the extra Android permissions needed for that surface.
 
 ## What stays on your phone
@@ -27,7 +27,7 @@ Chat messages are **not cached** on device. They load from your Hermes server on
 | Destination | Protocol | Purpose |
 |-------------|----------|---------|
 | Your Hermes API server | HTTP/SSE | Chat streaming |
-| Your relay server | WSS | Terminal/TUI relay, Bridge Core status, media, notifications, sessions |
+| Your relay server | WSS | Terminal/TUI relay, Bridge Core status, explicit Relay media, notifications, sessions |
 | Your relay voice routes | HTTP(S)/WSS | Voice settings, STT, realtime voice, TTS |
 
 HTTPS is enforced for non-localhost remote connections. No background pings or DNS prefetching to external services.

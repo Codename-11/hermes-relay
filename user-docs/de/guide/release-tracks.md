@@ -13,16 +13,17 @@ Apps stammen aus demselben Quellcode und können gleichzeitig installiert werden
 | Frage | Google Play | Sideload |
 |---|---|---|
 | Einfache Installation und automatische Updates? | Ja | Nein |
-| Chat, Profile, Manage und Voice? | Ja | Ja |
-| Terminal, Medien und Benachrichtigungen mit Relay? | Ja | Ja |
+| Chat, Profile, Manage, Voice und eingehende Dateien? | Ja | Ja |
+| Terminal, Medienerweiterungen und Benachrichtigungen mit Relay? | Ja | Ja |
 | Bildschirm lesen oder aufnehmen? | Nein | Ja |
 | Tippen, schreiben, wischen und Apps bedienen? | Nein | Ja |
 
 ## App-Version und Relay sind getrennte Entscheidungen
 
 Die **App-Version** bestimmt, ob Android Device Control enthält. Das optionale
-**Relay-Plugin** verbindet Terminal, Medien, Benachrichtigungen und
-Gerätekanäle mit dem Hermes-Host.
+**Relay-Plugin** verbindet Terminal, Benachrichtigungen und Gerätekanäle mit dem
+Hermes-Host und ergänzt Medienkompatibilität und -metadaten. Gewöhnliche
+eingehende Dateien werden über das Standard-Dashboard übertragen.
 
 Device Control funktioniert nur mit **Sideload + gepaartem Relay**. Chat,
 Manage und Standard-Voice benötigen keines von beiden.

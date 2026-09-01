@@ -686,8 +686,8 @@
     <string name="settings_voice_mode">Режим голоса</string>
     <string name="settings_voice_mode_desc">Голос панели управления, опции Relay в реальном времени, поставщики</string>
     <string name="settings_threads">Потоки</string>
-    <string name="settings_threads_desc">Позволяет агенту начинать разговоры с вами (по умолчанию выключено)</string>
-    <string name="settings_power_tools">Мощные инструменты</string>
+    <string name="settings_threads_desc">Разговоры, начатые Relay, и проактивная доставка (по умолчанию выключено)</string>
+    <string name="settings_power_tools">Инструменты Relay</string>
     <string name="settings_terminal">Терминал</string>
     <string name="settings_terminal_desc">Доступ к оболочке сервера через сопряженный сеанс Relay</string>
     <string name="settings_bridge">Мост</string>
@@ -699,7 +699,7 @@
     <string name="settings_notification_companion">Сопровождение уведомлений</string>
     <string name="settings_notification_companion_desc">Общие уведомления телефона для сопряженных инструментов Relay</string>
     <string name="settings_media">Медиа</string>
-    <string name="settings_media_desc">Передача входящих вложений, автозагрузка, кэш</string>
+    <string name="settings_media_desc">Вложения чата, загрузка, конфиденциальность и кэш</string>
     <string name="settings_bridge_safety">Безопасность моста</string>
     <string name="settings_bridge_safety_desc">Черный список, подтверждение деструктивных действий, автоотключение</string>
     <string name="settings_sideload">Установка из APK</string>
@@ -1233,8 +1233,8 @@
     <string name="about_credits">Axiom Labs ❤️ Агент Гермес · Nous Research</string>
     <string name="media_title">Медиа</string>
     <string name="media_back">Назад</string>
-    <string name="media_intro_1">Управляет тем, как приложение обрабатывает файлы, отправленные результатами инструментов (скриншоты, PDF и т. д.) через Relay.</string>
-    <string name="media_intro_2">Только Relay — эти настройки не влияют на изображения, которые вы прикрепляете в чате, или что-либо на стандартном (без Relay) соединении.</string>
+    <string name="media_intro_1">Определяет, как приложение скачивает, защищает и кэширует файлы, отправленные Hermes в чате.</string>
+    <string name="media_intro_2">Предпочтение отдаётся стандартным медиа Dashboard. После сопряжения Relay может добавить совместимую доставку и метаданные конфиденциальности.</string>
     <string name="media_max_inbound">Максимальный размер входящего вложения</string>
     <string name="media_max_inbound_value">%1$d МБ</string>
     <string name="media_max_inbound_desc">Файлы, превышающие этот размер, отклоняются после загрузки.</string>
@@ -2185,7 +2185,8 @@
     <string name="session_path_signin_for_gateway">Войдите в систему под управлением для шлюза живого мышления.</string>
     <string name="session_path_gateway_api_server">Доступно на транспортном шлюзе — этот сеанс передается через сервер API.</string>
     <string name="session_path_relay_not_connected">Relay сопряжён, но не подключен.</string>
-    <string name="session_path_pair_relay_media">Сопрягите Relay для отправки и получения медиа.</string>
+    <string name="session_path_pair_relay_media">Сопрягите Relay для совместимости медиа со старыми хостами Hermes.</string>
+    <string name="session_path_media_not_ready">Обновите Hermes для стандартной доставки медиа или сопрягите Relay для совместимости.</string>
     <string name="session_path_pair_relay_terminal">Сопрягите Relay для доступа к терминалу.</string>
     <string name="session_path_voice_not_ready">Голос не готов на этом подключении.</string>
     <string name="session_path_threads_pair_relay">Сопрягите Relay и включите &quot;Позволить Гермесу отправлять мне сообщения&quot;, чтобы агент мог открывать потоки.</string>
@@ -2782,6 +2783,8 @@
     <string name="inbound_attach_downloading">Скачивание\&amp;#8230;%1$s</string>
     <string name="inbound_attach_failed">Ошибка вложения</string>
     <string name="inbound_attach_tap_retry">Нажмите для повторной попытки</string>
+    <string name="inbound_attach_host_only">Файл находится на вашем хосте Hermes</string>
+    <string name="inbound_attach_host_only_help">Обновите Hermes для стандартных загрузок или сопрягите Relay для совместимости.</string>
     <string name="inbound_attach_open">Открыть внешне</string>
     <string name="inbound_attach_share">Поделиться</string>
     <string name="inbound_attach_save">Сохранить на устройство</string>
@@ -3187,6 +3190,8 @@
     <string name="diag_check_ready_with">Готово с %s</string>
     <string name="diag_check_relay_active">Relay активен</string>
     <string name="diag_check_relay_not_configured">Relay не настроен</string>
+    <string name="diag_relay_tools_optional">Инструменты Relay (необязательно)</string>
+    <string name="diag_relay_tools_not_paired">Не сопряжено</string>
     <string name="diag_check_relay_server">Проверить сервер Relay</string>
     <string name="diag_check_relay_plugin">Плагин Relay</string>
     <string name="diag_plugin_not_configured">Дополнительный плагин не настроен</string>
@@ -3218,8 +3223,8 @@
     <string name="inbound_attach_cd_cancel">Отмена</string>
     <string name="inbound_attach_open_failed">Не удалось открыть вложение</string>
     <string name="inbound_attach_share_failed">Не удалось поделиться вложением</string>
-    <string name="injected_context_media_no_relay">Для мультимедиа требуется активное подключение Relay</string>
-    <string name="injected_context_media_relay_active">плагин Relay активен для мультимедиа</string>
+    <string name="injected_context_media_no_relay">Нет дополнительных инструкций для медиа — стандартная доставка остаётся на стороне сервера</string>
+    <string name="injected_context_media_relay_active">Доступно расширение Relay для медиа</string>
     <string name="injected_context_media_title">Обмен мультимедиа</string>
     <string name="injected_context_persona_not_set">Персона не установлена</string>
     <string name="injected_context_persona_server_side">Персона на стороне сервера</string>
@@ -4228,7 +4233,7 @@
     <string name="chat_git_deletions">Удалено строк: %1$d</string>
     <plurals name="chat_git_change_count"><item quantity="one">%1$d изменение</item><item quantity="few">%1$d изменения</item><item quantity="many">%1$d изменений</item><item quantity="other">%1$d изменения</item></plurals>
     <string name="settings_git_workspace">Рабочая область Git</string>
-    <string name="settings_git_workspace_desc">Изменения, ветки, коммиты и удалённые репозитории</string>
+    <string name="settings_git_workspace_desc">Сначала Git текущего сеанса, с дополнительным обнаружением на хосте</string>
     <string name="current_chat_activity_title">Текущая активность чата</string>
     <string name="current_chat_activity_subtitle">Доступные только для чтения сведения в реальном времени из этого чата</string>
     <string name="current_chat_activity_open">Просмотреть текущую активность чата</string>
@@ -4263,7 +4268,7 @@
     <string name="agent_activity_child_role_task">Задача</string>
     <string name="agent_activity_child_role_agent">Агент</string>
     <string name="agent_activity_child_role_system">Система</string>
-    <string name="settings_git_workspace_off_desc">Выкл. · Сканирование репозиториев на хосте включается вручную</string>
+    <string name="settings_git_workspace_off_desc">Только репозиторий сеанса · Обнаружение на хосте включается вручную</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>

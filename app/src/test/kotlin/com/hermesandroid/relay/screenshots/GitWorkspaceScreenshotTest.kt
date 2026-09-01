@@ -97,6 +97,40 @@ class GitWorkspaceScreenshotTest {
     }
 
     @Test
+    fun standardSessionWorkspaceRendersWithRelayDiscoveryOff() {
+        enqueue("""{"branch":"main","changed":1,"staged":0,"unstaged":1,"untracked":0,"added":3,"removed":1,"files":[{"path":"app.kt","unstaged":true}]}""")
+        enqueue("""{"branch":"main","changed":1,"staged":0,"unstaged":1,"untracked":0,"added":3,"removed":1,"files":[{"path":"app.kt","unstaged":true}]}""")
+        enqueue("""{"files":[{"path":"app.kt","added":3,"removed":1,"staged":false}]}""")
+        enqueue("""{"branches":[{"name":"main","checkedOut":true}]}""")
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = GitStateViewModel(app)
+        viewModel.configure(
+            DashboardApiClient(server.url("/").toString()),
+            "standard-owner",
+            scanningEnabled = false,
+        )
+        viewModel.setSessionWorkspace("/srv/projects/standard", null)
+
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                GitStateScreen(
+                    viewModel = viewModel,
+                    onScanningEnabledChange = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("1 changes").assertExists() }.isSuccess
+        }
+        val paths = buildList {
+            repeat(4) { add(server.takeRequest().path.orEmpty()) }
+        }
+        org.junit.Assert.assertTrue(paths.none { it.contains("/api/plugins/") })
+    }
+
+    @Test
     fun chatRailMatchesApprovedCompactTreatment() {
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {

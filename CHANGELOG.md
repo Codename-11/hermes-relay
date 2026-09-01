@@ -8,11 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Android prefers current upstream Hermes for standard media, Git, usage, and notices.** Authenticated Dashboard file delivery, current-session `/api/git/*`, Gateway `usage.bars`, and keyed agent notices work without the optional Hermes-Relay Plugin; Relay remains additive for older-host media compatibility, sensitivity metadata, repository discovery and guarded mutations, multi-provider usage, and true Relay tools.
+- **Android Settings separates standard Hermes from Relay tools.** Media now sits with Chat and Voice under Hermes, while proactive Threads, Terminal, Notification Companion, Relay sessions, and Device Control remain clearly grouped behind the optional plugin.
 - **Android Supervised Mode uses app-specific parent access.** Parents choose a six-digit PIN or password, receive a shareable six-word recovery phrase, and can remove the credential without losing their supervised profile, capability, appearance, visibility, session, or relock settings. Android device credentials and biometrics no longer grant parent access.
 - **Android What's New now provides a readable, complete release record.** One overall title and summary lead into selected highlights, every remaining user-visible addition, improvement, and fix, and relevant compatibility boundaries. Toast counts and previews are derived from that same inventory, so View all no longer promises details the expanded dialog and history cannot show.
 
 ### Fixed
 
+- **Standard Hermes attachments no longer demand Relay pairing.** Host-local images, audio, video, and files download through the authenticated Dashboard, stay loaded across history reconciliation, and fall back to one neutral compatibility card on older hosts instead of flashing `Relay URL not configured` or retrying indefinitely.
+- **Removing optional Relay does not strand Standard voice or leak preferences across connections.** Runtime fallback keeps Dashboard voice usable, preserves configured choices through temporary outages, and normalizes only connection-scoped named-profile settings after explicit Relay removal.
+- **Relay prompt context advertises only real callable phone tools.** Phone-control and cross-platform delivery guidance now follows the exact selected session/profile tool catalog instead of implying unavailable `android_*` or `send_message` capabilities.
 - **Android keeps completed chat text visible when Dashboard sign-in expires.** Generic and reason-coded history `401` responses settle the local turn, preserve its transcript, and surface the existing sign-in recovery without reading another profile's API history.
 - **Android keeps long-running context compaction alive.** A client-visible compaction status extends and refreshes the Gateway turn watchdog instead of interrupting healthy compression after the ordinary idle window. (Supersedes #484.)
 - **Android Bot Chats render loaded history immediately.** Route-owned chat screens observe their own handler state from first composition, including fast history loads that settle before another frame. (Supersedes #453.)

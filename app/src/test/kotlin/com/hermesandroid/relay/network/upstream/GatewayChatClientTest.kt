@@ -227,6 +227,13 @@ class GatewayClientHarness(
     @Volatile
     var profileGetAssetPayload: JsonObject = buildJsonObject { put("found", false) }
 
+    @Volatile
+    var usageBarsPayload: JsonObject = buildJsonObject {
+        put("ok", true)
+        put("available", true)
+        put("plan_name", "Pro")
+    }
+
     /** Methods answered with JSON-RPC -32601 — exercises the legacy-name fallback. */
     val methodNotFound: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -436,6 +443,7 @@ class GatewayClientHarness(
                 "profiles.list" -> profilesListPayload
                 "profiles.create" -> profileCreatePayload
                 "profiles.get_asset" -> profileGetAssetPayload
+                "usage.bars" -> usageBarsPayload
                 "profiles.set_asset" -> buildJsonObject {
                     put("ok", true)
                     put("asset", "avatar")
@@ -886,6 +894,21 @@ class GatewayChatClientTest {
         client.shutdown()
         scope.cancel()
         harness.shutdown()
+    }
+
+    @Test
+    fun `provider usage calls official upstream usage bars method`() = runBlocking {
+        harness.usageBarsPayload = buildJsonObject {
+            put("ok", true)
+            put("available", true)
+            put("plan_name", "Pro")
+        }
+
+        val response = client.usageBars().getOrThrow()
+
+        assertEquals("Pro", (response["plan_name"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("usage.bars", harness.rpcLog.last().first)
+        assertTrue(harness.rpcLog.none { it.first == "account.usage" })
     }
 
     @Test
@@ -3447,6 +3470,42 @@ class GatewayChatClientTest {
             ),
             client.serverReasoningIdentity.value,
         )
+    }
+
+    @Test
+    fun `session info exposes exact model callable tool catalog`() {
+        val recorder = Recorder()
+        client.sendTurn("stored-1", "hi", null, recorder.callbacks) {
+            recorder.preflightFailures += it
+        }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("session.resume")
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "session.info",
+                buildJsonObject {
+                    put("tools", buildJsonObject {
+                        put("android", buildJsonArray {
+                            add(JsonPrimitive("android_phone_status"))
+                            add(JsonPrimitive("android_tap"))
+                        })
+                        put("terminal", buildJsonArray { add(JsonPrimitive("terminal")) })
+                    })
+                },
+                "live-resumed",
+            ),
+        )
+
+        waitUntil { client.serverTools.value?.size == 3 }
+        assertEquals(
+            setOf("android_phone_status", "android_tap", "terminal"),
+            client.serverTools.value,
+        )
+
+        client.clearSession()
+        assertNull(client.serverTools.value)
     }
 
     @Test

@@ -755,8 +755,8 @@
     <string name="settings_voice_mode">Voice mode</string>
     <string name="settings_voice_mode_desc">Dashboard voice, realtime relay options, providers</string>
     <string name="settings_threads">Threads</string>
-    <string name="settings_threads_desc">Let the agent start conversations with you (off by default)</string>
-    <string name="settings_power_tools">Power tools</string>
+    <string name="settings_threads_desc">Relay-started conversations and proactive delivery (off by default)</string>
+    <string name="settings_power_tools">Relay tools</string>
     <string name="settings_terminal">Terminal</string>
     <string name="settings_terminal_desc">Server shell access through a paired relay session</string>
     <string name="settings_bridge">Bridge</string>
@@ -768,7 +768,7 @@
     <string name="settings_notification_companion">Notification companion</string>
     <string name="settings_notification_companion_desc">Shared phone notifications for paired relay tools</string>
     <string name="settings_media">Media</string>
-    <string name="settings_media_desc">Relay inbound attachments, auto-fetch, cache cap</string>
+    <string name="settings_media_desc">Chat attachments, download behavior, privacy, and cache</string>
     <string name="settings_bridge_safety">Bridge safety</string>
     <string name="settings_bridge_safety_desc">Blocklist, destructive-verb confirmation, auto-disable</string>
     <string name="settings_sideload">Sideload</string>
@@ -1383,8 +1383,8 @@
     <!-- P1: MediaSettingsScreen -->
     <string name="media_title">Media</string>
     <string name="media_back">Back</string>
-    <string name="media_intro_1">Controls how the app handles files sent by tool results (screenshots, PDFs, etc.) over the relay.</string>
-    <string name="media_intro_2">Relay only — these settings don\'t affect images you attach in chat or anything on a standard (no-Relay) connection.</string>
+    <string name="media_intro_1">Controls how the app downloads, protects, and caches files Hermes sends in chat.</string>
+    <string name="media_intro_2">Standard Dashboard media is preferred. When paired, Relay can add compatibility delivery and sensitivity metadata.</string>
     <string name="media_max_inbound">Max inbound attachment size</string>
     <string name="media_max_inbound_value">%1$d MB</string>
     <string name="media_max_inbound_desc">Files larger than this are rejected after download.</string>
@@ -2513,7 +2513,8 @@
     <string name="session_path_signin_for_gateway">Sign in under Manage for the live-thinking gateway.</string>
     <string name="session_path_gateway_api_server">Available on the gateway transport — this session streams over the API server.</string>
     <string name="session_path_relay_not_connected">Relay paired but not connected.</string>
-    <string name="session_path_pair_relay_media">Pair the relay to send and receive media.</string>
+    <string name="session_path_pair_relay_media">Pair Relay for media compatibility on older Hermes hosts.</string>
+    <string name="session_path_media_not_ready">Update Hermes for standard media delivery, or pair Relay for compatibility.</string>
     <string name="session_path_pair_relay_terminal">Pair the relay for terminal access.</string>
     <string name="session_path_voice_not_ready">Voice not ready on this connection.</string>
     <string name="session_path_threads_pair_relay">Pair the relay and turn on "Let Hermes message me" so the agent can open Threads.</string>
@@ -3161,6 +3162,8 @@
     <string name="inbound_attach_downloading">Downloading&#8230;%1$s</string>
     <string name="inbound_attach_failed">Attachment failed</string>
     <string name="inbound_attach_tap_retry">Tap to retry</string>
+    <string name="inbound_attach_host_only">File is on your Hermes host</string>
+    <string name="inbound_attach_host_only_help">Update Hermes for standard downloads, or pair Relay for compatibility.</string>
     <string name="inbound_attach_open">Open externally</string>
     <string name="inbound_attach_share">Share</string>
     <string name="inbound_attach_save">Save to device</string>
@@ -3689,6 +3692,8 @@
     <string name="diag_check_ready_with">Ready with %s</string>
     <string name="diag_check_relay_active">Relay active</string>
     <string name="diag_check_relay_not_configured">Relay not configured</string>
+    <string name="diag_relay_tools_optional">Relay tools (optional)</string>
+    <string name="diag_relay_tools_not_paired">Not paired</string>
     <string name="diag_check_relay_server">Check relay server</string>
     <string name="diag_check_relay_plugin">Relay plugin</string>
     <string name="diag_plugin_not_configured">Optional plugin is not configured</string>
@@ -3720,8 +3725,8 @@
     <string name="inbound_attach_cd_cancel">Cancel</string>
     <string name="inbound_attach_open_failed">Couldn\u0027t open attachment</string>
     <string name="inbound_attach_share_failed">Couldn\u0027t share attachment</string>
-    <string name="injected_context_media_no_relay">Media requires an active Relay connection</string>
-    <string name="injected_context_media_relay_active">Relay active for media</string>
+    <string name="injected_context_media_no_relay">No extra media instruction — standard delivery stays server-owned</string>
+    <string name="injected_context_media_relay_active">Relay media enhancement available</string>
     <string name="injected_context_media_title">Media sharing</string>
     <string name="injected_context_persona_not_set">No persona set</string>
     <string name="injected_context_persona_server_side">Server-side persona</string>
@@ -4586,6 +4591,6 @@
     <string name="provider_usage_capability_basic_title">Basic usage from Hermes</string>
     <string name="provider_usage_capability_basic_body">Install or update the Relay plugin for credential pools, structured Nous balances, and OpenCode Go.</string>
     <string name="settings_git_workspace">Git workspace</string>
-    <string name="settings_git_workspace_desc">Review changes, branches, commits, and remotes</string>
-    <string name="settings_git_workspace_off_desc">Off · Host repository scanning is opt-in</string>
+    <string name="settings_git_workspace_desc">Current-session Git first, with optional host discovery</string>
+    <string name="settings_git_workspace_off_desc">Session repository only · Host discovery is opt-in</string>
 </resources>

@@ -28,6 +28,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.io.ByteArrayOutputStream
 
 internal const val RELAY_SESSION_HEADER: String = "X-Hermes-Relay-Session"
 
@@ -88,6 +89,7 @@ class RelayHttpClient(
 
     companion object {
         private const val TAG = "RelayHttpClient"
+        private const val DEFAULT_MEDIA_DOWNLOAD_LIMIT_BYTES = 100L * 1024L * 1024L
         const val MAX_MODEL_CAPABILITY_ROWS = 64
         private const val MAX_MODEL_CAPABILITY_PROVIDER_CHARS = 128
         private const val MAX_MODEL_CAPABILITY_MODEL_CHARS = 512
@@ -257,7 +259,10 @@ class RelayHttpClient(
      * underlying exception with a human-readable message suitable for
      * surfacing in the attachment's `errorMessage` field.
      */
-    suspend fun fetchMedia(token: String): Result<FetchedMedia> = withContext(Dispatchers.IO) {
+    suspend fun fetchMedia(
+        token: String,
+        maxBytes: Long = DEFAULT_MEDIA_DOWNLOAD_LIMIT_BYTES,
+    ): Result<FetchedMedia> = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) {
             return@withContext Result.failure(
@@ -318,7 +323,7 @@ class RelayHttpClient(
                 if (body == null) {
                     return@withContext Result.failure(IOException("Empty response body"))
                 }
-                val bytes = body.bytes()
+                val bytes = body.readBytesBounded(maxBytes)
                 Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
@@ -352,6 +357,7 @@ class RelayHttpClient(
     suspend fun fetchMediaByPath(
         path: String,
         contentTypeHint: String? = null,
+        maxBytes: Long = DEFAULT_MEDIA_DOWNLOAD_LIMIT_BYTES,
     ): Result<FetchedMedia> = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) {
@@ -427,12 +433,16 @@ class RelayHttpClient(
                 if (body == null) {
                     return@withContext Result.failure(IOException("Empty response body"))
                 }
-                val bytes = body.bytes()
+                val bytes = body.readBytesBounded(maxBytes)
                 Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
             Log.w(TAG, "fetchMediaByPath failed for $path: ${e.message}")
-            Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
+            if (e is RelayMediaLimitException) {
+                Result.failure(e)
+            } else {
+                Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
+            }
         } catch (e: Exception) {
             Log.w(TAG, "fetchMediaByPath unexpected error for $path: ${e.message}")
             Result.failure(e)
@@ -1456,6 +1466,33 @@ class RelayHttpClient(
         return match?.groupValues?.get(1)?.trim()?.ifBlank { null }
     }
 
+    private fun okhttp3.ResponseBody.readBytesBounded(maxBytes: Long): ByteArray {
+        if (maxBytes <= 0L) throw RelayMediaLimitException()
+        val declared = contentLength().takeIf { it >= 0L }
+        if (declared != null && declared > maxBytes) throw RelayMediaLimitException()
+        val output = ByteArrayOutputStream(
+            declared?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: DEFAULT_BUFFER_SIZE,
+        )
+        byteStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var total = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > maxBytes) throw RelayMediaLimitException()
+                output.write(buffer, 0, count)
+            }
+            if (declared != null && total != declared) {
+                throw IOException("Media file changed while it was being downloaded")
+            }
+        }
+        return output.toByteArray()
+    }
+
+    private class RelayMediaLimitException :
+        IOException("File exceeds the configured download limit")
+
     /**
      * Parse the relay's `X-Media-Sensitive` response header into a bool.
      *
@@ -1468,7 +1505,7 @@ class RelayHttpClient(
         return value == "1" || value == "true"
     }
 
-    /** Provider-neutral compatibility fetch for gateways without `account.usage`. */
+    /** Provider-neutral enhancement for pools and providers upstream does not expose. */
     suspend fun fetchProviderUsage(
         profile: String? = null,
         sessionId: String? = null,

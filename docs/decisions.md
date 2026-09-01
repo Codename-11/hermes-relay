@@ -377,6 +377,14 @@ Key data classes: `MessageEvent` (inbound), `SendResult` (outbound), `SessionSou
 
 ### 14. Inbound Media via Plugin-Owned Relay Endpoint, Not Upstream Gateway (2026-04-11)
 
+**Status (2026-08-31): Superseded for ordinary media.** Current upstream
+Hermes Dashboard/Desktop provides authenticated file download, streaming, and
+bounded preview routes. Android now prefers those upstream routes for ordinary
+`MEDIA:` paths and file references. The token registry remains valid for
+explicit Relay tokens, phone-control screenshots, sensitivity metadata, and
+older-host compatibility; it is no longer a prerequisite for standard inbound
+attachments. See [`upstream-surface-matrix.md`](upstream-surface-matrix.md).
+
 **Decision:** Agent-initiated media (screenshots, and any future file-producing tool) is delivered to the phone via a new loopback-register + bearer-fetch pair of routes on our own relay server (`POST /media/register` → `GET /media/{token}`), not by relying on hermes-agent's upstream `extract_media()` / `send_document()` machinery. Tools emit a `MEDIA:hermes-relay://<token>` marker in their chat response text; the phone parses the marker out of the SSE stream and fetches bytes out-of-band over authenticated HTTPS.
 
 **Why:**

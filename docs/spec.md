@@ -24,7 +24,7 @@ Current capabilities are split between vanilla upstream Hermes and optional Rela
 | **Vanilla Hermes voice** | No | Dashboard `/api/audio/transcribe`, streaming `/api/audio/speak-stream`, and compatible `/api/audio/speak` fallback with the Manage session |
 | **Terminal** | Yes | Secure remote shell access to the Hermes server via tmux |
 | **Bridge / Device Control** | Yes | Agent controls the sideload phone with explicit safety gates |
-| **Relay power features** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media relay |
+| **Relay tools and enhancements** | Yes | Remote access, notification companion, provider-native voice, desktop tooling, media compatibility and metadata |
 
 The standard Vanilla Hermes connection needs only the Dashboard/Gateway surface.
 An API-server endpoint can be discovered or added as an automatic fallback for
@@ -137,11 +137,14 @@ sessions, and a timeout must not start another long read automatically.
 Progressive-page failures likewise stop automatic near-end requests and expose
 an explicit retry action; connection/profile changes cancel and reset page state.
 
-Optional Relay plugin metadata is not a standard connection prerequisite. In
-particular, Git repository discovery is a per-connection user opt-in, defaults
-off, and starts only from the Git workspace. Its filesystem and Git subprocess
-work runs outside the Dashboard event loop so an accessory scan cannot delay
-auth tickets, Gateway readiness, sessions, or Manage routes.
+Optional Relay plugin metadata is not a standard connection prerequisite.
+Upstream session `cwd`, repository-root, and branch metadata own the active
+session's Git context. Relay may enhance that context with repository discovery,
+working-tree details, diffs, and guarded mutations. Host discovery is a
+per-connection user opt-in, defaults off, and starts only from the Git workspace.
+Its filesystem and Git subprocess work runs outside the Dashboard event loop so
+an accessory scan cannot delay auth tickets, Gateway readiness, sessions, or
+Manage routes.
 
 ### 3.2 Protocol
 
@@ -183,7 +186,7 @@ Connection lifecycle, auth, keepalive.
 **Note:** Vanilla Hermes chat prefers the upstream dashboard `/api/ws` gateway when
 Manage auth is ready, then falls back to Hermes API Server HTTP/SSE paths (see
 Section 6.2). It does not traverse the Relay server. Relay voice, bridge,
-terminal, notifications, and inbound media do go through Relay. Relay voice
+terminal, notifications, and Relay-specific media enhancements do go through Relay. Relay voice
 HTTP/WSS routes accept either a Relay session token with an active
 `voice:config`, `voice:stt`, `voice:tts`, or `voice:realtime` grant, depending
 on the route, or the Hermes API bearer token; that API bearer exception does not
@@ -597,7 +600,7 @@ Bottom navigation bar with 4 tabs:
   3. Remaining top-bar actions (session drawer hamburger, ambient toggle, etc.).
 - **Profile Shelf** — the active avatar/name/chevron capsule opens Agent Passport; inactive profiles are avatar-only 48 dp switch targets; a fixed overflow opens the canonical full switcher also used by Passport. The shelf scrolls horizontally, honors `ProfilePresentationStore` ordering/hidden preferences, keeps a hidden selected profile disclosed, and disappears when only one visible identity remains. Hermes-owned avatars win by default, followed by device-local icons and display initials; an explicit per-connection/profile **This phone only** override lets the local icon win without mutating Hermes. Server default uses a home glyph and remains distinct from a profile literally named `default`.
 - **Hermes-owned profile identity** — on a current Gateway, Android calls `profiles.list {include_sessions:false}` and consumes bounded `ui_meta` plus `has_avatar`. A true avatar flag triggers `profiles.get_asset`; validated server bytes are cached per connection/profile and win over the older device-local `ProfileIconStore`. A false flag or successful clear removes only the server cache. Refresh generations and exact connection identity prevent a late fetch from repainting another connection or resurrecting a cleared avatar.
-- **Separated shared and phone avatar controls** — **Shared across Hermes** directly selects or removes the upstream `profiles.set_asset` avatar without changing local presentation. **This phone only** is a persisted per-connection/profile override populated from a phone image or Relay-host `GET /api/profiles/{name}/avatar`; selecting an image enables the override, while disabling it immediately returns to the shared avatar. Phone-local PNG/JPEG/WebP/GIF bytes are magic-checked and capped at 8 MB; Coil renders animated GIF/WebP consistently anywhere the profile icon appears. The shared picker accepts any image Android can decode, applies its display orientation, and downscales/re-encodes when necessary while retaining the exact upstream PNG/JPEG/WebP and 2,000,000-byte storage contract. Pet sheets and Sphere skins never enter `ui_meta` or profile assets.
+- **Separated shared and phone avatar controls** — **Shared across Hermes** directly selects or removes the upstream `profiles.set_asset` avatar without changing local presentation. **This phone only** is a persisted per-connection/profile override populated from a phone image. The Relay-host `GET /api/profiles/{name}/avatar` conventional-file importer is a legacy enhancement only; it does not own or replace upstream profile assets. Selecting a phone image enables the override, while disabling it immediately returns to the shared avatar. Phone-local PNG/JPEG/WebP/GIF bytes are magic-checked and capped at 8 MB; Coil renders animated GIF/WebP consistently anywhere the profile icon appears. The shared picker accepts any image Android can decode, applies its display orientation, and downscales/re-encodes when necessary while retaining the exact upstream PNG/JPEG/WebP and 2,000,000-byte storage contract. Pet sheets and Sphere skins never enter `ui_meta` or profile assets.
 - **Upstream animated pets** — the agent sheet consumes the profile-scoped Gateway `pet.info`, `pet.gallery`, `pet.select`, and `pet.disable` contracts. Android caches the bounded PNG/WebP sprite sheet by connection, effective profile, and `spritesheetRevision`; it sends `knownRevision` on refresh and reuses the existing bounded pet renderer for the returned geometry, row taxonomy, and activity states. The active upstream pet becomes the phone companion unless the user explicitly selected a phone-local floating pet. Selection and disable write Hermes `display.pet.*` state and therefore follow the profile across current Hermes surfaces; a method-not-found response leaves older hosts on the established local pet flow.
 - **Profile creation** — Manage uses `profiles.create` on current Gateways and labels authentication as shared sign-in, copied credential snapshot, or isolated/no-copy. Android serializes `mirror_credentials` and `share_auth` explicitly, reports best-effort SOUL/model/credential results without claiming full success, and never receives or logs credentials. The user may explicitly enable the authenticated Dashboard create route as an older-host fallback only for the legacy shared/default choice; explicit isolation never degrades to an ambiguous older mutation.
 - **Deletion boundary** — Hermes exposes no `profiles.delete` Gateway RPC. Android continues to delete profiles only through authenticated Dashboard `DELETE /api/profiles/{name}`.
@@ -662,6 +665,8 @@ The bridge UI drives — and is driven by — Tier 5 safety-rails (`BridgeSafety
 - **Connections** (v0.6.0+) — lists every paired Hermes server with a per-card status chip. Actions: rename (inline), re-pair (reuses `ConnectionWizard` with `connectionId` nav arg), revoke, remove. Add-connection button launches the standard QR flow. Settings briefly treats a paired + disconnected relay as **Connecting** during the reconnect grace window, then promotes it to **Relay unreachable - tap to reconnect** if the live socket does not recover. API / Relay / Session detail sheets include compact sanitized recent-activity tails, and **Settings -> Diagnostics** shows the consolidated app-level API, relay, session, endpoint, voice, Pair-readiness, credential-store recovery, history-failure, and rejected-Send evidence without secrets. See `docs/decisions.md` §19.
 - **Connection (single-server settings)** — summary-first detail for one Hermes installation. Dashboard/Gateway health drives standard Chat, Manage, Sessions, and Voice readiness. API fallback and Relay extensions appear as independently optional capabilities. Dashboard/Gateway address and network paths are edited under Routes. Advanced retains only the optional direct API credential, explicit direct Relay endpoint override, and insecure-development controls; missing API or Relay settings never make a healthy Dashboard/Gateway connection look broken. Every Relay QR, enter-code, and show-code method uses the shared connection-scoped Pair flow. Transport security posture and paired-device grants remain visible without leading the normal setup flow with ports or bearer keys.
 - **Chat** — Show reasoning toggle, smooth auto-scroll toggle (live-follow streaming, default on), show token usage toggle, app context prompt toggle, tool call display (Off/Compact/Detailed), streaming endpoint selector (`auto` / `sessions` / `runs`), Stats for Nerds (analytics charts)
+- **Media** — standard Chat settings for inbound attachment download policy, size limits, sensitive-media treatment, and the shared on-device cache. Authenticated upstream Dashboard file routes are preferred; pairing Relay adds compatibility delivery and sensitivity metadata but does not own the settings surface.
+- **Threads** — Relay-tool settings for the opt-in `phone` platform, named proactive conversations, and delivery behavior. Standard Dashboard session history remains separate and does not require Relay.
 - **Voice** — route-aware voice engine selector (`Vanilla Hermes` via dashboard audio, `Relay Voice Output`, and experimental `Realtime Agent`), global interaction mode (tap / hold / continuous), silence threshold slider, a final-answer-only speech policy, Auto-TTS toggle, selected-engine cards for dashboard or relay-backed settings, language picker, and a Test Current Engine card. Final-answer-only keeps tool/service progress and intermediate commentary visual while both voice engines wait to speak the settled answer; approvals, confirmation questions, and blocking failures remain actionable. Vanilla Hermes voice depends on Manage/dashboard auth; Relay-backed engines run a fast relay health preflight before uploading audio or opening a realtime provider session so a hung relay surfaces as a connection error instead of an indefinite Thinking state.
 - **Notification companion** — opt-in status, "Open Android Settings" action, test notification dump
 - **Permissions** — central permission/capability review screen linked from Settings and onboarding. It makes the Vanilla Hermes path explicit ("Chat and Manage" need no Android runtime grant), lists optional camera/microphone/notification access with current status and Android Settings links, and shows sideload-only Device Control requirements only in the sideload flavor.
@@ -706,7 +711,7 @@ HTTP routes registered by `create_app()` in `plugin/relay/server.py`:
 | `/pairing/register` | POST | **Loopback only.** Pre-register an externally-provided pairing code. Used by the pair command (`hermes pair`, `/hermes-relay-pair`, or compatibility `hermes-pair`) to inject codes that will appear in QR payloads. Request: `{"code": "ABCD12"}`. Rejects non-loopback peers with HTTP 403. |
 | `/pairing/mint` | POST | **Loopback only.** Mint a fresh pairing code and signed QR payload plus `pairing_url` (`hermes-relay://pair?payload=...`) for dashboard and CLI/tray pair/repair flows. Optional request field `dashboard_url` is copied into the QR payload for custom dashboard routes. |
 | `/api/profiles/{name}/config` | GET | Profile-scoped read-only config. Returns `{profile, path, config, readonly: true}`. Loopback callers receive the parsed `config.yaml` and absolute path. Remote callers require a relay session bearer and receive only the explicitly public `description` and `model.default` fields with `path: "config.yaml"`; arbitrary provider, platform, integration, and extension sections never cross the remote boundary. 404 on missing profile / missing config.yaml; 500 on yaml parse error. See §22 in decisions.md. |
-| `/api/profiles/{name}/avatar` | GET | Profile-scoped avatar discovery and image delivery. Searches direct children of the profile home for conventional names, preferring `avatar.*` then `profile.*` (`png`, `jpg`, `jpeg`, `webp`, `gif`; additional `profile-image`, `agent`, and `icon` stems are accepted). Synthetic `default` follows a valid sticky `active_profile` marker, matching its advertised identity. The resolved file must remain inside the profile home and satisfy the Relay media-size policy. Same loopback-or-session-bearer auth as the other profile reads. 404 when the profile or an image is absent. Android copies returned bytes into its existing device-local per-profile icon store. |
+| `/api/profiles/{name}/avatar` | GET | Legacy Relay enhancement for importing a conventional host file into this phone's local profile-icon store. It does not represent the upstream shared profile asset, which remains owned by `profiles.set_asset`. Searches direct children of the profile home for conventional names, preferring `avatar.*` then `profile.*` (`png`, `jpg`, `jpeg`, `webp`, `gif`; additional `profile-image`, `agent`, and `icon` stems are accepted). The resolved file must remain inside the profile home and satisfy the Relay media-size policy. |
 | `/api/profiles/{name}/skills` | GET | Profile-scoped skill enumeration. Walks `<profile>/skills/<category>/<skill>/SKILL.md` recursively; returns `{profile, skills: [{name, category, description, path, enabled: true}], total}`. Same auth model as `/config`. `name`/`description` come from YAML frontmatter when present, else directory basename. All skills report `enabled: true` today — see §22 for the toggle stub. |
 | `/api/profiles/{name}/soul` | GET | Profile-scoped raw `SOUL.md` read. Returns `{profile, path, content, exists, size_bytes}` with optional `truncated: true` when content exceeds the 200KB inline cap. Absent SOUL.md returns 200 with `exists: false` and an empty content string so the Inspector can distinguish "no soul" from transport failure. Same auth model as `/config`. 404 on unknown profile; 500 `{error: "soul_read_failed"}` on decode error. See §22 in decisions.md. |
 | `/api/profiles/{name}/memory` | GET | Profile-scoped memory listing. Returns `{profile, memories_dir, entries: [{name, filename, path, content, size_bytes, truncated}], total}` for `*.md` files directly under `<profile>/memories/` (non-recursive). Ordering: `MEMORY.md` first, `USER.md` second, remainder alphabetical. Each entry capped at 50KB inline with `truncated: true` when larger. Absent memories dir → 200 with empty `entries` array. Same auth model as `/config`. 404 on unknown profile. See §22 in decisions.md. |
@@ -797,58 +802,66 @@ app-root intent coordinator retains a cold-start request until the chat context
 settles, while `ChatViewModel` owns the existing transport-aware new-chat
 lifecycle and the one-shot composer prefill.
 
-The relay server is **not involved** in chat streaming itself. It remains the home for bridge, terminal, and — as of 2026-04-11 — **inbound media delivery** (see 6.2a). As an optional compatibility enhancement, a paired phone may poll `GET /chat/image-activity?profile=<name>&session_id=<id>&since=<epoch>` during an active Standard Gateway turn. Relay reads the selected profile's Hermes `state.db` in read-only mode and reports persisted `image_generate` start/completion state. This fills only the animation lifecycle gap on upstream configurations that suppress tool progress; it does not proxy prompts, deltas, results, or chat control, and Android stops using it when the route is absent.
+The relay server is **not involved** in chat streaming itself. It remains the home for bridge, terminal, and additive media compatibility (see 6.2a). As an optional compatibility enhancement, a paired phone may poll `GET /chat/image-activity?profile=<name>&session_id=<id>&since=<epoch>` during an active Standard Gateway turn. Relay reads the selected profile's Hermes `state.db` in read-only mode and reports persisted `image_generate` start/completion state. This fills only the animation lifecycle gap on upstream configurations that suppress tool progress; it does not proxy prompts, deltas, results, or chat control, and Android never starts the poller when Relay is not configured.
 
 ### 6.2a Inbound Media (Agent → Phone file delivery)
 
-Tool-produced files (screenshots today, video/audio/PDF/other in the future) reach the phone via a plugin-owned file-serving surface on the relay, decoupled from the chat SSE stream itself. Only a short opaque token rides the chat stream; the bytes flow out-of-band over authenticated HTTPS.
+Current upstream Hermes Desktop treats generated media and host-local files as a
+standard Dashboard capability. Android follows the same ownership instead of
+requiring the optional Relay plugin.
 
-**Why this lives in the plugin, not upstream hermes-agent:** `APIServerAdapter.send()` (in upstream `gateway/platforms/api_server.py`) is an explicit no-op — the HTTP API adapter does not implement `send_document`. Upstream's `extract_media()` / `send_document()` pipeline only fires for push platforms (Telegram, Feishu, WeChat) and non-streaming paths. On our streaming HTTP surface, `MEDIA:` tags in tool output have always passed through as literal text. Rather than patch upstream, we added our own endpoints and marker format. See [docs/decisions.md §14](decisions.md) for the full trust and resource model.
+**Source precedence:**
+1. Use bounded `data:` content and explicit HTTP(S) sources directly.
+2. Resolve host-local `MEDIA:` paths, `@image:` directives, file links, and
+   generated-file references through authenticated Dashboard
+   `/api/files/download`, enforce the Android media cap while reading, then play
+   or preview the bounded local cache. Current upstream also exposes
+   `/api/files/stream` and `/api/fs/read-data-url` for official Desktop's Range
+   playback and bounded preview paths; Android does not claim those routes yet.
+3. Resolve explicit `MEDIA:hermes-relay://<token>` references through the paired
+   Relay. Relay `/media/by-path` remains an older-host compatibility fallback and
+   can add sensitivity metadata or cache-compatible delivery, but it never
+   outranks a compatible upstream route.
+4. If neither owner is available, keep one stable, path-free attachment card.
+   Missing optional Relay configuration is not a failed transfer, is not
+   retryable until a usable route exists, and must not emit a global connection
+   error or re-fetch on every history reconciliation.
 
-**Wire format:**
-```
-Screenshot captured (1280x720)
-MEDIA:hermes-relay://<url-safe-16-byte-token>
-```
+Every Dashboard fetch uses the exact active connection/profile and authenticated
+origin. Connection, profile, session, and generation ownership are checked again
+before downloaded bytes may update message state. Upstream authentication or
+policy rejection remains an actionable upstream error; capability absence on an
+older host may fall back to a paired Relay without changing Chat readiness.
 
-**Server:** media routes on `plugin/relay/server.py`:
-- `POST /media/register` — **loopback-only**. Body `{"path", "content_type", "file_name"}`. Validates path is absolute, resolves (`os.path.realpath`) under an allowed root, exists, is a regular file, fits under `RELAY_MEDIA_MAX_SIZE_MB`. Generates `secrets.token_urlsafe(16)` (128 bits entropy), stores the token → entry mapping in an in-memory `OrderedDict` LRU (capped at `RELAY_MEDIA_LRU_CAP`, TTL `RELAY_MEDIA_TTL_SECONDS`). Returns `{ok, token, expires_at}`. Used when a host-local tool explicitly wants to publish a file.
-- `GET /api/plugins/hermes-relay/provider-usage?profile=<id>&session_id=<id>` — authenticated Dashboard-plugin surface that resolves the active Codex pool entry directly from the live Gateway session, without requiring another turn. Android prefers this route when Dashboard auth is available.
-- `GET /usage/providers?profile=<id>&session_id=<id>` — bearer-authenticated standalone Relay surface for Android provider account limits. Disabled unless `RELAY_PROVIDER_USAGE_ENABLED=1`. The validated profile ID scopes every credential/account lookup through Hermes's context-local home override. It reuses Hermes account snapshots for Codex and Nous, adds OpenCode Go percentage/reset windows, and returns no provider secrets. For Codex it reports every bounded pool entry with a safe label, hashed opaque id, effective status, and usage windows; the optional Gateway session id correlates the active entry from a secret-free profile-local hook snapshot. If that exact evidence is absent, active state is explicitly unknown. Android falls back to this route, then additive upstream Gateway `account.usage` as a single-account fallback.
-- `GET /media/{token}` — requires `Authorization: Bearer <session_token>` against the existing `SessionManager` (same token WSS uses). Streams the file via `web.FileResponse` with the registered content type plus `Content-Disposition: inline; filename="..."` if the entry has a file name. 401 on missing/invalid bearer, 404 on unknown/expired token.
-- `GET /media/by-path?path=<abs>&content_type=<optional>` — requires bearer auth. Shares the same sandbox validation as `/media/register` via a common `validate_media_path()` helper: absolute path, `realpath`-resolves under an allowed root, exists, is a regular file, fits under the size cap. Content-Type is the phone's hint if provided, otherwise guessed via `mimetypes.guess_type()`. This route exists specifically for **LLM-emitted bare-path markers** — upstream `agent/prompt_builder.py` instructs the model to include `MEDIA:/absolute/path/to/file` in its response text, so the bare-path form is the agent's native output, not just a fallback. 401 auth, 403 sandbox, 404 missing file.
-- `POST /media/upload` — bearer-auth'd small upload route for phone-originated media. Accepts base64 content, writes a temp file, and registers it into the same media registry.
+Downloaded bytes share the existing bounded `MediaCacheWriter` and
+`FileProvider` path. The same cellular, maximum-size, cache-cap, and sensitive
+media preferences apply regardless of whether upstream or Relay delivered the
+file. `InboundAttachmentCard` therefore renders one source-neutral loading,
+loaded, manual-download, unavailable, or failed state; it never labels a
+standard attachment as a Relay connection failure.
 
-**Phone:** parse → fetch → cache → render:
-1. `ChatHandler.scanForMediaMarkers()` runs on every `onTextDelta`, unconditionally (not gated on `parseToolAnnotations`). Matches `MEDIA:hermes-relay://([A-Za-z0-9_-]+)` and fires `onMediaAttachmentRequested(messageId, token)`. A second regex matches the bare-path form `MEDIA:(/\S+)` and fires `onMediaBarePathRequested(messageId, path)` — the ViewModel then calls `RelayHttpClient.fetchMediaByPath()` to pull bytes via `GET /media/by-path`. A per-session `dispatchedMediaMarkers` set dedupes between real-time streaming scans and the post-stream `finalizeMediaMarkers` reconciliation pass. `loadMessageHistory` (invoked by the `session_end reload` pattern at every stream complete) re-runs the same parser on server-stored content so client-injected attachments survive the wholesale state replace. Both marker forms are stripped from the rendered message text.
-2. `ChatViewModel` inserts a LOADING `Attachment` with `relayToken` set immediately (message updates via `ChatHandler.mutateMessage`).
-3. On Wi-Fi, or on cellular when `autoFetchOnCellular` is true: `RelayHttpClient.fetchMedia(token)` issues `GET /media/{token}` with the bearer header. URL is derived by swapping `ws://`→`http://`, `wss://`→`https://` on the stored relay URL.
-4. Bytes are checked against `maxInboundSizeMb`. If oversize → FAILED placeholder. Otherwise `MediaCacheWriter` writes them to `context.cacheDir/hermes-media/<sha1>.<ext>` with LRU eviction by mtime (capped at `cachedMediaCapMb`) and returns a `content://` URI via `FileProvider.getUriForFile(context, "${applicationId}.fileprovider", file)`.
-5. The Attachment is flipped to LOADED with `cachedUri` set. `InboundAttachmentCard` dispatches by `(state × renderMode)`: `IMAGE` renders inline via `BitmapFactory.decodeByteArray` + `asImageBitmap`; `VIDEO`/`AUDIO`/`PDF`/`TEXT`/`GENERIC` render as tap-to-open file cards firing `ACTION_VIEW` with `FLAG_GRANT_READ_URI_PERMISSION` on the cached URI. Every message attachment group, including galleries and LOADING/FAILED cards, sits behind a compact collapse/expand header keyed by the message's stable UI identity. Collapsing changes presentation only: the header keeps the attachment count, first name/type, and restore affordance visible while existing retry, fetch, viewer, share, and save behavior remains mounted again after expansion.
-6. On cellular with `autoFetchOnCellular` off: the initial LOADING placeholder settles to an actionable FAILED state with `errorMessage = "Tap to download"`, and `manualFetchAttachment()` re-runs the fetch ignoring the cellular gate. In-flight reads have a two-minute absolute timeout; every completed attempt publishes LOADED or an actionable FAILED state.
+Relay token delivery remains available for phone-control screenshots and tools
+that explicitly register a file. The registry retains its bearer authentication,
+allowed-root validation, size cap, TTL, and LRU behavior. A stale token may be
+unavailable after a Relay restart, but an ordinary upstream path remains
+replayable through the Dashboard file routes.
 
-**Fallback when relay isn't running:** the tool's `register_media()` call fails (connection refused / timeout / non-200) → tool logs a warning and returns the legacy bare-path form (`MEDIA:/tmp/...`). The phone's `onUnavailableMediaMarker` handler inserts a FAILED Attachment with `errorMessage = "Image unavailable — relay offline"`. Matches current behavior; placeholder is tidier than raw marker text.
+Upstream already owns the general file-delivery instructions used by the agent.
+Relay's profile-owned `register_system_prompt_section` entries stay additive:
+they may describe Relay-only phone capabilities or sensitive-media metadata, but
+must not tell the agent that Relay is required for ordinary media. The legacy
+prompt wrapper remains only an older-host fallback and is fail-open.
 
-Persisted USER history may also contain upstream-owned `@image:<absolute-path>`
-directive lines. Android recognizes only bounded, full-line image directives
-(including upstream's backtick/single-quote/double-quote path wrapping), removes
-recognized host paths from visible text, and reconstructs at most eight
-attachments. A paired Relay may resolve those paths through its authenticated
-media route; a vanilla or unavailable route renders a path-free failed
-attachment. Inline, relative, malformed, non-image, and unknown directives stay
-as text and never trigger a fetch. Client-local outbound attachments win during
-the immediate post-send reload, preventing a duplicate fetch/gallery entry.
-
-**Known gap — session replay across relay restarts:** the `MediaRegistry` is in-memory. Restarting the relay invalidates all tokens. A user scrolling back into a session from yesterday sees FAILED placeholders for any now-stale token. Phone-side persistent cache (indexed by token or content hash) is the planned fix; filed as a DEVLOG follow-up.
-
-**Known gap — auto-fetch threshold slider isn't enforced today.** The Settings → Inbound media → auto-fetch threshold knob is persisted but the fetch path currently only checks the cellular toggle + the hard max cap. Forward-compatibility placeholder; real enforcement needs a HEAD preflight or post-hoc byte rejection.
-
-**Key classes:**
-- **`MediaRegistry`** (`plugin/relay/media.py`) — in-memory token store, thread-safe via `asyncio.Lock`
-- **`register_media()`** (`plugin/relay/client.py`) — stdlib `urllib.request` helper for in-process tool callers
-- **`RelayHttpClient`** (Android) — OkHttp GET with Bearer auth + URL rewriting
-- **`MediaCacheWriter`** (Android) — FileProvider-backed LRU cache in `cacheDir/hermes-media/`
-- **`InboundAttachmentCard`** (Android) — single Compose component dispatched on `(state × renderMode)`, handles both inbound and outbound attachments
+**Provider-usage enhancements:**
+- `GET /api/plugins/hermes-relay/provider-usage?profile=<id>&session_id=<id>` is
+  the authenticated Dashboard-plugin surface that resolves an active Codex pool
+  entry from the live Gateway session without requiring another turn.
+- `GET /usage/providers?profile=<id>&session_id=<id>` is the optional
+  bearer-authenticated standalone Relay fallback. It is disabled unless
+  `RELAY_PROVIDER_USAGE_ENABLED=1`, returns no provider secrets, and keeps
+  profile/account correlation explicitly unknown when exact evidence is absent.
+  Android falls back from these additive views to upstream Gateway
+  `account.usage` for the standard single-account surface.
 
 ### 6.2b Rich Cards (Agent → Phone structured UI, ADR 26)
 

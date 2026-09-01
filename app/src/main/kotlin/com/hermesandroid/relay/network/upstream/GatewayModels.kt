@@ -263,6 +263,16 @@ data class GatewayToolOutputRisk(
     val redacted: Boolean,
 )
 
+/** Official upstream `notification.show` AgentNotice payload. */
+data class GatewayAgentNotice(
+    val text: String,
+    val level: String? = null,
+    val kind: String? = null,
+    val ttlMs: Long? = null,
+    val key: String? = null,
+    val id: String? = null,
+)
+
 /**
  * One `subagent.*` lifecycle event, emitted on the PARENT session. Lifecycle
  * per task: SPAWN_REQUESTED → START → (THINKING | TOOL | PROGRESS)* →
@@ -734,6 +744,10 @@ class GatewayTurnCallbacks(
     val onStatusUpdate: (kind: String?, text: String) -> Unit = { _, _ -> },
     /** Clear a transient status only when [kind] still owns the visible status slot. */
     val onStatusClear: (kind: String) -> Unit = { _ -> },
+    /** Official upstream account/agent notice; distinct from Relay proactive messages. */
+    val onNoticeShow: (GatewayAgentNotice) -> Unit = { _ -> },
+    /** Exact-key dismissal for an upstream notice. */
+    val onNoticeClear: (key: String) -> Unit = { _ -> },
 )
 
 /**

@@ -23,8 +23,8 @@ Server-, TLS- und Betreiberoptionen stehen in der
 |---|---|---|
 | Empfohlen für | Die meisten Nutzer | Nutzer von Device Control |
 | Updates | Automatisch | APK manuell aktualisieren |
-| Chat, Voice, Manage | Enthalten | Enthalten |
-| Terminal, Medien, Benachrichtigungen mit Relay | Enthalten | Enthalten |
+| Chat, Voice, Manage, eingehende Dateien | Enthalten | Enthalten |
+| Terminal, Medienerweiterungen, Benachrichtigungen mit Relay | Enthalten | Enthalten |
 | Bildschirm lesen, tippen, schreiben, navigieren | Nicht enthalten | Enthalten |
 
 <StoreBadge />
@@ -36,7 +36,8 @@ nicht die `.aab`-Datei herunter; sie ist nur für Google Play bestimmt.
 ## 2. Hermes erreichbar machen
 
 Android verwendet standardmäßig das Hermes Dashboard/Gateway unter `:9119`.
-Es stellt Chat, Sitzungen, Anmeldung, Manage und Standard-Voice bereit. Starte
+Es stellt Chat, Sitzungen, Anmeldung, Manage, Standard-Voice und authentifizierte
+eingehende Dateien bereit. Starte
 es mit `hermes dashboard` und mache diese Adresse für das Telefon erreichbar.
 
 Der API-Server unter `:8642` ist optional: Er dient als automatischer

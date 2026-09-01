@@ -1,6 +1,6 @@
 # Hermes-Relay Surface Matrix
 
-Updated: 2026-08-29
+Updated: 2026-08-31
 
 This matrix records the v1.0.0 route ownership contract. It is meant to keep
 future app, plugin, and agent work honest about what is vanilla upstream
@@ -29,6 +29,11 @@ Verified upstream source snapshot:
 - Session activity contracts were rechecked against upstream `main` at
   `d736f5d53f1d33fabad5a17cb070eb138b618fb8` in `tui_gateway/server.py`,
   `tui_gateway/methods_session.py`, and `hermes_cli/web_routers/sessions.py`.
+- Desktop media delivery was rechecked at upstream commit
+  `b20cc5f787ea816ea8645603b7b2ac8234dcb8b4` in
+  `apps/desktop/src/lib/media.ts`,
+  `apps/desktop/src/components/assistant-ui/markdown-text.tsx`, and
+  `hermes_cli/web_server.py`.
 
 ## Ownership
 
@@ -46,8 +51,9 @@ Verified upstream source snapshot:
 | Dashboard `model.options` / `/api/model/*` | Upstream dashboard/tui_gateway | No | Provider/model inventory and selection | Source of truth for coherent provider/model identities. A reasoning boolean or exact effort list is consumed when present; clients do not infer provider identity from a model string alone. |
 | Gateway `pet.info`, `pet.gallery`, `pet.select`, `pet.disable` | Upstream tui_gateway | No | Profile-scoped animated companion | `pet.info` supplies bounded PNG/WebP sheet bytes, revision, geometry, real frame counts, loop timing, scale, and row taxonomy. Android passes `knownRevision` to avoid duplicate sheet transfer, renders the active pet through its native activity-aware companion, and keeps phone-local pet packs separate. All four RPCs carry the effective profile. |
 | Dashboard `/api/audio/transcribe`, `/api/audio/speak-stream`, `/api/audio/speak` | Upstream dashboard | No | Vanilla Hermes voice | Manage sign-in unlocks Vanilla Hermes voice. Assistant text streams into upstream speech when available; older hosts fall back to whole-request speech before audio starts. API server has no `/v1/audio/*` route today. |
+| Dashboard `/api/files/download`, `/api/files/stream`, `/api/fs/read-data-url` | Upstream dashboard | No | Primary inbound files and official Desktop media/preview support | Android currently downloads host-local `MEDIA:` paths and file links through authenticated `/api/files/download`, then plays or previews the bounded local cache. Official Desktop additionally uses `/api/files/stream` for Range playback and `/api/fs/read-data-url` for bounded previews; Android does not claim those two routes yet. Direct HTTP/data URLs remain direct. |
 | Dashboard `/api/config`, `/api/profiles/*`, `/api/env`, `/api/model/*`, `/api/mcp/*`, `/api/providers/custom-endpoints*` | Upstream dashboard | No | Manage | Do not proxy through Relay. MCP list/actions/OAuth carry Android's effective profile explicitly; Android detects hosted-OAuth support with a read-only missing-flow status GET and caches that capability per dashboard/profile. Hosted OAuth itself stays server-owned, opens only the returned HTTPS URL, and persists only the opaque flow id/server/profile plus a normalized non-secret dashboard/connection identity; polling is held whenever the active connection does not own that flow. Custom-endpoint routes are process-scoped in the current public contract, so Android does not claim or append profile scoping; credentials are write-only and blank edits preserve an existing key. |
-| `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools | Owned by `plugin/relay/server.py`; Android must gate behind Relay readiness/session grants. |
+| `/pairing/*`, `/sessions`, `/voice/*`, `/desktop/*`, `/media/*`, `/notifications/*` on Relay | Hermes-Relay plugin/server | Yes | Relay pairing, terminal, bridge, relay voice, desktop tools, and additive media compatibility | Owned by `plugin/relay/server.py`; Android must gate these routes behind Relay readiness/session grants. Relay media tokens, sensitivity metadata, and older-host compatibility enhance the standard Dashboard media path; they do not make ordinary inbound files Relay-owned. |
 | `POST /relay/model-capabilities` | Hermes-Relay plugin/server | Optional | Refine reasoning-effort choices for exact upstream provider/model pairs | Never supplies model inventory or gates chat. Missing, old, unpaired, malformed, or unreachable Relay falls back to standard advisory choices. Remote calls require a paired bearer with an active `chat` grant. |
 | Dashboard `/api/plugins/hermes-relay/*` | Hermes-Relay dashboard plugin | Yes for live data | Relay dashboard tab and same-origin Relay ingress | FastAPI plugin backend proxies an explicit allowlist to the independently supervised loopback Relay. HTTP requires Dashboard auth plus `X-Hermes-Relay-Session`; WebSockets require a fresh Dashboard ticket before Relay's own pairing/session frame. Loopback administration routes are never exposed. |
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |
@@ -60,7 +66,7 @@ second, orthogonal axis: the **build flavor**, a capability ceiling compiled
 into the APK regardless of which routes the server exposes.
 
 - `googlePlay` ("Bridge Core") ships the full Vanilla Hermes path plus the Relay
-  client (terminal, relay voice, notification companion, media, session
+  client (terminal, relay voice, notification companion, media enhancements, session
   grants), but **no** AccessibilityService Device Control.
 - `sideload` additionally compiles in phone Device Control — screen reading,
   taps, typing, screenshots, overlays, unattended control — and the Tier-C
@@ -167,9 +173,9 @@ capabilities, not identity:
 
 | Surface | Product role | Required for the standard path |
 |---------|--------------|--------------------------------|
-| Dashboard/Gateway | Primary chat, auth, sessions, Manage, and Vanilla Hermes voice | Yes |
+| Dashboard/Gateway | Primary chat, auth, sessions, Manage, Vanilla Hermes voice, and inbound files | Yes |
 | API server | Automatic chat fallback and advanced headless compatibility | No |
-| Relay | Pairing, terminal, bridge/device control, media, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
+| Relay | Pairing, terminal, bridge/device control, media enhancements/legacy fallback, and enhanced voice; normally reached through the Dashboard plugin ingress | No |
 
 Existing API-only records and headless deployments remain supported compatibility
 configurations. They do not redefine normal onboarding or make an API key a
@@ -186,7 +192,10 @@ The app should present Vanilla Hermes as the default path:
 4. When needed, fall back to API-server
    SSE.
 5. Use Vanilla Hermes dashboard voice when audio routes are present.
-6. Offer Relay pairing only for Relay-owned power features. Prefer the
+6. Resolve inbound files through direct sources or authenticated upstream
+   Dashboard file routes first. Use Relay only for Relay tokens, additive
+   metadata, or compatibility with older hosts.
+7. Offer Relay pairing only for Relay-owned tools and enhancements. Prefer the
    Dashboard-origin plugin ingress advertised by pairing; retain a direct Relay
    listener only as an advanced/headless/Desktop compatibility route.
 
@@ -262,6 +271,9 @@ keeping route ownership explicit:
   owner; Stop/session-switch cancels the initial request, pending delay, and
   replacement together. A second drain or any post-event failure remains an
   explicit retry so the client cannot duplicate an admitted turn.
-- Gateway `session.create` and `session.resume` declare `source: webui`, the
-  existing upstream rich-chat platform hint. Hermes currently has no stable
-  `android` or `relay_desktop` platform hint; Relay clients must not invent one.
+- Android currently preserves its explicit `source: webui` session field for
+  wire and history compatibility only. Current official Desktop does not treat
+  `webui` as a rich-chat prompt hint; upstream removed that unused path at the
+  verified `b20cc5f` snapshot. Hermes has no stable `android` or mobile platform
+  hint, so Android must not claim Desktop parity or invent one. The upstream
+  platform-hint follow-up is tracked in `TODO.md`.

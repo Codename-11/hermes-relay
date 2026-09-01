@@ -669,8 +669,8 @@
     <string name="settings_voice_mode">Modo de voz</string>
     <string name="settings_voice_mode_desc">Voz do painel, opções de relay em tempo real e provedores</string>
     <string name="settings_threads">Threads</string>
-    <string name="settings_threads_desc">Permita que o agente inicie conversas com você (desativado por padrão)</string>
-    <string name="settings_power_tools">Ferramentas avançadas</string>
+    <string name="settings_threads_desc">Conversas iniciadas pelo Relay e entrega proativa (desativado por padrão)</string>
+    <string name="settings_power_tools">Ferramentas do Relay</string>
     <string name="settings_terminal">Terminal</string>
     <string name="settings_terminal_desc">Acesso ao shell do servidor por uma sessão pareada do relay</string>
     <string name="settings_bridge">Bridge</string>
@@ -682,7 +682,7 @@
     <string name="settings_notification_companion">Assistente de notificações</string>
     <string name="settings_notification_companion_desc">Notificações compartilhadas do celular para ferramentas pareadas do relay</string>
     <string name="settings_media">Mídia</string>
-    <string name="settings_media_desc">Anexos recebidos pelo Relay, busca automática e limite do cache</string>
+    <string name="settings_media_desc">Anexos do chat, downloads, privacidade e cache</string>
     <string name="settings_bridge_safety">Segurança do Bridge</string>
     <string name="settings_bridge_safety_desc">Lista de bloqueio, confirmação de verbos destrutivos e desativação automática</string>
     <string name="settings_sideload">Sideload</string>
@@ -1162,8 +1162,8 @@
     <!-- P1: MediaSettingsScreen -->
     <string name="media_title">Mídia</string>
     <string name="media_back">Voltar</string>
-    <string name="media_intro_1">Controla como o app lida com arquivos enviados pelos resultados de ferramentas (capturas de tela, PDFs etc.) pelo relay.</string>
-    <string name="media_intro_2">Somente Relay — estas configurações não afetam as imagens que você anexa no chat nem nada em uma conexão padrão (sem Relay).</string>
+    <string name="media_intro_1">Controla como o app baixa, protege e armazena em cache os arquivos enviados pelo Hermes no chat.</string>
+    <string name="media_intro_2">A mídia padrão do Dashboard é priorizada. Quando pareado, o Relay pode acrescentar entrega de compatibilidade e metadados de sensibilidade.</string>
     <string name="media_max_inbound">Tamanho máximo dos anexos recebidos</string>
     <string name="media_max_inbound_value">%1$d MB</string>
     <string name="media_max_inbound_desc">Arquivos maiores que isso são rejeitados após o download.</string>
@@ -2080,7 +2080,8 @@
     <string name="session_path_signin_for_gateway">Entre em Gerenciar para usar o Gateway com pensamento ao vivo.</string>
     <string name="session_path_gateway_api_server">Disponível no transporte do Gateway — esta sessão transmite pelo servidor API.</string>
     <string name="session_path_relay_not_connected">Relay pareado, mas desconectado.</string>
-    <string name="session_path_pair_relay_media">Pareie o relay para enviar e receber mídia.</string>
+    <string name="session_path_pair_relay_media">Pareie o Relay para compatibilidade de mídia em hosts Hermes mais antigos.</string>
+    <string name="session_path_media_not_ready">Atualize o Hermes para entrega de mídia padrão ou pareie o Relay para compatibilidade.</string>
     <string name="session_path_pair_relay_terminal">Pareie o relay para acessar o terminal.</string>
     <string name="session_path_voice_not_ready">A voz não está pronta nesta conexão.</string>
     <string name="session_path_threads_pair_relay">Pareie o relay e ative \"Permitir que o Hermes me envie mensagens\" para o agente poder abrir Threads.</string>
@@ -2678,6 +2679,8 @@
     <string name="inbound_attach_downloading">Baixando…%1$s</string>
     <string name="inbound_attach_failed">Falha no anexo</string>
     <string name="inbound_attach_tap_retry">Toque para tentar novamente</string>
+    <string name="inbound_attach_host_only">O arquivo está no seu host Hermes</string>
+    <string name="inbound_attach_host_only_help">Atualize o Hermes para downloads padrão ou pareie o Relay para compatibilidade.</string>
     <string name="inbound_attach_open">Abrir externamente</string>
     <string name="inbound_attach_share">Compartilhar</string>
     <string name="inbound_attach_save">Salvar no dispositivo</string>
@@ -3151,6 +3154,8 @@
     <string name="diag_check_ready_with">Pronto com %s</string>
     <string name="diag_check_relay_active">Relay ativo</string>
     <string name="diag_check_relay_not_configured">Relay não configurado</string>
+    <string name="diag_relay_tools_optional">Ferramentas do Relay (opcionais)</string>
+    <string name="diag_relay_tools_not_paired">Não pareado</string>
     <string name="diag_check_relay_server">Verificar servidor relay</string>
     <string name="diag_check_relay_plugin">Plugin do Relay</string>
     <string name="diag_plugin_not_configured">O plugin opcional não está configurado</string>
@@ -3180,8 +3185,8 @@
     <string name="inbound_attach_cd_cancel">Cancelar</string>
     <string name="inbound_attach_open_failed">Não foi possível abrir o anexo</string>
     <string name="inbound_attach_share_failed">Não foi possível compartilhar o anexo</string>
-    <string name="injected_context_media_no_relay">A mídia exige uma conexão ativa com o Relay</string>
-    <string name="injected_context_media_relay_active">Relay ativo para mídia</string>
+    <string name="injected_context_media_no_relay">Nenhuma instrução extra de mídia — a entrega padrão continua sob responsabilidade do servidor</string>
+    <string name="injected_context_media_relay_active">Aprimoramento de mídia do Relay disponível</string>
     <string name="injected_context_media_title">Compartilhamento de mídia</string>
     <string name="injected_context_persona_not_set">Nenhuma persona definida</string>
     <string name="injected_context_persona_server_side">Persona no servidor</string>
@@ -4332,7 +4337,7 @@
     <string name="chat_git_deletions">%1$d exclusões</string>
     <plurals name="chat_git_change_count"><item quantity="one">%1$d alteração</item><item quantity="other">%1$d alterações</item></plurals>
     <string name="settings_git_workspace">Espaço de trabalho Git</string>
-    <string name="settings_git_workspace_desc">Revise alterações, branches, commits e remotos</string>
+    <string name="settings_git_workspace_desc">Git da sessão atual primeiro, com descoberta opcional do host</string>
     <string name="current_chat_activity_title">Atividade atual do chat</string>
     <string name="current_chat_activity_subtitle">Detalhes ao vivo e somente leitura deste chat</string>
     <string name="current_chat_activity_open">Visualizar atividade atual do chat</string>
@@ -4367,7 +4372,7 @@
     <string name="agent_activity_child_role_task">Tarefa</string>
     <string name="agent_activity_child_role_agent">Agente</string>
     <string name="agent_activity_child_role_system">Sistema</string>
-    <string name="settings_git_workspace_off_desc">Desativado · A verificação de repositórios no host é opcional</string>
+    <string name="settings_git_workspace_off_desc">Somente repositório da sessão · A descoberta do host é opcional</string>
     <string name="active_section_available_fallback">Available fallback</string>
     <string name="active_section_available_fallback_mechanism">Available fallback · %1$s</string>
     <string name="active_section_in_use">In use</string>

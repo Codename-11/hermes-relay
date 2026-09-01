@@ -162,9 +162,9 @@ A pairing QR can carry multiple endpoint candidates for the same server: LAN, Ta
 
 The split is intentional:
 
-- Standard Chat, sessions, Manage, and voice use the Dashboard/Gateway route.
+- Standard Chat, sessions, Manage, voice, and ordinary inbound files use the Dashboard/Gateway route.
 - Optional API fallback uses its own route and bearer only when configured.
-- Terminal, bridge, TUI, media, clipboard, profile-file operations, Android
+- Terminal, bridge, TUI, explicit Relay media/enhancements, clipboard, profile-file operations, Android
   control, and Relay voice extensions use the Relay route and require a paired
   Relay session.
 

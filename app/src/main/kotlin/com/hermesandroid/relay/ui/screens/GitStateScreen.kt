@@ -98,7 +98,7 @@ private data class DisplayFile(
     val deletions: Int?,
 )
 
-/** First-class native Git workspace backed by the optional Relay contribution. */
+/** Native Git workspace: upstream current-session reads plus optional Relay enhancements. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GitStateScreen(
@@ -131,7 +131,7 @@ fun GitStateScreen(
     var pendingConfirm by remember { mutableStateOf<ConfirmationRequest?>(null) }
 
     LaunchedEffect(scanningEnabled) {
-        if (scanningEnabled) viewModel.loadRepos()
+        viewModel.loadRepos()
     }
 
     val repos = (reposState as? GitStateUiState.Ready)?.repos.orEmpty()
@@ -202,29 +202,27 @@ fun GitStateScreen(
                     }
                 },
                 actions = {
-                    if (scanningEnabled) {
-                        IconButton(onClick = { selectedRepo?.let { viewModel.selectRepo(it.id) } ?: viewModel.loadRepos() }) {
-                            Icon(Icons.Filled.Refresh, "Refresh Git workspace")
-                        }
-                        Box {
-                            IconButton(onClick = { showOverflow = true }) { Icon(Icons.Filled.MoreVert, "More Git actions") }
-                            DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
-                                DropdownMenuItem(text = { Text("Choose repository") }, onClick = { showOverflow = false; showRepos = true })
-                                DropdownMenuItem(text = { Text(stringResource(R.string.git_state_branches)) }, enabled = detail != null, onClick = { showOverflow = false; showBranches = true })
-                            }
+                    IconButton(onClick = { selectedRepo?.let { viewModel.selectRepo(it.id) } ?: viewModel.loadRepos() }) {
+                        Icon(Icons.Filled.Refresh, "Refresh Git workspace")
+                    }
+                    Box {
+                        IconButton(onClick = { showOverflow = true }) { Icon(Icons.Filled.MoreVert, "More Git actions") }
+                        DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
+                            DropdownMenuItem(text = { Text("Choose repository") }, onClick = { showOverflow = false; showRepos = true })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.git_state_branches)) }, enabled = detail != null, onClick = { showOverflow = false; showBranches = true })
                         }
                     }
                 },
             )
         },
         bottomBar = {
-            if (scanningEnabled && detail != null) {
+            if (detail != null) {
                 Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
                     Column {
                         if (selection.isNotEmpty()) {
                             SelectionRail(
                                 count = selection.size,
-                                canWrite = hasGrant,
+                                canWrite = hasGrant && scanningEnabled,
                                 allStaged = selection.all { it.filter == FileFilter.Staged },
                                 onStage = stageSelection,
                                 onDiscard = discardSelection,
@@ -234,7 +232,7 @@ fun GitStateScreen(
                             OutlinedButton(onClick = { showBranches = true }, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Filled.AccountTree, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.git_state_branches))
                             }
-                            Button(onClick = { showCommit = true }, enabled = hasGrant && detail.status.counts.staged > 0, modifier = Modifier.weight(1f)) {
+                            Button(onClick = { showCommit = true }, enabled = scanningEnabled && hasGrant && detail.status.counts.staged > 0, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Filled.AutoAwesome, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.git_state_commit))
                             }
                         }
@@ -248,21 +246,21 @@ fun GitStateScreen(
                 enabled = scanningEnabled,
                 onEnabledChange = onScanningEnabledChange,
             )
-            if (scanningEnabled) {
-                when (val state = reposState) {
-                    GitStateUiState.Loading -> FullState(Modifier.weight(1f), true, "Finding repositories")
-                    is GitStateUiState.Unavailable -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
-                    is GitStateUiState.Error -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
-                    is GitStateUiState.Ready -> when {
-                        state.repos.isEmpty() -> FullState(Modifier.weight(1f), false, "No Git repositories found", "Add a repository to the host's configured Git roots, then refresh.")
-                        selectedRepo == null -> RepositoryPrompt(Modifier.weight(1f), state.repos, viewModel::selectRepo)
-                        else -> WorkspaceBody(
+            when (val state = reposState) {
+                GitStateUiState.Loading -> FullState(Modifier.weight(1f), true, "Finding repositories")
+                is GitStateUiState.Unavailable -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
+                is GitStateUiState.Error -> UnavailableState(Modifier.weight(1f), state.message, viewModel::loadRepos)
+                is GitStateUiState.Ready -> when {
+                    state.repos.isEmpty() -> FullState(Modifier.weight(1f), false, "No current-session Git repository", "Open a Hermes coding session with repository context, or enable host repository discovery above.")
+                    selectedRepo == null -> RepositoryPrompt(Modifier.weight(1f), state.repos, viewModel::selectRepo)
+                    else -> WorkspaceBody(
                             modifier = Modifier.weight(1f),
                             repo = selectedRepo,
                             reposNotice = state.notice,
                             detailState = detailState,
                             mutation = mutation,
                             stashNotice = stashNotice,
+                            relayEnhancementsEnabled = scanningEnabled,
                             hasGrant = hasGrant,
                             filter = filter,
                             onFilter = { filter = it },
@@ -289,8 +287,7 @@ fun GitStateScreen(
                             onPush = { viewModel.currentTarget()?.let { pendingConfirm = ConfirmationRequest.Push(it) } },
                             onClearMutation = viewModel::clearMutationError,
                             onRetry = { viewModel.selectRepo(selectedRepo.id) },
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -311,7 +308,7 @@ fun GitStateScreen(
             onCreate = { name, track -> showBranches = false; viewModel.checkout("", newBranch = name, track = track) },
         )
     }
-    if (showCommit && detail != null) {
+    if (showCommit && scanningEnabled && detail != null) {
         val stagedPaths = detail.status.staged.map { it.path }
         CommitDialog(
             hasStaged = stagedPaths.isNotEmpty(),
@@ -392,6 +389,7 @@ private fun WorkspaceBody(
     detailState: GitRepoDetailState,
     mutation: GitMutationState,
     stashNotice: String?,
+    relayEnhancementsEnabled: Boolean,
     hasGrant: Boolean,
     filter: FileFilter,
     onFilter: (FileFilter) -> Unit,
@@ -421,9 +419,11 @@ private fun WorkspaceBody(
             LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 18.dp)) {
                 item {
                     SummaryRail(repo, detailState)
-                    RemoteActions(hasGrant, status, onFetch, onPull, onPush)
+                    if (relayEnhancementsEnabled) {
+                        RemoteActions(hasGrant, status, onFetch, onPull, onPush)
+                    }
                     reposNotice?.let { NoticeCard(it) }
-                    if (!hasGrant) WriteGrantNotice()
+                    if (relayEnhancementsEnabled && !hasGrant) WriteGrantNotice()
                     MutationBanner(mutation, onClearMutation)
                     stashNotice?.let { NoticeCard(it) }
                     if (status.truncated) NoticeCard(stringResource(R.string.git_state_truncated), error = true)
@@ -438,6 +438,7 @@ private fun WorkspaceBody(
                             FileRow(
                                 file = file,
                                 selected = file in selection,
+                                selectionEnabled = relayEnhancementsEnabled,
                                 expanded = expandedPath == file.path,
                                 mode = contentMode,
                                 contentState = contentState,
@@ -554,6 +555,7 @@ private fun GitStatus.uniqueChangeCount(): Int = counts.changes.takeIf { it >= 0
 private fun FileRow(
     file: DisplayFile,
     selected: Boolean,
+    selectionEnabled: Boolean,
     expanded: Boolean,
     mode: ContentMode,
     contentState: GitContentViewState,
@@ -572,7 +574,7 @@ private fun FileRow(
         ) {
             Checkbox(
                 checked = selected,
-                onCheckedChange = { onToggleSelected() },
+                onCheckedChange = if (selectionEnabled) ({ _ -> onToggleSelected() }) else null,
                 modifier = Modifier.semantics {
                     contentDescription = "Select ${file.path}"
                 },
@@ -602,7 +604,9 @@ private fun FileRow(
         if (expanded && file.filter != FileFilter.Untracked) {
             Row(Modifier.padding(start = 56.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (file.filter != FileFilter.Untracked) FilterChip(mode == ContentMode.Diff, { onOpen(ContentMode.Diff) }, label = { Text("Diff") })
-                FilterChip(mode == ContentMode.File, { onOpen(ContentMode.File) }, label = { Text("File") })
+                if (selectionEnabled) {
+                    FilterChip(mode == ContentMode.File, { onOpen(ContentMode.File) }, label = { Text("File") })
+                }
             }
             InlineContent(contentState, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
         }

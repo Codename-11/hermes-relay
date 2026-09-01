@@ -1007,6 +1007,17 @@ fun RelayApp() {
         chatSessions.firstOrNull { it.sessionId == currentChatSessionId }
     }
 
+    LaunchedEffect(
+        gitOwnerKey,
+        activeChatSession?.gitRepoRoot,
+        activeChatSession?.workingDirectory,
+    ) {
+        gitStateViewModel.setSessionWorkspace(
+            repoRoot = activeChatSession?.gitRepoRoot,
+            workingDirectory = activeChatSession?.workingDirectory,
+        )
+    }
+
     // Bind Git to the active coding session when upstream supplies its exact
     // workspace metadata. CWD fallback only matches a path-segment descendant;
     // an ambiguous multi-repo catalog stays unselected until the user chooses.
@@ -1023,7 +1034,7 @@ fun RelayApp() {
         }
     }
 
-    val gitWorkspaceAvailable = gitRepoScanningEnabled &&
+    val gitWorkspaceAvailable =
         (gitReposState as? GitStateUiState.Ready)?.repos?.isNotEmpty() == true
     val gitWorkspaceSummary = remember(
         gitReposState,

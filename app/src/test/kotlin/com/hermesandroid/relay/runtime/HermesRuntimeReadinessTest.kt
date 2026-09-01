@@ -16,6 +16,7 @@ class HermesRuntimeReadinessTest {
             chatReady = true,
             standardAvailability = StandardVoiceAvailability.Ready,
             relayReady = false,
+            relayConfigured = false,
             profileSettled = true,
         )
 
@@ -32,6 +33,7 @@ class HermesRuntimeReadinessTest {
             chatReady = true,
             standardAvailability = StandardVoiceAvailability.SignInRequired,
             relayReady = true,
+            relayConfigured = true,
             profileSettled = true,
         )
 
@@ -45,6 +47,7 @@ class HermesRuntimeReadinessTest {
             chatReady = true,
             standardAvailability = StandardVoiceAvailability.Ready,
             relayReady = true,
+            relayConfigured = true,
             profileSettled = true,
         )
 
@@ -61,6 +64,7 @@ class HermesRuntimeReadinessTest {
             chatReady = false,
             standardAvailability = StandardVoiceAvailability.Unknown,
             relayReady = true,
+            relayConfigured = true,
             profileSettled = false,
         )
         val ready = resolveVoiceActivationReadiness(
@@ -68,6 +72,7 @@ class HermesRuntimeReadinessTest {
             chatReady = false,
             standardAvailability = StandardVoiceAvailability.Unknown,
             relayReady = true,
+            relayConfigured = true,
             profileSettled = true,
         )
 
@@ -75,6 +80,64 @@ class HermesRuntimeReadinessTest {
         assertEquals(
             HermesVoiceActivationReadiness.Ready(HermesVoiceActivationRoute.Realtime),
             ready,
+        )
+    }
+
+    @Test
+    fun relayOnlySelections_fallBackToStandardWhenRelayWasRemoved() {
+        val realtime = resolveVoiceActivationReadiness(
+            settings = VoiceSettings(engineMode = VoiceEngineMode.RealtimeAgent.storageValue),
+            chatReady = true,
+            standardAvailability = StandardVoiceAvailability.Ready,
+            relayReady = false,
+            relayConfigured = false,
+            profileSettled = true,
+        )
+        val relayAudio = resolveVoiceActivationReadiness(
+            settings = VoiceSettings(audioRoute = VoiceAudioRoute.Relay.storageValue),
+            chatReady = true,
+            standardAvailability = StandardVoiceAvailability.Ready,
+            relayReady = false,
+            relayConfigured = false,
+            profileSettled = true,
+        )
+
+        assertEquals(
+            HermesVoiceActivationReadiness.Ready(HermesVoiceActivationRoute.Standard),
+            realtime,
+        )
+        assertEquals(
+            HermesVoiceActivationReadiness.Ready(HermesVoiceActivationRoute.Standard),
+            relayAudio,
+        )
+    }
+
+    @Test
+    fun configuredRelayOutage_preservesRelayOnlySelections() {
+        val realtime = resolveVoiceActivationReadiness(
+            settings = VoiceSettings(engineMode = VoiceEngineMode.RealtimeAgent.storageValue),
+            chatReady = true,
+            standardAvailability = StandardVoiceAvailability.Ready,
+            relayReady = false,
+            relayConfigured = true,
+            profileSettled = true,
+        )
+        val relayAudio = resolveVoiceActivationReadiness(
+            settings = VoiceSettings(audioRoute = VoiceAudioRoute.Relay.storageValue),
+            chatReady = true,
+            standardAvailability = StandardVoiceAvailability.Ready,
+            relayReady = false,
+            relayConfigured = true,
+            profileSettled = true,
+        )
+
+        assertEquals(
+            HermesVoiceActivationReadiness.Waiting("Waiting for the Relay realtime route"),
+            realtime,
+        )
+        assertEquals(
+            HermesVoiceActivationReadiness.Waiting("Waiting for Relay voice"),
+            relayAudio,
         )
     }
 }
