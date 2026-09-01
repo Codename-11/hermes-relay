@@ -4304,3 +4304,45 @@ API-only/headless clients, compatibility testing, and existing API records, but
 they are no longer automatic recovery for standard Chat. Users retry or sign in
 without losing local work, named profiles cannot cross databases silently, and
 readiness reflects the conversation that will actually receive the next turn.
+
+---
+
+## ADR 72 — Plugin and CLI+UI release tags are approval-created
+
+**Status:** Accepted (2026-09-01).
+
+**Context.** Plugin and CLI+UI tag workflows correctly rejected stable tags
+outside `main` and prerelease tags outside `dev`, but that validation occurred
+only after an operator pushed the tag. The CLI+UI release recipe also told
+operators to tag a prerelease from `main`, contradicting the canonical branch
+contract. A rejected tag therefore left a failed check on an otherwise healthy
+release commit and required destructive tag recovery before publication.
+
+**Decision.** The normal Plugin and CLI+UI release path validates first and
+creates the tag second. A single manual approval workflow:
+
+- always runs the trusted workflow definition from `main`, then selects the
+  exact `origin/main` tip for stable versions or `origin/dev` for prereleases;
+- verifies the surface-owned version metadata and matching changelog heading;
+- refuses an existing tag, then creates the exact `server-v*` or `desktop-v*`
+  ref at the validated commit; and
+- dispatches the trusted release workflow from `main`, whose jobs explicitly
+  check out and revalidate that immutable tag.
+
+Direct tag pushes remain a recovery path and retain the same fail-closed
+metadata and branch-containment checks. Approval does not weaken release tests,
+change stable/prerelease source branches, or combine the independently
+versioned Plugin and CLI+UI artifacts.
+
+**Consequences.** Routine releases cannot create a known-invalid tag before
+discovering a branch mismatch. A tag created with `GITHUB_TOKEN` does not
+recursively trigger Actions, so approval explicitly dispatches the release
+workflow and the release workflow supports both tag-push and approved-dispatch
+events. The workflow must exist on `main` before the approval surface is used.
+
+**Key files:**
+
+- `.github/workflows/approve-release-extensions.yml`
+- `.github/workflows/release-plugin.yml`
+- `.github/workflows/release-cli.yml`
+- `RELEASE.md`

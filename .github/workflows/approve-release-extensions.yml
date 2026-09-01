@@ -1,0 +1,158 @@
+name: Hermes-Relay Plugin and CLI+UI Release Approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      surface:
+        description: "Release surface"
+        required: true
+        type: choice
+        options:
+          - plugin
+          - desktop
+      version:
+        description: "Approved version (for example 1.11.2 or 0.4.0-beta.7)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: approve-${{ inputs.surface }}-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release source and metadata
+    runs-on: ubuntu-latest
+    outputs:
+      source_branch: ${{ steps.metadata.outputs.source_branch }}
+      source_sha: ${{ steps.metadata.outputs.source_sha }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      workflow: ${{ steps.metadata.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ contains(inputs.version, '-') && 'dev' || 'main' }}
+
+      - name: Validate approval request
+        id: metadata
+        env:
+          REQUESTED_SURFACE: ${{ inputs.surface }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must be SemVer with an optional prerelease suffix: $REQUESTED_VERSION"
+            exit 1
+          fi
+
+          if [[ "$REQUESTED_VERSION" == *-* ]]; then
+            source_branch="dev"
+          else
+            source_branch="main"
+          fi
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Release approval must run from the trusted main workflow definition, not $GITHUB_REF"
+            exit 1
+          fi
+          git fetch origin "$source_branch" --no-tags
+          source_sha="$(git rev-parse HEAD)"
+          expected_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "$source_sha" != "$expected_sha" ]; then
+            echo "::error::Checked out $source_sha, but origin/$source_branch is $expected_sha"
+            exit 1
+          fi
+
+          case "$REQUESTED_SURFACE" in
+            plugin)
+              tag="server-v${REQUESTED_VERSION}"
+              workflow="release-plugin.yml"
+              python3 scripts/check-plugin-version-sync.py --expect "$REQUESTED_VERSION"
+              if ! grep -Eq "^## \[Plugin ${REQUESTED_VERSION}\]" CHANGELOG.md; then
+                echo "::error::CHANGELOG.md has no Plugin release heading for $REQUESTED_VERSION"
+                exit 1
+              fi
+              ;;
+            desktop)
+              tag="desktop-v${REQUESTED_VERSION}"
+              workflow="release-cli.yml"
+              node desktop/scripts/cli-version-sync.mjs --expect "$REQUESTED_VERSION"
+              if ! grep -Fq "## [$REQUESTED_VERSION]" CHANGELOG.md; then
+                echo "::error::CHANGELOG.md has no CLI+UI release heading for $REQUESTED_VERSION"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported release surface: $REQUESTED_SURFACE"
+              exit 1
+              ;;
+          esac
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "workflow=$workflow" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  approve:
+    name: Create release tag and start publication
+    needs: validate
+    permissions:
+      actions: write
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release source has not moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ needs.validate.outputs.source_branch }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+        run: |
+          current_sha=$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/${SOURCE_BRANCH}" --jq .object.sha)
+          if [ "$current_sha" != "$SOURCE_SHA" ]; then
+            echo "::error::$SOURCE_BRANCH moved from $SOURCE_SHA to $current_sha; run approval again"
+            exit 1
+          fi
+
+      - name: Ensure release tag does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag $RELEASE_TAG already exists"
+            exit 1
+          fi
+
+      - name: Create approved release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.validate.outputs.source_sha }}
+        run: |
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${RELEASE_TAG}" \
+            -f sha="$RELEASE_SHA"
+
+      - name: Start the immutable tag release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_WORKFLOW: ${{ needs.validate.outputs.workflow }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          # A tag created by GITHUB_TOKEN does not recursively start workflows.
+          # Dispatch the trusted definition from main; release jobs check out
+          # and validate the immutable tag created above.
+          gh workflow run "$RELEASE_WORKFLOW" \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f version="$RELEASE_VERSION"
+
+      - name: Approval summary
+        run: |
+          echo "## Release approved" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Created \`${{ needs.validate.outputs.tag }}\` from \`${{ needs.validate.outputs.source_branch }}\` at \`${{ needs.validate.outputs.source_sha }}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Dispatched \`${{ needs.validate.outputs.workflow }}\` to validate and publish that immutable tag." >> "$GITHUB_STEP_SUMMARY"
