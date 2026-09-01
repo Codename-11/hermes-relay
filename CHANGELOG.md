@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Android Chat and Voice use tablet space intentionally.** Expanded layouts keep introductions, transcripts, composer controls, and status chrome on readable centered rails, while landscape Voice Focus separates identity controls from conversation activity without changing phone or portrait interaction behavior.
 
+### Fixed
+
+- **Windows desktop updates keep the installed CLI and UI on one release.** `hermes-relay update` now detects a colocated management UI, reports both installed versions, and uses the verified bundle installer to replace and restart the affected surfaces together. Explicit CLI-only installations retain the standalone binary updater.
+
 ## [Android 1.15.0] - 2026-08-31
 
 ### Changed

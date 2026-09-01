@@ -441,6 +441,11 @@ jobs:
             if ($versionOutput -ne "hermes-relay $env:EXPECTED_DESKTOP_VERSION") {
               throw "installed CLI version mismatch: expected $env:EXPECTED_DESKTOP_VERSION, got '$versionOutput'"
             }
+            $tray = Join-Path $installDir 'hermes-relay-tray.exe'
+            $trayVersion = (Get-Item -LiteralPath $tray).VersionInfo.ProductVersion
+            if ($trayVersion -ne $env:EXPECTED_DESKTOP_VERSION) {
+              throw "installed UI version mismatch: expected $env:EXPECTED_DESKTOP_VERSION, got '$trayVersion'"
+            }
             $helpOutput = (& $cli --help | Out-String)
             if ($LASTEXITCODE -ne 0 -or $helpOutput -notmatch 'Usage:') {
               throw 'installed CLI --help smoke failed'
@@ -481,7 +486,7 @@ jobs:
               throw "installer lifecycle changed the pre-existing tray startup preference"
             }
 
-            Write-Host "packaged installer lifecycle smoke OK version=$versionOutput install=$installDir"
+            Write-Host "packaged installer lifecycle smoke OK cli=$versionOutput ui=$trayVersion install=$installDir"
           } finally {
             Get-Process -Name 'hermes-relay-tray' -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue

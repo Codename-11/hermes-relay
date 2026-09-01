@@ -386,10 +386,13 @@ hermes-relay update --json       # machine-readable status
 hermes-relay update --installer  # Windows: update the complete CLI + UI bundle
 ```
 
-The normal update path replaces only the CLI binary. On Windows, `--installer`
-downloads the checksum-verified NSIS bundle so the CLI and management UI stay on
-the same release. The UI's update action invokes this bundle path, stops the
-affected processes, installs the update, and reopens the UI.
+The normal update path replaces only the CLI binary on macOS, Linux, and
+explicit Windows CLI-only installations. When a Windows management UI is
+detected, the same command reports both installed versions and automatically
+downloads the checksum-verified NSIS bundle so the CLI and UI cannot silently
+drift. `--installer` explicitly installs or repairs that bundle. Bundle updates
+stop the affected processes and restore only the daemon and tray processes that
+were running before replacement; the UI's update action uses the same path.
 
 ## `hermes-relay ui`
 

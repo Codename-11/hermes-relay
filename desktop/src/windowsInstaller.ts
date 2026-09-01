@@ -12,6 +12,7 @@ export interface WindowsInstallerLaunchOptions {
   installDir?: string
   cliPath?: string
   trayPath?: string
+  restartTray?: boolean
   delayMs?: number
   callerPid?: number
 }
@@ -31,6 +32,7 @@ export function windowsInstallerLaunchPlan(
     installDir = '',
     cliPath = '',
     trayPath = '',
+    restartTray = true,
     delayMs = 1200,
     callerPid = process.pid
   } = options
@@ -44,7 +46,7 @@ export function windowsInstallerLaunchPlan(
     '$process = Start-Process -FilePath $installer -ArgumentList $installerArgs -PassThru',
     '$process.WaitForExit()',
     "if ($process.ExitCode -eq 0 -and $env:HERMES_RELAY_SETUP_RESTART_DAEMON -eq '1') { Start-Process -FilePath $env:HERMES_RELAY_SETUP_CLI -ArgumentList @('daemon','start') -WindowStyle Hidden | Out-Null }",
-    "if ($process.ExitCode -eq 0 -and $env:HERMES_RELAY_SETUP_TRAY) { Start-Process -FilePath $env:HERMES_RELAY_SETUP_TRAY -ArgumentList '--show' | Out-Null }",
+    "if ($process.ExitCode -eq 0 -and $env:HERMES_RELAY_SETUP_RESTART_TRAY -eq '1' -and $env:HERMES_RELAY_SETUP_TRAY) { Start-Process -FilePath $env:HERMES_RELAY_SETUP_TRAY -ArgumentList '--show' | Out-Null }",
     'Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue',
     'exit $process.ExitCode'
   ].join('; ')
@@ -73,7 +75,8 @@ export function windowsInstallerLaunchPlan(
         HERMES_RELAY_SETUP_RESTART_DAEMON: restartDaemon ? '1' : '0',
         HERMES_RELAY_SETUP_INSTALL_DIR: installDir,
         HERMES_RELAY_SETUP_CLI: cliPath,
-        HERMES_RELAY_SETUP_TRAY: trayPath
+        HERMES_RELAY_SETUP_TRAY: trayPath,
+        HERMES_RELAY_SETUP_RESTART_TRAY: restartTray ? '1' : '0'
       }
     }
   }
