@@ -30,8 +30,8 @@ Status: **passed**
 
 ### Compared
 
-- Source: `C:\Users\Bailey\.codex\generated_images\019f6640-e6dc-7c33-8aca-a1610e2a19f0\call_JzVlJKlG8KWTJRo2xup7oTlq.png`
-- Implementation: `C:\Users\Bailey\.codex\visualizations\2026\07\25\agent-drawer-audit\passport-qa-final.png`
+- Source: `<session-generated-reference>`
+- Implementation: `<session-visualization-artifact>`
 - Source size: 852 x 1846 px
 - Device viewport: Android, 1080 x 2340 px, font scale 1.0
 - State: Agent tab, Victor pinned profile, disconnected gateway
@@ -105,11 +105,11 @@ final result: passed
 
 ## Assistant overlay
 
-- Reference: `C:\Users\Bailey\.codex\generated_images\019fb003-68ea-7052-85c7-3745fa7e838e\call_jPwpDr9QfaCDA6k2c01StBYe.png`
+- Reference: `<session-generated-reference>`
 - Implementation captures:
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-live-compact.png`
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-live-expanded.png`
-- Combined comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\29\019fb003-68ea-7052-85c7-3745fa7e838e\assistant-design-comparison.png`
+  - `<session-visualization-artifact>`
+  - `<session-visualization-artifact>`
+- Combined comparison: `<session-visualization-artifact>`
 - Device viewport: 1080 × 2340, portrait, Samsung SM-S938U
 - States reviewed: system assistant compact overlay and expanded overlay over a non-Hermes app
 
@@ -146,18 +146,18 @@ final result: blocked
 
 ## Appearance customization and visual assets
 
-- Selected reference: `C:\Users\Bailey\.codex\generated_images\019fe6f7-920d-7be1-b287-608a0bc2ff49\exec-facb08cb-3d8f-400a-b6ff-6f1a11a74d95.png`
+- Selected reference: `<session-generated-reference>`
 - Reference pixels: 852 x 1843.
 - Final real-screen captures:
-  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\05_themes.png`
-  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\05_theme_customizer.png`
-  - `C:\Users\Bailey\.codex\worktrees\af0f\hermes-relay\app\build\store-shots\08_appearance.png`
+  - `app/build/store-shots/05_themes.png`
+  - `app/build/store-shots/05_theme_customizer.png`
+  - `app/build/store-shots/08_appearance.png`
 - Implementation pixels: 1080 x 2160, portrait Robolectric/Roborazzi capture of the production Compose screen at its 360 dp Android viewport.
 - Normalization: the selected reference was scaled to 1080 px wide and cropped to the same 2160 px viewport for the full-view comparison. The reference's taller aspect ratio remains visible as an expected viewport difference; the focused customizer capture verifies the below-fold editor content.
 - Comparison evidence:
-  - Initial full-view comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-reference-v-current.png`
-  - Final normalized full-view comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-reference-v-current-2.png`
-  - Focused customizer comparison: `C:\Users\Bailey\.codex\visualizations\2026\08\09\019fe6f7-920d-7be1-b287-608a0bc2ff49\appearance-customizer-reference-v-current.png`
+  - Initial full-view comparison: `<session-visualization-artifact>`
+  - Final normalized full-view comparison: `<session-visualization-artifact>`
+  - Focused customizer comparison: `<session-visualization-artifact>`
 - State: Hermes Relay dark preset, customizer expanded. The focused capture expands the real control by click and scrolls its Shape row into view.
 
 ### Comparison history
@@ -187,15 +187,15 @@ final result: passed
 
 ## Conversation voice dock
 
-- Reference: `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-89feab69-9caf-4084-b107-6bff43e511d6.png`
+- Reference: `<session-generated-reference>`
 - Implementation captures:
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\implemented_conversation_final.png`
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\conversation_refined_expanded.png`
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\focus_final_expanded.png`
-- Combined comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice-dock-design-comparison-final.png`
-- Expanded before/after comparison: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice-expanded-before-after.png`
-- Entry transition recording: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice_entry_transition.mp4`
-- Entry transition frame sequence: `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit\voice_entry_transition_frames.png`
+  - `<session-visualization-artifact>`
+  - `<session-visualization-artifact>`
+  - `<session-visualization-artifact>`
+- Combined comparison: `<session-visualization-artifact>`
+- Expanded before/after comparison: `<session-visualization-artifact>`
+- Entry transition recording: `<session-visualization-artifact>`
+- Entry transition frame sequence: `<session-visualization-artifact>`
 - Reference size: 853 x 1844 px
 - Device viewport: 1080 x 2340, portrait, Samsung SM-S938U
 - States reviewed: collapsed idle dock, expanded Tap-mode controls, collapsed and expanded Focus header, Focus-to-Conversation transition
@@ -229,8 +229,8 @@ copying the mockup's illustrative content.
 6. Compared the original and refined expanded Conversation and Focus states together; the final panels remove metadata fragmentation, header truncation, and avatar bleed-through.
 7. Recorded a persisted-Focus voice entry, inspected the 30 fps frame sequence, and verified that Conversation appears first through a continuous composer expansion before Focus is offered as an explicit action.
 8. Re-audited the installed Standard-mode drawer in both presentations. The final Conversation and Focus captures are:
-   - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\21-final-expanded.png`
-   - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\24-final-focus-expanded.png`
+   - `<session-visualization-artifact>`
+   - `<session-visualization-artifact>`
    The route summary is now two clearly separated lines (`Standard mode · Victor` and `xAI TTS · Leo`), with duplicate provider/model aliases removed and configuration provenance left to Voice Settings.
 9. Verified the Conversation long-press menu on-device in `22-final-speak-menu.png`: completed assistant messages expose Copy, Quote in reply, and Speak response without stacking Android's text-selection toolbar over the app menu.
 10. Verified the connection footer remains present under the Conversation composer. Focus remains the only in-app voice presentation that hides it.
@@ -242,13 +242,13 @@ final result: passed
 
 ## System voice overlay redesign
 
-- Selected reference: `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-6a606b04-58c3-4a6d-b11b-cd25f99a047d.png`
+- Selected reference: `<session-generated-reference>`
 - Source concepts:
-  - `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-31a5512a-9cb7-455a-b111-d5797ab09e93.png`
-  - `C:\Users\Bailey\.codex\generated_images\019fba42-1e93-78e1-9cd6-6919fb52d5bc\exec-bbfd616e-3847-4a2e-bbd0-65deb5e4e98c.png`
+  - `<session-generated-reference>`
+  - `<session-generated-reference>`
 - Baseline captures:
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\29-current-overlay-expanded.png`
-  - `C:\Users\Bailey\.codex\visualizations\2026\07\31\019fba42-1e93-78e1-9cd6-6919fb52d5bc\voice-ui-audit-standard\30-current-overlay-expanded.png`
+  - `<session-visualization-artifact>`
+  - `<session-visualization-artifact>`
 - Device viewport: 1080 x 2340, portrait, Samsung SM-S938U
 - States to review: collapsed system overlay and expanded system overlay over a non-Hermes app
 

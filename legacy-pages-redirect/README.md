@@ -15,6 +15,6 @@ request under `/docs/`. The meta refresh and visible link provide a no-script
 fallback to the guide root. Privacy compatibility pages identify
 `https://hermes-relay.dev/privacy.html` as canonical.
 
-Removal is tracked in the repository root `TODO.md`. Do not delete this shim
+Removal is tracked in the repository root `docs/project/TODO.md`. Do not delete this shim
 solely because the first fixed release has shipped; honor the documented
 compatibility window for older Play and sideload installations.

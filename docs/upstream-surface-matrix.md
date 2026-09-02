@@ -280,4 +280,4 @@ keeping route ownership explicit:
   `webui` as a rich-chat prompt hint; upstream removed that unused path at the
   verified `b20cc5f` snapshot. Hermes has no stable `android` or mobile platform
   hint, so Android must not claim Desktop parity or invent one. The upstream
-  platform-hint follow-up is tracked in `TODO.md`.
+  platform-hint follow-up is tracked in `docs/project/TODO.md`.

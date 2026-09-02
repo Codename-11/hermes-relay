@@ -102,7 +102,7 @@ Advanced users can narrow or extend this through `~/.hermes/desktop-control.json
 ### Phase 0 — Research Pack + Tech Decision (Ready Now)
 - Port this enhanced plan into repo `docs/plans/`.
 - Add ADR for Tauri choice + CLI fallback.
-- Update `ROADMAP.md` and `desktop/README.md`.
+- Update `docs/project/ROADMAP.md` and `desktop/README.md`.
 - Define Easy/Standard/Advanced tiers and default blocklist.
 
 ### Phase 1 — Tool Schema + Server Registration
@@ -182,6 +182,6 @@ Do not ship until the user can instantly understand from the UI whether Hermes i
 
 **Brief goal prompt for Codex (copy-paste ready):**
 
-"Read the enhanced plan at docs/plans/desktop-control-computer-use-enhanced.md. Start by completing Phase 0: port the enhancements into the repo, add the Tauri decision ADR, and update ROADMAP.md. Then implement Phase 1 tool schemas while ensuring full backward compatibility with the existing desktop CLI. Focus on keeping the CLI as the primary surface and Tauri as the optional polished tray/overlay experience. Make the default pairing flow seamless for Easy-tier users."
+"Read the enhanced plan at docs/plans/desktop-control-computer-use-enhanced.md. Start by completing Phase 0: port the enhancements into the repo, add the Tauri decision ADR, and update docs/project/ROADMAP.md. Then implement Phase 1 tool schemas while ensuring full backward compatibility with the existing desktop CLI. Focus on keeping the CLI as the primary surface and Tauri as the optional polished tray/overlay experience. Make the default pairing flow seamless for Easy-tier users."
 
 **Current pairing/settings parity goal prompt:** use `docs/plans/2026-05-17-desktop-android-pairing-parity.md` instead for the next tray UI pass.

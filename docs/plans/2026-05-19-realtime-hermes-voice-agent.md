@@ -262,7 +262,7 @@ Tool calls must appear live without leaving voice mode.
 ### Wave 7 - Documentation and operator guidance
 
 - Update `user-docs/features/voice.md`.
-- Update `TODO.md` to mark the realtime-agent TODO as planned/linked.
+- Update `docs/project/TODO.md` to mark the realtime-agent TODO as planned/linked.
 - Add troubleshooting for auth/session binding, provider disconnect fallback, and why tools still run through Hermes.
 - Add DEVLOG entry after implementation lands.
 

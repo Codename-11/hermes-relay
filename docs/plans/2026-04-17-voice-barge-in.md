@@ -278,13 +278,13 @@
 **Summary.** Capture the wave. Unlike the voice-quality-pass docs pass, this one DOES update `user-docs/features/voice.md` because barge-in is a user-facing feature with a settings UI they need to discover.
 
 **Scope.**
-- `DEVLOG.md`: append 2026-04-17 entry (second of the day) summarizing the barge-in stack.
+- `docs/project/DEVLOG.md`: append 2026-04-17 entry (second of the day) summarizing the barge-in stack.
 - `CHANGELOG.md`: add to `[Unreleased]` under an `### Added — Barge-in` section.
 - `docs/spec.md` Phase V section: reference the new barge-in architecture (duplex audio, VAD, AEC, resume).
 - `user-docs/features/voice.md`: add a new "## Barge-in (interrupt the agent)" section with screenshot placeholder, settings description, device compatibility note.
 
 **Files to touch.**
-- `DEVLOG.md`, `CHANGELOG.md`, `docs/spec.md`, `user-docs/features/voice.md`.
+- `docs/project/DEVLOG.md`, `CHANGELOG.md`, `docs/spec.md`, `user-docs/features/voice.md`.
 
 **Dependencies.** All B units committed.
 

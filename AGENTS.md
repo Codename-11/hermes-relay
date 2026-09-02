@@ -17,7 +17,7 @@ contract here and in `RELEASE.md`.
 - Android local/cloud verification → **[docs/android-build-lane.md](docs/android-build-lane.md)**
 - Android emulator lanes → **[docs/android-emulator-testing.md](docs/android-emulator-testing.md)** — suggest the smallest relevant API 36 lanes; never run the full matrix automatically
 - `android_*` toolset + MCP → **[docs/mcp-tooling.md](docs/mcp-tooling.md)**
-- Follow-ups / deferred work / known gaps → **[TODO.md](TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
+- Follow-ups / deferred work / known gaps → **[docs/project/TODO.md](docs/project/TODO.md)** (the single home for "what's next" — never DEVLOG, never scattered code comments)
 
 ## Branch contract
 

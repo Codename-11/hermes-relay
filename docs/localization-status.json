@@ -18,7 +18,7 @@
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -53,7 +53,7 @@
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -77,7 +77,7 @@
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -101,7 +101,7 @@
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -125,7 +125,7 @@
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "english-fallback",
         "website": "english-fallback"
       }

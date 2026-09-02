@@ -1,6 +1,12 @@
 # Hermes Quest
 
-Spatial SDK Quest app for the Hermes relay terminal cockpit.
+> **Status: quarantined experiment.** This project is not shipped, supported,
+> or exercised by normal Hermes-Relay CI. It is preserved as a standalone
+> prototype for a possible future spatial terminal and voice client.
+
+Spatial SDK Quest prototype for the Hermes relay terminal cockpit. Its
+Quest-specific transport and UI modules live beside it so the production
+Android build remains independent.
 
 ## Build
 
@@ -8,19 +14,19 @@ From the repo root:
 
 ```powershell
 $env:ANDROID_HOME='C:\Users\Bailey\AppData\Local\Android\Sdk'
-.\gradlew.bat :quest:assembleDebug --console=plain
+.\gradlew.bat -p experiments\quest assembleDebug --console=plain
 ```
 
 APK:
 
 ```text
-quest\build\outputs\apk\debug\quest-debug.apk
+experiments\quest\build\outputs\apk\debug\quest-debug.apk
 ```
 
 Install on a connected Quest:
 
 ```powershell
-adb install -r quest\build\outputs\apk\debug\quest-debug.apk
+adb install -r experiments\quest\build\outputs\apk\debug\quest-debug.apk
 adb shell monkey -p com.axiomlabs.hermesquest.debug 1
 ```
 
@@ -54,7 +60,9 @@ and MorphingSphere listening/speaking hooks.
 
 ## Tooling
 
-Use Android Studio for Kotlin, Compose, Gradle, logcat, and direct install/run. Open the repo root when working across `:app`, `:relay-core`, and `:relay-ui`; open `quest/` directly when focusing on Spatial SDK or Meta Spatial Editor tasks.
+Use Android Studio for Kotlin, Compose, Gradle, logcat, and direct install/run.
+Open `experiments/quest/` as its own Gradle project. The production repo root
+does not include this experiment in its project graph.
 
 Use Meta Quest Developer Hub for headset setup, ADB pairing, install/uninstall, casting, logcat, and quick device state checks.
 
@@ -62,8 +70,8 @@ Use Meta Spatial Editor when editing/exporting `.metaspatial`/`.glxf` scenes or 
 
 ```powershell
 $env:ANDROID_HOME='C:\Users\Bailey\AppData\Local\Android\Sdk'
-.\gradlew.bat :quest:export -Pquest.exportScenes=true --console=plain
-.\gradlew.bat :quest:hotReload -Pquest.exportScenes=true --console=plain
+.\gradlew.bat -p experiments\quest export -Pquest.exportScenes=true --console=plain
+.\gradlew.bat -p experiments\quest hotReload -Pquest.exportScenes=true --console=plain
 ```
 
 Normal `assembleDebug` does not require Meta Spatial Editor. The app creates a programmatic spatial terminal panel when exported GLXF scene assets are absent.

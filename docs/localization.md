@@ -78,21 +78,25 @@ structurally complete but semantically stale translation.
 9. Test the locale on an emulator or device, including in-app and Android-system
    language switching, process restart, text expansion, and
    accessibility.
-10. Add the language to the README language links and status registry. New
-   AI-assisted locales start as `ai-translated` with empty `review_refs`.
+10. Add a compact `docs/readme/README.<locale>.md` entrypoint, link it from the
+   root README language list, and update the status registry. New AI-assisted
+   locales start as `ai-translated` with empty `review_refs`.
 
 ## README and user documentation
 
-`README.md` remains canonical. Translations use separate files such as
-`README.zh-CN.md` and link back to English. Product documentation can be rolled
-out by locale under `user-docs/<locale>/`; untranslated technical references
-should link to the canonical English page rather than copying stale content.
+`README.md` remains canonical. Translated entrypoints live under
+`docs/readme/` as `README.<locale>.md` and link back to English. They are
+deliberately compact onboarding and core-feature summaries, not full copies of
+the fast-moving English README. Product documentation can be rolled out by
+locale under `user-docs/<locale>/`; untranslated technical references should
+link to the canonical English page rather than copying stale content.
 
 `docs/localization-status.json` is the authoritative per-locale and per-surface
 status. README and user-documentation translations may follow app translation;
 maintainer `docs/` and ADRs remain canonical English.
 
-The public documentation currently localizes a deliberately bounded first-run
+All shipped non-English Android locales have a compact translated README
+entrypoint. The public documentation localizes a deliberately bounded first-run
 set for German, Spanish, Japanese, Brazilian Portuguese, and Simplified Chinese.
 Russian currently falls back to the canonical English documentation:
 

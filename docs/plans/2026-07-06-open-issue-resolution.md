@@ -3,7 +3,7 @@
 Triage of all 13 open GitHub issues (multi-agent code-verified pass + adversarial
 cross-check), grouped into workstreams that land on `dev` via worktree feature
 branches before the next releases. Owner-only actions (GitHub comments/closures,
-labels, Play Console, on-device checks) are tracked in `TODO.md` — automation
+labels, Play Console, on-device checks) are tracked in `docs/project/TODO.md` — automation
 never posts to GitHub on the owner's behalf.
 
 ## Verdict summary
