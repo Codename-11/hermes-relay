@@ -751,7 +751,7 @@ one-time pairing, the interactive PTY/TUI shell, client-side tool routing,
 auto-reconnect with TOFU cert pinning, server-side session management, the
 headless daemon, local diagnostics, and the optional Windows management tray.
 
-What's next (see [ROADMAP.md](../ROADMAP.md#desktop-track) for the full track):
+What's next (see [docs/project/ROADMAP.md](../docs/project/ROADMAP.md#desktop-track) for the full track):
 
 - Service installers — `install-service-{win,linux,mac}` to register the daemon with `sc.exe` / systemd user unit / `launchd` so it auto-starts on login.
 - Multi-client server-side routing — today a connected desktop client is single-slot; allow laptop + home-desktop + work-box attached simultaneously with per-client tool dispatch via a new hermes-agent `ContextVar`.
