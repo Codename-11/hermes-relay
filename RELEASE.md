@@ -924,7 +924,7 @@ gradlew promoteReleaseArtifact --from-track=internal --promote-track=production
   (This step was only needed as a retrofit for v0.1.0 — v0.1.1+ inherit
   the Download section automatically from `RELEASE_NOTES.md`.)
 - Confirm Play Console shows the new versionCode on the target track.
-- Update `DEVLOG.md` with a short entry for the release.
+- Update `docs/project/DEVLOG.md` with a short entry for the release.
 
 ## CI Behavior
 

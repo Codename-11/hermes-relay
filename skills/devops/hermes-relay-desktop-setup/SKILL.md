@@ -15,7 +15,7 @@ metadata:
 
 # Hermes-Relay Desktop CLI Setup
 
-> **Experimental.** The desktop CLI at `desktop/` is a preview-grade thin client. Pairing, chat, shell (PTY pipe to the host), and local tool routing (`desktop_terminal` / `desktop_read_file` / `desktop_write_file` / `desktop_search_files` / `desktop_patch`) all work end-to-end. Daemon mode, multi-client routing, and code-signed binaries are the v1.0 polish — see the [ROADMAP](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
+> **Experimental.** The desktop CLI at `desktop/` is a preview-grade thin client. Pairing, chat, shell (PTY pipe to the host), and local tool routing (`desktop_terminal` / `desktop_read_file` / `desktop_write_file` / `desktop_search_files` / `desktop_patch`) all work end-to-end. Daemon mode, multi-client routing, and code-signed binaries are the v1.0 polish — see the [ROADMAP](https://github.com/Codename-11/hermes-relay/blob/main/docs/project/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental).
 
 The [Hermes-Relay](https://github.com/Codename-11/hermes-relay) desktop CLI (`hermes-relay`) is a thin client that gives you remote access to a Hermes agent running on another machine. It pipes a full PTY shell (with the agent's native Ink TUI), streams structured chat events for scripting, and — uniquely — lets the remote agent execute tools **on your local machine** (read files, run shell commands, search the filesystem) through a round-trip over the same WSS relay the Android client uses. The agent brain stays on the host; your laptop is the hands.
 

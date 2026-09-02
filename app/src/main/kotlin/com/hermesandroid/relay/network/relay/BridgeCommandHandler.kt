@@ -348,7 +348,7 @@ class BridgeCommandHandler(
      * the multiplexer. The two paths are fully independent.
      *
      * Caught by Bailey's on-device test 2026-04-14 — see the v0.4.1
-     * "voice intent local dispatch loop" entry in ROADMAP.md.
+     * "voice intent local dispatch loop" entry in docs/project/ROADMAP.md.
      */
     suspend fun handleLocalCommand(envelope: Envelope): LocalDispatchResult {
         if (envelope.type != "bridge.command") {

@@ -45,7 +45,7 @@ as a collaborator. This continues that pattern.
   Run `./gradlew lint` once before the PR.
   (Use `--no-daemon`; never pipe gradle through `tail` — it masks the exit code.)
 - **Conventional Commits, one commit per extracted controller.** `--no-ff` PR into
-  `dev` at the end. Update `DEVLOG.md`.
+  `dev` at the end. Update `docs/project/DEVLOG.md`.
 - **If a cluster is too entangled** to extract without logic changes, STOP, leave it
   in place, and report — open the PR with the completed steps rather than forcing it.
 
@@ -111,7 +111,7 @@ change, defer it and report** — Steps 1–4 stand on their own.
   `ProfileController` extracted (Step 5 optional).
 - `compileSideloadDebugKotlin` + `compileSideloadDebugUnitTestKotlin` green; focused
   slice passes; `./gradlew lint` clean; `ArchitectureBoundaryTest` green.
-- `DEVLOG.md` updated. One PR (`feature/connectionviewmodel-decomposition` → `dev`,
+- `docs/project/DEVLOG.md` updated. One PR (`feature/connectionviewmodel-decomposition` → `dev`,
   `--no-ff`). Worktree removed.
 - **Report:** `ConnectionViewModel` line-count before/after, what moved where, any
   cluster left in place + why, and any deferred cleanups noted.

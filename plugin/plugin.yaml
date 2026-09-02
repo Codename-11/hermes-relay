@@ -1,5 +1,5 @@
 name: hermes-relay
-# Temporary v1 shim for Hermes installers that reject manifests the runtime supports; see TODO.md.
+# Temporary v1 shim for Hermes installers that reject manifests the runtime supports; see docs/project/TODO.md.
 manifest_version: 1
 api_version: 1
 version: 1.11.1

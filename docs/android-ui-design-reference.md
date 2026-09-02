@@ -1,6 +1,7 @@
 # Hermes Relay Android UI Design Reference
 
-Status: design reference for future Android, Quest, and pairing-flow work.
+Status: design reference for Android and pairing-flow work. The quarantined
+Quest prototype is retained under `experiments/quest/` for historical context.
 
 Use this document when a future session asks for mobile UI polish, pairing flow changes, QR scanning, connection setup, onboarding, terminal cockpit, or "make it feel more like Orca." It is intentionally a reference, not an implementation task list.
 
@@ -11,7 +12,6 @@ This project should keep its native Android stack:
 - Kotlin + Jetpack Compose + Material 3 for app chrome and interaction flows.
 - CameraX + ML Kit for QR scanning.
 - Android WebView only where it is already the correct tool, such as xterm.
-- Meta Spatial SDK for Quest/XR surfaces where needed.
 
 Do not propose a React Native or Expo migration just because Orca's mobile app uses that stack. The useful lesson from Orca is the visual discipline and pairing UX, not the framework choice.
 
@@ -205,7 +205,10 @@ Target layout:
 
 ### Quest / XR
 
-Use this reference for Quest visual tone, but do not force the phone layout into XR. Quest should keep the spatial cockpit concept:
+The inactive Quest prototype is quarantined under `experiments/quest/` and is
+not part of the production Android build or normal CI. If development resumes,
+use this reference for its visual tone, but do not force the phone layout into
+XR. The spatial cockpit concept was:
 
 - MorphingSphere and voice pipeline remain first-class.
 - Terminal panels should be spatial, readable, and anchored.
