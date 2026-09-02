@@ -136,6 +136,7 @@
     <string name="chat_retry">リトライ</string>
     <string name="chat_dismiss">却下する</string>
     <string name="chat_failure_title">Hermes はこの応答を完了できませんでした</string>
+    <string name="chat_failure_inference_unavailable">推論を利用できません</string>
     <string name="chat_failure_details">詳細</string>
     <string name="chat_failure_details_title">応答エラー</string>
     <string name="chat_failure_details_guidance">Hermes からこのエラーが報告されました。アプリがルートやモデルを自動的に切り替えることはありません。</string>

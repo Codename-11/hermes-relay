@@ -416,6 +416,10 @@ class GatewayChatClient(
     @Volatile
     private var webSocket: WebSocket? = null
 
+    /** Profile explicitly routed by the Dashboard `/api/ws?profile=` handshake. */
+    @Volatile
+    private var connectedSocketProfile: String? = null
+
     /** Completed when the server's `gateway.ready` event arrives for the current socket. */
     @Volatile
     private var readySignal: CompletableDeferred<Unit>? = null
@@ -3066,9 +3070,10 @@ class GatewayChatClient(
             )
         }
         val ticketMs = (System.nanoTime() - connectStart) / 1_000_000
+        val socketProfile = currentSessionProfile()
         val url = dashboardClient.gatewayWebSocketUrl(
             ticket = ticket.ticket,
-            profile = currentSessionProfile(),
+            profile = socketProfile,
         )
             ?: throw GatewayConnectAttemptException(
                 "could not build /api/ws URL",
@@ -3102,6 +3107,7 @@ class GatewayChatClient(
         if (readyFailure != null) {
             socket.cancel()
             webSocket = null
+            connectedSocketProfile = null
             throw (readyFailure as? GatewayConnectAttemptException
                 ?: GatewayConnectAttemptException(
                     "gateway connection failed: ${readyFailure.message}",
@@ -3114,6 +3120,7 @@ class GatewayChatClient(
         val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
         Log.i(TAG, "Gateway connected (/api/ws ready) — ticket=${ticketMs}ms ws=${wsMs}ms")
         hasEverReachedReady = true
+        connectedSocketProfile = socketProfile
         coldStartFailureEpisodes = 0
         _reconnectDisposition.value = GatewayReconnectDisposition.None
         _connectionState.value = GatewayConnectionState.Ready
@@ -3288,7 +3295,8 @@ class GatewayChatClient(
             ?.stringField("profile_name")
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-        if (actual != expected) {
+        val socketConfirmed = actual == null && connectedSocketProfile == expected
+        if (actual != expected && !socketConfirmed) {
             val detail = actual?.let { "Hermes returned profile '$it'" }
                 ?: "Hermes did not confirm profile ownership"
             throw GatewayPreflightException(
@@ -3692,6 +3700,22 @@ class GatewayChatClient(
             sessionReadyWaiters.remove(eventSessionId)?.complete(Unit)
         }
 
+        // Deferred agent construction can fail after lazy session.create/
+        // resume returns but before prompt.submit. Fail the readiness barrier
+        // immediately so the optimistic prompt remains retryable/Not sent
+        // instead of waiting for the five-minute readiness timeout.
+        if (type == "error" && !eventSessionId.isNullOrBlank() &&
+            (eventSessionId in lazyLiveSessions || sessionReadyWaiters.containsKey(eventSessionId))
+        ) {
+            val message = payload?.stringField("message")
+                ?: "Hermes session initialization failed"
+            lazyLiveSessions.remove(eventSessionId)
+            readyLiveSessions.remove(eventSessionId)
+            sessionReadyWaiters.remove(eventSessionId)
+                ?.completeExceptionally(GatewayRpcException(message))
+            return
+        }
+
         // Upstream emits session.reclaimed process-wide, so it is identified
         // by payload rather than params.session_id. Retire only an exact live
         // runtime we own; preserve the durable id so the next send resumes it.
@@ -4006,6 +4030,7 @@ class GatewayChatClient(
         // id on the shared gateway stream) keeps matching after reconnect.
         val preservedLiveId = liveSessionId
         webSocket = null
+        connectedSocketProfile = null
         readySignal = null
         liveSessionId = null
         attachMethodForSocket = null
@@ -4197,6 +4222,7 @@ class GatewayChatClient(
     private fun closeSocket(reason: String) {
         webSocket?.close(1000, reason)
         webSocket = null
+        connectedSocketProfile = null
         readySignal = null
         liveSessionId = null
         failSessionReadyWaiters("gateway socket closed")

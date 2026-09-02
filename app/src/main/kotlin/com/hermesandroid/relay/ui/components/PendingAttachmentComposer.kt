@@ -296,12 +296,12 @@ internal fun formatAttachmentSize(bytes: Long): String {
 
 private suspend fun decodePendingAttachmentImage(attachment: Attachment): ImageBitmap? =
     withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val bytes = Base64.decode(attachment.content, Base64.DEFAULT)
-            if (bytes.isEmpty()) return@runCatching null
+            if (bytes.isEmpty()) return@withContext null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
 
             var sample = 1
             while (
@@ -314,7 +314,9 @@ private suspend fun decodePendingAttachmentImage(attachment: Attachment): ImageB
                 bytes,
                 BitmapFactory.Options().apply { inSampleSize = sample },
             )?.asImageBitmap()
-        }.getOrNull()
+        } catch (_: Exception) {
+            null
+        }
     }
 
 private sealed interface PendingPreviewState {

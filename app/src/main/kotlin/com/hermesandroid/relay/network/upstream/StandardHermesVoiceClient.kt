@@ -195,7 +195,7 @@ class StandardHermesVoiceClient(
                 .let { Result.success<VoiceSpeechStream?>(it) }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             Result.failure(error)
         }
     }
@@ -222,7 +222,9 @@ class StandardHermesVoiceClient(
                 if (!response.isSuccessful) {
                     return Result.failure(apiFailure(response, operation))
                 }
-                val body = response.body.string()
+                val body = response.body.readUtf8Bounded(
+                    DashboardApiClient.MAX_JSON_RESPONSE_BYTES,
+                )
                 if (body.isBlank()) {
                     return Result.failure(IOException("$operation returned an empty response"))
                 }
@@ -245,7 +247,11 @@ class StandardHermesVoiceClient(
     }
 
     private fun apiFailure(response: Response, operation: String): IOException {
-        val body = runCatching { response.body.string() }.getOrDefault("")
+        val body = try {
+            response.body.readUtf8Bounded(4L * 1024L)
+        } catch (_: Exception) {
+            ""
+        }
         val detail = body.takeIf { it.isNotBlank() } ?: response.message
         val message = when (response.code) {
             400 -> "$operation rejected that input - ${detail.ifBlank { "bad request" }}"

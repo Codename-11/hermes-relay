@@ -745,6 +745,7 @@ class ChatViewModel : ViewModel() {
         private const val CHECKPOINT_WRITE_INTERVAL_MS = 750L
         private const val SESSION_REFRESH_RETRY_DELAY_MS = 1_000L
         private const val SESSION_REFRESH_MAX_READINESS_RETRIES = 2
+        private const val MAX_COALESCED_SESSION_REFRESH_PASSES = 2
         private const val SESSION_DRAWER_FRESHNESS_WINDOW_MS = 5_000L
         private const val PROFILE_SESSION_CACHE_CONTEXTS = 24
         private const val PROFILE_SESSION_CACHE_ROWS = 50
@@ -3402,8 +3403,6 @@ class ChatViewModel : ViewModel() {
                     }
                     if (visibleSignature != serverSignature) {
                         handler.loadMessageHistory(serverMessages)
-                        refreshSessions()
-                        scheduleTitleReconcile(storedSessionId)
                         return@launch
                     }
                     if (attempt < 7 && retryUntilChanged) delay(250L)
@@ -4037,7 +4036,7 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadSessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
         profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
         if (profileMessageLoader != null) {
@@ -4063,7 +4062,7 @@ class ChatViewModel : ViewModel() {
     private suspend fun loadGatewaySessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
         profileName: String? = currentSessionProfileName(),
     ): List<MessageItem> {
         val scoped = profileMessageLoader?.invoke(profileName, sessionId, mode)
@@ -5331,11 +5330,13 @@ class ChatViewModel : ViewModel() {
     val sessionPageLoadFailed: StateFlow<Boolean> = _sessionPageLoadFailed.asStateFlow()
     val sessionListUnavailable: StateFlow<Boolean> = _sessionListUnavailable.asStateFlow()
 
-    fun refreshSessions() = refreshSessions(
-        allowReadinessRetry = true,
-        preserveFailurePresentation = false,
-        readinessRetryAttempt = 0,
-    )
+    fun refreshSessions() {
+        refreshSessions(
+            allowReadinessRetry = true,
+            preserveFailurePresentation = false,
+            readinessRetryAttempt = 0,
+        )
+    }
 
     /**
      * Drawer-open freshness gate. Process-owned startup binding may already be
@@ -5460,8 +5461,10 @@ class ChatViewModel : ViewModel() {
 
             var retryUnavailable = false
             var retryReadiness = false
+            var refreshPass = 0
             try {
                 do {
+                    refreshPass += 1
                     sessionRefreshPending = false
                     // A queued trailing refresh owns a new outcome. Never let
                     // an earlier timeout overwrite a later successful list.
@@ -5559,7 +5562,7 @@ class ChatViewModel : ViewModel() {
                         )
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (e: Throwable) {
+                    } catch (e: Exception) {
                         if (isCurrentRefresh()) {
                             android.util.Log.w(
                                 "ChatViewModel",
@@ -5582,7 +5585,11 @@ class ChatViewModel : ViewModel() {
                             }
                         }
                     }
-                } while (sessionRefreshPending && isCurrentRefresh())
+                } while (
+                    refreshPass < MAX_COALESCED_SESSION_REFRESH_PASSES &&
+                    sessionRefreshPending &&
+                    isCurrentRefresh()
+                )
             } finally {
                 val shouldRetry = allowReadinessRetry &&
                     retryReadiness &&
@@ -7806,7 +7813,13 @@ class ChatViewModel : ViewModel() {
         }
 
         adoptTurnCheckpoint(checkpoint)
-        val initialHistory = runCatching { loadSessionHistory(sessionId) }.getOrDefault(emptyList())
+        val initialHistory = try {
+            loadSessionHistory(sessionId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            emptyList()
+        }
         if (!ownsTurnCheckpoint(checkpoint, handler)) return true
         if (initialHistory.isNotEmpty()) handler.loadMessageHistory(initialHistory)
         handler.restoreInFlightTurn(checkpoint)
@@ -9760,6 +9773,11 @@ class ChatViewModel : ViewModel() {
             handler.onTurnComplete(currentMessageId)
             gatewayInterimMessageId = currentMessageId
             gatewayInterimSealedCurrentMessage = true
+            // `message.interim` closes one assistant segment but not the
+            // agent run. Create the next blank owner immediately so the chat
+            // retains its in-conversation working indicator even when the
+            // next tool/reasoning event is delayed or suppressed upstream.
+            ensurePostInterimMessage()
             scheduleCheckpointWrite(immediate = true)
         }
         val onInterimReconciledCb = { text: String ->
@@ -10125,12 +10143,16 @@ class ChatViewModel : ViewModel() {
                     (streamingEndpoint == "sessions" || streamingEndpoint == "gateway")
                 ) {
                     viewModelScope.launch {
-                        runCatching {
+                        try {
                             // Profile-aware read — see onCompleteCb: a bare
                             // getMessages 404s for a non-default-profile session
                             // and silently empties the transcript.
                             val serverMessages = loadSessionHistory(errorSessionId)
                             handler.loadMessageHistory(serverMessages)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            // The existing local failure remains authoritative.
                         }
                     }
                 }
@@ -10586,7 +10608,7 @@ class ChatViewModel : ViewModel() {
                         _steerableTurn.value = false
                         onPreflightErrorCb(Exception(reason))
                     },
-                    onPreflightFailure = {
+                    onPreflightFailure = { reason ->
                         _steerableTurn.value = false
                         if (intentionallyCancelled) {
                             // User cancelled while preflight was in flight —
@@ -10598,11 +10620,11 @@ class ChatViewModel : ViewModel() {
                             // Nothing started server-side. Keep this turn bound
                             // to Gateway and settle it as retryable local state;
                             // API sessions are a different owner/database.
-                            onPreflightErrorCb(
-                                IllegalStateException(
-                                    "Hermes Dashboard chat is unavailable. Sign in or reconnect, then retry.",
-                                ),
-                            )
+                            // Preserve the authoritative Gateway explanation.
+                            // Inference initialization failures happen before
+                            // prompt.submit, and replacing them with generic
+                            // reconnect advice hides the actual operator fix.
+                            onPreflightErrorCb(IllegalStateException(reason))
                         }
                     },
                 )

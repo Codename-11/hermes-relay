@@ -4226,6 +4226,12 @@ longer current.
   hidden-source exclusions server-side. Near-end scrolling appends subsequent
   50-row `offset` pages under the same owner/generation; older rows never block
   the first-open critical path.
+- Routine transcript open, restore, and post-turn reconciliation request one
+  latest 500-row page, matching the rows Android can retain. Complete
+  oldest-first pagination is reserved for positional recovery that proves it
+  needs older anchors. Each Dashboard JSON response is rejected above the
+  Android byte limit before parsing, and aggregate complete reads retain their
+  independent row/payload ceilings.
 - A refresh over existing rows is quiet. The exact connection/profile cache
   remains visible until authoritative replacement rows arrive. An uncached
   profile may show loading, but a failed read never means "no sessions."

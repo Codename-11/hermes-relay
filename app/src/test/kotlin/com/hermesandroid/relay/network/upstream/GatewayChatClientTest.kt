@@ -2697,13 +2697,28 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `session create rejects older gateway without profile ownership metadata`() {
+    fun `profile scoped socket accepts older session result without duplicate ownership metadata`() {
         val r = Recorder()
         client.sessionProfileProvider = { "mizu" }
         harness.omitSessionProfileMetadata = true
 
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
         harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `unscoped socket still rejects missing named profile ownership metadata`() {
+        val r = Recorder()
+        harness.omitSessionProfileMetadata = true
+        client.observe()
+        harness.awaitServerSocket()
+        awaitCondition { client.connectionState.value == GatewayConnectionState.Ready }
+        client.sessionProfileProvider = { "mizu" }
+
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
         awaitCondition { r.preflightFailures.isNotEmpty() }
 
         assertTrue(r.preflightFailures.single().contains("did not confirm profile ownership"))
@@ -3987,6 +4002,29 @@ class GatewayChatClientTest {
         harness.awaitRpc("session.create")
 
         waitUntil { r.preflightFailures.isNotEmpty() }
+        assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun `lazy session initialization error fails before prompt submit`() {
+        harness.createdSessionLazy = true
+        val r = Recorder()
+
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitRpc("session.create")
+        val serverWs = harness.awaitServerSocket()
+        serverWs.send(
+            harness.eventFrame(
+                "error",
+                buildJsonObject {
+                    put("message", "agent init failed: No Codex credentials stored")
+                },
+                "live-1",
+            ),
+        )
+
+        waitUntil { r.preflightFailures.isNotEmpty() }
+        assertTrue(r.preflightFailures.single().contains("No Codex credentials stored"))
         assertEquals(0, harness.rpcLog.count { it.first == "prompt.submit" })
     }
 

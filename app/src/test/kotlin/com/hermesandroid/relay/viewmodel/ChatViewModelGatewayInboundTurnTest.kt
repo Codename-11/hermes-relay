@@ -914,6 +914,28 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun reentrantSessionPublicationCannotKeepTheRefreshBatchAlive() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            // Reproduce a downstream publication observer requesting another
+            // refresh while every successful directory read is still active.
+            viewModel.refreshSessions()
+            Result.success(listOf(SessionItem(id = "stable", title = "Stable session")))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() >= 2 }
+        Thread.sleep(150)
+        val settledCalls = calls.get()
+        Thread.sleep(150)
+        assertEquals(settledCalls, calls.get())
+        assertTrue(settledCalls <= 3)
+        assertEquals("stable", handler.sessions.value.singleOrNull()?.sessionId)
+    }
+
+    @Test
     fun coalescedTrailingSuccessClearsTheInitialFailure() {
         val calls = AtomicInteger(0)
         val releaseFirst = CompletableDeferred<Unit>()
@@ -1959,6 +1981,33 @@ class ChatViewModelGatewayInboundTurnTest {
         }
         assertFalse(handler.messages.value.single().isStreaming)
         assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun gatewayInterimImmediatelyLeavesAStreamingConversationOwner() {
+        viewModel.sendMessage("Generate an image")
+        gatewayHarness.awaitRpc("prompt.submit")
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.interim",
+                buildJsonObject {
+                    put("text", "Generating it now.")
+                    put("already_streamed", false)
+                },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            handler.messages.value.any { it.content == "Generating it now." }
+        }
+        assertTrue(handler.isStreaming.value)
+        val activeOwner = handler.messages.value.last()
+        assertTrue(activeOwner.isStreaming)
+        assertEquals(MessageRole.ASSISTANT, activeOwner.role)
+        assertTrue(activeOwner.content.isBlank())
     }
 
     @Test
@@ -3788,6 +3837,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun passiveForegroundObservationNeverClaimsOrInterruptsDesktopTurn() {
+        val directoryReads = AtomicInteger(0)
         val observerProfile = Profile(
             name = "observer",
             model = "model-a",
@@ -3855,7 +3905,12 @@ class ChatViewModelGatewayInboundTurnTest {
             viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
                 SessionActivityState.Working
         }
+        viewModel.setProfileSessionLister {
+            directoryReads.incrementAndGet()
+            Result.success(emptyList())
+        }
         gatewayHarness.activeSessionListPayload = activeSessionPayload("waiting")
+        val directoryReadsBeforeHistoryPublication = directoryReads.get()
         viewModel.requestSessionActivityRefresh()
         awaitCondition {
             viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
@@ -3873,6 +3928,9 @@ class ChatViewModelGatewayInboundTurnTest {
             handler.messages.value.singleOrNull()?.content ==
                 "Desktop completed without Android attachment."
         }
+        shadowOf(Looper.getMainLooper()).idleFor(4, TimeUnit.SECONDS)
+        Thread.sleep(100)
+        assertEquals(directoryReadsBeforeHistoryPublication, directoryReads.get())
         ownershipMethods.forEach { method ->
             assertEquals(
                 "passive foreground sent $method",

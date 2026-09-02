@@ -130,6 +130,7 @@
     <string name="chat_retry">Повторить</string>
     <string name="chat_dismiss">Отменить</string>
     <string name="chat_failure_title">Hermes не смог завершить ответ</string>
+    <string name="chat_failure_inference_unavailable">Генерация ответа недоступна</string>
     <string name="chat_failure_details">Подробности</string>
     <string name="chat_failure_details_title">Ошибка ответа</string>
     <string name="chat_failure_details_guidance">Hermes сообщил об этой ошибке. Приложение не будет автоматически менять маршрут или модель.</string>

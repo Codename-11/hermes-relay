@@ -14,6 +14,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -303,19 +304,21 @@ private fun ImageRender(
     }
     LaunchedEffect(attachment.cachedUri, attachment.content) {
         val decoded = withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 when {
                     !attachment.cachedUri.isNullOrBlank() ->
-                        decodeOrientedBitmap(context, Uri.parse(attachment.cachedUri))
+                        decodeBoundedOrientedBitmap(context, Uri.parse(attachment.cachedUri))
                             ?.asImageBitmap()
                     attachment.content.isNotBlank() ->
                         android.util.Base64.decode(
                             attachment.content,
                             android.util.Base64.DEFAULT,
-                        ).let { decodeOrientedBitmap(it)?.asImageBitmap() }
+                        ).let { decodeBoundedOrientedBitmap(it)?.asImageBitmap() }
                     else -> null
                 }
-            }.getOrNull()
+            } catch (_: Exception) {
+                null
+            }
         }
         if (decoded != null) bitmap = decoded else decodeFailed = true
     }
@@ -375,6 +378,8 @@ private fun ImageRender(
                 contentDescription = attachment.fileName,
                 modifier = Modifier
                     .widthIn(max = maxWidth)
+                    .fillMaxWidth()
+                    .aspectRatio(bmp.width.toFloat() / bmp.height.coerceAtLeast(1))
                     .clip(RoundedCornerShape(8.dp))
                     .combinedClickable(
                         onClick = {
@@ -391,7 +396,7 @@ private fun ImageRender(
                         },
                         onLongClick = { menuExpanded = true },
                     ),
-                contentScale = ContentScale.FillWidth,
+                contentScale = ContentScale.Fit,
             )
         }
         // One-tap save overlay — hidden while the blur cover is up so it
@@ -683,7 +688,11 @@ private fun rememberAttachmentThumbnail(attachment: Attachment): ImageBitmap? {
     }
     LaunchedEffect(attachment.cachedUri, attachment.content, attachment.renderMode) {
         thumb = withContext(Dispatchers.IO) {
-            runCatching { generateThumbnail(context, attachment) }.getOrNull()
+            try {
+                generateThumbnail(context, attachment)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
     return thumb
