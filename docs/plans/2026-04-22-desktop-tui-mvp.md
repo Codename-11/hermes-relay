@@ -100,7 +100,7 @@ Confirm exact invocation by reading `hermes_cli/main.py:1034` area (agent will d
 ### Phase 4 — Polish + docs *(post-smoke)*
 - Update `~/.hermes/hermes-relay/README.md` with desktop install section.
 - Update hermes-relay `CHANGELOG.md` `[Unreleased]`.
-- Update hermes-relay `DEVLOG.md` with session summary.
+- Update hermes-relay `docs/project/DEVLOG.md` with session summary.
 - Bump version via `scripts/bump-version.sh 0.8.0-alpha`.
 - User-docs page in `user-docs/guide/desktop.md`.
 

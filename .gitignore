@@ -24,10 +24,7 @@ Thumbs.db
 local.properties
 /build/
 /app/build/
-/relay-core/build/
-/relay-ui/build/
-/ui-preview/build/
-/quest/build/
+/experiments/quest/**/build/
 /app/release/
 *.apk
 *.aab

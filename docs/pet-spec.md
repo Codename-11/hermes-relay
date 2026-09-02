@@ -513,7 +513,7 @@ reply completes. A reaction overlays whatever else would show (including
 ### Forthcoming behavior (designed, not yet rendered)
 
 These are specified so authors can plan, but the renderer doesn't drive them
-yet — they're tracked in `TODO.md`. Authoring the clips/flags now is harmless.
+yet — they're tracked in `docs/project/TODO.md`. Authoring the clips/flags now is harmless.
 
 - **`attention` reaction** — a one-shot when a notification arrives. Reserved: it
   needs a host event the pet doesn't yet receive (unlike `greet`/`done`, which

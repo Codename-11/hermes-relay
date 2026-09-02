@@ -9,16 +9,16 @@
 > **Related files.**
 > - [`CLAUDE.md`](../../CLAUDE.md) — project conventions every implementing agent reads first
 > - [`docs/spec.md`](../spec.md) — protocol / voice surface reference
-> - [`ROADMAP.md`](../../ROADMAP.md) — where this pass sits in the broader arc
+> - [`docs/project/ROADMAP.md`](../../docs/project/ROADMAP.md) — where this pass sits in the broader arc
 > - [`docs/plans/2026-04-13-bridge-feature-expansion.md`](./2026-04-13-bridge-feature-expansion.md) — precedent for plan-file format
-> - [`DEVLOG.md`](../../DEVLOG.md) — append session entry on completion
+> - [`docs/project/DEVLOG.md`](../../docs/project/DEVLOG.md) — append session entry on completion
 > - Upstream reference: `~/.hermes/hermes-agent/tools/tts_tool.py` on hermes-host (`you@hermes-host`)
 
 ## How to use this file
 
 1. **Bailey:** walk each work unit, mark status checkbox (`[x] Now` / `[x] Next` / `[x] Later` / `[x] Skip`). Leave inline notes to override scope.
 2. **Orchestrator agent:** creates the worktree + branch per [Worktree setup](#worktree-setup), then dispatches work units per the [Sequencing](#sequencing--parallelism) plan. The orchestrator owns the working tree; subagents are given narrow, self-contained tasks and asked to return diffs or land commits on the shared branch.
-3. **Session end:** run acceptance checklist, update `DEVLOG.md` + `CHANGELOG.md`, open one PR for the whole branch with all unit IDs in the body.
+3. **Session end:** run acceptance checklist, update `docs/project/DEVLOG.md` + `CHANGELOG.md`, open one PR for the whole branch with all unit IDs in the body.
 
 ## Worktree setup
 
@@ -56,7 +56,7 @@ cd ../hermes-android-voice
 | **Wave 2** | V2 | Serial | Extends `VoiceViewModel.stripMarkdown()` → must land before V3 because V3's coalesce logic runs against sanitized text. |
 | **Wave 3** | V3 | Serial | Chunking changes to `VoiceViewModel.kt` — conflicts with V4. |
 | **Wave 4** | V4 | Serial | Pipelining rewrite of `VoiceViewModel.startTtsConsumer()` — takes the output of V3's chunker as input. |
-| **Wave 5** | Doc1 | Serial | `DEVLOG.md` + `CHANGELOG.md` + `user-docs/` updates after code stabilizes. |
+| **Wave 5** | Doc1 | Serial | `docs/project/DEVLOG.md` + `CHANGELOG.md` + `user-docs/` updates after code stabilizes. |
 
 **Shared-file hot-spot.** `VoiceViewModel.kt` is touched by V2, V3, and V4. These **must** serialize — do not parallelize them. The orchestrator should handle them in sequence (V2→V3→V4) as three commits from one agent session, not three concurrent subagents.
 
@@ -341,14 +341,14 @@ cd ../hermes-android-voice
 **Summary.** Capture the wave in the append-only log, bump CHANGELOG with an `[Unreleased]` entry, refresh user-docs voice-mode troubleshooting, update spec if the TTS pipeline section exists.
 
 **Scope / Acceptance criteria.**
-- `DEVLOG.md`: append a 2026-04-16 session entry summarizing what shipped and the diagnosis chain that motivated it.
+- `docs/project/DEVLOG.md`: append a 2026-04-16 session entry summarizing what shipped and the diagnosis chain that motivated it.
 - `CHANGELOG.md`: `[Unreleased] — Changed` entry: "Voice output quality — switched to ElevenLabs flash streaming model, added client+relay text sanitization, coalesced short sentences, prefetched next sentence during playback, and swapped to ExoPlayer for gapless concatenation." Use conventional-changelog tone.
 - `user-docs/`: if there's a voice-mode page, add a "What changed in voice mode" note. If not, don't create one just for this.
 - `docs/spec.md`: if there's a voice-pipeline section, update the flow diagram or prose to reflect the prefetch + gapless architecture.
-- No entry in `ROADMAP.md` — the wave is complete, not milestoned.
+- No entry in `docs/project/ROADMAP.md` — the wave is complete, not milestoned.
 
 **Files to touch.**
-- `DEVLOG.md`
+- `docs/project/DEVLOG.md`
 - `CHANGELOG.md`
 - `user-docs/*` (conditional)
 - `docs/spec.md` (conditional)

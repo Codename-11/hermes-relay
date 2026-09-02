@@ -4227,7 +4227,7 @@ Expected new keyless cold start: client ~+1–2s after first DataStore emission,
 
 ## 2026-05-19 — Experimental Realtime Hermes Voice Agent
 
-**Plan.** [docs/plans/2026-05-19-realtime-hermes-voice-agent.md](docs/plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
+**Plan.** [`2026-05-19-realtime-hermes-voice-agent.md`](../plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
 
 **Surface added.**
 
@@ -4384,7 +4384,7 @@ Post-fix smoke: Victor called `desktop_terminal("hostname")` → returned `{"std
 
 ## 2026-04-23 — Desktop CLI thin-client v0.1 (`@hermes-relay/cli`)
 
-**Context.** The broader ask from the vault's [Desktop Client.md](../../../SynologyDrive/-Vault-/Axiom-Vault/3.%20System/Projects/Hermes-Relay/Desktop%20Client.md) decomposes into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
+**Context.** An earlier private design note decomposed the desktop-client work into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
 
 ### Architecture decision — same channel, different renderer
 

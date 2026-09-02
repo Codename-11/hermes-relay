@@ -160,7 +160,7 @@ BRIEF="${WTDIR}/ISSUE-BRIEF.md"
   echo "## Definition of done"
   echo
   echo "- The fix passes the verification above (write the failing test first where the surface is CI-gateable)."
-  echo "- Update CHANGELOG \`[Unreleased]\`, and DEVLOG.md at end of session; park any follow-ups in TODO.md."
+  echo "- Update CHANGELOG \`[Unreleased]\`, and docs/project/DEVLOG.md at end of session; park any follow-ups in docs/project/TODO.md."
   echo "- Feature branches target \`dev\` (never straight to \`main\`); merge with --no-ff."
   echo
   echo "## Issue body"

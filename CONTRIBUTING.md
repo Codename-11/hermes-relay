@@ -259,16 +259,20 @@ translations may ship as `ai-translated`; do not claim fluent review unless a
 review reference is recorded. Focused correction PRs from fluent contributors
 are the canonical way to improve wording and can advance a locale to
 `community-reviewed` or `verified` under `docs/translation-playbook.md`.
-Translated READMEs use separate `README.<locale>.md` files; `README.md` remains
-the canonical project description. User docs may be added incrementally under
-`user-docs/<locale>/`, with links back to canonical English reference material.
+Translated README entrypoints live under `docs/readme/` as
+`README.<locale>.md`; root `README.md` remains the canonical project
+description. Keep translated entrypoints concise: summarize onboarding and
+core capabilities, link to localized user docs where available, and link back
+to English for fast-moving architecture, security, and operator detail. User
+docs may be added incrementally under `user-docs/<locale>/`, with links back to
+canonical English reference material.
 
 ## Changelog & writing conventions
 
-This is a **public repo** — `CHANGELOG.md`, `DEVLOG.md`, the README, and everything under `docs/` ship publicly. Keep them clean:
+This is a **public repo** — `CHANGELOG.md`, `docs/project/DEVLOG.md`, the README, and everything under `docs/` ship publicly. Keep them clean:
 
-- **`CHANGELOG.md`** follows [Keep a Changelog](https://keepachangelog.com/) (Added / Changed / Fixed). Append your change to the `## [Unreleased]` block in the PR. Entries can carry detail while they accumulate, but at release-prep the version block is **condensed to crisp public bullets** (1–2 lines each) — the deep "how we debugged it" narrative belongs in commit messages and `DEVLOG.md`, not the public changelog.
-- **`DEVLOG.md`** is a factual engineering log — what changed, why, and how it was verified. Keep it depersonalized and third-person; it's a record, not a diary.
+- **`CHANGELOG.md`** follows [Keep a Changelog](https://keepachangelog.com/) (Added / Changed / Fixed). Append your change to the `## [Unreleased]` block in the PR. Entries can carry detail while they accumulate, but at release-prep the version block is **condensed to crisp public bullets** (1–2 lines each) — the deep "how we debugged it" narrative belongs in commit messages and `docs/project/DEVLOG.md`, not the public changelog.
+- **`docs/project/DEVLOG.md`** is a factual engineering log — what changed, why, and how it was verified. Keep it depersonalized and third-person; it's a record, not a diary.
 - **No non-public wording anywhere committed:** no personal names (attribute impersonally — identity lives in git history), no real server hostnames/IPs or internal deployment names, no AI/assistant process self-narration, no fork/branch plumbing in user-facing notes. Generic example IPs in setup docs are fine.
 
 Release notes (`RELEASE_NOTES.md`, `app/src/main/assets/whats_new.txt`, `docs/play-store-listing.md`) are theme-framed and user-facing; see [RELEASE.md](RELEASE.md) §2 "Scrub for public distribution" for the full checklist.

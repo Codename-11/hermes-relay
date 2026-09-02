@@ -3,7 +3,7 @@
 Research snapshot mapping OpenAI's realtime voice offering (as of July 2026)
 onto the hermes-relay realtime agent, to scope next-release-candidate work.
 Companion TODO items live under "OpenAI realtime provider — next-RC roadmap"
-in `TODO.md`.
+in `docs/project/TODO.md`.
 
 ## Repo starting point
 

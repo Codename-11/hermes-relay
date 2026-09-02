@@ -267,7 +267,7 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 
 ### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
 
-> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in TODO.md.
+> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in docs/project/TODO.md.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
 >
@@ -3240,7 +3240,7 @@ escalation remains reserved and reports disabled. The optional driver is not
 bundled or updated by Hermes-Relay, and Hermes forces driver telemetry off for
 every child process it starts. The legacy engine remains the default and the
 fail-closed fallback while the live Windows acceptance and remaining scope,
-redaction, and grant-bridge hardening gates tracked in `TODO.md` stay open.
+redaction, and grant-bridge hardening gates tracked in `docs/project/TODO.md` stay open.
 
 **Second-phase refinement (2026-08-13).** CUA is the preferred/default setting
 for new structured-control sessions; the original Windows input path is named
@@ -3743,7 +3743,7 @@ the session, duplicate submission, wrong-session events, or an arbitrary timer.
 Normal terminal delivery is unchanged, queued turns retain their existing
 ownership, Relay remains optional, and unmodified upstream compatibility is
 preserved. Physical certification across the reported device/network matrix
-remains tracked in `TODO.md`.
+remains tracked in `docs/project/TODO.md`.
 
 ---
 
@@ -4118,7 +4118,7 @@ visible without mislabeling their parent turn. Older Gateways remain usable
 but show Unavailable when no exact local terminal truth exists. Declarative
 Gateway scenarios cover all four upstream states, complete-snapshot
 disappearance, client-side profile isolation, and method-not-found; physical
-and current-host certification remains tracked in `TODO.md`. An upstream
+and current-host certification remains tracked in `docs/project/TODO.md`. An upstream
 profile field/filter or explicitly owned aggregate activity route would remove
 the remaining ambiguity for multi-profile clients.
 

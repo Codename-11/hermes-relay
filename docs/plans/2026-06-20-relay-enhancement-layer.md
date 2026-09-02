@@ -143,7 +143,7 @@ Owns: `plugin/dashboard/**`.
 
 ### Coordinator — docs (this doc + the rest)
 `docs/plans/2026-06-20-structured-media-channel.md` (Q3 plan — design only, not built here),
-`docs/decisions.md` entry, `TODO.md` follow-ups + retirement note, `DEVLOG.md`, `CHANGELOG`.
+`docs/decisions.md` entry, `docs/project/TODO.md` follow-ups + retirement note, `docs/project/DEVLOG.md`, `CHANGELOG`.
 
 ---
 
@@ -154,4 +154,4 @@ Owns: `plugin/dashboard/**`.
   unchanged; with the seam patched out / absent, no exception reaches a turn.
 - Clean UI/UX: the transport badge + ladder read clearly; the injected-context audit shows the
   exact server-side block.
-- Docs updated; retirement tracked in `TODO.md`.
+- Docs updated; retirement tracked in `docs/project/TODO.md`.

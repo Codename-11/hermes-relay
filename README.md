@@ -21,7 +21,13 @@
 </p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
+  <strong>English</strong> ·
+  <a href="docs/readme/README.de.md">Deutsch</a> ·
+  <a href="docs/readme/README.es.md">Español</a> ·
+  <a href="docs/readme/README.ja.md">日本語</a> ·
+  <a href="docs/readme/README.pt-BR.md">Português (Brasil)</a> ·
+  <a href="docs/readme/README.ru.md">Русский</a> ·
+  <a href="docs/readme/README.zh-CN.md">简体中文</a><br>
   <a href="https://hermes-relay.dev/docs/">Documentation</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/releases">Releases</a> ·
   <a href="https://github.com/Codename-11/hermes-relay/discussions">Discussions</a> ·

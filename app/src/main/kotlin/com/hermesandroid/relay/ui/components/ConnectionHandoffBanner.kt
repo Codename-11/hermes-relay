@@ -73,7 +73,7 @@ private const val SWIPE_DISMISS_THRESHOLD_PX = 80f
  * progress" moment (pairing, long upload, a bridge action sequence). When first
  * reused, decouple it from [ConnectionStatusSnapshot] and rename to a generic
  * `StatusToast`. It also anchors [UpdateAvailableBanner]'s visual language + the
- * shared [ConnectionStepRow]/[StepGlyph] helpers. See TODO.md.
+ * shared [ConnectionStepRow]/[StepGlyph] helpers. See docs/project/TODO.md.
  *
  * Rendered as a top-aligned overlay inside a `Box` — it slides down OVER the UI
  * without shifting layout. Pair it with `AnimatedVisibility(enter =
