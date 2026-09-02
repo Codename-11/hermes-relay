@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -97,9 +98,9 @@ private fun isSensitiveAltText(alt: String): Boolean {
 
 /**
  * Resolves a server-local image path — an absolute path the agent put in a
- * markdown image `![alt](/abs/path)` — to raw bytes, via the relay's
- * `/media/by-path` route when a relay session is paired. Returns null when no
- * relay is available or the fetch fails, so the renderer falls back to the
+ * markdown image `![alt](/abs/path)` — to an on-disk cache URI, via the relay's
+ * authenticated Dashboard route (or Relay compatibility route). Returns a
+ * failure when no route is available or the fetch fails, so the renderer falls back to the
  * "this image is on the server" notice. Provided by ChatScreen from
  * [com.hermesandroid.relay.viewmodel.ChatViewModel.resolveServerImage]; the
  * default is null, which preserves the standard (no-plugin) behavior where a
@@ -113,12 +114,12 @@ private fun isSensitiveAltText(alt: String): Boolean {
  * `RelayServerImage` on app open with a server-local image in history).
  */
 sealed interface ServerImageResult {
-    class Success(val bytes: ByteArray, val sensitive: Boolean = false) : ServerImageResult
+    class Success(val cachedUri: String, val sensitive: Boolean = false) : ServerImageResult
     class Failure(val reason: String) : ServerImageResult
 }
 
 fun interface RelayServerImageResolver {
-    /** Fetch the server-local file's bytes over the relay, or a
+    /** Fetch the server-local file into the media cache, or a
      *  [ServerImageResult.Failure] whose reason explains why (unpaired /
      *  sandboxed / missing / decode) so the UI can surface it instead of a
      *  generic placeholder. */
@@ -461,6 +462,7 @@ private fun RelayServerImage(
     maxWidth: Dp,
     resolver: RelayServerImageResolver,
 ) {
+    val context = LocalContext.current
     var phase by remember(image.src) {
         mutableStateOf<RelayImagePhase>(
             cachedInlineImage(image.src)
@@ -478,15 +480,15 @@ private fun RelayServerImage(
             }
             when (result) {
                 is ServerImageResult.Success -> {
-                    val bytes = result.bytes
+                    val cachedUri = Uri.parse(result.cachedUri)
                     val bmp = runCatching {
-                        decodeOrientedBitmap(bytes)
+                        decodeOrientedBitmap(context, cachedUri)
                     }.getOrNull()?.asImageBitmap()
                     if (bmp != null) {
                         putInlineImage(image.src, bmp, result.sensitive)
                         RelayImagePhase.Loaded(bmp, result.sensitive)
                     } else {
-                        RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
+                        RelayImagePhase.Failed("fetched file could not be decoded as an image")
                     }
                 }
                 is ServerImageResult.Failure -> RelayImagePhase.Failed(result.reason)
@@ -527,6 +529,7 @@ private fun RelayServerImageContent(
     maxWidth: Dp,
     resolver: RelayServerImageResolver,
 ) {
+    val context = LocalContext.current
     var viewerOpen by remember { mutableStateOf(false) }
     val blurMode = LocalMediaBlurMode.current
     var revealed by remember(image.src) { mutableStateOf(false) }
@@ -542,7 +545,12 @@ private fun RelayServerImageContent(
                 mime = "image/*",
                 // Save/Share re-fetch the original bytes on demand so we don't
                 // hold them in memory next to the decoded bitmap.
-                bytesProvider = { (resolver.fetch(image.src) as? ServerImageResult.Success)?.bytes },
+                bytesProvider = {
+                    (resolver.fetch(image.src) as? ServerImageResult.Success)?.let { fetched ->
+                        context.contentResolver.openInputStream(Uri.parse(fetched.cachedUri))
+                            ?.use { it.readBytes() }
+                    }
+                },
             ),
             onDismiss = { viewerOpen = false },
             sensitive = sensitive,
