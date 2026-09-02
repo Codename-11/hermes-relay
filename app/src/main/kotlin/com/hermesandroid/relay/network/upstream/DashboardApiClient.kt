@@ -49,6 +49,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -1355,7 +1356,7 @@ class DashboardApiClient(
     suspend fun getSessionMessages(
         sessionId: String,
         profile: String? = null,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
         val name = profile?.trim().orEmpty()
         loadSessionMessages(mode) { page ->
@@ -1759,6 +1760,7 @@ class DashboardApiClient(
         // Mirrors current upstream `_MANAGED_FILE_MAX_BYTES`; enforcing it
         // client-side avoids uploading a body the Dashboard will reject.
         internal const val MAX_BACKUP_TRANSFER_BYTES = 100L * 1024L * 1024L
+        internal const val MAX_JSON_RESPONSE_BYTES = 8L * 1024L * 1024L
 
         fun pathSegment(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
@@ -2487,15 +2489,42 @@ data class StoredDashboardCookie(
 }
 
 private fun Response.readJsonObject(json: Json): JsonObject {
-    val raw = body.string()
+    val raw = body.readUtf8Bounded(DashboardApiClient.MAX_JSON_RESPONSE_BYTES)
     if (raw.isBlank()) return JsonObject(emptyMap())
     return json.parseToJsonElement(raw).jsonObject
 }
 
 private fun Response.readJsonElement(json: Json): JsonElement {
-    val raw = body.string()
+    val raw = body.readUtf8Bounded(DashboardApiClient.MAX_JSON_RESPONSE_BYTES)
     if (raw.isBlank()) return JsonObject(emptyMap())
     return json.parseToJsonElement(raw)
+}
+
+internal fun okhttp3.ResponseBody.readUtf8Bounded(maxBytes: Long): String {
+    require(maxBytes in 1..Int.MAX_VALUE.toLong()) { "Invalid response byte limit" }
+    val declaredLength = contentLength()
+    if (declaredLength > maxBytes) {
+        throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+    }
+    val initialSize = when {
+        declaredLength in 1..maxBytes -> declaredLength.toInt()
+        else -> minOf(maxBytes, DEFAULT_BUFFER_SIZE.toLong()).toInt()
+    }
+    val output = ByteArrayOutputStream(initialSize)
+    byteStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            if (total > maxBytes) {
+                throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+            }
+            output.write(buffer, 0, read)
+        }
+    }
+    return output.toString(Charsets.UTF_8.name())
 }
 
 private fun contentDispositionFileName(header: String): String? {
@@ -2586,7 +2615,11 @@ internal fun Throwable.isDashboardManagedFilesUnsupported(): Boolean {
 }
 
 private fun apiFailure(response: Response, operation: String): IOException {
-    val bodyDetail = runCatching { response.body.string() }.getOrDefault("")
+    val bodyDetail = try {
+        response.body.readUtf8Bounded(4L * 1024L)
+    } catch (_: Exception) {
+        ""
+    }
     val detail = bodyDetail.take(240).ifBlank { response.message }
     return DashboardHttpException(
         statusCode = response.code,

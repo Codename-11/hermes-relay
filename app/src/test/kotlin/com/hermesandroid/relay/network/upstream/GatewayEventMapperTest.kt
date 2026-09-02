@@ -571,6 +571,24 @@ class GatewayEventMapperTest {
     }
 
     @Test
+    fun `wrapped image generation start exposes the effective tool identity`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent(
+            "tool.start",
+            obj(
+                """{"tool_id":"img-1","name":"tool_call","args":{"name":"image_generate","arguments":{"prompt":"test","aspect_ratio":"landscape"}}}""",
+            ),
+        )
+
+        assertEquals(listOf("img-1" to "image_generate"), recorder.toolStarts)
+        assertEquals(
+            listOf("img-1" to "{\"prompt\":\"test\",\"aspect_ratio\":\"landscape\"}"),
+            recorder.toolStartArgs,
+        )
+    }
+
+    @Test
     fun `tool complete with error routes to failed`() {
         val r = Recorder()
         val mapper = mapperWith(r)

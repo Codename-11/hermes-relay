@@ -140,6 +140,7 @@
     <string name="chat_retry">Retry</string>
     <string name="chat_dismiss">Dismiss</string>
     <string name="chat_failure_title">Hermes couldn’t complete this response</string>
+    <string name="chat_failure_inference_unavailable">Inference unavailable</string>
     <string name="chat_failure_details">Details</string>
     <string name="chat_failure_details_title">Response failure</string>
     <string name="chat_failure_details_guidance">Hermes reported this error. The app won’t switch routes or models automatically.</string>

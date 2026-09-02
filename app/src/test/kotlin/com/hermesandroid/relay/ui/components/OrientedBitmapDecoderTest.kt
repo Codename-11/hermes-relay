@@ -43,6 +43,14 @@ class OrientedBitmapDecoderTest {
     }
 
     @Test
+    fun `cached raster orientation matches viewer mime policy`() {
+        assertEquals(false, shouldApplyExifOrientation("image/png"))
+        assertEquals(false, shouldApplyExifOrientation("image/gif"))
+        assertEquals(true, shouldApplyExifOrientation("image/jpeg"))
+        assertEquals(true, shouldApplyExifOrientation("image/heif"))
+    }
+
+    @Test
     fun `content uri decoder reads encoded image without byte array handoff`() {
         val context = RuntimeEnvironment.getApplication()
         val source = File.createTempFile("oriented-bitmap-", ".png", context.cacheDir)

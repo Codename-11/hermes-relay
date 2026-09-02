@@ -2387,13 +2387,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     suspend fun loadProfileScopedMessages(
         sessionId: String,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>>? = profileController.loadProfileScopedMessages(sessionId, mode)
 
     suspend fun loadProfileScopedMessages(
         profileName: String?,
         sessionId: String,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>>? =
         profileController.loadProfileScopedMessages(profileName, sessionId, mode)
 

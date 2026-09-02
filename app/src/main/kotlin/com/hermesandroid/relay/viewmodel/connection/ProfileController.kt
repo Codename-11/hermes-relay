@@ -909,7 +909,7 @@ class ProfileController(
      */
     suspend fun loadProfileScopedMessages(
         sessionId: String,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>>? = loadProfileScopedMessages(
         profileName = resolveSessionProfileName(),
         sessionId = sessionId,
@@ -919,7 +919,7 @@ class ProfileController(
     suspend fun loadProfileScopedMessages(
         profileName: String?,
         sessionId: String,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null

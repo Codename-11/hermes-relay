@@ -27,6 +27,11 @@ internal fun imageOrientationTransform(orientation: Int): ImageOrientationTransf
     else -> ImageOrientationTransform()
 }
 
+internal fun shouldApplyExifOrientation(mimeType: String?): Boolean = when (mimeType?.lowercase()) {
+    "image/png", "image/gif", "image/bmp" -> false
+    else -> true
+}
+
 /**
  * Decode image bytes for display and apply their EXIF orientation. BitmapFactory
  * returns the stored pixel layout and otherwise leaves portrait phone photos
@@ -43,14 +48,16 @@ internal fun decodeOrientedBitmap(
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     } ?: return null
 
-    val orientation = runCatching {
+    val orientation = try {
         ByteArrayInputStream(bytes).use { stream ->
             ExifInterface(stream).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL,
             )
         }
-    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    } catch (_: Exception) {
+        ExifInterface.ORIENTATION_NORMAL
+    }
     val transform = imageOrientationTransform(orientation)
     if (transform.rotationDegrees == 0f && !transform.flipHorizontal) return decoded
 
@@ -58,26 +65,53 @@ internal fun decodeOrientedBitmap(
         if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
         if (transform.flipHorizontal) postScale(-1f, 1f)
     }
-    return runCatching {
+    val oriented = try {
         Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-    }.getOrNull()?.also { oriented ->
-        if (oriented !== decoded) decoded.recycle()
+    } catch (_: Exception) {
+        null
+    }
+    return oriented?.also { bitmap ->
+        if (bitmap !== decoded) decoded.recycle()
     } ?: decoded
 }
 
-/** Decode a cached content URI without first copying the encoded file into RAM. */
-internal fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap? {
-    val decoded = context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-        BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor)
+/** Decode a cached content URI without copying the encoded file into RAM. */
+internal fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap? =
+    decodeBoundedOrientedBitmap(context, uri)
+
+internal fun decodeBoundedOrientedBitmap(context: Context, uri: Uri): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    val boundsInput = context.contentResolver.openInputStream(uri) ?: return null
+    boundsInput.use { input ->
+        // Bounds-only decode deliberately returns null; the populated Options
+        // are the result and must not be treated as a decode failure.
+        BitmapFactory.decodeStream(input, null, bounds)
+    }
+    val sample = inlineImageSampleSize(bounds.outWidth, bounds.outHeight) ?: return null
+    val decoded = context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(
+            input,
+            null,
+            BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            },
+        )
     } ?: return null
-    val orientation = runCatching {
-        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-            ExifInterface(descriptor.fileDescriptor).getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_NORMAL,
-            )
-        }
-    }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+    val orientation = if (shouldApplyExifOrientation(bounds.outMimeType)) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                ExifInterface(input).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL,
+                )
+            }
+        } catch (_: Exception) {
+            null
+        } ?: ExifInterface.ORIENTATION_NORMAL
+    } else {
+        ExifInterface.ORIENTATION_NORMAL
+    }
     val transform = imageOrientationTransform(orientation)
     if (transform.rotationDegrees == 0f && !transform.flipHorizontal) return decoded
 
@@ -85,9 +119,27 @@ internal fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap? {
         if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
         if (transform.flipHorizontal) postScale(-1f, 1f)
     }
-    return runCatching {
+    val oriented = try {
         Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-    }.getOrNull()?.also { oriented ->
-        if (oriented !== decoded) decoded.recycle()
+    } catch (_: Exception) {
+        null
+    }
+    return oriented?.also { bitmap ->
+        if (bitmap !== decoded) decoded.recycle()
     } ?: decoded
+}
+
+/** Decode an encoded chat image only after bounding its decoded pixel footprint. */
+internal fun decodeBoundedOrientedBitmap(bytes: ByteArray): Bitmap? {
+    if (bytes.isEmpty()) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val sample = inlineImageSampleSize(bounds.outWidth, bounds.outHeight) ?: return null
+    return decodeOrientedBitmap(
+        bytes,
+        BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        },
+    )
 }

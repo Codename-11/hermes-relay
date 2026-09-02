@@ -113,6 +113,7 @@
     <string name="chat_retry">Reintentar</string>
     <string name="chat_dismiss">Descartar</string>
     <string name="chat_failure_title">Hermes no pudo completar esta respuesta</string>
+    <string name="chat_failure_inference_unavailable">Inferencia no disponible</string>
     <string name="chat_failure_details">Detalles</string>
     <string name="chat_failure_details_title">Error de respuesta</string>
     <string name="chat_failure_details_guidance">Hermes informó de este error. La aplicación no cambiará automáticamente de ruta ni de modelo.</string>

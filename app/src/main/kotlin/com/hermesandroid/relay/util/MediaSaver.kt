@@ -14,6 +14,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,6 +42,7 @@ object MediaSaver {
 
     private const val SAVE_SUBDIR = "Hermes-Relay"
     private const val SHARE_CACHE_DIR = "hermes-media"
+    private const val MAX_IN_MEMORY_MEDIA_BYTES = 25L * 1024L * 1024L
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -70,7 +74,10 @@ object MediaSaver {
             httpClient.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 val contentType = resp.header("Content-Type")?.substringBefore(';')?.trim()
-                val body = resp.body.bytes()
+                val responseBody = resp.body
+                val body = responseBody.byteStream().use { input ->
+                    readBoundedBytes(input, responseBody.contentLength())
+                }
                 body to contentType
             }
         }
@@ -78,10 +85,41 @@ object MediaSaver {
     /** Read the bytes behind a `content://` (or `file://`) [uri]. */
     suspend fun readUriBytes(context: Context, uri: Uri): ByteArray? =
         withContext(Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            }.getOrNull()
+            try {
+                val declaredLength = context.contentResolver.openAssetFileDescriptor(uri, "r")
+                    ?.use { it.length }
+                    ?.takeIf { it >= 0L }
+                    ?: -1L
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    readBoundedBytes(input, declaredLength)
+                }
+            } catch (_: Exception) {
+                null
+            }
         }
+
+    private fun readBoundedBytes(input: InputStream, declaredLength: Long): ByteArray {
+        if (declaredLength > MAX_IN_MEMORY_MEDIA_BYTES) {
+            throw IOException("Media exceeds Android's in-memory export limit")
+        }
+        val initialSize = when {
+            declaredLength in 1..MAX_IN_MEMORY_MEDIA_BYTES -> declaredLength.toInt()
+            else -> DEFAULT_BUFFER_SIZE
+        }
+        val output = ByteArrayOutputStream(initialSize)
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            if (total > MAX_IN_MEMORY_MEDIA_BYTES) {
+                throw IOException("Media exceeds Android's in-memory export limit")
+            }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray()
+    }
 
     // --- Save ---------------------------------------------------------------
 

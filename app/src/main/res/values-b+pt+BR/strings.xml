@@ -122,6 +122,7 @@
     <string name="chat_retry">Tentar novamente</string>
     <string name="chat_dismiss">Dispensar</string>
     <string name="chat_failure_title">O Hermes não conseguiu concluir esta resposta</string>
+    <string name="chat_failure_inference_unavailable">Inferência indisponível</string>
     <string name="chat_failure_details">Detalhes</string>
     <string name="chat_failure_details_title">Falha na resposta</string>
     <string name="chat_failure_details_guidance">O Hermes relatou este erro. O app não mudará de rota nem de modelo automaticamente.</string>

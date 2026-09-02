@@ -136,6 +136,7 @@
     <string name="chat_retry">Erneut versuchen</string>
     <string name="chat_dismiss">Schließen</string>
     <string name="chat_failure_title">Hermes konnte diese Antwort nicht abschließen</string>
+    <string name="chat_failure_inference_unavailable">Inferenz nicht verfügbar</string>
     <string name="chat_failure_details">Details</string>
     <string name="chat_failure_details_title">Antwortfehler</string>
     <string name="chat_failure_details_guidance">Hermes hat diesen Fehler gemeldet. Die App wechselt Routen oder Modelle nicht automatisch.</string>

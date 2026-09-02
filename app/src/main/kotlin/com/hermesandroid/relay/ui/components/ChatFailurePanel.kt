@@ -53,7 +53,13 @@ fun ChatFailurePanel(
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = stringResource(R.string.chat_failure_title),
+                        text = stringResource(
+                            if (isInferenceUnavailableFailure(failure.rawError)) {
+                                R.string.chat_failure_inference_unavailable
+                            } else {
+                                R.string.chat_failure_title
+                            },
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -148,3 +154,10 @@ internal fun failureIdentity(route: String, model: String?, provider: String?): 
         provider?.trim()?.takeIf { it.isNotEmpty() },
         model?.trim()?.takeIf { it.isNotEmpty() },
     ).distinct().joinToString(" · ")
+
+internal fun isInferenceUnavailableFailure(rawError: String): Boolean {
+    val message = rawError.lowercase()
+    return "agent init failed" in message ||
+        "no codex credentials stored" in message ||
+        "runtime resolution still failed" in message
+}

@@ -505,15 +505,17 @@ private fun RelayServerImage(
         phase = withContext(Dispatchers.IO) {
             val result = try {
                 resolver.fetch(image.src)
-            } catch (t: Throwable) {
-                ServerImageResult.Failure(t.message ?: "relay fetch failed")
+            } catch (error: Exception) {
+                ServerImageResult.Failure(error.message ?: "relay fetch failed")
             }
             when (result) {
                 is ServerImageResult.Success -> {
                     val cachedUri = Uri.parse(result.cachedUri)
-                    val bmp = runCatching {
-                        decodeOrientedBitmap(context, cachedUri)
-                    }.getOrNull()?.asImageBitmap()
+                    val bmp = try {
+                        decodeBoundedOrientedBitmap(context, cachedUri)
+                    } catch (_: Exception) {
+                        null
+                    }?.asImageBitmap()
                     if (bmp != null) {
                         putInlineImage(image.src, bmp, result.sensitive)
                         RelayImagePhase.Loaded(bmp, result.sensitive)
