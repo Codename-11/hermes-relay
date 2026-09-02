@@ -9,7 +9,6 @@ import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.view.SurfaceView
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
@@ -63,10 +62,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -86,13 +87,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.compose.ContentFrame
 import coil3.compose.AsyncImage
 import com.hermesandroid.relay.data.Attachment
 import com.hermesandroid.relay.data.AttachmentRenderMode
@@ -290,7 +291,7 @@ fun Modifier.zoomable(maxScale: Float = 6f): Modifier {
  * Dispatches on [Attachment.renderMode]:
  *  - IMAGE → zoomable image (Coil from the cached URI, or a decoded bitmap),
  *            honoring the sensitive blur gate.
- *  - VIDEO → ExoPlayer on a hand-wired [SurfaceView] with transport controls.
+ *  - VIDEO → ExoPlayer through Media3's lifecycle-aware Compose content frame.
  *  - AUDIO → ExoPlayer mini-player with scrubber + a Visualizer amplitude meter.
  *  - PDF   → [PdfRenderer] paginated pages in a LazyColumn.
  *  - TEXT  → in-app monospace text viewer.
@@ -384,7 +385,8 @@ fun AttachmentViewer(
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.96f)),
+                .background(Color.Black.copy(alpha = 0.96f))
+                .testTag("attachment-viewer"),
         ) {
             // Body fills; toolbar floats on top. PDF/TEXT add their own top
             // inset so the first line clears the toolbar.
@@ -737,17 +739,27 @@ private fun VideoBody(attachment: Attachment) {
         return
     }
 
+    var savedPosition by rememberSaveable(uri.toString()) { mutableLongStateOf(0L) }
+    var wantsToPlay by rememberSaveable(uri.toString()) { mutableStateOf(true) }
+    var muted by rememberSaveable(uri.toString()) { mutableStateOf(false) }
     val player = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
+            if (savedPosition > 0L) seekTo(savedPosition)
+            playWhenReady = wantsToPlay
+            volume = if (muted) 0f else 1f
             prepare()
-            playWhenReady = true
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
+    DisposableEffect(player) {
+        onDispose {
+            savedPosition = player.currentPosition.coerceAtLeast(0L)
+            wantsToPlay = player.playWhenReady
+            player.release()
+        }
+    }
 
-    var isPlaying by remember { mutableStateOf(true) }
-    var muted by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(player.isPlaying) }
     var position by remember { mutableStateOf(0L) }
     var duration by remember { mutableStateOf(0L) }
 
@@ -761,24 +773,30 @@ private fun VideoBody(attachment: Attachment) {
     LaunchedEffect(player) {
         while (true) {
             position = player.currentPosition.coerceAtLeast(0L)
+            savedPosition = position
             duration = player.duration.takeIf { it > 0L } ?: 0L
             delay(250)
         }
     }
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-        AndroidView(
-            factory = { ctx ->
-                SurfaceView(ctx).also { player.setVideoSurfaceView(it) }
-            },
-            modifier = Modifier.fillMaxWidth().weight(1f, fill = false).aspectRatio(16f / 9f),
-        )
+        Box(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            ContentFrame(
+                player = player,
+                modifier = Modifier.fillMaxSize().testTag("attachment-video-content"),
+                contentScale = ContentScale.Fit,
+            )
+        }
         PlaybackControls(
             isPlaying = isPlaying,
             position = position,
             duration = duration,
             onPlayPause = {
-                if (player.isPlaying) player.pause() else player.play()
+                wantsToPlay = !player.playWhenReady
+                player.playWhenReady = wantsToPlay
             },
             onSeek = { player.seekTo(it) },
             trailing = {

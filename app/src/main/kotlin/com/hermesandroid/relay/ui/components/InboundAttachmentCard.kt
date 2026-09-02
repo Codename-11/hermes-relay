@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -331,9 +332,14 @@ private fun ImageRender(
     }
 
     val blurMode = LocalMediaBlurMode.current
+    val viewerController = LocalChatMediaViewerController.current
     var revealed by remember(attachment.cachedUri, attachment.content) { mutableStateOf(false) }
     val blurred = !revealed && shouldBlurImage(blurMode, attachment.sensitive)
-    var viewerOpen by remember { mutableStateOf(false) }
+    var viewerOpen by rememberSaveable(
+        attachment.cachedUri,
+        attachment.relayToken,
+        attachment.fileName,
+    ) { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
     val bmp = bitmap
@@ -354,7 +360,7 @@ private fun ImageRender(
         return
     }
 
-    if (viewerOpen) {
+    if (viewerController == null && viewerOpen) {
         AttachmentViewer(
             attachment = attachment,
             onDismiss = { viewerOpen = false },
@@ -371,7 +377,18 @@ private fun ImageRender(
                     .widthIn(max = maxWidth)
                     .clip(RoundedCornerShape(8.dp))
                     .combinedClickable(
-                        onClick = { viewerOpen = true },
+                        onClick = {
+                            if (viewerController != null) {
+                                viewerController.openAttachment(
+                                    attachment = attachment,
+                                    initiallyRevealed = revealed,
+                                    blurMode = blurMode,
+                                    exportAllowed = exportAllowed,
+                                )
+                            } else {
+                                viewerOpen = true
+                            }
+                        },
                         onLongClick = { menuExpanded = true },
                     ),
                 contentScale = ContentScale.FillWidth,
@@ -408,15 +425,20 @@ private fun FileCardRender(
     val scope = rememberCoroutineScope()
     val (emoji, typeLabel) = emojiAndLabelFor(attachment.renderMode, attachment.contentType)
     var menuExpanded by remember { mutableStateOf(false) }
-    var viewerOpen by remember { mutableStateOf(false) }
+    var viewerOpen by rememberSaveable(
+        attachment.cachedUri,
+        attachment.relayToken,
+        attachment.fileName,
+    ) { mutableStateOf(false) }
 
     // Real thumbnail when one is cheap (video first frame, PDF first page);
     // null falls back to the type emoji.
     val thumbnail = rememberAttachmentThumbnail(attachment)
     val blurMode = LocalMediaBlurMode.current
+    val viewerController = LocalChatMediaViewerController.current
     val blurThumb = thumbnail != null && shouldBlurThumb(blurMode, attachment)
 
-    if (viewerOpen) {
+    if (viewerController == null && viewerOpen) {
         // Non-image types don't blur in the viewer; open straight through.
         AttachmentViewer(
             attachment = attachment,
@@ -432,7 +454,18 @@ private fun FileCardRender(
             .widthIn(max = maxWidth)
             // Tap previews in-app; long-press surfaces Open-externally / Share / Save.
             .combinedClickable(
-                onClick = { viewerOpen = true },
+                onClick = {
+                    if (viewerController != null) {
+                        viewerController.openAttachment(
+                            attachment = attachment,
+                            initiallyRevealed = true,
+                            blurMode = blurMode,
+                            exportAllowed = exportAllowed,
+                        )
+                    } else {
+                        viewerOpen = true
+                    }
+                },
                 onLongClick = { menuExpanded = true },
             )
     ) {
