@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Android attachment previews survive rotation and preserve video proportions.** Full-screen image, video, audio, PDF, text, and file previews remain open while the chat reflows, respect the device rotation preference, and render portrait or landscape video through Media3's fitted content surface instead of a fixed 16:9 box. (#483)
 - **Android streams Standard Hermes attachments into its on-disk media cache.** Automatic Dashboard downloads no longer preallocate and duplicate the full response body on the OkHttp dispatcher, while declared and observed size limits remain enforced. (#531)
 - **Android fresh Gateway chats wait for their upstream runtime before sending.** Android now consumes the lazy `session.create` readiness edge instead of racing the first prompt into compute-host ownership rejection. Genuine ownership refusals keep the exact holder-aware error and retryable local prompt instead of falling into unfinished-message history recovery.
 - **Windows desktop updates keep the installed CLI and UI on one release.** `hermes-relay update` now detects a colocated management UI, reports both installed versions, and uses the verified bundle installer to replace and restart the affected surfaces together. Explicit CLI-only installations retain the standalone binary updater.

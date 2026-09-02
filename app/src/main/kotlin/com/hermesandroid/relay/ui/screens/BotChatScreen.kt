@@ -58,6 +58,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -84,24 +85,26 @@ fun BotChatScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
-    BotChatScreen(
-        route = route,
-        bot = bot,
-        sessionId = sessionId,
-        gatewayClient = gatewayClient,
-        dashboardClient = dashboardClient,
-        chatViewModel = chatViewModel,
-        onBack = onBack,
-        handlerFactory = ::ChatHandler,
-        historyLoader = { profileName, storedSessionId, mode ->
-            dashboardClient.getSessionMessages(
-                sessionId = storedSessionId,
-                profile = profileName,
-                mode = mode,
-            )
-        },
-        profileIconFlow = connectionViewModel::profileIconFlow,
-    )
+    ChatMediaViewerHost(route.key, sessionId) {
+        BotChatScreen(
+            route = route,
+            bot = bot,
+            sessionId = sessionId,
+            gatewayClient = gatewayClient,
+            dashboardClient = dashboardClient,
+            chatViewModel = chatViewModel,
+            onBack = onBack,
+            handlerFactory = ::ChatHandler,
+            historyLoader = { profileName, storedSessionId, mode ->
+                dashboardClient.getSessionMessages(
+                    sessionId = storedSessionId,
+                    profile = profileName,
+                    mode = mode,
+                )
+            },
+            profileIconFlow = connectionViewModel::profileIconFlow,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

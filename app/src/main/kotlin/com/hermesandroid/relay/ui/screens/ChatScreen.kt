@@ -1398,7 +1398,11 @@ fun ChatScreen(
     }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showTranscriptSearch by rememberSaveable { mutableStateOf(false) }
-    var pendingAttachmentPreview by remember { mutableStateOf<Attachment?>(null) }
+    var pendingAttachmentPreviewIndex by rememberSaveable(
+        composerDraftKey.connectionId,
+        composerDraftKey.profileId,
+        composerDraftKey.sessionId,
+    ) { mutableStateOf<Int?>(null) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
@@ -4218,15 +4222,17 @@ fun ChatScreen(
 
             PendingAttachmentComposer(
                 attachments = pendingAttachments,
-                onPreview = { attachment, _ -> pendingAttachmentPreview = attachment },
+                onPreview = { _, index -> pendingAttachmentPreviewIndex = index },
                 onRemove = chatViewModel::removeAttachment,
                 onMove = chatViewModel::moveAttachment,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            pendingAttachmentPreview?.let { attachment ->
+            pendingAttachmentPreviewIndex
+                ?.let(pendingAttachments::getOrNull)
+                ?.let { attachment ->
                 AttachmentViewer(
                     attachment = attachment,
-                    onDismiss = { pendingAttachmentPreview = null },
+                    onDismiss = { pendingAttachmentPreviewIndex = null },
                     initiallyRevealed = true,
                 )
             }
