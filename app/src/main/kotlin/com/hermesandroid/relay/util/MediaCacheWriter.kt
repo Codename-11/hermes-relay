@@ -6,6 +6,7 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import java.security.MessageDigest
 
 /**
@@ -98,7 +99,7 @@ class MediaCacheWriter(
     suspend fun cache(bytes: ByteArray, contentType: String, fileName: String?): Uri =
         withContext(Dispatchers.IO) {
             val dir = cacheRoot
-            val targetName = buildFilename(bytes, contentType, fileName)
+            val targetName = buildFilename(bytes.sha1(), contentType, fileName)
             val file = File(dir, targetName)
             file.writeBytes(bytes)
             // Best-effort LRU enforcement — never fatal on a cache operation.
@@ -111,6 +112,45 @@ class MediaCacheWriter(
                 "${context.packageName}.fileprovider",
                 file
             )
+        }
+
+    /**
+     * Move a completed streaming download into the media cache without ever
+     * materializing the file as a ByteArray. The caller retains ownership of
+     * [source] when this throws; successful calls consume or copy it.
+     */
+    suspend fun cache(source: File, contentType: String, fileName: String?): Uri {
+        val target = cacheFile(source, contentType, fileName)
+        return withContext(Dispatchers.IO) {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                target,
+            )
+        }
+    }
+
+    internal suspend fun cacheFile(source: File, contentType: String, fileName: String?): File =
+        withContext(Dispatchers.IO) {
+            require(source.isFile) { "Media cache source does not exist" }
+            val dir = cacheRoot
+            val target = File(dir, buildFilename(source.sha1(), contentType, fileName))
+            if (source.canonicalFile != target.canonicalFile) {
+                if (target.exists()) {
+                    source.delete()
+                    target.setLastModified(System.currentTimeMillis())
+                } else if (!source.renameTo(target)) {
+                    source.inputStream().use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    source.delete()
+                }
+            }
+            try {
+                enforceCap()
+            } catch (_: Exception) { /* swallow */ }
+
+            target
         }
 
     /**
@@ -133,15 +173,8 @@ class MediaCacheWriter(
 
     // --- internals ---
 
-    private fun buildFilename(bytes: ByteArray, contentType: String, fileName: String?): String {
+    private fun buildFilename(sha1: String, contentType: String, fileName: String?): String {
         val ext = mimeToExt[contentType.lowercase().substringBefore(';').trim()] ?: "bin"
-        // SHA-1 of the bytes — stable + collision-resistant enough for cache keys.
-        val sha1 = try {
-            MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
-        } catch (_: Exception) {
-            // fallback to a weaker but always-available hash
-            bytes.contentHashCode().toUInt().toString(16)
-        }
 
         // If the server supplied a filename, keep the base (sanitized) but
         // force the extension we derived from the MIME. This keeps the
@@ -161,6 +194,33 @@ class MediaCacheWriter(
             "$sha1.$ext"
         }
     }
+
+    private fun ByteArray.sha1(): String = try {
+        MessageDigest.getInstance("SHA-1").digest(this).toHexString()
+    } catch (_: Exception) {
+        contentHashCode().toUInt().toString(16)
+    }
+
+    private fun File.sha1(): String = try {
+        inputStream().use { input ->
+            val digest = MessageDigest.getInstance("SHA-1")
+            input.updateDigest(digest)
+            digest.digest().toHexString()
+        }
+    } catch (_: Exception) {
+        "${length().toUInt().toString(16)}-${lastModified().toUInt().toString(16)}"
+    }
+
+    private fun InputStream.updateDigest(digest: MessageDigest) {
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) return
+            digest.update(buffer, 0, read)
+        }
+    }
+
+    private fun ByteArray.toHexString(): String = joinToString("") { "%02x".format(it) }
 
     /**
      * Delete oldest-mtime files until the cache directory fits under the cap.

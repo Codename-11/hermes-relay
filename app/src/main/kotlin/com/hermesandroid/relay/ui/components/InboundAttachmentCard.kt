@@ -303,15 +303,17 @@ private fun ImageRender(
     LaunchedEffect(attachment.cachedUri, attachment.content) {
         val decoded = withContext(Dispatchers.IO) {
             runCatching {
-                val bytes: ByteArray? = when {
+                when {
                     !attachment.cachedUri.isNullOrBlank() ->
-                        context.contentResolver.openInputStream(Uri.parse(attachment.cachedUri))
-                            ?.use { it.readBytes() }
+                        decodeOrientedBitmap(context, Uri.parse(attachment.cachedUri))
+                            ?.asImageBitmap()
                     attachment.content.isNotBlank() ->
-                        android.util.Base64.decode(attachment.content, android.util.Base64.DEFAULT)
+                        android.util.Base64.decode(
+                            attachment.content,
+                            android.util.Base64.DEFAULT,
+                        ).let { decodeOrientedBitmap(it)?.asImageBitmap() }
                     else -> null
                 }
-                bytes?.let { decodeOrientedBitmap(it)?.asImageBitmap() }
             }.getOrNull()
         }
         if (decoded != null) bitmap = decoded else decodeFailed = true

@@ -52,7 +52,6 @@ import okhttp3.Response
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -294,6 +293,34 @@ internal fun copyBounded(
     return written
 }
 
+internal fun copyMediaBounded(
+    input: InputStream,
+    output: OutputStream,
+    declaredLength: Long?,
+    limitBytes: Long,
+): Long {
+    require(limitBytes > 0)
+    require(declaredLength == null || declaredLength >= 0)
+    if (declaredLength != null && declaredLength > limitBytes) {
+        throw IOException("File exceeds the configured download limit")
+    }
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var written = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        written += read
+        if (written > limitBytes) {
+            throw IOException("File exceeds the configured download limit")
+        }
+        output.write(buffer, 0, read)
+    }
+    if (declaredLength != null && written != declaredLength) {
+        throw IOException("Media file changed while it was being downloaded")
+    }
+    return written
+}
+
 /** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
 data class ElevenLabsVoice(
     val voiceId: String,
@@ -312,14 +339,14 @@ data class ElevenLabsVoices(
 )
 
 /**
- * Bytes fetched from upstream's authenticated managed-files surface.
+ * Metadata for a file streamed from upstream's authenticated managed-files surface.
  *
  * The Dashboard applies its own managed-root, sensitive-file, and maximum-size
- * policy before these bytes leave the Hermes host. Android applies the user's
+ * policy before the file leaves the Hermes host. Android applies the user's
  * stricter inbound-media cap while reading the response as a second boundary.
  */
 data class DashboardFetchedFile(
-    val bytes: ByteArray,
+    val sizeBytes: Long,
     val contentType: String,
     val fileName: String?,
 )
@@ -401,13 +428,14 @@ class DashboardApiClient(
      * This is the same authenticated `/api/files/download` route official
      * Desktop uses for remote gateway files. The caller supplies its display
      * cap so a malicious or stale Content-Length cannot cause an unbounded
-     * allocation. Audio/video are downloaded into Android's local media cache;
+     * allocation. The supplied output is normally Android's on-disk media cache;
      * local playback supplies seeking, so `/api/files/stream` is unnecessary
      * on this path.
      */
     suspend fun downloadManagedFile(
         serverPath: String,
         maxBytes: Long,
+        output: OutputStream,
     ): Result<DashboardFetchedFile> = withContext(Dispatchers.IO) {
         if (serverPath.isBlank()) {
             return@withContext Result.failure(IOException("Media path is empty"))
@@ -428,29 +456,11 @@ class DashboardApiClient(
             if (declaredLength != null && declaredLength > maxBytes) {
                 throw IOException("File exceeds the configured download limit")
             }
-            val initialSize = declaredLength
-                ?.coerceAtMost(Int.MAX_VALUE.toLong())
-                ?.toInt()
-                ?: DEFAULT_BUFFER_SIZE
-            val output = ByteArrayOutputStream(initialSize)
-            body.byteStream().use { input ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var readTotal = 0L
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    readTotal += count
-                    if (readTotal > maxBytes) {
-                        throw IOException("File exceeds the configured download limit")
-                    }
-                    output.write(buffer, 0, count)
-                }
-                if (declaredLength != null && readTotal != declaredLength) {
-                    throw IOException("Media file changed while it was being downloaded")
-                }
+            val readTotal = body.byteStream().use { input ->
+                copyMediaBounded(input, output, declaredLength, maxBytes)
             }
             DashboardFetchedFile(
-                bytes = output.toByteArray(),
+                sizeBytes = readTotal,
                 contentType = response.header("Content-Type")
                     ?.substringBefore(';')
                     ?.trim()

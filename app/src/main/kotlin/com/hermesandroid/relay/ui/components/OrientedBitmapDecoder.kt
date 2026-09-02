@@ -1,8 +1,10 @@
 package com.hermesandroid.relay.ui.components
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayInputStream
 
@@ -49,6 +51,33 @@ internal fun decodeOrientedBitmap(
             )
         }
     }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    val transform = imageOrientationTransform(orientation)
+    if (transform.rotationDegrees == 0f && !transform.flipHorizontal) return decoded
+
+    val matrix = Matrix().apply {
+        if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
+        if (transform.flipHorizontal) postScale(-1f, 1f)
+    }
+    return runCatching {
+        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    }.getOrNull()?.also { oriented ->
+        if (oriented !== decoded) decoded.recycle()
+    } ?: decoded
+}
+
+/** Decode a cached content URI without first copying the encoded file into RAM. */
+internal fun decodeOrientedBitmap(context: Context, uri: Uri): Bitmap? {
+    val decoded = context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+        BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor)
+    } ?: return null
+    val orientation = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            ExifInterface(descriptor.fileDescriptor).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        }
+    }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
     val transform = imageOrientationTransform(orientation)
     if (transform.rotationDegrees == 0f && !transform.flipHorizontal) return decoded
 

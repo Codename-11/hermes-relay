@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Android wake-word JNI configuration survives release shrinking.** R8 now preserves sherpa-onnx configuration class and field names that the native keyword spotter resolves at runtime. (#444)
+- **Android streams Standard Hermes attachments into its on-disk media cache.** Automatic Dashboard downloads no longer preallocate and duplicate the full response body on the OkHttp dispatcher, while declared and observed size limits remain enforced. (#531)
 - **Android fresh Gateway chats wait for their upstream runtime before sending.** Android now consumes the lazy `session.create` readiness edge instead of racing the first prompt into compute-host ownership rejection. Genuine ownership refusals keep the exact holder-aware error and retryable local prompt instead of falling into unfinished-message history recovery.
 - **Windows desktop updates keep the installed CLI and UI on one release.** `hermes-relay update` now detects a colocated management UI, reports both installed versions, and uses the verified bundle installer to replace and restart the affected surfaces together. Explicit CLI-only installations retain the standalone binary updater.
 

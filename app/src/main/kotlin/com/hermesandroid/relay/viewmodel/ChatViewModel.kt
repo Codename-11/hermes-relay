@@ -173,6 +173,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.sse.EventSource
+import java.io.File
+import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -10727,7 +10729,7 @@ class ChatViewModel : ViewModel() {
      *     placeholder as actionable FAILED with [MEDIA_TAP_TO_DOWNLOAD] in
      *     [Attachment.errorMessage]. The UI renders a retry card.
      *  4. Otherwise → kick off a background fetch, enforce the max size cap,
-     *     cache the bytes via [MediaCacheWriter], and update the attachment
+     *     stream into [MediaCacheWriter], and update the attachment
      *     to LOADED (or FAILED on any error).
      *
      * Note: the matching happens by (messageId + relayToken). If the same
@@ -10791,7 +10793,10 @@ class ChatViewModel : ViewModel() {
                 expectedHistoryGeneration = historyGeneration,
             ) { _ ->
                 if (relay.mediaUrlConfigured()) {
-                    relay.fetchMedia(token, maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1L) * 1024L * 1024L)
+                    relay.fetchMedia(
+                        token,
+                        maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1L) * 1024L * 1024L,
+                    ).asInboundFetchedMedia()
                 } else {
                     Result.failure(MediaRouteUnavailableException())
                 }
@@ -10854,7 +10859,7 @@ class ChatViewModel : ViewModel() {
                     fetchServerPath(fetchKey, maxBytes, upstreamMediaClient)
                 } else {
                     if (relay.mediaUrlConfigured()) {
-                        relay.fetchMedia(fetchKey, maxBytes = maxBytes)
+                        relay.fetchMedia(fetchKey, maxBytes = maxBytes).asInboundFetchedMedia()
                     } else {
                         Result.failure(MediaRouteUnavailableException())
                     }
@@ -10913,7 +10918,22 @@ class ChatViewModel : ViewModel() {
             return ServerImageResult.Failure("Connection changed while loading image")
         }
         return result.fold(
-            onSuccess = { ServerImageResult.Success(it.bytes, it.sensitive) },
+            onSuccess = { fetched ->
+                try {
+                    val cachedUri = fetched.cachedUri ?: mediaCacheWriter?.cache(
+                        requireNotNull(fetched.bytes),
+                        fetched.contentType,
+                        fetched.fileName,
+                    )?.toString()
+                    if (cachedUri == null) {
+                        ServerImageResult.Failure("Media cache is unavailable")
+                    } else {
+                        ServerImageResult.Success(cachedUri, fetched.sensitive)
+                    }
+                } catch (error: Exception) {
+                    ServerImageResult.Failure(error.message ?: "Image cache failed")
+                }
+            },
             onFailure = { ServerImageResult.Failure(it.message ?: "Image unavailable") },
         )
     }
@@ -11035,17 +11055,39 @@ class ChatViewModel : ViewModel() {
         serverPath: String,
         maxBytes: Long,
         upstream: DashboardApiClient?,
-    ): Result<RelayHttpClient.FetchedMedia> {
+    ): Result<InboundFetchedMedia> {
         if (upstream != null) {
-            val upstreamResult = upstream.downloadManagedFile(serverPath, maxBytes)
-                .map { fetched ->
-                    RelayHttpClient.FetchedMedia(
-                        contentType = fetched.contentType,
-                        bytes = fetched.bytes,
-                        fileName = fetched.fileName,
-                        sensitive = false,
+            val cache = mediaCacheWriter
+                ?: return Result.failure(IOException("Media cache is unavailable"))
+            val context = appContext
+                ?: return Result.failure(IOException("Application context is unavailable"))
+            val staging = File.createTempFile("hermes-media-", ".part", context.cacheDir)
+            val upstreamResult = try {
+                val fetchedResult = staging.outputStream().buffered().use { output ->
+                    upstream.downloadManagedFile(serverPath, maxBytes, output)
+                }
+                if (fetchedResult.isFailure) {
+                    Result.failure(fetchedResult.exceptionOrNull()!!)
+                } else {
+                    val fetched = fetchedResult.getOrThrow()
+                    val uri = cache.cache(staging, fetched.contentType, fetched.fileName)
+                    Result.success(
+                        InboundFetchedMedia(
+                            contentType = fetched.contentType,
+                            fileName = fetched.fileName,
+                            sensitive = false,
+                            sizeBytes = fetched.sizeBytes,
+                            cachedUri = uri.toString(),
+                        ),
                     )
                 }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            } finally {
+                staging.delete()
+            }
             if (upstreamResult.isSuccess) return upstreamResult
             val upstreamFailure = upstreamResult.exceptionOrNull()
             if (upstreamFailure?.isDashboardManagedFilesUnsupported() != true) {
@@ -11054,13 +11096,14 @@ class ChatViewModel : ViewModel() {
             val relay = relayHttpClient
             if (relay?.mediaUrlConfigured() == true) {
                 return relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+                    .asInboundFetchedMedia()
             }
             return Result.failure(MediaRouteUnavailableException(upstreamFailure))
         }
 
         val relay = relayHttpClient
         return if (relay?.mediaUrlConfigured() == true) {
-            relay.fetchMediaByPath(serverPath, maxBytes = maxBytes)
+            relay.fetchMediaByPath(serverPath, maxBytes = maxBytes).asInboundFetchedMedia()
         } else {
             Result.failure(MediaRouteUnavailableException())
         }
@@ -11100,7 +11143,7 @@ class ChatViewModel : ViewModel() {
         expectedRole: MessageRole = MessageRole.ASSISTANT,
         expectedContextKey: String? = activeProfileContextKey,
         expectedHistoryGeneration: Int = historyLoadGeneration.get(),
-        fetch: suspend (maxBytes: Long) -> Result<RelayHttpClient.FetchedMedia>,
+        fetch: suspend (maxBytes: Long) -> Result<InboundFetchedMedia>,
     ) {
         val cache = mediaCacheWriter ?: return
         val maxBytes = settings.maxInboundSizeMb.toLong().coerceAtLeast(1) * 1024L * 1024L
@@ -11121,8 +11164,8 @@ class ChatViewModel : ViewModel() {
         ) return
         result.fold(
             onSuccess = { fetched ->
-                if (fetched.bytes.size > maxBytes) {
-                    val sizeMb = fetched.bytes.size / (1024.0 * 1024.0)
+                if (fetched.sizeBytes > maxBytes) {
+                    val sizeMb = fetched.sizeBytes / (1024.0 * 1024.0)
                     updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.FAILED,
@@ -11131,22 +11174,26 @@ class ChatViewModel : ViewModel() {
                             ),
                             contentType = fetched.contentType,
                             fileName = fetched.fileName ?: att.fileName,
-                            fileSize = fetched.bytes.size.toLong()
+                            fileSize = fetched.sizeBytes
                         )
                     }
                     return
                 }
 
                 try {
-                    val uri = cache.cache(fetched.bytes, fetched.contentType, fetched.fileName)
+                    val cachedUri = fetched.cachedUri ?: cache.cache(
+                        requireNotNull(fetched.bytes),
+                        fetched.contentType,
+                        fetched.fileName,
+                    ).toString()
                     updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
                             state = AttachmentState.LOADED,
                             errorMessage = null,
                             contentType = fetched.contentType,
                             fileName = fetched.fileName ?: att.fileName,
-                            fileSize = fetched.bytes.size.toLong(),
-                            cachedUri = uri.toString(),
+                            fileSize = fetched.sizeBytes,
+                            cachedUri = cachedUri,
                             // Carry the relay-authoritative sensitivity bit
                             // (X-Media-Sensitive header) onto the LOADED
                             // attachment so the renderer can blur per the
@@ -11191,6 +11238,26 @@ class ChatViewModel : ViewModel() {
             }
         )
     }
+
+    private data class InboundFetchedMedia(
+        val contentType: String,
+        val fileName: String?,
+        val sensitive: Boolean,
+        val sizeBytes: Long,
+        val bytes: ByteArray? = null,
+        val cachedUri: String? = null,
+    )
+
+    private fun Result<RelayHttpClient.FetchedMedia>.asInboundFetchedMedia(): Result<InboundFetchedMedia> =
+        map { fetched ->
+            InboundFetchedMedia(
+                contentType = fetched.contentType,
+                fileName = fetched.fileName,
+                sensitive = fetched.sensitive,
+                sizeBytes = fetched.bytes.size.toLong(),
+                bytes = fetched.bytes,
+            )
+        }
 
     /**
      * Append an attachment to a specific assistant message, matched by id.
