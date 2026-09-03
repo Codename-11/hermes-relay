@@ -6,22 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.15.1] - 2026-09-02
+
 ### Changed
 
-- **Chat and Bot Chat expose a clear mid-response send choice.** A slim translucent tray slides up behind the composer for Correct now or Queue next without covering the input. Chat settings sets the default; the tray overrides it for one message. Stop pauses pending messages until Resume, and editing or removing a queued message keeps its successors deliverable.
-- **Android Chat and Voice use tablet space intentionally.** Expanded layouts keep introductions, transcripts, composer controls, and status chrome on readable centered rails, while landscape Voice Focus separates identity controls from conversation activity without changing phone or portrait interaction behavior.
+- Chat and Bot Chat offer a compact Correct now / Queue next tray behind the composer. Chat settings sets the default; each message can override it. Stop pauses pending work until Resume, and editing or removing queued messages preserves the remaining order.
+- Wider Chat and Voice layouts keep text and controls centered and readable, including landscape Voice Focus.
 
 ### Fixed
 
-- **Android message delivery labels remain readable inside user bubbles.** Steering confirmations and other delivery states use the bubble's contrasting text color instead of disappearing into its accent background.
-- **Android voice errors open in a readable dialog.** Long provider messages stay inside a scrollable, selectable detail area with separate Retry and Dismiss actions instead of overlapping Chat or Voice Focus controls.
-- **Android attachment previews survive rotation and preserve video proportions.** Full-screen image, video, audio, PDF, text, and file previews remain open while the chat reflows, respect the device rotation preference, and render portrait or landscape video through Media3's fitted content surface instead of a fixed 16:9 box. (#483)
-- **Android wake-word JNI configuration survives release shrinking.** R8 now preserves sherpa-onnx configuration class and field names that the native keyword spotter resolves at runtime. (#444)
-- **Android streams Standard Hermes attachments into its on-disk media cache.** Automatic Dashboard downloads no longer preallocate and duplicate the full response body on the OkHttp dispatcher, while declared and observed size limits remain enforced. (#531)
-- **Android bounds automatic session refresh and large chat allocations.** A foreground directory refresh can no longer sustain a request loop, routine history opens read one latest 500-row page, Dashboard JSON and in-memory media exports reject oversized bodies, Markdown renders through a bounded presentation window, and chat image previews downsample before allocating pixels.
-- **Android keeps visible progress through image-generation tool gaps.** Gateway interim replies immediately hand off to a new in-chat working owner, so the standard working animation remains visible until media arrives even when upstream hides tool lifecycle events. Older Tool Search gateways that do expose a structured `tool_call` bridge are normalized to the effective image tool.
-- **Android fresh Gateway chats wait for their upstream runtime before sending.** Android now consumes the lazy `session.create` readiness edge instead of racing the first prompt into compute-host ownership rejection. Genuine ownership refusals keep the exact holder-aware error and retryable local prompt instead of falling into unfinished-message history recovery.
-- **Windows desktop updates keep the installed CLI and UI on one release.** `hermes-relay update` now detects a colocated management UI, reports both installed versions, and uses the verified bundle installer to replace and restart the affected surfaces together. Explicit CLI-only installations retain the standalone binary updater.
+- Delivery and correction labels remain readable inside user-message bubbles.
+- Voice errors use a scrollable dialog with separate Retry and Dismiss actions.
+- Attachment previews stay open through rotation, and videos retain their original proportions. (#483)
+- Release builds preserve the native configuration names required for wake-word startup. (#444)
+- Standard Hermes attachments stream to disk while enforcing download size limits. (#531)
+- Session refresh no longer sustains a request loop. History loads, chat rendering, image previews, and media exports keep memory use bounded.
+- Image-generation progress remains visible between interim replies and media delivery.
+- New Gateway chats wait for session readiness before the first prompt; ownership refusals preserve the retryable prompt and server error.
+
+## [0.4.0-beta.7] - 2026-09-02
+
+### Fixed
+
+- Windows updates detect a colocated management UI, report both installed versions, and update the CLI and UI together through the verified bundle installer. CLI-only installations keep their standalone updater.
 
 ## [Android 1.15.0] - 2026-08-31
 

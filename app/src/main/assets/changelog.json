@@ -2,6 +2,83 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.15.1",
+   "title": "Steadier chat, media, and voice",
+   "date": "2026-09-02",
+   "summary": "Chats use less memory, attachment previews stay in place, and voice failures are easier to recover from. Follow-up controls make it clear whether a message changes the current response or waits for the next turn.",
+   "changes": [
+    {
+     "id": "follow-up-controls",
+     "kind": "improved",
+     "title": "Choose when follow-up messages are sent",
+     "summary": "A slim tray behind the composer offers Correct now or Queue next. Chat settings sets the default, and a composer choice applies to one message. Stop pauses pending work until Resume; editing or removing an item keeps the remaining queue usable.",
+     "highlight": true
+    },
+    {
+     "id": "tablet-layouts",
+     "kind": "improved",
+     "title": "Make better use of wider screens",
+     "summary": "Chat and Voice keep text and controls on readable centered layouts. Landscape Voice Focus separates identity controls from conversation activity."
+    },
+    {
+     "id": "delivery-labels",
+     "kind": "fixed",
+     "title": "Read message delivery status clearly",
+     "summary": "Correction and delivery labels use contrasting text instead of disappearing into the message bubble."
+    },
+    {
+     "id": "voice-error-dialog",
+     "kind": "fixed",
+     "title": "Read and dismiss voice errors",
+     "summary": "Voice errors open in a contained dialog with scrollable details and separate Retry and Dismiss actions, without overlapping chat controls."
+    },
+    {
+     "id": "attachment-previews",
+     "kind": "fixed",
+     "title": "Keep attachment previews open through rotation",
+     "summary": "Image, video, audio, PDF, text, and file previews stay open as the screen rotates. Videos retain their original proportions.",
+     "highlight": true
+    },
+    {
+     "id": "wake-word-startup",
+     "kind": "fixed",
+     "title": "Fix wake-word startup in release builds",
+     "summary": "Release optimization now preserves the native speech configuration names needed to initialize wake-word detection."
+    },
+    {
+     "id": "attachment-downloads",
+     "kind": "fixed",
+     "title": "Download attachments with less memory",
+     "summary": "Standard Hermes attachments stream into the on-disk cache while download size limits remain enforced."
+    },
+    {
+     "id": "chat-memory-safety",
+     "kind": "fixed",
+     "title": "Keep large chats and media manageable",
+     "summary": "Automatic session refresh no longer loops. Routine history loads, chat rendering, image previews, and media exports use bounded memory instead of allocating entire large responses.",
+     "highlight": true
+    },
+    {
+     "id": "image-progress",
+     "kind": "fixed",
+     "title": "Keep image-generation progress visible",
+     "summary": "The working indicator stays visible between interim replies and the generated image, including gateways that omit tool activity events."
+    },
+    {
+     "id": "first-message-readiness",
+     "kind": "fixed",
+     "title": "Wait for new chats to be ready",
+     "summary": "The first message waits for the Gateway session to initialize. Ownership refusals keep the prompt retryable and show the server's error."
+    }
+   ],
+   "compatibility": [
+    "Standard Chat, sessions, media, and voice continue to use upstream Hermes. Voice transcription still requires a configured speech-to-text provider on the Hermes host.",
+    "Paused text queues can be restored. Attachment bytes are not stored in preferences; an attachment queue that cannot be restored must be reviewed and sent again."
+   ],
+   "playNotes": "More reliable chats and media: fewer memory-heavy refreshes, smoother large histories, and attachment previews that survive rotation. Choose whether follow-ups correct the current response or wait in a queue. Voice errors are easier to read, image-generation progress stays visible, and wake-word startup and first-message readiness are fixed.",
+   "sections": []
+  },
+  {
    "version": "1.15.0",
    "title": "Standard Hermes first, with clearer Relay boundaries",
    "date": "2026-08-31",

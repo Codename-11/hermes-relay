@@ -1,5 +1,11 @@
 # Hermes-Relay — Dev Log
 
+## 2026-09-02 — Android 1.15.1 and CLI+UI beta.7 release preparation
+
+Prepared Android 1.15.1 (versionCode 54) and CLI+UI 0.4.0-beta.7 from the integrated release tree. Android notes cover chat memory bounds, media previews, Gateway readiness, follow-up controls, and voice recovery. CLI+UI notes cover the Windows unified updater. Plugin metadata remains at 1.11.1; its only unreleased change is a documentation-comment path.
+
+The Android release uses the immutable signed Play preflight artifact for public publication. CLI+UI remains a prerelease and is approved from the exact prepared dev commit.
+
 ## 2026-09-01 — Exact-tree release artifact promotion
 
 Android Play preflight now packages the signed sideload APK, Play AAB, R8
