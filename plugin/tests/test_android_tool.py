@@ -431,4 +431,3 @@ class TestBridgeTokenResolution:
         assert android_tool._auth_headers() == {
             "Authorization": "Bearer hdr-token"
         }
-
