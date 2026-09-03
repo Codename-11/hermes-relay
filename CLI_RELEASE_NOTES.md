@@ -1,22 +1,18 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-08-31
+**Release Date:** 2026-09-02
 
-This beta preserves complete multi-route pairing while preventing Desktop from dialing Dashboard-ingress Relay routes before Dashboard WebSocket ticket support is available. (Related: #399)
+This beta fixes Windows updates so the installed CLI and management UI advance together. Explicit CLI-only installations keep their standalone update path.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
 ## What's changed
 
-### Changed
-
-- **Saved hosts retain the full route topology.** Dashboard, Relay, optional API, route priority, transport protection, certificate pins, and the selected host survive LAN, Tailscale, and public-route changes without creating duplicate hosts.
-- **API-less pairing is first-class.** Dashboard plus direct Relay can pair without inventing an optional API server, while secure-first ranking retains plain LAN as the final fallback.
-
 ### Fixed
 
-- **Dashboard-ingress Relay routes fail closed on Desktop.** The daemon, host selector, and Relay transport reject ingress that requires a Dashboard WebSocket ticket and choose a compatible direct Relay fallback instead of attempting an unauthenticated dial.
-- **Pairing accepts the current v3 candidate shape.** Optional API records, same-origin Dashboard/Relay routes, and legacy top-level payloads remain compatible without collapsing route ownership.
+- `hermes-relay update` detects an installed management UI beside the CLI and reports both installed versions.
+- Bundle installations use the checksum-verified Windows installer to update and restart the affected CLI and UI together.
+- Explicit CLI-only installations continue to use the standalone binary updater.
 
 ## Install
 
