@@ -2,6 +2,9 @@
 
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.data.BusyMessageAction
+import com.hermesandroid.relay.data.canCorrectBusyMessage
+import com.hermesandroid.relay.ui.components.ChatMessageQueue
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
@@ -1138,6 +1141,12 @@ fun ChatScreen(
 
     val availableSkills by chatViewModel.availableSkills.collectAsState()
     val queuedMessages by chatViewModel.queuedMessages.collectAsState()
+    val queuePaused by chatViewModel.queuePaused.collectAsState()
+    val busyMessageAction by connectionViewModel.busyMessageAction.collectAsState()
+    var busyActionOverride by remember(currentSessionId, busyMessageAction) {
+        mutableStateOf<BusyMessageAction?>(null)
+    }
+    var editingQueuedMessage by remember(currentSessionId) { mutableStateOf(false) }
     val recentPrompts by chatViewModel.recentPrompts.collectAsState()
     val recentPromptsEnabled by connectionViewModel.chatRecentPromptsEnabled.collectAsState()
     // Effective approval-bypass (server-computed: ORs global approvals.mode=off,
@@ -4114,69 +4123,21 @@ fun ChatScreen(
                 }
             }
 
-            AnimatedVisibility(visible = queuedMessages.isNotEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = pluralStringResource(
-                                R.plurals.chat_queue_count,
-                                queuedMessages.size,
-                                queuedMessages.size,
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        TextButton(
-                            onClick = { chatViewModel.clearQueue() },
-                            modifier = Modifier.height(28.dp)
-                        ) {
-                            Text(
-                                stringResource(R.string.chat_clear),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
+            ChatMessageQueue(
+                messages = queuedMessages,
+                paused = queuePaused,
+                onResume = chatViewModel::resumeQueue,
+                onClear = chatViewModel::clearQueue,
+                onRemove = chatViewModel::removeQueuedAt,
+                canEdit = inputText.isBlank() && pendingAttachments.isEmpty(),
+                onEdit = { index ->
+                    chatViewModel.takeQueuedForEdit(index)?.let {
+                        inputText = it
+                        editingQueuedMessage = true
                     }
-                    // Per-item: tap the text to pull it back into the composer
-                    // for editing; ✕ to drop just that one. (Reorder omitted —
-                    // low value vs. drag-handle complexity on a transient queue.)
-                    queuedMessages.forEachIndexed { index, msg ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = msg,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        chatViewModel.takeQueuedForEdit(index)?.let { t ->
-                                            inputText = if (inputText.isBlank()) t else "$inputText $t"
-                                        }
-                                    }
-                                    .padding(vertical = 4.dp),
-                            )
-                            TextButton(
-                                onClick = { chatViewModel.removeQueuedAt(index) },
-                                modifier = Modifier.height(28.dp),
-                            ) {
-                                Text("✕", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                }
-            }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            )
 
             val quoteYouLabel = stringResource(R.string.chat_quote_you)
             val quoteHermesLabel = stringResource(R.string.chat_quote_hermes)
@@ -4285,25 +4246,32 @@ fun ChatScreen(
             // Gateway redirect is text-only. Attachment-bearing follow-ups must
             // retain their files in the session-owned queue instead of showing
             // a correction action that cannot carry them.
-            val canSteerCurrentMessage = steerableTurn && pendingAttachments.isEmpty() &&
+            val canSteerCurrentMessage = canCorrectBusyMessage(
+                steerableTurn, pendingAttachments.isNotEmpty(), pendingAsk != null, turnStatus, inputText,
+            ) &&
                 (!supervised || supervisedPolicy.capabilities.steerResponse)
+            val effectiveBusyAction = if (canSteerCurrentMessage && !editingQueuedMessage) busyActionOverride ?: busyMessageAction
+                else BusyMessageAction.QueueNext
+            val correctCurrentMessage = canSteerCurrentMessage &&
+                effectiveBusyAction == BusyMessageAction.CorrectNow
             val trailing = when {
                 !isStreaming && hasContent -> ChatInputTrailing.SEND
                 !isStreaming -> ChatInputTrailing.VOICE
                 isStreaming && !hasContent -> ChatInputTrailing.STOP
-                canSteerCurrentMessage -> ChatInputTrailing.STEER
+                correctCurrentMessage -> ChatInputTrailing.STEER
                 else -> ChatInputTrailing.QUEUE
             }
             val inputCaption = when {
-                isStreaming && hasContent && canSteerCurrentMessage ->
+                isStreaming && hasContent && correctCurrentMessage ->
                     stringResource(R.string.chat_sends_now)
+                isStreaming && hasContent && queuePaused -> stringResource(R.string.chat_queue_paused)
                 isStreaming && hasContent -> stringResource(R.string.chat_delivered_after_turn)
                 isStreaming && steerNotice != null -> steerNotice
                 else -> null
             }
             val inputPlaceholder = when {
                 editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
-                isStreaming && canSteerCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
+                isStreaming && correctCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
                 isStreaming -> stringResource(R.string.chat_placeholder_queue)
                 else -> stringResource(R.string.chat_placeholder_message)
             }
@@ -4555,6 +4523,12 @@ fun ChatScreen(
             }
 
             ChatInputBar(
+                busyAction = effectiveBusyAction.takeIf { isStreaming },
+                correctionAvailable = canSteerCurrentMessage,
+                onBusyActionChange = {
+                    editingQueuedMessage = false
+                    busyActionOverride = it
+                },
                 value = inputText,
                 onValueChange = { inputText = it },
                 placeholder = inputPlaceholder,
@@ -4583,7 +4557,9 @@ fun ChatScreen(
                             }
                         }
                     } else {
-                        chatViewModel.sendMessage(outboundText)
+                        chatViewModel.sendMessage(outboundText, effectiveBusyAction)
+                        editingQueuedMessage = false
+                        busyActionOverride = null
                         inputText = ""
                         finishSuccessfulSend()
                     }

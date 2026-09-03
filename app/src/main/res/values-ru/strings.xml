@@ -4317,4 +4317,12 @@
     <string name="active_section_unavailable">Unavailable</string>
     <string name="detail_inactive_badge">Not active</string>
     <string name="detail_overview_clarity_summary">What works now, the path this phone is using, and what can take over if it becomes unavailable.</string>
+    <string name="voice_overlay_error_title">Ошибка голосового режима</string>
+    <string name="chat_correct_now">Исправить сейчас</string>
+    <string name="chat_queue_next">Отправить позже</string>
+    <string name="chat_busy_default_title">Во время ответа</string>
+    <string name="chat_busy_default_description">Выберите действие отправки, пока Hermes работает. Настройка общая для устройства и поля ввода. Вложения и недоступные исправления добавляются в очередь.</string>
+    <string name="chat_queue_paused">Очередь приостановлена</string>
+    <string name="chat_queue_resume">Продолжить</string>
+    <string name="chat_queue_remove">Удалить сообщение из очереди</string>
 </resources>

@@ -8,10 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Chat and Bot Chat expose a clear mid-response send choice.** A slim translucent tray slides up behind the composer for Correct now or Queue next without covering the input. Chat settings sets the default; the tray overrides it for one message. Stop pauses pending messages until Resume, and editing or removing a queued message keeps its successors deliverable.
 - **Android Chat and Voice use tablet space intentionally.** Expanded layouts keep introductions, transcripts, composer controls, and status chrome on readable centered rails, while landscape Voice Focus separates identity controls from conversation activity without changing phone or portrait interaction behavior.
 
 ### Fixed
 
+- **Android message delivery labels remain readable inside user bubbles.** Steering confirmations and other delivery states use the bubble's contrasting text color instead of disappearing into its accent background.
+- **Android voice errors open in a readable dialog.** Long provider messages stay inside a scrollable, selectable detail area with separate Retry and Dismiss actions instead of overlapping Chat or Voice Focus controls.
 - **Android attachment previews survive rotation and preserve video proportions.** Full-screen image, video, audio, PDF, text, and file previews remain open while the chat reflows, respect the device rotation preference, and render portrait or landscape video through Media3's fitted content surface instead of a fixed 16:9 box. (#483)
 - **Android wake-word JNI configuration survives release shrinking.** R8 now preserves sherpa-onnx configuration class and field names that the native keyword spotter resolves at runtime. (#444)
 - **Android streams Standard Hermes attachments into its on-disk media cache.** Automatic Dashboard downloads no longer preallocate and duplicate the full response body on the OkHttp dispatcher, while declared and observed size limits remain enforced. (#531)

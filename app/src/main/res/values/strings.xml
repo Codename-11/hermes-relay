@@ -4594,4 +4594,12 @@
     <string name="settings_git_workspace">Git workspace</string>
     <string name="settings_git_workspace_desc">Current-session Git first, with optional host discovery</string>
     <string name="settings_git_workspace_off_desc">Session repository only · Host discovery is opt-in</string>
+    <string name="voice_overlay_error_title">Voice error</string>
+    <string name="chat_correct_now">Correct now</string>
+    <string name="chat_queue_next">Queue next</string>
+    <string name="chat_busy_default_title">While responding</string>
+    <string name="chat_busy_default_description">Choose what Send does while Hermes is working. This device-wide default is shared with the composer. Attachments and unavailable corrections queue instead.</string>
+    <string name="chat_queue_paused">Queue paused</string>
+    <string name="chat_queue_resume">Resume</string>
+    <string name="chat_queue_remove">Remove queued message</string>
 </resources>

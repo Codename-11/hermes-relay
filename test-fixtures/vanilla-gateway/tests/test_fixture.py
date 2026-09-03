@@ -316,6 +316,21 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(2, len(completes))
 
+    async def test_interrupt_stops_old_turn_before_explicit_queue_resume(self) -> None:
+        fixture, base_url = await self.start("queued_stop_resume")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "original"})
+        await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.delta")
+        await self.rpc(ws, 2, "session.interrupt")
+        frames = await self.frames_until(ws, lambda f: f.get("id") == 2)
+        self.assertFalse(fixture._running)
+        self.assertFalse(fixture._turn_active)
+        await self.rpc(ws, 3, "prompt.submit", {"text": "resumed", "queued": True})
+        frames += await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        completes = [f["params"]["payload"]["text"] for f in frames if f.get("params", {}).get("type") == "message.complete"]
+        self.assertEqual(["", "Resumed follow-up."], completes)
+        self.assertEqual(1, sum(f.get("params", {}).get("payload", {}).get("status") == "interrupted" for f in frames))
+
     async def test_scope_scenario_exposes_rejection_inputs_and_exact_terminal(self) -> None:
         fixture, base_url = await self.start("scope_rejection_inputs")
         ws, _ = await self.connect(base_url)
@@ -407,6 +422,7 @@ class ScenarioTestCase(unittest.TestCase):
             "terminal_gap_active_list",
             "terminal_gap_session_info",
             "queued_follow_up",
+            "queued_stop_resume",
             "scope_rejection_inputs",
         ):
             scenario = load_scenario(name)

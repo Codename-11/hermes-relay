@@ -140,7 +140,18 @@ class GatewayFixture:
             await self._submit(socket, connection)
             return
         elif method == "session.interrupt":
+            was_active = self._turn_active
+            tasks = tuple(self._tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             self._running = False
+            if was_active:
+                await self._send_event(
+                    socket, connection, "message.complete",
+                    {"text": "", "status": "interrupted"}, self.scenario.live_session_id,
+                )
             result = {"ok": True}
         elif method == "session.active_list" and self.scenario.active_list_supported:
             if self._active_list_snapshots:
