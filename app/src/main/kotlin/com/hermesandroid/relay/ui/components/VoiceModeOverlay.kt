@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,6 +40,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Close
@@ -48,10 +52,11 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -77,6 +82,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -145,8 +151,7 @@ fun VoiceModeOverlay(
     onModeChange: (InteractionMode) -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
-    // Nullable so existing call sites compile; when wired, voice errors
-    // surface as global snackbars in addition to the inline banner below.
+    // Retained for callers; uiState.error owns the modal while voice is visible.
     errorEvents: SharedFlow<HumanError>? = null,
     // === PHASE3-voice-mode-transcript ===
     // Compact rolling transcript of the last N chat messages — the
@@ -255,7 +260,7 @@ fun VoiceModeOverlay(
         )
     }
 
-    // Voice errors surface ONLY on the overlay's own inline top banner
+    // Voice errors surface ONLY in the overlay's dialog
     // (uiState.error) while the overlay is up — we deliberately do NOT also pipe
     // them to the app-wide bottom snackbar. Doing both duplicated the message
     // and left a retry-only, un-dismissable toast at the bottom during long /
@@ -510,59 +515,15 @@ fun VoiceModeOverlay(
             )
         }
 
-        // Error banner
-        AnimatedVisibility(
-            visible = uiState.error != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .then(
-                    responsiveLayout.chromeMaxWidth?.let {
-                        Modifier.widthIn(max = it)
-                    } ?: Modifier,
-                )
-                .fillMaxWidth()
-                .padding(top = 64.dp, start = 16.dp, end = 16.dp),
-        ) {
-            Surface(
-                shape = appearanceRoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                tonalElevation = 2.dp,
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = uiState.error.orEmpty(),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Dismiss clears the error and returns to Idle without
-                    // retrying, so a failed/timed-out turn never traps the user
-                    // on a retry-only banner.
-                    TextButton(onClick = { onClearError() }) {
-                        Text(stringResource(R.string.common_dismiss))
-                    }
-                    TextButton(
-                        onClick = {
-                            onClearError()
-                            onMicTap()
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Text(stringResource(R.string.voice_overlay_retry))
-                    }
-                }
-            }
+        uiState.error?.let { error ->
+            VoiceErrorDialog(
+                error = error,
+                onDismiss = onClearError,
+                onRetry = {
+                    onClearError()
+                    onMicTap()
+                },
+            )
         }
 
         // Mic button — dispatch by current voice state.
@@ -587,6 +548,60 @@ fun VoiceModeOverlay(
             visible = focusMode && !splitFocusLayout,
         )
     }
+}
+
+@Composable
+private fun VoiceErrorDialog(
+    error: String,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(error) { keyboard?.hide() }
+
+    // Match ChatFailureDetailsDialog: keep provider detail selectable and inside
+    // a bounded surface, with actions outside the scroll area. A real dialog
+    // owns focus and blocks the underlying chat in both voice presentations.
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text(stringResource(R.string.voice_overlay_error_title)) },
+        text = {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = MaterialTheme.shapes.small,
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.voice_overlay_retry))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_dismiss))
+            }
+        },
+    )
 }
 
 @Composable

@@ -4578,4 +4578,12 @@
     <string name="active_section_unavailable">Unavailable</string>
     <string name="detail_inactive_badge">Not active</string>
     <string name="detail_overview_clarity_summary">What works now, the path this phone is using, and what can take over if it becomes unavailable.</string>
+    <string name="voice_overlay_error_title">Sprachfehler</string>
+    <string name="chat_correct_now">Jetzt korrigieren</string>
+    <string name="chat_queue_next">Danach senden</string>
+    <string name="chat_busy_default_title">Während der Antwort</string>
+    <string name="chat_busy_default_description">Wähle, was Senden während der Arbeit ausführt. Dieser geräteweite Standard gilt auch im Eingabefeld. Anhänge und nicht verfügbare Korrekturen werden eingereiht.</string>
+    <string name="chat_queue_paused">Warteschlange pausiert</string>
+    <string name="chat_queue_resume">Fortsetzen</string>
+    <string name="chat_queue_remove">Nachricht aus Warteschlange entfernen</string>
 </resources>

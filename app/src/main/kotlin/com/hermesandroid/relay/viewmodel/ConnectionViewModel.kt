@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.viewmodel
 
+import com.hermesandroid.relay.data.BusyMessageAction
 import android.app.Application
 import android.os.Build
 import android.content.Context
@@ -3088,6 +3089,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 prefs[KEY_KEEP_COMPOSER_FOCUSED_ON_SEND] = enabled
             }
         }
+    }
+
+    val busyMessageAction = chatInputPreferencesRepository.busyMessageAction
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BusyMessageAction.CorrectNow)
+
+    fun setBusyMessageAction(action: BusyMessageAction) {
+        viewModelScope.launch { chatInputPreferencesRepository.setBusyMessageAction(action) }
     }
 
     val physicalKeyboardEnterBehavior: StateFlow<PhysicalKeyboardEnterBehavior> =

@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.viewmodel
 
+import com.hermesandroid.relay.data.BusyMessageAction
+import com.hermesandroid.relay.data.canCorrectBusyMessage
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -912,6 +914,10 @@ class ChatViewModel : ViewModel() {
     )
 
     private val queuedMessageItems = mutableListOf<QueuedMessage>()
+    private val pausedQueueDestinations = mutableSetOf<Pair<String, String>>()
+    private val retainedQueueCheckpoints = mutableMapOf<Pair<String, String>, ChatTurnCheckpoint>()
+    private val _queuePaused = MutableStateFlow(false)
+    val queuePaused: StateFlow<Boolean> = _queuePaused.asStateFlow()
     private val completedQueueOwnerRuns = ConcurrentHashMap.newKeySet<String>()
     private val _queuedMessages = MutableStateFlow<List<String>>(emptyList())
     val queuedMessages: StateFlow<List<String>> = _queuedMessages.asStateFlow()
@@ -4800,6 +4806,8 @@ class ChatViewModel : ViewModel() {
                 publishBackgroundSessionActivity()
                 queuedMessageItems.clear()
                 completedQueueOwnerRuns.clear()
+                pausedQueueDestinations.clear()
+                retainedQueueCheckpoints.clear()
                 publishQueuedMessages()
                 _steerableTurn.value = false
                 _steerNotice.value = null
@@ -6310,7 +6318,11 @@ class ChatViewModel : ViewModel() {
 
     // --- Message sending ---
 
-    fun sendMessage(text: String) {
+    fun sendMessage(
+        text: String,
+        busyAction: BusyMessageAction =
+            BusyMessageAction.CorrectNow,
+    ) {
         if (text.isBlank()) return
         supervisedMessageBlockReason(supervisedModePolicy, text)?.let { reason ->
             chatHandler?.addSystemNotice(reason)
@@ -6397,9 +6409,13 @@ class ChatViewModel : ViewModel() {
         // Mid-turn: redirect on the gateway transport, queue everywhere else.
         if (activeStream != null) {
             if (
-                _steerableTurn.value &&
+                busyAction == BusyMessageAction.CorrectNow &&
+                (!supervisedModePolicy.enabled || supervisedModePolicy.capabilities.steerResponse) &&
                 streamingEndpoint == "gateway" &&
-                _pendingAttachments.value.isEmpty()
+                canCorrectBusyMessage(
+                    _steerableTurn.value, _pendingAttachments.value.isNotEmpty(),
+                    _pendingAsk.value != null, chatHandler?.turnStatus?.value, text,
+                )
             ) {
                 steerActiveTurn(text.trim())
             } else {
@@ -7579,8 +7595,7 @@ class ChatViewModel : ViewModel() {
             queuedMessages = queuedMessageItems
                 .filter {
                     it.contextKey == contextKey &&
-                        it.sessionId == sessionId &&
-                        it.ownerRunId == seed.userMessageId
+                        it.sessionId == sessionId
                 }
                 .map { item ->
                     ChatQueuedMessageCheckpoint(
@@ -7592,17 +7607,22 @@ class ChatViewModel : ViewModel() {
                         hadAttachments = item.attachments.isNotEmpty(),
                     )
                 },
+            queuePaused = (contextKey to sessionId) in pausedQueueDestinations,
             startedAt = seed.startedAt,
             updatedAt = now,
         )
     }
 
     private fun restoreQueuedMessages(checkpoint: ChatTurnCheckpoint) {
+        val destination = checkpoint.contextKey to checkpoint.sessionId
+        if (checkpoint.queuePaused || checkpoint.queueOnly) pausedQueueDestinations += destination
         var droppedAttachmentQueue = false
+        val droppedOwners = mutableMapOf<String, String>()
         checkpoint.queuedMessages.forEach { saved ->
             if (queuedMessageItems.any { it.id == saved.id }) return@forEach
             if (saved.hadAttachments) {
                 droppedAttachmentQueue = true
+                droppedOwners[saved.id] = droppedOwners[saved.ownerRunId] ?: saved.ownerRunId
                 return@forEach
             }
             queuedMessageItems += QueuedMessage(
@@ -7611,10 +7631,15 @@ class ChatViewModel : ViewModel() {
                 contextKey = checkpoint.contextKey,
                 sessionId = checkpoint.sessionId,
                 transport = saved.transport,
-                ownerRunId = saved.ownerRunId,
+                ownerRunId = droppedOwners[saved.ownerRunId] ?: saved.ownerRunId,
                 attachments = emptyList(),
                 interfaceContextPrompt = saved.interfaceContextPrompt,
             )
+        }
+        if (checkpoint.queueOnly) {
+            val ids = queuedMessageItems.mapTo(mutableSetOf()) { it.id }
+            queuedMessageItems.filter { it.contextKey == checkpoint.contextKey && it.sessionId == checkpoint.sessionId }
+                .map { it.ownerRunId }.filterNot { it in ids }.forEach { completedQueueOwnerRuns += it }
         }
         publishQueuedMessages()
         if (droppedAttachmentQueue) {
@@ -7650,10 +7675,12 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    private fun clearTurnCheckpoint() {
+    private fun clearTurnCheckpoint(preserveQueue: Boolean = false) {
+        val queueSnapshot = if (preserveQueue) buildQueueOnlyCheckpoint() else null
+        queueSnapshot?.let { retainedQueueCheckpoints[it.contextKey to it.sessionId] = it }
         val key = activeTurnCheckpointSeed?.let { seed ->
             seed.contextKey?.let { TurnCheckpointKey(it, seed.sessionId) }
-        }
+        } ?: queueSnapshot?.let { TurnCheckpointKey(it.contextKey, it.sessionId) }
         activeTurnCheckpointSeed = null
         activeQueueOwnerRunId = null
         val generation = checkpointGeneration.incrementAndGet()
@@ -7670,7 +7697,8 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             checkpointMutex.withLock {
                 if (generation == checkpointGeneration.get() && activeTurnCheckpointSeed == null) {
-                    if (key != null) runCatching { store.remove(key.contextKey, key.sessionId) }
+                    if (queueSnapshot != null) runCatching { store.write(queueSnapshot) }
+                    else if (key != null) runCatching { store.remove(key.contextKey, key.sessionId) }
                 }
             }
         }
@@ -7800,6 +7828,11 @@ class ChatViewModel : ViewModel() {
         backgroundNeedsInputKeys -= key
         publishBackgroundSessionActivity()
         if (checkpoint.transport !in setOf("gateway", "sessions")) return false
+        if (checkpoint.queueOnly) {
+            retainedQueueCheckpoints[contextKey to sessionId] = checkpoint
+            restoreQueuedMessages(checkpoint)
+            return false
+        }
         if (activeStream != null) return true
         if (streamRecovery != null) {
             if (checkpoint.transport == "gateway" && client != null) {
@@ -8232,7 +8265,7 @@ class ChatViewModel : ViewModel() {
         if (completedOwner != null && queuedMessageItems.any { it.ownerRunId == completedOwner }) {
             completedQueueOwnerRuns += completedOwner
         }
-        clearTurnCheckpoint()
+        clearTurnCheckpoint(preserveQueue = true)
         activeStream = null
         _steerableTurn.value = false
         _steerNotice.value = null
@@ -8476,6 +8509,106 @@ class ChatViewModel : ViewModel() {
                 it.contextKey == destination.first && it.sessionId == destination.second
             }.map(QueuedMessage::text)
         }
+        _queuePaused.value = _queuedMessages.value.isNotEmpty() && destination in pausedQueueDestinations
+    }
+
+    private fun persistQueueChanges() {
+        scheduleCheckpointWrite(immediate = true)
+        val destination = currentQueueDestination() ?: return
+        if (activeTurnCheckpointSeed?.let { it.contextKey to it.sessionId } == destination) return
+        val template = retainedQueueCheckpoints[destination] ?: return
+        val items = queuedMessageItems.filter { it.contextKey to it.sessionId == destination }
+        val snapshot = template.copy(
+            queuePaused = destination in pausedQueueDestinations,
+            queuedMessages = items.map { item ->
+                ChatQueuedMessageCheckpoint(
+                    id = item.id,
+                    text = item.text.take(MAX_CHECKPOINT_TEXT_CHARS),
+                    transport = item.transport,
+                    ownerRunId = item.ownerRunId,
+                    interfaceContextPrompt = item.interfaceContextPrompt,
+                    hadAttachments = item.attachments.isNotEmpty(),
+                )
+            },
+            updatedAt = System.currentTimeMillis(),
+        )
+        if (items.isEmpty()) retainedQueueCheckpoints.remove(destination)
+        else retainedQueueCheckpoints[destination] = snapshot
+        val generation = checkpointGeneration.get()
+        val store = chatTurnCheckpointStore ?: return
+        viewModelScope.launch {
+            checkpointMutex.withLock {
+                if (generation != checkpointGeneration.get()) return@withLock
+                runCatching {
+                    if (items.isEmpty()) store.remove(destination.first, destination.second)
+                    else store.write(snapshot)
+                }
+            }
+        }
+    }
+
+    private fun buildQueueOnlyCheckpoint(): ChatTurnCheckpoint? {
+        val destination = currentQueueDestination() ?: return null
+        val items = queuedMessageItems.filter { (it.contextKey to it.sessionId) == destination }
+        if (items.isEmpty()) return null
+        buildTurnCheckpoint()?.let { return it.copy(queueOnly = true, pendingAsk = null) }
+        // A server-initiated turn has no outgoing user checkpoint. Retain only
+        // queue ownership metadata; queueOnly restoration never renders these
+        // empty turn fields or attempts to reattach the cancelled runtime.
+        val now = System.currentTimeMillis()
+        return ChatTurnCheckpoint(
+            contextKey = destination.first,
+            sessionId = destination.second,
+            transport = items.first().transport,
+            user = ChatTurnUserCheckpoint(items.first().ownerRunId, "", now),
+            assistant = ChatTurnAssistantCheckpoint(id = items.first().ownerRunId, timestamp = now, isStreaming = false),
+            priorUserMessageCount = 0,
+            baselineAssistantCount = 0,
+            queuedMessages = items.map { item ->
+                ChatQueuedMessageCheckpoint(
+                    item.id, item.text.take(MAX_CHECKPOINT_TEXT_CHARS), item.transport,
+                    item.ownerRunId, item.interfaceContextPrompt, item.attachments.isNotEmpty(),
+                )
+            },
+            queuePaused = destination in pausedQueueDestinations,
+            queueOnly = true,
+            startedAt = now,
+            updatedAt = now,
+        )
+    }
+
+    /** Stop preserves pending work. Resume is explicit and always keeps its destination. */
+    fun resumeQueue() {
+        val destination = currentQueueDestination() ?: return
+        val first = queuedMessageItems.firstOrNull { it.contextKey to it.sessionId == destination } ?: return
+        if (activeStream != null) {
+            val owner = activeQueueOwnerRunId ?: return
+            val index = queuedMessageItems.indexOf(first)
+            queuedMessageItems[index] = first.copy(ownerRunId = owner)
+        } else {
+            completedQueueOwnerRuns += first.ownerRunId
+        }
+        pausedQueueDestinations -= destination
+        publishQueuedMessages()
+        persistQueueChanges()
+        drainQueue()
+    }
+
+    private fun removeQueuedItem(item: QueuedMessage) {
+        queuedMessageItems.removeAll { it.id == item.id }
+        // Splice the run chain: successors now wait for the removed item's
+        // predecessor, never for a deleted turn that can no longer complete.
+        queuedMessageItems.replaceAll { next ->
+            if (next.contextKey == item.contextKey && next.sessionId == item.sessionId && next.ownerRunId == item.id) {
+                next.copy(ownerRunId = item.ownerRunId)
+            } else next
+        }
+        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) completedQueueOwnerRuns -= item.ownerRunId
+        if (queuedMessageItems.none { it.contextKey == item.contextKey && it.sessionId == item.sessionId }) {
+            pausedQueueDestinations -= item.contextKey to item.sessionId
+        }
+        publishQueuedMessages()
+        persistQueueChanges()
     }
 
     private fun removeQueuedMessagesFor(contextKey: String?, sessionId: String): Int {
@@ -8501,6 +8634,9 @@ class ChatViewModel : ViewModel() {
     fun clearQueue() {
         val destination = currentQueueDestination() ?: return
         removeQueuedMessagesFor(destination.first, destination.second)
+        pausedQueueDestinations -= destination
+        publishQueuedMessages()
+        persistQueueChanges()
     }
 
     /** Drop a single queued message by index (no-op if out of range). */
@@ -8510,11 +8646,7 @@ class ChatViewModel : ViewModel() {
             it.contextKey == destination.first && it.sessionId == destination.second
         }
         val item = visible.getOrNull(index) ?: return
-        queuedMessageItems.removeAll { it.id == item.id }
-        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
-            completedQueueOwnerRuns -= item.ownerRunId
-        }
-        publishQueuedMessages()
+        removeQueuedItem(item)
     }
 
     /**
@@ -8522,14 +8654,15 @@ class ChatViewModel : ViewModel() {
      * the composer can prefill it. Null if the index is out of range.
      */
     fun takeQueuedForEdit(index: Int): String? {
+        if (_pendingAttachments.value.isNotEmpty()) {
+            _transientNotice.tryEmit("Finish the current attachment draft before editing a queued message.")
+            return null
+        }
         val destination = currentQueueDestination() ?: return null
         val item = queuedMessageItems.filter {
             it.contextKey == destination.first && it.sessionId == destination.second
         }.getOrNull(index) ?: return null
-        queuedMessageItems.removeAll { it.id == item.id }
-        if (queuedMessageItems.none { it.ownerRunId == item.ownerRunId }) {
-            completedQueueOwnerRuns -= item.ownerRunId
-        }
+        removeQueuedItem(item)
         _pendingAttachments.value = item.attachments
         nextInterfaceContextPrompt = item.interfaceContextPrompt
         publishQueuedMessages()
@@ -8543,6 +8676,7 @@ class ChatViewModel : ViewModel() {
         if (streamingEndpoint == "gateway" && gatewayClient == null && client == null) return
         if (activeStream != null || streamRecovery != null) return
         val destination = currentQueueDestination() ?: return
+        if (destination in pausedQueueDestinations) return
         val next = queuedMessageItems.firstOrNull {
             it.contextKey == destination.first &&
                 it.sessionId == destination.second &&
@@ -10697,6 +10831,13 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        currentQueueDestination()?.let { destination ->
+            if (queuedMessageItems.any { it.contextKey to it.sessionId == destination }) {
+                pausedQueueDestinations += destination
+                activeQueueOwnerRunId?.let { completedQueueOwnerRuns += it }
+            }
+        }
+        publishQueuedMessages()
         // User Stop also aborts a dropped-stream answer recovery. settleUi
         // false: the Stopped-badge block below finalizes the placeholder
         // itself (completing it here first would hide it from findLast).
@@ -10707,13 +10848,12 @@ class ChatViewModel : ViewModel() {
         activeStream = null
         imageActivityJob?.cancel()
         imageActivityJob = null
-        clearQueue()
         _steerableTurn.value = false
         _steerNotice.value = null
         // Gateway cancel issues session.interrupt, which force-denies any
         // blocked approval server-side — stamp the card to match.
         clearPendingAskAfterInterrupt()
-        clearTurnCheckpoint()
+        clearTurnCheckpoint(preserveQueue = true)
         AppAnalytics.onStreamCancelled()
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }

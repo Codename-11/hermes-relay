@@ -18,6 +18,7 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -57,6 +58,7 @@ fun MessageDeliveryIndicator(
     modifier: Modifier = Modifier,
     failureMessage: String? = null,
     onRetry: (() -> Unit)? = null,
+    contentColor: Color? = null,
 ) {
     val retryAction = onRetry.takeIf { status == MessageDeliveryStatus.FAILED }
     val retryable = retryAction != null
@@ -67,7 +69,7 @@ fun MessageDeliveryIndicator(
         retryable = retryable,
     )
     val presentation = messageDeliveryPresentation(status)
-    val tint = when (presentation.colorRole) {
+    val tint = contentColor ?: when (presentation.colorRole) {
         DeliveryColorRole.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
         DeliveryColorRole.ACCENT -> MaterialTheme.colorScheme.primary
         DeliveryColorRole.QUEUED -> MaterialTheme.colorScheme.tertiary

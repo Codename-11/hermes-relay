@@ -35,6 +35,9 @@ data class ChatTurnCheckpoint(
     val baselineAssistantCount: Int,
     val pendingAsk: ChatTurnAskCheckpoint? = null,
     val queuedMessages: List<ChatQueuedMessageCheckpoint> = emptyList(),
+    val queuePaused: Boolean = false,
+    /** Only pending local work remains; never reattach the completed/stopped turn. */
+    val queueOnly: Boolean = false,
     val startedAt: Long,
     val updatedAt: Long,
 ) {

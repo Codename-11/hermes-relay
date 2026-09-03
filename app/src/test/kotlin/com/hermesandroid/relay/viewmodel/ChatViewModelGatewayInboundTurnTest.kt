@@ -3188,6 +3188,87 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun explicitQueueChoiceDoesNotAttemptRedirect() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Run next", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        assertEquals(listOf("Run next"), viewModel.queuedMessages.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "session.redirect" || it.first == "session.steer" })
+    }
+
+    @Test
+    fun deletingQueuedHeadReconnectsSuccessorToActiveTurn() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Remove me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Keep me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.removeQueuedAt(0)
+        completeQueueTestTurn()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Keep me") } }
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Remove me") })
+    }
+
+    @Test
+    fun editingQueuedHeadDoesNotStrandSuccessor() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Edit me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Keep me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        assertEquals("Edit me", viewModel.takeQueuedForEdit(0))
+        completeQueueTestTurn()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Keep me") } }
+    }
+
+    @Test
+    fun stopPausesQueueUntilExplicitResumeAndPersistsWholeChain() {
+        val store = MemoryCheckpointStore()
+        viewModel.setChatTurnCheckpointStore(store)
+        startTurnForQueueTest()
+        viewModel.sendMessage("First pending", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Second pending", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.cancelStream()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("First pending", "Second pending"), viewModel.queuedMessages.value)
+        assertTrue(viewModel.queuePaused.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" })
+        awaitCondition { store.checkpoint?.queueOnly == true }
+        assertEquals(true, store.checkpoint?.queuePaused)
+        assertEquals(2, store.checkpoint?.queuedMessages?.size)
+
+        viewModel.resumeQueue()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("First pending") } }
+        assertFalse(viewModel.queuePaused.value)
+        assertEquals(listOf("Second pending"), viewModel.queuedMessages.value)
+    }
+
+    @Test
+    fun pausedQueueCheckpointRestoresWithoutRecoveringStoppedTurn() {
+        val store = MemoryCheckpointStore()
+        viewModel.setChatTurnCheckpointStore(store)
+        startTurnForQueueTest()
+        viewModel.sendMessage("Keep paused", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.cancelStream()
+        awaitCondition { store.checkpoint?.queueOnly == true }
+        val saved = requireNotNull(store.checkpoint)
+        viewModel.clearQueue()
+        shadowOf(Looper.getMainLooper()).idle()
+        store.checkpoint = saved
+        val activationsBefore = gatewayHarness.rpcLog.count { it.first == "session.activate" }
+        viewModel.prewarmGateway()
+        awaitCondition { viewModel.queuedMessages.value == listOf("Keep paused") }
+        assertTrue(viewModel.queuePaused.value)
+        assertFalse(handler.isStreaming.value)
+        assertEquals(activationsBefore, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+    }
+
+    private fun startTurnForQueueTest() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { handler.isStreaming.value }
+    }
+
+    private fun completeQueueTestTurn() {
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "Original complete") }, "live-resumed"))
+    }
+
+    @Test
     fun queuedMessageStaysWithOriginWhileAnotherRunningSessionCompletes() {
         val secondSession = "stored-session-b"
         val contextKey = AgentDisplay.profileContextKey("connection-a", null)
@@ -3333,6 +3414,29 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun connectionSwitchKeepsRunningCheckpointWhenQueueExists() {
+        val store = MemoryCheckpointStore()
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        viewModel.setChatTurnCheckpointStore(store)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        viewModel.observeConnectionSwitches(switches)
+        viewModel.sendMessage("Keep the running turn recoverable")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Follow up on this connection", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        switches.tryEmit("connection-b")
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val checkpoint = requireNotNull(store.checkpoint)
+        assertFalse("A detached running turn must not become queue-only", checkpoint.queueOnly)
+        assertEquals("Keep the running turn recoverable", checkpoint.user.content)
+        assertEquals(listOf("Follow up on this connection"), checkpoint.queuedMessages.map { it.text })
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun deletingDestinationCancelsItsQueueAndEditRestoresOnlyThatItem() {
         gatewayHarness.redirectStatus = "rejected"
         viewModel.switchProfileContext(
@@ -3379,7 +3483,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun retryQueuedForActiveRunIsCancelledWithThatRun() {
+    fun retryQueuedForActiveRunIsPausedWhenThatRunStops() {
         gatewayHarness.redirectStatus = "rejected"
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", null),
@@ -3394,7 +3498,8 @@ class ChatViewModelGatewayInboundTurnTest {
 
         viewModel.cancelStream()
         gatewayHarness.awaitRpc("session.interrupt")
-        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertEquals(listOf("Retry this turn"), viewModel.queuedMessages.value)
+        assertTrue(viewModel.queuePaused.value)
 
         serverWs.send(
             gatewayHarness.eventFrame(

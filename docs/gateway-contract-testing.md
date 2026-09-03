@@ -72,6 +72,7 @@ the upstream contract identifiers it depends on.
 | `compaction_status` | Compaction status is client-visible before terminal completion and may repeat as a heartbeat |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
 | `queued_follow_up` | Two explicitly owned turns and ordered queue drainage |
+| `queued_stop_resume` | Explicit queue choice, removal of a predecessor, Stop/pause, lifecycle return, and explicit Resume through production Android controls |
 | `scope_rejection_inputs` | Exact, foreign, and unscoped event inputs |
 | `terminal_gap_activate` | Socket closes after live output; replacement `session.activate` reports `running=false`; history is authoritative |
 | `terminal_gap_active_list` | An exact Android-owned turn receives deltas but no terminal; `session.active_list` reports the same live/durable owner idle; history is authoritative |
@@ -123,6 +124,16 @@ The external test is opt-in through the instrumentation argument
 unreviewed endpoint.
 
 ## Physical-device certification
+
+The queue-control instrumentation uses the `queued_stop_resume` fixture on
+loopback with an explicit ADB reverse. Run only
+`GatewayExternalFixtureInstrumentedTest#queuedStopResume_preservesWorkAcrossLifecycleAndUsesExplicitResume`
+with `gatewayFixtureBaseUrl` set to that fixture. It verifies two submits, one
+interrupt, no redirect, and a single completed resumed reply. This is a separate
+scenario from the terminal-gap certification runner below, whose evidence
+contract requires socket loss and activation. The fixture emits the upstream
+interrupted terminal before the next turn; omitting it would exercise a broken
+server contract rather than the queue controls.
 
 Inspect the exact plan first. The runner requires an explicit serial or
 transport ID, targets only `com.axiomlabs.hermesrelay.sideload`, and performs no
