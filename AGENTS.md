@@ -5,11 +5,10 @@ coding agent (Claude Code, Codex, Cursor, etc.).
 
 ## Read this first
 
-This file is the provider-neutral canonical agent context. Read it before
-touching code, then `docs/spec.md` and `docs/decisions.md`. Provider adapters
-such as **[CLAUDE.md](CLAUDE.md)** import this file instead of duplicating
-policy. They do not redefine the branch, release, hotfix, or verification
-contract here and in `RELEASE.md`.
+This file is the provider-neutral canonical agent context and the only
+automatically discovered project context. Read it before touching code, then
+`docs/spec.md` and `docs/decisions.md`. It defines the branch, release, hotfix,
+and verification contract alongside `RELEASE.md`.
 
 - Release process → **[RELEASE.md](RELEASE.md)**
 - Contributor setup → **[CONTRIBUTING.md](CONTRIBUTING.md)**

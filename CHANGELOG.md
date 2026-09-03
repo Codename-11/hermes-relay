@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Project context has one canonical entry point.** `AGENTS.md` is the sole automatically discovered agent contract; the redundant Claude-specific adapter was removed to prevent duplicate context loading.
+
 ## [Android 1.15.1] - 2026-09-02
 
 ### Changed
