@@ -140,6 +140,7 @@
     <string name="chat_retry">Retry</string>
     <string name="chat_dismiss">Dismiss</string>
     <string name="chat_failure_title">Hermes couldn’t complete this response</string>
+    <string name="chat_failure_inference_unavailable">Inference unavailable</string>
     <string name="chat_failure_details">Details</string>
     <string name="chat_failure_details_title">Response failure</string>
     <string name="chat_failure_details_guidance">Hermes reported this error. The app won’t switch routes or models automatically.</string>
@@ -4593,4 +4594,12 @@
     <string name="settings_git_workspace">Git workspace</string>
     <string name="settings_git_workspace_desc">Current-session Git first, with optional host discovery</string>
     <string name="settings_git_workspace_off_desc">Session repository only · Host discovery is opt-in</string>
+    <string name="voice_overlay_error_title">Voice error</string>
+    <string name="chat_correct_now">Correct now</string>
+    <string name="chat_queue_next">Queue next</string>
+    <string name="chat_busy_default_title">While responding</string>
+    <string name="chat_busy_default_description">Choose what Send does while Hermes is working. This device-wide default is shared with the composer. Attachments and unavailable corrections queue instead.</string>
+    <string name="chat_queue_paused">Queue paused</string>
+    <string name="chat_queue_resume">Resume</string>
+    <string name="chat_queue_remove">Remove queued message</string>
 </resources>

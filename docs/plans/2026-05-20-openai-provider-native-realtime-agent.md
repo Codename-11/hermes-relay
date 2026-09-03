@@ -116,7 +116,7 @@ Design target:
   data, side effects, and durable transcript state
 - avoid hard-coding OpenAI WebRTC details into Android voice UX or broker core
 
-This is tracked in `TODO.md` under **Pluggable Realtime Agent media
+This is tracked in `docs/project/TODO.md` under **Pluggable Realtime Agent media
 transports**.
 
 ### 3. Map OpenAI Wire Events to Normalized Events

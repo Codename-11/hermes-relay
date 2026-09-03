@@ -13,12 +13,12 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -48,12 +48,12 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -72,12 +72,12 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -96,12 +96,12 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "core-pages",
         "website": "complete"
       },
@@ -120,12 +120,12 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
         "android": "complete",
-        "readme": "english-fallback",
+        "readme": "maintained-summary",
         "user_docs": "english-fallback",
         "website": "english-fallback"
       }
@@ -135,7 +135,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "227a53fc7a1fd3cf113b56b507c7d65372769db179f4772be892138ff0ac8060",
+        "main": "1efc1c169120e525ddd1484f9ac33c15d27f558d74b766e7c04f42abd8169255",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {

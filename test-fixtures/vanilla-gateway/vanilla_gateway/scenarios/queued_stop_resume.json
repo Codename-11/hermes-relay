@@ -1,0 +1,25 @@
+{
+  "name": "queued_stop_resume",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": ["gateway.message_complete"],
+  "turns": [
+    {"steps": [
+      {"op": "event", "type": "message.start"},
+      {"op": "event", "type": "message.delta", "payload": {"text": "Original work."}},
+      {"op": "sleep", "milliseconds": 5000},
+      {"op": "sleep", "milliseconds": 5000},
+      {"op": "sleep", "milliseconds": 5000},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Original work."}}
+    ]},
+    {"steps": [
+      {"op": "event", "type": "message.start"},
+      {"op": "event", "type": "message.delta", "payload": {"text": "Resumed follow-up."}},
+      {"op": "persist", "messages": [{"id": 2, "role": "assistant", "content": "Resumed follow-up.", "timestamp": 2.0}]},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Resumed follow-up."}}
+    ]}
+  ]
+}

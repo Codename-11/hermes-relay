@@ -117,6 +117,7 @@ import com.hermesandroid.relay.ui.components.pet.PetSafeAreaRegistry
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
 import com.hermesandroid.relay.ui.components.pet.platformModalOwnsPetLayer
 import com.hermesandroid.relay.ui.components.ConnectionSwitcherSheet
+import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.ChatTransportStatusBadge
 import com.hermesandroid.relay.ui.components.ChatTransportTier
 import com.hermesandroid.relay.ui.components.ConnectionSecurityGlyph
@@ -2200,6 +2201,9 @@ fun RelayApp() {
                         // Routine in-progress reconnect surfaces here (amber cue)
                         // instead of a take-space banner or a floating toast.
                         reconnecting = connectionReconnecting,
+                        maxContentWidth = chatResponsiveLayout(
+                            LocalConfiguration.current.screenWidthDp,
+                        ).chromeMaxWidth,
                         modifier = Modifier.petPerchSurface(
                             key = APP_STATUS_PET_WALK_REGION,
                             routes = APP_STATUS_PET_ROUTES,
@@ -2472,103 +2476,110 @@ fun RelayApp() {
 
                     val screenChatLabel = stringResource(R.string.screen_chat_label)
 
-                    ChatScreen(
-                        chatViewModel = chatViewModel,
-                        connectionViewModel = connectionViewModel,
-                        voiceViewModel = voiceViewModel,
-                        voiceClient = voiceClient,
-                        maxBubbleWidth = maxBubbleWidth,
-                        voicePresentationMode = voicePresentationMode,
-                        onVoicePresentationModeChange = { mode ->
-                            connectionSwitchScope.launch {
-                                voicePreferences.setPresentationMode(mode)
-                            }
-                        },
-                        openAgentSheetOnEntry = openAgentSheetArg,
-                        onAgentSheetArgConsumed = {
-                            backStackEntry.arguments?.putBoolean(
-                                Screen.Chat.ARG_OPEN_AGENT_SHEET, false,
-                            )
-                        },
-                        // AgentInfoSheet footer jumps straight into the full
-                        // Connections CRUD screen — saves a detour through
-                        // Settings → Gateways.
-                        onNavigateToConnections = {
-                            navController.navigate(Screen.ConnectionsSettings.route)
-                        },
-                        onNavigateToConnect = {
-                            navController.navigate(Screen.Pair.route()) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onRepairConnection = {
-                            navController.navigate(
-                                Screen.Pair.route(
-                                    connectionId = activeConnectionId,
-                                    autoStart = "relay",
-                                ),
-                            ) {
-                                launchSingleTop = true
-                            }
-                        },
-                        // Empty-chat "needs connection" card also offers the offline
-                        // demo, so a skipped / never-connected first run can explore
-                        // without leaving Chat. Safe here — this state only shows when
-                        // nothing is configured, so there's no placeholder in flight.
-                        onTryDemo = enterDemo,
-                        onNavigateToDashboardSignIn = {
-                            navController.navigate(Screen.DashboardSignIn.route()) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onNavigateToBridge = {
-                            rememberBridgeReturn(
-                                route = Screen.Chat.route(openAgentSheet = false),
-                                label = screenChatLabel,
-                            )
-                            navController.navigate(Screen.Bridge.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                    ChatMediaViewerHost(
+                        activeConnectionId,
+                        effectiveSessionProfileName,
+                        currentChatSessionId,
+                        chatSupervisedPolicy,
+                    ) {
+                        ChatScreen(
+                            chatViewModel = chatViewModel,
+                            connectionViewModel = connectionViewModel,
+                            voiceViewModel = voiceViewModel,
+                            voiceClient = voiceClient,
+                            maxBubbleWidth = maxBubbleWidth,
+                            voicePresentationMode = voicePresentationMode,
+                            onVoicePresentationModeChange = { mode ->
+                                connectionSwitchScope.launch {
+                                    voicePreferences.setPresentationMode(mode)
                                 }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        onNavigateToTerminal = {
-                            navController.navigate(Screen.Terminal.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onNavigateToSettings = {
-                            navController.navigate(Screen.Settings.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onNavigateToAppearanceSettings = {
-                            navController.navigate(Screen.AppearanceSettings.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onNavigateToVoiceSettings = {
-                            navController.navigate(Screen.VoiceSettings.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onNavigateToProfileInspector = { profileName ->
-                            navController.navigate(Screen.ProfileInspector.route(profileName)) {
-                                launchSingleTop = true
-                            }
-                        },
-                        supervisedPolicy = chatSupervisedPolicy,
-                        onNavigateToBotMode = {
-                            navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
-                        },
-                        gitWorkspaceAvailable = gitWorkspaceAvailable,
-                        gitWorkspaceSummary = gitWorkspaceSummary,
-                        onNavigateToGitWorkspace = {
-                            navController.navigate(Screen.GitState.route) { launchSingleTop = true }
-                        },
-                    )
+                            },
+                            openAgentSheetOnEntry = openAgentSheetArg,
+                            onAgentSheetArgConsumed = {
+                                backStackEntry.arguments?.putBoolean(
+                                    Screen.Chat.ARG_OPEN_AGENT_SHEET, false,
+                                )
+                            },
+                            // AgentInfoSheet footer jumps straight into the full
+                            // Connections CRUD screen — saves a detour through
+                            // Settings → Gateways.
+                            onNavigateToConnections = {
+                                navController.navigate(Screen.ConnectionsSettings.route)
+                            },
+                            onNavigateToConnect = {
+                                navController.navigate(Screen.Pair.route()) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onRepairConnection = {
+                                navController.navigate(
+                                    Screen.Pair.route(
+                                        connectionId = activeConnectionId,
+                                        autoStart = "relay",
+                                    ),
+                                ) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            // Empty-chat "needs connection" card also offers the offline
+                            // demo, so a skipped / never-connected first run can explore
+                            // without leaving Chat. Safe here — this state only shows when
+                            // nothing is configured, so there's no placeholder in flight.
+                            onTryDemo = enterDemo,
+                            onNavigateToDashboardSignIn = {
+                                navController.navigate(Screen.DashboardSignIn.route()) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToBridge = {
+                                rememberBridgeReturn(
+                                    route = Screen.Chat.route(openAgentSheet = false),
+                                    label = screenChatLabel,
+                                )
+                                navController.navigate(Screen.Bridge.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onNavigateToTerminal = {
+                                navController.navigate(Screen.Terminal.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToSettings = {
+                                navController.navigate(Screen.Settings.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToAppearanceSettings = {
+                                navController.navigate(Screen.AppearanceSettings.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToVoiceSettings = {
+                                navController.navigate(Screen.VoiceSettings.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onNavigateToProfileInspector = { profileName ->
+                                navController.navigate(Screen.ProfileInspector.route(profileName)) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            supervisedPolicy = chatSupervisedPolicy,
+                            onNavigateToBotMode = {
+                                navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
+                            },
+                            gitWorkspaceAvailable = gitWorkspaceAvailable,
+                            gitWorkspaceSummary = gitWorkspaceSummary,
+                            onNavigateToGitWorkspace = {
+                                navController.navigate(Screen.GitState.route) { launchSingleTop = true }
+                            },
+                        )
+                    }
                 }
                 composable(Screen.BotMode.route) {
                     BotModeScreen(

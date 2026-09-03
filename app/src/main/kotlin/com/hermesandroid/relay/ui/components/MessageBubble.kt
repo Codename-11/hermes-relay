@@ -856,13 +856,13 @@ fun MessageBubble(
                     }
                 }
 
-                // Delivery status — only on agent-Thread reply bubbles (a user
-                // message routed over the relay proactive channel). Null on every
-                // ordinary chat message, which render nothing here.
+                // Delivery status for local user messages, including steering.
+                // Use the bubble's foreground: accent-on-accent hides the label.
                 message.deliveryStatus?.takeIf { isUser }?.let { status ->
                     Spacer(modifier = Modifier.height(2.dp))
                     MessageDeliveryIndicator(
                         status = status,
+                        contentColor = textColor,
                         text = MessageDeliveryIndicatorText(
                             sending = stringResource(R.string.msg_bubble_sending),
                             queued = stringResource(R.string.msg_bubble_queued),

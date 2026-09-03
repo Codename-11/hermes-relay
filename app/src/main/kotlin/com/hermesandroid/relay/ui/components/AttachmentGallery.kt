@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -128,10 +129,11 @@ fun AttachmentGallery(
     val exportAllowed = LocalImageExportAllowed.current
     val scope = rememberCoroutineScope()
     val blurMode = LocalMediaBlurMode.current
+    val viewerController = LocalChatMediaViewerController.current
     val revealed = remember { mutableStateMapOf<String, Boolean>() }
-    var viewerStartIndex by remember { mutableStateOf<Int?>(null) }
+    var viewerStartIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
-    viewerStartIndex?.let { startIndex ->
+    viewerStartIndex?.takeIf { viewerController == null }?.let { startIndex ->
         AttachmentGalleryViewer(
             attachments = attachments,
             initialIndex = startIndex.coerceIn(attachments.indices),
@@ -184,7 +186,21 @@ fun AttachmentGallery(
                                     .testTag("attachment-gallery-tile-$galleryIndex")
                                     .clip(RoundedCornerShape(GALLERY_CORNER))
                                     .combinedClickable(
-                                        onClick = { viewerStartIndex = galleryIndex },
+                                        onClick = {
+                                            if (viewerController != null) {
+                                                viewerController.openGallery(
+                                                    attachments = attachments,
+                                                    initialIndex = galleryIndex,
+                                                    initiallyRevealedKeys = revealed
+                                                        .filterValues { it }
+                                                        .keys,
+                                                    blurMode = blurMode,
+                                                    exportAllowed = exportAllowed,
+                                                )
+                                            } else {
+                                                viewerStartIndex = galleryIndex
+                                            }
+                                        },
                                         onLongClick = { menuExpanded = true },
                                     ),
                             )

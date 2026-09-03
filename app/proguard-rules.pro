@@ -55,6 +55,9 @@
 -keep class androidx.camera.** { *; }
 -dontwarn androidx.camera.**
 
+# sherpa-onnx JNI resolves Kotlin configuration classes and fields by name.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+
 # ── General ──────────────────────────────────────────────────────────
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

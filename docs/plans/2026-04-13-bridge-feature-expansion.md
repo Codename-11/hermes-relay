@@ -2,14 +2,14 @@
 
 > **Purpose.** Detailed implementation plan for the v0.4 bridge feature expansion wave. Each work unit here is self-contained enough that an agent can pick it up and execute independently, including per-unit Agent briefs, file lists, acceptance criteria, and reference-implementation pointers.
 >
-> **Why this file exists.** The high-level [`ROADMAP.md`](../../ROADMAP.md) at the repo root lists the milestones for this wave as brief bullets; this file is where the scoping detail lives. While this plan is active, it's the source of truth for the agent team. Once every unit here has shipped, the plan file gets archived or deleted and the shipped items live on in [`CHANGELOG.md`](../../CHANGELOG.md) and [`DEVLOG.md`](../../DEVLOG.md).
+> **Why this file exists.** The high-level [`docs/project/ROADMAP.md`](../../docs/project/ROADMAP.md) lists the milestones for this wave as brief bullets; this file is where the scoping detail lives. While this plan is active, it's the source of truth for the agent team. Once every unit here has shipped, the plan file gets archived or deleted and the shipped items live on in [`CHANGELOG.md`](../../CHANGELOG.md) and [`docs/project/DEVLOG.md`](../../docs/project/DEVLOG.md).
 >
-> **Origin.** Compiled 2026-04-13 from a comparison pass against [raulvidis/hermes-android](https://github.com/raulvidis/hermes-android) plus prior research. Scope covers bridge-channel tool expansion, reliability patterns, and one documentation/skill addition — deferred and research-horizon items live in [`ROADMAP.md`](../../ROADMAP.md), not here.
+> **Origin.** Compiled 2026-04-13 from a comparison pass against [raulvidis/hermes-android](https://github.com/raulvidis/hermes-android) plus prior research. Scope covers bridge-channel tool expansion, reliability patterns, and one documentation/skill addition — deferred and research-horizon items live in [`docs/project/ROADMAP.md`](../../docs/project/ROADMAP.md), not here.
 >
 > **Related files.**
-> - [`ROADMAP.md`](../../ROADMAP.md) — milestone-level view of where this plan sits in the broader arc
+> - [`docs/project/ROADMAP.md`](../../docs/project/ROADMAP.md) — milestone-level view of where this plan sits in the broader arc
 > - [`CHANGELOG.md`](../../CHANGELOG.md) — cumulative release history
-> - [`DEVLOG.md`](../../DEVLOG.md) — session-by-session narrative log
+> - [`docs/project/DEVLOG.md`](../../docs/project/DEVLOG.md) — session-by-session narrative log
 > - [`CLAUDE.md`](../../CLAUDE.md) — project conventions every implementing agent should read first
 > - [`docs/spec.md`](../spec.md) — formal architecture spec
 > - [`docs/decisions.md`](../decisions.md) — architecture decision records (ADRs)
@@ -30,7 +30,7 @@
 | **P** | Architectural pattern / reliability improvement, not a new tool. |
 | **Doc** | Documentation surface change. |
 
-Longer-term / research / aspirational items live in [`ROADMAP.md`](../../ROADMAP.md), not in this plan.
+Longer-term / research / aspirational items live in [`docs/project/ROADMAP.md`](../../docs/project/ROADMAP.md), not in this plan.
 
 **Effort sizing** (scope, not duration): **S** = trivial single-file change, **M** = multi-file change touching 2–4 layers, **L** = new subsystem or cross-cutting work.
 

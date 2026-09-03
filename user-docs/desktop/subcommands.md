@@ -386,10 +386,13 @@ hermes-relay update --json       # machine-readable status
 hermes-relay update --installer  # Windows: update the complete CLI + UI bundle
 ```
 
-The normal update path replaces only the CLI binary. On Windows, `--installer`
-downloads the checksum-verified NSIS bundle so the CLI and management UI stay on
-the same release. The UI's update action invokes this bundle path, stops the
-affected processes, installs the update, and reopens the UI.
+The normal update path replaces only the CLI binary on macOS, Linux, and
+explicit Windows CLI-only installations. When a Windows management UI is
+detected, the same command reports both installed versions and automatically
+downloads the checksum-verified NSIS bundle so the CLI and UI cannot silently
+drift. `--installer` explicitly installs or repairs that bundle. Bundle updates
+stop the affected processes and restore only the daemon and tray processes that
+were running before replacement; the UI's update action uses the same path.
 
 ## `hermes-relay ui`
 
@@ -433,7 +436,7 @@ hermes-relay workspace --json    # machine-readable
 Fields detected via parallel `git rev-parse` / `git status --porcelain=v1 --branch` calls under a 2 s total budget: `cwd`, `git_root`, `git_branch`, `git_status_summary` (staged / modified counts), `repo_name`, `hostname`, `platform`, `arch`, `active_shell`. Active-editor hints (`active_editor`) detect VSCode / Cursor via `$VSCODE_IPC_HOOK_CLI` + `TERM_PROGRAM`, or poll tmux's `display-message -p "#{pane_current_path}:#{pane_current_command}"` if `--watch-editor` is on.
 
 ::: tip Server-side consumption
-The client-side workspace envelope shipped in alpha.6. Server-side prompt-context injection (so the agent reads "Active desktop workspace: machine=X · repo=Y · branch=Z" every turn) is on the way — see [ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental). Until then, the envelope is captured by the relay as ephemeral session metadata; you can ask the agent about it explicitly via tool calls.
+The client-side workspace envelope shipped in alpha.6. Server-side prompt-context injection (so the agent reads "Active desktop workspace: machine=X · repo=Y · branch=Z" every turn) is on the way — see [docs/project/ROADMAP.md](https://github.com/Codename-11/hermes-relay/blob/main/docs/project/ROADMAP.md#desktop-track-parallel-lane-to-android--experimental). Until then, the envelope is captured by the relay as ephemeral session metadata; you can ask the agent about it explicitly via tool calls.
 :::
 
 ## `hermes-relay logo`

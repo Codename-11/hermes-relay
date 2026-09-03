@@ -1,10 +1,15 @@
 package com.hermesandroid.relay.ui.components
 
+import android.graphics.Bitmap
 import android.media.ExifInterface
+import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RuntimeEnvironment
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class OrientedBitmapDecoderTest {
@@ -35,5 +40,35 @@ class OrientedBitmapDecoderTest {
             ImageOrientationTransform(rotationDegrees = -90f, flipHorizontal = true),
             imageOrientationTransform(ExifInterface.ORIENTATION_TRANSVERSE),
         )
+    }
+
+    @Test
+    fun `cached raster orientation matches viewer mime policy`() {
+        assertEquals(false, shouldApplyExifOrientation("image/png"))
+        assertEquals(false, shouldApplyExifOrientation("image/gif"))
+        assertEquals(true, shouldApplyExifOrientation("image/jpeg"))
+        assertEquals(true, shouldApplyExifOrientation("image/heif"))
+    }
+
+    @Test
+    fun `content uri decoder reads encoded image without byte array handoff`() {
+        val context = RuntimeEnvironment.getApplication()
+        val source = File.createTempFile("oriented-bitmap-", ".png", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(3, 2, Bitmap.Config.ARGB_8888)
+        try {
+            source.outputStream().use { output ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            }
+        } finally {
+            bitmap.recycle()
+        }
+
+        val decoded = decodeOrientedBitmap(context, Uri.fromFile(source))
+
+        assertNotNull(decoded)
+        assertEquals(3, decoded?.width)
+        assertEquals(2, decoded?.height)
+        decoded?.recycle()
+        source.delete()
     }
 }

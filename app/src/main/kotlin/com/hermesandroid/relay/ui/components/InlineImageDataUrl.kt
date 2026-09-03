@@ -46,7 +46,11 @@ internal fun decodeInlineImageDataUrl(
     // ceil(maxBytes / 3) * 4 plus at most two trailing padding characters.
     val maxEncoded = ((maxBytes.toLong() + 2L) / 3L) * 4L
     if (encoded.length.toLong() > maxEncoded) return null
-    val bytes = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull() ?: return null
+    val bytes = try {
+        Base64.getDecoder().decode(encoded)
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
     if (bytes.isEmpty() || bytes.size > maxBytes || !matchesImageMagic(mime, bytes)) return null
     return DecodedInlineImageData(bytes, mime)
 }

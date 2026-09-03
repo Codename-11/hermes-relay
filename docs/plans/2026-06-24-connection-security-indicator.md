@@ -135,7 +135,7 @@ A small bottom sheet that is the single place the per-surface truth + the explai
 
 The **plugin secure proxy** (the "Secure proxy — Not advertised" row) is a **stub today**: the Android side models it (`Endpoint.kt` `ProxyEndpoint`, `plugin_proxy` role, `hasSecureProxy()`), and `isEncryptedOverlayRoute()` already treats it as encrypted — but **the relay has no proxy-forward implementation, pairing never emits a `plugin_proxy` candidate, and no cert/pin is generated.** Enabling it end-to-end is the unbuilt **Phase 4** of `2026-06-18-native-secure-routes.md` (relay HTTP-forward routes + `RELAY_SSL_*` cert + pairing emission; ~2–3 wk).
 
-**Implication for this plan:** the indicator must **not block** on the proxy. We design the wording/placement so that *when* a `plugin_proxy` route is advertised it slots in as a 🔒 **TLS (pinned)** route automatically (it already would, via `isEncryptedOverlayRoute`). Until then it stays honestly "Not advertised." Recommend a separate spike to stand it up + test on the server (tracked in `TODO.md`), independent of this UX work.
+**Implication for this plan:** the indicator must **not block** on the proxy. We design the wording/placement so that *when* a `plugin_proxy` route is advertised it slots in as a 🔒 **TLS (pinned)** route automatically (it already would, via `isEncryptedOverlayRoute`). Until then it stays honestly "Not advertised." Recommend a separate spike to stand it up + test on the server (tracked in `docs/project/TODO.md`), independent of this UX work.
 
 ---
 
@@ -187,7 +187,7 @@ New bottom sheet; per-surface rows + explainer + TOFU/keystore lines + docs link
 New user-docs page + the four conflation edits + TOFU documentation.
 
 ### Spike — stand up & test the plugin secure proxy · L (separate, not blocking)
-Phase 4 of `2026-06-18-native-secure-routes.md`. Tracked in `TODO.md`.
+Phase 4 of `2026-06-18-native-secure-routes.md`. Tracked in `docs/project/TODO.md`.
 
 ---
 

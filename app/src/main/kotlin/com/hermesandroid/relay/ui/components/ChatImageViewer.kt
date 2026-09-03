@@ -170,7 +170,11 @@ fun ChatImageViewer(
                         onClick = {
                             scope.launch {
                                 busy = true
-                                val bytes = runCatching { source.bytesProvider() }.getOrNull()
+                                val bytes = try {
+                                    source.bytesProvider()
+                                } catch (_: Exception) {
+                                    null
+                                }
                                 busy = false
                                 if (bytes == null) {
                                     toast(context, errorMsg)
@@ -195,7 +199,11 @@ fun ChatImageViewer(
                         onClick = {
                             scope.launch {
                                 busy = true
-                                val bytes = runCatching { source.bytesProvider() }.getOrNull()
+                                val bytes = try {
+                                    source.bytesProvider()
+                                } catch (_: Exception) {
+                                    null
+                                }
                                 if (bytes == null) {
                                     busy = false
                                     toast(context, errorMsg)

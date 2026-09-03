@@ -49,10 +49,10 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -294,6 +294,34 @@ internal fun copyBounded(
     return written
 }
 
+internal fun copyMediaBounded(
+    input: InputStream,
+    output: OutputStream,
+    declaredLength: Long?,
+    limitBytes: Long,
+): Long {
+    require(limitBytes > 0)
+    require(declaredLength == null || declaredLength >= 0)
+    if (declaredLength != null && declaredLength > limitBytes) {
+        throw IOException("File exceeds the configured download limit")
+    }
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var written = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        written += read
+        if (written > limitBytes) {
+            throw IOException("File exceeds the configured download limit")
+        }
+        output.write(buffer, 0, read)
+    }
+    if (declaredLength != null && written != declaredLength) {
+        throw IOException("Media file changed while it was being downloaded")
+    }
+    return written
+}
+
 /** One entry from `GET /api/audio/elevenlabs/voices` — non-secret voice metadata. */
 data class ElevenLabsVoice(
     val voiceId: String,
@@ -312,14 +340,14 @@ data class ElevenLabsVoices(
 )
 
 /**
- * Bytes fetched from upstream's authenticated managed-files surface.
+ * Metadata for a file streamed from upstream's authenticated managed-files surface.
  *
  * The Dashboard applies its own managed-root, sensitive-file, and maximum-size
- * policy before these bytes leave the Hermes host. Android applies the user's
+ * policy before the file leaves the Hermes host. Android applies the user's
  * stricter inbound-media cap while reading the response as a second boundary.
  */
 data class DashboardFetchedFile(
-    val bytes: ByteArray,
+    val sizeBytes: Long,
     val contentType: String,
     val fileName: String?,
 )
@@ -401,13 +429,14 @@ class DashboardApiClient(
      * This is the same authenticated `/api/files/download` route official
      * Desktop uses for remote gateway files. The caller supplies its display
      * cap so a malicious or stale Content-Length cannot cause an unbounded
-     * allocation. Audio/video are downloaded into Android's local media cache;
+     * allocation. The supplied output is normally Android's on-disk media cache;
      * local playback supplies seeking, so `/api/files/stream` is unnecessary
      * on this path.
      */
     suspend fun downloadManagedFile(
         serverPath: String,
         maxBytes: Long,
+        output: OutputStream,
     ): Result<DashboardFetchedFile> = withContext(Dispatchers.IO) {
         if (serverPath.isBlank()) {
             return@withContext Result.failure(IOException("Media path is empty"))
@@ -428,29 +457,11 @@ class DashboardApiClient(
             if (declaredLength != null && declaredLength > maxBytes) {
                 throw IOException("File exceeds the configured download limit")
             }
-            val initialSize = declaredLength
-                ?.coerceAtMost(Int.MAX_VALUE.toLong())
-                ?.toInt()
-                ?: DEFAULT_BUFFER_SIZE
-            val output = ByteArrayOutputStream(initialSize)
-            body.byteStream().use { input ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var readTotal = 0L
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    readTotal += count
-                    if (readTotal > maxBytes) {
-                        throw IOException("File exceeds the configured download limit")
-                    }
-                    output.write(buffer, 0, count)
-                }
-                if (declaredLength != null && readTotal != declaredLength) {
-                    throw IOException("Media file changed while it was being downloaded")
-                }
+            val readTotal = body.byteStream().use { input ->
+                copyMediaBounded(input, output, declaredLength, maxBytes)
             }
             DashboardFetchedFile(
-                bytes = output.toByteArray(),
+                sizeBytes = readTotal,
                 contentType = response.header("Content-Type")
                     ?.substringBefore(';')
                     ?.trim()
@@ -1345,7 +1356,7 @@ class DashboardApiClient(
     suspend fun getSessionMessages(
         sessionId: String,
         profile: String? = null,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
         val name = profile?.trim().orEmpty()
         loadSessionMessages(mode) { page ->
@@ -1749,6 +1760,7 @@ class DashboardApiClient(
         // Mirrors current upstream `_MANAGED_FILE_MAX_BYTES`; enforcing it
         // client-side avoids uploading a body the Dashboard will reject.
         internal const val MAX_BACKUP_TRANSFER_BYTES = 100L * 1024L * 1024L
+        internal const val MAX_JSON_RESPONSE_BYTES = 8L * 1024L * 1024L
 
         fun pathSegment(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
@@ -2477,15 +2489,42 @@ data class StoredDashboardCookie(
 }
 
 private fun Response.readJsonObject(json: Json): JsonObject {
-    val raw = body.string()
+    val raw = body.readUtf8Bounded(DashboardApiClient.MAX_JSON_RESPONSE_BYTES)
     if (raw.isBlank()) return JsonObject(emptyMap())
     return json.parseToJsonElement(raw).jsonObject
 }
 
 private fun Response.readJsonElement(json: Json): JsonElement {
-    val raw = body.string()
+    val raw = body.readUtf8Bounded(DashboardApiClient.MAX_JSON_RESPONSE_BYTES)
     if (raw.isBlank()) return JsonObject(emptyMap())
     return json.parseToJsonElement(raw)
+}
+
+internal fun okhttp3.ResponseBody.readUtf8Bounded(maxBytes: Long): String {
+    require(maxBytes in 1..Int.MAX_VALUE.toLong()) { "Invalid response byte limit" }
+    val declaredLength = contentLength()
+    if (declaredLength > maxBytes) {
+        throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+    }
+    val initialSize = when {
+        declaredLength in 1..maxBytes -> declaredLength.toInt()
+        else -> minOf(maxBytes, DEFAULT_BUFFER_SIZE.toLong()).toInt()
+    }
+    val output = ByteArrayOutputStream(initialSize)
+    byteStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            if (total > maxBytes) {
+                throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+            }
+            output.write(buffer, 0, read)
+        }
+    }
+    return output.toString(Charsets.UTF_8.name())
 }
 
 private fun contentDispositionFileName(header: String): String? {
@@ -2576,7 +2615,11 @@ internal fun Throwable.isDashboardManagedFilesUnsupported(): Boolean {
 }
 
 private fun apiFailure(response: Response, operation: String): IOException {
-    val bodyDetail = runCatching { response.body.string() }.getOrDefault("")
+    val bodyDetail = try {
+        response.body.readUtf8Bounded(4L * 1024L)
+    } catch (_: Exception) {
+        ""
+    }
     val detail = bodyDetail.take(240).ifBlank { response.message }
     return DashboardHttpException(
         statusCode = response.code,

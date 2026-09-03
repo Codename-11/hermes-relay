@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.components
 
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -97,9 +99,9 @@ private fun isSensitiveAltText(alt: String): Boolean {
 
 /**
  * Resolves a server-local image path — an absolute path the agent put in a
- * markdown image `![alt](/abs/path)` — to raw bytes, via the relay's
- * `/media/by-path` route when a relay session is paired. Returns null when no
- * relay is available or the fetch fails, so the renderer falls back to the
+ * markdown image `![alt](/abs/path)` — to an on-disk cache URI, via the relay's
+ * authenticated Dashboard route (or Relay compatibility route). Returns a
+ * failure when no route is available or the fetch fails, so the renderer falls back to the
  * "this image is on the server" notice. Provided by ChatScreen from
  * [com.hermesandroid.relay.viewmodel.ChatViewModel.resolveServerImage]; the
  * default is null, which preserves the standard (no-plugin) behavior where a
@@ -113,12 +115,12 @@ private fun isSensitiveAltText(alt: String): Boolean {
  * `RelayServerImage` on app open with a server-local image in history).
  */
 sealed interface ServerImageResult {
-    class Success(val bytes: ByteArray, val sensitive: Boolean = false) : ServerImageResult
+    class Success(val cachedUri: String, val sensitive: Boolean = false) : ServerImageResult
     class Failure(val reason: String) : ServerImageResult
 }
 
 fun interface RelayServerImageResolver {
-    /** Fetch the server-local file's bytes over the relay, or a
+    /** Fetch the server-local file into the media cache, or a
      *  [ServerImageResult.Failure] whose reason explains why (unpaired /
      *  sandboxed / missing / decode) so the UI can surface it instead of a
      *  generic placeholder. */
@@ -293,8 +295,10 @@ private sealed interface DataUrlImagePhase {
 @Composable
 private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
     var phase by remember(image.src) { mutableStateOf<DataUrlImagePhase>(DataUrlImagePhase.Loading) }
-    var viewerOpen by remember(image.src) { mutableStateOf(false) }
+    var viewerOpen by rememberSaveable(image.src) { mutableStateOf(false) }
     val blurMode = LocalMediaBlurMode.current
+    val exportAllowed = LocalImageExportAllowed.current
+    val viewerController = LocalChatMediaViewerController.current
     var revealed by remember(image.src) { mutableStateOf(false) }
     LaunchedEffect(image.src) {
         phase = withInlineImageDecodeLock {
@@ -329,17 +333,17 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
             reason = "Unsupported or oversized inline image.",
         )
         is DataUrlImagePhase.Loaded -> {
-            if (viewerOpen) {
+            val viewerSource = ChatImageViewerSource.Bitmap(
+                bitmap = current.bitmap,
+                displayName = image.alt.ifBlank { "image" },
+                mime = current.mime,
+                // Decode the already-retained data URL only when the user
+                // requests Save/Share; don't retain a second byte array.
+                bytesProvider = { decodeInlineImageDataUrlOffMain(image.src)?.bytes },
+            )
+            if (viewerController == null && viewerOpen) {
                 ChatImageViewer(
-                    source = ChatImageViewerSource.Bitmap(
-                        bitmap = current.bitmap,
-                        displayName = image.alt.ifBlank { "image" },
-                        mime = current.mime,
-                        // Decode the already-retained data URL only when the
-                        // user requests Save/Share; don't keep a second 5 MiB
-                        // byte array beside every thumbnail.
-                        bytesProvider = { decodeInlineImageDataUrlOffMain(image.src)?.bytes },
-                    ),
+                    source = viewerSource,
                     onDismiss = { viewerOpen = false },
                     sensitive = image.sensitive,
                     initiallyRevealed = revealed,
@@ -358,7 +362,19 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
                             .widthIn(max = maxWidth)
                             .heightIn(max = 360.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .clickable { viewerOpen = true },
+                            .clickable {
+                                if (viewerController != null) {
+                                    viewerController.openImage(
+                                        source = viewerSource,
+                                        sensitive = image.sensitive,
+                                        initiallyRevealed = revealed,
+                                        blurMode = blurMode,
+                                        exportAllowed = exportAllowed,
+                                    )
+                                } else {
+                                    viewerOpen = true
+                                }
+                            },
                     )
                 }
             }
@@ -368,18 +384,21 @@ private fun DataUrlChatImage(image: ChatInlineImage, maxWidth: Dp) {
 
 @Composable
 private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
-    var viewerOpen by remember { mutableStateOf(false) }
+    var viewerOpen by rememberSaveable(image.src) { mutableStateOf(false) }
     val blurMode = LocalMediaBlurMode.current
+    val exportAllowed = LocalImageExportAllowed.current
+    val viewerController = LocalChatMediaViewerController.current
     var revealed by remember(image.src) { mutableStateOf(false) }
     val blurred = !revealed && shouldBlurImage(blurMode, image.sensitive)
-    if (viewerOpen) {
+    val viewerSource = ChatImageViewerSource.Coil(
+        model = image.src,
+        displayName = image.alt.ifBlank { "image" },
+        mime = "image/*",
+        bytesProvider = { MediaSaver.fetchRemoteBytes(image.src).first },
+    )
+    if (viewerController == null && viewerOpen) {
         ChatImageViewer(
-            source = ChatImageViewerSource.Coil(
-                model = image.src,
-                displayName = image.alt.ifBlank { "image" },
-                mime = "image/*",
-                bytesProvider = { MediaSaver.fetchRemoteBytes(image.src).first },
-            ),
+            source = viewerSource,
             onDismiss = { viewerOpen = false },
             sensitive = image.sensitive,
             initiallyRevealed = revealed,
@@ -395,7 +414,19 @@ private fun RemoteChatImage(image: ChatInlineImage, maxWidth: Dp) {
                     .widthIn(max = maxWidth)
                     .heightIn(max = 360.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { viewerOpen = true },
+                    .clickable {
+                        if (viewerController != null) {
+                            viewerController.openImage(
+                                source = viewerSource,
+                                sensitive = image.sensitive,
+                                initiallyRevealed = revealed,
+                                blurMode = blurMode,
+                                exportAllowed = exportAllowed,
+                            )
+                        } else {
+                            viewerOpen = true
+                        }
+                    },
             ) {
                 val state by painter.state.collectAsState()
                 when (state) {
@@ -461,6 +492,7 @@ private fun RelayServerImage(
     maxWidth: Dp,
     resolver: RelayServerImageResolver,
 ) {
+    val context = LocalContext.current
     var phase by remember(image.src) {
         mutableStateOf<RelayImagePhase>(
             cachedInlineImage(image.src)
@@ -473,20 +505,22 @@ private fun RelayServerImage(
         phase = withContext(Dispatchers.IO) {
             val result = try {
                 resolver.fetch(image.src)
-            } catch (t: Throwable) {
-                ServerImageResult.Failure(t.message ?: "relay fetch failed")
+            } catch (error: Exception) {
+                ServerImageResult.Failure(error.message ?: "relay fetch failed")
             }
             when (result) {
                 is ServerImageResult.Success -> {
-                    val bytes = result.bytes
-                    val bmp = runCatching {
-                        decodeOrientedBitmap(bytes)
-                    }.getOrNull()?.asImageBitmap()
+                    val cachedUri = Uri.parse(result.cachedUri)
+                    val bmp = try {
+                        decodeBoundedOrientedBitmap(context, cachedUri)
+                    } catch (_: Exception) {
+                        null
+                    }?.asImageBitmap()
                     if (bmp != null) {
                         putInlineImage(image.src, bmp, result.sensitive)
                         RelayImagePhase.Loaded(bmp, result.sensitive)
                     } else {
-                        RelayImagePhase.Failed("fetched ${bytes.size} B but couldn't decode the image")
+                        RelayImagePhase.Failed("fetched file could not be decoded as an image")
                     }
                 }
                 is ServerImageResult.Failure -> RelayImagePhase.Failed(result.reason)
@@ -527,23 +561,32 @@ private fun RelayServerImageContent(
     maxWidth: Dp,
     resolver: RelayServerImageResolver,
 ) {
-    var viewerOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var viewerOpen by rememberSaveable(image.src) { mutableStateOf(false) }
     val blurMode = LocalMediaBlurMode.current
+    val exportAllowed = LocalImageExportAllowed.current
+    val viewerController = LocalChatMediaViewerController.current
     var revealed by remember(image.src) { mutableStateOf(false) }
     val sensitive = image.sensitive || fetchedSensitive
     val blurred = !revealed && shouldBlurImage(blurMode, sensitive)
-    if (viewerOpen) {
+    val viewerSource = ChatImageViewerSource.Bitmap(
+        bitmap = bitmap,
+        displayName = image.alt.ifBlank {
+            image.src.substringAfterLast('/').ifBlank { "image" }
+        },
+        mime = "image/*",
+        // Save/Share re-fetch the original bytes on demand so we don't hold
+        // them in memory next to the decoded bitmap.
+        bytesProvider = {
+            (resolver.fetch(image.src) as? ServerImageResult.Success)?.let { fetched ->
+                context.contentResolver.openInputStream(Uri.parse(fetched.cachedUri))
+                    ?.use { it.readBytes() }
+            }
+        },
+    )
+    if (viewerController == null && viewerOpen) {
         ChatImageViewer(
-            source = ChatImageViewerSource.Bitmap(
-                bitmap = bitmap,
-                displayName = image.alt.ifBlank {
-                    image.src.substringAfterLast('/').ifBlank { "image" }
-                },
-                mime = "image/*",
-                // Save/Share re-fetch the original bytes on demand so we don't
-                // hold them in memory next to the decoded bitmap.
-                bytesProvider = { (resolver.fetch(image.src) as? ServerImageResult.Success)?.bytes },
-            ),
+            source = viewerSource,
             onDismiss = { viewerOpen = false },
             sensitive = sensitive,
             initiallyRevealed = revealed,
@@ -559,7 +602,19 @@ private fun RelayServerImageContent(
                     .widthIn(max = maxWidth)
                     .heightIn(max = 360.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { viewerOpen = true },
+                    .clickable {
+                        if (viewerController != null) {
+                            viewerController.openImage(
+                                source = viewerSource,
+                                sensitive = sensitive,
+                                initiallyRevealed = revealed,
+                                blurMode = blurMode,
+                                exportAllowed = exportAllowed,
+                            )
+                        } else {
+                            viewerOpen = true
+                        }
+                    },
             )
         }
     }

@@ -22,6 +22,26 @@ enum class PhysicalKeyboardEnterBehavior(val storedValue: String) {
     }
 }
 
+/** Default intent for a message submitted while an agent is responding. */
+enum class BusyMessageAction(val storedValue: String) {
+    CorrectNow("correct_now"),
+    QueueNext("queue_next");
+
+    companion object {
+        fun fromStoredValue(value: String?): BusyMessageAction =
+            entries.firstOrNull { it.storedValue == value } ?: CorrectNow
+    }
+}
+
+fun canCorrectBusyMessage(
+    steerable: Boolean,
+    hasAttachments: Boolean,
+    hasPendingInput: Boolean,
+    status: String?,
+    text: String,
+): Boolean = steerable && !hasAttachments && !hasPendingInput &&
+    status?.contains("compact", ignoreCase = true) != true && !text.trimStart().startsWith("/")
+
 /** Device-level chat input preferences shared by every Hermes profile. */
 class ChatInputPreferencesRepository(
     private val dataStore: DataStore<Preferences>,
@@ -29,6 +49,7 @@ class ChatInputPreferencesRepository(
     constructor(context: Context) : this(context.relayDataStore)
 
     companion object {
+        internal val KEY_BUSY_MESSAGE_ACTION = stringPreferencesKey("busy_message_action")
         internal val KEY_PHYSICAL_KEYBOARD_ENTER =
             stringPreferencesKey("physical_keyboard_enter_behavior")
         internal val KEY_CONVERT_LARGE_PASTES =
@@ -44,6 +65,14 @@ class ChatInputPreferencesRepository(
             )
         }
         .distinctUntilChanged()
+
+    val busyMessageAction: Flow<BusyMessageAction> = dataStore.data
+        .map { BusyMessageAction.fromStoredValue(it[KEY_BUSY_MESSAGE_ACTION]) }
+        .distinctUntilChanged()
+
+    suspend fun setBusyMessageAction(action: BusyMessageAction) {
+        dataStore.edit { it[KEY_BUSY_MESSAGE_ACTION] = action.storedValue }
+    }
 
     val convertLargePastesToAttachments: Flow<Boolean> = dataStore.data
         .map { preferences -> preferences[KEY_CONVERT_LARGE_PASTES] ?: true }

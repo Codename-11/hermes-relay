@@ -15,6 +15,10 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermesandroid.relay.data.MessageRole
@@ -169,6 +173,81 @@ class GatewayExternalFixtureInstrumentedTest {
             check(response.isSuccessful) { "fixture HTTP ${response.code}" }
             Json.parseToJsonElement(response.body.string()).jsonObject
         }
+    }
+
+    @Test
+    fun queuedStopResume_preservesWorkAcrossLifecycleAndUsesExplicitResume() {
+        val base = InstrumentationRegistry.getArguments().getString(ARG_FIXTURE_BASE_URL)?.trimEnd('/')
+        assumeTrue("Pass a queued_stop_resume fixture URL", !base.isNullOrBlank())
+        requireNotNull(base)
+        val http = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
+        assertEquals("queued_stop_resume", readFixtureJson(http, "$base/__fixture__/state")["scenario"]?.jsonString())
+        val dashboard = DashboardApiClient(base, http)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { gatewayScope = it }
+        val gateway = GatewayChatClient(
+            initialDashboardClient = dashboard, okHttpClient = http, scope = scope,
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            reconnectJitterUnit = { 0.0 },
+        ).also { gatewayClient = it }
+        val handler = ChatHandler().also { it.setSessionId(STORED_SESSION_ID) }
+        val vm = ChatViewModel().also {
+            it.initialize(null, handler)
+            it.streamingEndpoint = "gateway"
+            it.setProfileMessageLoaderWithMode { profile, session, mode -> dashboard.getSessionMessages(session, profile, mode) }
+            it.updateGatewayClient(gateway)
+            it.switchProfileContext(com.hermesandroid.relay.data.AgentDisplay.profileContextKey("fixture-queue", null), STORED_SESSION_ID)
+        }.also { viewModel = it }
+        compose.setContent {
+            val queue by vm.queuedMessages.collectAsStateWithLifecycle()
+            val paused by vm.queuePaused.collectAsStateWithLifecycle()
+            com.hermesandroid.relay.ui.theme.HermesRelayTheme(themePreference = "dark") {
+                androidx.compose.material3.Surface {
+                    Column {
+                        com.hermesandroid.relay.ui.components.ChatBusyActionSelector(
+                            com.hermesandroid.relay.data.BusyMessageAction.QueueNext, {}, onStop = vm::cancelStream,
+                        )
+                        com.hermesandroid.relay.ui.components.ChatMessageQueue(
+                            queue, paused, vm::resumeQueue, vm::clearQueue, {}, vm::removeQueuedAt, canEdit = true,
+                        )
+                    }
+                }
+            }
+        }
+        assertTrue(runBlocking { gateway.prewarmAwait(STORED_SESSION_ID) })
+        compose.runOnIdle { vm.sendMessage("Original work") }
+        compose.waitUntil(10_000) { handler.isStreaming.value && vm.steerableTurn.value }
+        compose.runOnIdle {
+            vm.sendMessage("Remove this follow-up", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+            vm.sendMessage("Keep this follow-up", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        }
+        compose.onAllNodesWithContentDescription("Remove queued message")[0].performClick()
+        compose.onNodeWithContentDescription("Stop streaming").performClick()
+        compose.onNodeWithText("Queue paused").assertIsDisplayed()
+        assertEquals(listOf("Keep this follow-up"), vm.queuedMessages.value)
+
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        compose.onNodeWithText("Keep this follow-up").assertIsDisplayed()
+        compose.onNodeWithText("Resume").performClick()
+        try {
+            compose.waitUntil(15_000) {
+                vm.queuedMessages.value.isEmpty() && !handler.isStreaming.value &&
+                    handler.messages.value.any { it.content == "Resumed follow-up." }
+            }
+        } catch (error: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError(
+                "Synthetic queue fixture did not settle: queued=${vm.queuedMessages.value.size}, " +
+                    "paused=${vm.queuePaused.value}, streaming=${handler.isStreaming.value}, " +
+                    "messages=${handler.messages.value.map { it.role to it.content }}, " +
+                    "error=${handler.error.value}",
+                error,
+            )
+        }
+        val evidence = readFixtureJson(http, "$base/__fixture__/evidence")["entries"] as JsonArray
+        assertEquals(2, evidence.rpcCount("prompt.submit"))
+        assertEquals(1, evidence.rpcCount("session.interrupt"))
+        assertEquals(0, evidence.rpcCount("session.redirect"))
+        assertEquals("gateway", vm.streamingEndpoint)
     }
 
     private fun JsonArray.rpcCount(method: String): Int = count { element ->

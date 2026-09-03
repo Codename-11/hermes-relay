@@ -65,4 +65,15 @@ class StreamingMarkdownContentTest {
             planStreamingMarkdownAppend("", "authoritative final response"),
         )
     }
+
+    @Test
+    fun oversizedMarkdownKeepsDataOutsideTheBoundedRenderWindow() {
+        val source = "x".repeat(MAX_RENDERED_MARKDOWN_CHARS + 1)
+
+        val rendered = markdownRenderWindow(source)
+
+        assertEquals(MAX_RENDERED_MARKDOWN_CHARS, rendered.takeWhile { it == 'x' }.length)
+        assertFalse(rendered.startsWith(source))
+        assertTrue(rendered.contains("shortened for Android memory safety"))
+    }
 }

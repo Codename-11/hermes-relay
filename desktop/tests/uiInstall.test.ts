@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 
 import { uiExecutablePath } from '../src/commands/ui.js'
+import { detectWindowsBundle } from '../src/windowsBundle.js'
 import { windowsInstallerLaunchPlan } from '../src/windowsInstaller.js'
 
 test('UI executable follows an explicit install directory', () => {
@@ -31,12 +32,42 @@ test('installer launch is delayed until the running CLI can exit', () => {
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_PATH, 'C:\\Temp\\hermes setup.exe')
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_SILENT, '1')
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_INSTALL_DIR, 'C:\\Hermes custom')
+  assert.equal(plan.options.env?.HERMES_RELAY_SETUP_RESTART_TRAY, '1')
   assert.equal(plan.options.env?.HERMES_RELAY_SETUP_CALLER_PID, String(process.pid))
   assert.match(plan.args.join(' '), /Wait-Process -Id \$callerPid/)
   assert.match(plan.args.join(' '), /Start-Sleep/)
   assert.match(plan.args.join(' '), /\/D=/)
   assert.match(plan.args.join(' '), /Remove-Item -LiteralPath \$installer/)
   assert.equal(plan.options.detached, true)
+})
+
+test('Windows bundle detection reads the installed UI version and running state', () => {
+  const state = detectWindowsBundle({
+    platform: 'win32',
+    executable: 'C:\\Hermes\\hermes-relay.exe',
+    exists: () => true,
+    probe: path => ({
+      version: path.endsWith('hermes-relay-tray.exe') ? '0.4.0-beta.4' : null,
+      running: true
+    })
+  })
+  assert.deepEqual(state, {
+    installed: true,
+    path: 'C:\\Hermes\\hermes-relay-tray.exe',
+    version: '0.4.0-beta.4',
+    running: true
+  })
+})
+
+test('installer helper preserves a stopped tray state during a bundle update', () => {
+  const plan = windowsInstallerLaunchPlan('C:\\Temp\\hermes setup.exe', {
+    silent: true,
+    installDir: 'C:\\Hermes',
+    trayPath: 'C:\\Hermes\\hermes-relay-tray.exe',
+    restartTray: false
+  })
+  assert.equal(plan.options.env?.HERMES_RELAY_SETUP_RESTART_TRAY, '0')
+  assert.match(plan.args.join(' '), /HERMES_RELAY_SETUP_RESTART_TRAY/)
 })
 
 test('PowerShell launches an installer whose path contains spaces via environment transport', {
@@ -129,6 +160,7 @@ test('POSIX installer only advertises artifacts produced by the release workflow
   assert.match(workflow, /if \[ "\$exit_code" -ne 0 \]/)
   assert.match(workflow, /Smoke exact macOS CLI release asset/)
   assert.match(workflow, /release-assets\/\$native_asset" --version/)
+  assert.match(workflow, /installed UI version mismatch/)
 })
 
 test('bootstrap installers paginate release discovery beyond the first API page', async () => {

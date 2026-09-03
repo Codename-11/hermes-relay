@@ -107,6 +107,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore exact-source tray build cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/tray/target
+          key: ${{ runner.os }}-tray-rust-${{ hashFiles('desktop/tray/Cargo.lock') }}-${{ hashFiles('desktop/tray/Cargo.toml', 'desktop/tray/build.rs', 'desktop/tray/src/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-tray-rust-${{ hashFiles('desktop/tray/Cargo.lock') }}-
+
       - name: Install deps
         run: npm ci && npm --prefix tray ci
 

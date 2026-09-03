@@ -1,5 +1,43 @@
 # Hermes-Relay — Dev Log
 
+## 2026-09-02 — Android 1.15.1 and CLI+UI beta.7 release preparation
+
+Prepared Android 1.15.1 (versionCode 54) and CLI+UI 0.4.0-beta.7 from the integrated release tree. Android notes cover chat memory bounds, media previews, Gateway readiness, follow-up controls, and voice recovery. CLI+UI notes cover the Windows unified updater. Plugin metadata remains at 1.11.1; its only unreleased change is a documentation-comment path.
+
+The Android release uses the immutable signed Play preflight artifact for public publication. CLI+UI remains a prerelease and is approved from the exact prepared dev commit.
+
+## 2026-09-01 — Exact-tree release artifact promotion
+
+Android Play preflight now packages the signed sideload APK, Play AAB, R8
+mappings, manifest, and public checksums as one immutable tree-keyed artifact.
+Stable approval revalidates and publishes those exact bytes instead of
+recompiling the release after Play accepted the draft. Final DEX and native
+compatibility checks still run against the promoted package.
+
+Required CI records a separate short-lived proof keyed to the complete Git
+tree. Canonical `dev` to `main` promotion reuses that proof only when the
+simulated merge tree is byte-identical; missing evidence or any tree change
+falls back to the full path-aware matrix. Local Android release iteration now
+uses a metadata-and-presentation lane, and a coordinated approval workflow can
+start independent Android, Plugin, and CLI+UI release jobs concurrently.
+The Windows tray lane also carries an exact-source Cargo/target cache from
+trusted branch CI into the tag installer build, with lockfile-scoped incremental
+fallback when tray sources change.
+
+## 2026-09-01 — Unified Windows desktop update contract
+
+The desktop updater now treats a detected Windows management UI as an installed
+bundle rather than updating only the CLI executable. Update checks compare the
+embedded CLI version with the tray executable's product version, expose the
+selected `cli` or `cli_ui` target in JSON, and route drift repair through the
+checksum-verified NSIS installer. Windows installations without the tray keep
+the standalone cooperative CLI swap.
+
+Bundle updates wait for the invoking CLI to exit, stop installer-owned CLI,
+daemon, and tray processes, then restore only the daemon and tray processes that
+were running before the update. Focused tests cover bundle detection, installer
+selection, drift reporting, headless preservation, and stopped-tray behavior.
+
 ## 2026-08-31 — Android Gateway compaction watchdog lease
 
 Gateway turns now recognize the upstream `status.update` payload kind
@@ -4195,7 +4233,7 @@ Expected new keyless cold start: client ~+1–2s after first DataStore emission,
 
 ## 2026-05-19 — Experimental Realtime Hermes Voice Agent
 
-**Plan.** [docs/plans/2026-05-19-realtime-hermes-voice-agent.md](docs/plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
+**Plan.** [`2026-05-19-realtime-hermes-voice-agent.md`](../plans/2026-05-19-realtime-hermes-voice-agent.md) — add a switchable Android voice engine that brokers a realtime provider session (OpenAI first, xAI ready) while keeping Hermes as authority for profiles, sessions, memory, tool execution, Android bridge safety, confirmations, and cancellation. Stable `Hermes chat + voice output` remains the default and is untouched.
 
 **Surface added.**
 
@@ -4352,7 +4390,7 @@ Post-fix smoke: Victor called `desktop_terminal("hostname")` → returned `{"std
 
 ## 2026-04-23 — Desktop CLI thin-client v0.1 (`@hermes-relay/cli`)
 
-**Context.** The broader ask from the vault's [Desktop Client.md](../../../SynologyDrive/-Vault-/Axiom-Vault/3.%20System/Projects/Hermes-Relay/Desktop%20Client.md) decomposes into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
+**Context.** An earlier private design note decomposed the desktop-client work into two independent pieces: (A) "one Node binary with CLI + TUI modes that talks to a remote Hermes over WSS" and (B) "per-tool dispatch routing so local tools run on the client while the brain stays on the server." This session ships **A** — with CLI mode specifically — and defers B to a separate hermes-agent PR on `fork/tool-relay`. The two are decoupled: the CLI consumes the existing `tui` WSS channel and `tui_gateway` subprocess shape without any server-side change.
 
 ### Architecture decision — same channel, different renderer
 

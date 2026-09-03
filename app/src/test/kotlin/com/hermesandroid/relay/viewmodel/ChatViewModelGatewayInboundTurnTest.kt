@@ -517,6 +517,40 @@ class ChatViewModelGatewayInboundTurnTest {
         )
     }
 
+    @Test
+    fun ownershipErrorAfterFreshSubmitStaysVisibleWithoutHistoryRecovery() {
+        val ownershipError =
+            "Session 20260612_120000_abc123 already has a live owner (webui, pid 42, running 0m). " +
+                "Only one surface at a time may run a session, because a second one would reason from stale history."
+        val historyReads = AtomicInteger(0)
+        viewModel.setProfileMessageLoader {
+            historyReads.incrementAndGet()
+            Result.success(emptyList())
+        }
+        viewModel.createNewChat()
+
+        viewModel.sendMessage("Keep this retryable")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "error",
+                buildJsonObject { put("message", ownershipError) },
+                "live-1",
+            ),
+        )
+
+        awaitCondition { viewModel.chatFailure.value?.rawError == ownershipError }
+        assertFalse(handler.isStreaming.value)
+        assertFalse(viewModel.recoveringAnswer.value)
+        assertEquals(0, historyReads.get())
+        assertTrue(handler.messages.value.any { it.content == "Keep this retryable" })
+        assertFalse(
+            handler.messages.value.any {
+                it.content.contains("unfinished message was not found", ignoreCase = true)
+            },
+        )
+    }
+
     @After
     fun tearDown() {
         DiagnosticsLog.clear()
@@ -877,6 +911,28 @@ class ChatViewModelGatewayInboundTurnTest {
             calls.get() == 2 && handler.sessions.value.singleOrNull()?.sessionId == "fresh"
         }
         assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun reentrantSessionPublicationCannotKeepTheRefreshBatchAlive() {
+        val calls = AtomicInteger(0)
+        viewModel.setProfileSessionLister {
+            calls.incrementAndGet()
+            // Reproduce a downstream publication observer requesting another
+            // refresh while every successful directory read is still active.
+            viewModel.refreshSessions()
+            Result.success(listOf(SessionItem(id = "stable", title = "Stable session")))
+        }
+
+        viewModel.refreshSessions()
+
+        awaitCondition { calls.get() >= 2 }
+        Thread.sleep(150)
+        val settledCalls = calls.get()
+        Thread.sleep(150)
+        assertEquals(settledCalls, calls.get())
+        assertTrue(settledCalls <= 3)
+        assertEquals("stable", handler.sessions.value.singleOrNull()?.sessionId)
     }
 
     @Test
@@ -1925,6 +1981,33 @@ class ChatViewModelGatewayInboundTurnTest {
         }
         assertFalse(handler.messages.value.single().isStreaming)
         assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" })
+    }
+
+    @Test
+    fun gatewayInterimImmediatelyLeavesAStreamingConversationOwner() {
+        viewModel.sendMessage("Generate an image")
+        gatewayHarness.awaitRpc("prompt.submit")
+
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(
+            gatewayHarness.eventFrame(
+                "message.interim",
+                buildJsonObject {
+                    put("text", "Generating it now.")
+                    put("already_streamed", false)
+                },
+                "live-resumed",
+            ),
+        )
+
+        awaitCondition {
+            handler.messages.value.any { it.content == "Generating it now." }
+        }
+        assertTrue(handler.isStreaming.value)
+        val activeOwner = handler.messages.value.last()
+        assertTrue(activeOwner.isStreaming)
+        assertEquals(MessageRole.ASSISTANT, activeOwner.role)
+        assertTrue(activeOwner.content.isBlank())
     }
 
     @Test
@@ -3105,6 +3188,87 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun explicitQueueChoiceDoesNotAttemptRedirect() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Run next", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        assertEquals(listOf("Run next"), viewModel.queuedMessages.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "session.redirect" || it.first == "session.steer" })
+    }
+
+    @Test
+    fun deletingQueuedHeadReconnectsSuccessorToActiveTurn() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Remove me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Keep me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.removeQueuedAt(0)
+        completeQueueTestTurn()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Keep me") } }
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Remove me") })
+    }
+
+    @Test
+    fun editingQueuedHeadDoesNotStrandSuccessor() {
+        startTurnForQueueTest()
+        viewModel.sendMessage("Edit me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Keep me", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        assertEquals("Edit me", viewModel.takeQueuedForEdit(0))
+        completeQueueTestTurn()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("Keep me") } }
+    }
+
+    @Test
+    fun stopPausesQueueUntilExplicitResumeAndPersistsWholeChain() {
+        val store = MemoryCheckpointStore()
+        viewModel.setChatTurnCheckpointStore(store)
+        startTurnForQueueTest()
+        viewModel.sendMessage("First pending", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.sendMessage("Second pending", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.cancelStream()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("First pending", "Second pending"), viewModel.queuedMessages.value)
+        assertTrue(viewModel.queuePaused.value)
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" })
+        awaitCondition { store.checkpoint?.queueOnly == true }
+        assertEquals(true, store.checkpoint?.queuePaused)
+        assertEquals(2, store.checkpoint?.queuedMessages?.size)
+
+        viewModel.resumeQueue()
+        awaitCondition { gatewayHarness.rpcLog.any { it.first == "prompt.submit" && it.second["text"] == JsonPrimitive("First pending") } }
+        assertFalse(viewModel.queuePaused.value)
+        assertEquals(listOf("Second pending"), viewModel.queuedMessages.value)
+    }
+
+    @Test
+    fun pausedQueueCheckpointRestoresWithoutRecoveringStoppedTurn() {
+        val store = MemoryCheckpointStore()
+        viewModel.setChatTurnCheckpointStore(store)
+        startTurnForQueueTest()
+        viewModel.sendMessage("Keep paused", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        viewModel.cancelStream()
+        awaitCondition { store.checkpoint?.queueOnly == true }
+        val saved = requireNotNull(store.checkpoint)
+        viewModel.clearQueue()
+        shadowOf(Looper.getMainLooper()).idle()
+        store.checkpoint = saved
+        val activationsBefore = gatewayHarness.rpcLog.count { it.first == "session.activate" }
+        viewModel.prewarmGateway()
+        awaitCondition { viewModel.queuedMessages.value == listOf("Keep paused") }
+        assertTrue(viewModel.queuePaused.value)
+        assertFalse(handler.isStreaming.value)
+        assertEquals(activationsBefore, gatewayHarness.rpcLog.count { it.first == "session.activate" })
+    }
+
+    private fun startTurnForQueueTest() {
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { handler.isStreaming.value }
+    }
+
+    private fun completeQueueTestTurn() {
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "Original complete") }, "live-resumed"))
+    }
+
+    @Test
     fun queuedMessageStaysWithOriginWhileAnotherRunningSessionCompletes() {
         val secondSession = "stored-session-b"
         val contextKey = AgentDisplay.profileContextKey("connection-a", null)
@@ -3250,6 +3414,29 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun connectionSwitchKeepsRunningCheckpointWhenQueueExists() {
+        val store = MemoryCheckpointStore()
+        val switches = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        viewModel.setChatTurnCheckpointStore(store)
+        viewModel.switchProfileContext(PROFILE_CONTEXT, STORED_SESSION_ID)
+        viewModel.observeConnectionSwitches(switches)
+        viewModel.sendMessage("Keep the running turn recoverable")
+        gatewayHarness.awaitRpc("prompt.submit")
+        viewModel.sendMessage("Follow up on this connection", com.hermesandroid.relay.data.BusyMessageAction.QueueNext)
+        awaitCondition { viewModel.queuedMessages.value.size == 1 }
+
+        switches.tryEmit("connection-b")
+        awaitCondition { viewModel.queuedMessages.value.isEmpty() }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val checkpoint = requireNotNull(store.checkpoint)
+        assertFalse("A detached running turn must not become queue-only", checkpoint.queueOnly)
+        assertEquals("Keep the running turn recoverable", checkpoint.user.content)
+        assertEquals(listOf("Follow up on this connection"), checkpoint.queuedMessages.map { it.text })
+        assertFalse(gatewayHarness.rpcLog.any { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun deletingDestinationCancelsItsQueueAndEditRestoresOnlyThatItem() {
         gatewayHarness.redirectStatus = "rejected"
         viewModel.switchProfileContext(
@@ -3296,7 +3483,7 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
-    fun retryQueuedForActiveRunIsCancelledWithThatRun() {
+    fun retryQueuedForActiveRunIsPausedWhenThatRunStops() {
         gatewayHarness.redirectStatus = "rejected"
         viewModel.switchProfileContext(
             AgentDisplay.profileContextKey("connection-a", null),
@@ -3311,7 +3498,8 @@ class ChatViewModelGatewayInboundTurnTest {
 
         viewModel.cancelStream()
         gatewayHarness.awaitRpc("session.interrupt")
-        assertTrue(viewModel.queuedMessages.value.isEmpty())
+        assertEquals(listOf("Retry this turn"), viewModel.queuedMessages.value)
+        assertTrue(viewModel.queuePaused.value)
 
         serverWs.send(
             gatewayHarness.eventFrame(
@@ -3754,6 +3942,7 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun passiveForegroundObservationNeverClaimsOrInterruptsDesktopTurn() {
+        val directoryReads = AtomicInteger(0)
         val observerProfile = Profile(
             name = "observer",
             model = "model-a",
@@ -3821,7 +4010,12 @@ class ChatViewModelGatewayInboundTurnTest {
             viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
                 SessionActivityState.Working
         }
+        viewModel.setProfileSessionLister {
+            directoryReads.incrementAndGet()
+            Result.success(emptyList())
+        }
         gatewayHarness.activeSessionListPayload = activeSessionPayload("waiting")
+        val directoryReadsBeforeHistoryPublication = directoryReads.get()
         viewModel.requestSessionActivityRefresh()
         awaitCondition {
             viewModel.backgroundSessionActivityStates.value["observer:$STORED_SESSION_ID"] ==
@@ -3839,6 +4033,9 @@ class ChatViewModelGatewayInboundTurnTest {
             handler.messages.value.singleOrNull()?.content ==
                 "Desktop completed without Android attachment."
         }
+        shadowOf(Looper.getMainLooper()).idleFor(4, TimeUnit.SECONDS)
+        Thread.sleep(100)
+        assertEquals(directoryReadsBeforeHistoryPublication, directoryReads.get())
         ownershipMethods.forEach { method ->
             assertEquals(
                 "passive foreground sent $method",

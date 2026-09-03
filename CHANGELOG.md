@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.15.1] - 2026-09-02
+
+### Changed
+
+- Chat and Bot Chat offer a compact Correct now / Queue next tray behind the composer. Chat settings sets the default; each message can override it. Stop pauses pending work until Resume, and editing or removing queued messages preserves the remaining order.
+- Wider Chat and Voice layouts keep text and controls centered and readable, including landscape Voice Focus.
+
+### Fixed
+
+- Delivery and correction labels remain readable inside user-message bubbles.
+- Voice errors use a scrollable dialog with separate Retry and Dismiss actions.
+- Attachment previews stay open through rotation, and videos retain their original proportions. (#483)
+- Release builds preserve the native configuration names required for wake-word startup. (#444)
+- Standard Hermes attachments stream to disk while enforcing download size limits. (#531)
+- Session refresh no longer sustains a request loop. History loads, chat rendering, image previews, and media exports keep memory use bounded.
+- Image-generation progress remains visible between interim replies and media delivery.
+- New Gateway chats wait for session readiness before the first prompt; ownership refusals preserve the retryable prompt and server error.
+
+## [0.4.0-beta.7] - 2026-09-02
+
+### Fixed
+
+- Windows updates detect a colocated management UI, report both installed versions, and update the CLI and UI together through the verified bundle installer. CLI-only installations keep their standalone updater.
+
 ## [Android 1.15.0] - 2026-08-31
 
 ### Changed
@@ -1271,7 +1295,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Voice-exit chime firing on every Add-connection tap.** `ConnectionSwitchCoordinator.switchConnection` fires the `voiceStopCallback` unconditionally at step 3 (correct for connection-to-connection switches while voice is active), but `beginAddConnection` also routes through `switchConnection` to bind the placeholder Connection's auth store before the pair wizard runs — and `VoiceViewModel.exitVoiceMode()` was playing `sfxPlayer.playExit()` regardless of whether voice mode was actually on. Logcat confirmed the chime on every Add-connection FAB tap. Fix adds an idempotence guard at the top of `exitVoiceMode()`: early-return when `_uiState.value.voiceMode` is already false. Teardown is still safe to skip because every inner statement is null-guarded + try/catch-wrapped and would be a no-op on an already-stopped voice session; the only meaningful line is the `playExit()` SFX, which is what we're silencing.
 - **500 ms freeze on every Add-connection tap.** `ConnectionSwitchCoordinator.switchConnection` runs a `withTimeoutOrNull(AUTH_HYDRATE_TIMEOUT_MS = 500L)` block at step 10 to wait for the freshly-bound `AuthManager` to flip `AuthState` from `Loading` to `Paired`. The comment acknowledged Add-connection is the common path and the 500 ms was meant to be "imperceptible," but on-device it wasn't — the user perceived the delay (and the voice chime masking it) on every tap. The placeholder Connection created by `beginAddConnection` has `pairedAt == null` and an empty EncryptedSharedPreferences store, so `AuthState` will NEVER reach `Paired` — the 500 ms is pure stall. Fix short-circuits the hydrate wait when `target.pairedAt == null`: skip `withTimeoutOrNull` entirely for placeholders and log at DEBUG instead of the misleading "auth hydrate timeout" INFO. Real paired-to-paired switches still run the full hydrate wait because both sides have `pairedAt != null`.
-- **KDoc nested-comment trap in `ConnectionViewModel.relayReady` doc block.** A literal `/voice/*` path pattern inside the `relayReady` KDoc opened a nested block comment (Kotlin supports nested `/* */`, Java does not) whose `*/` then closed only the nested level — leaving the outer `/**` open for the remaining ~2200 lines of the file. Symptom: `MainActivity.kt:67` "Unresolved reference 'isReady'" plus ~50 cascading "Cannot infer type" errors across `PairedDevicesScreen`, `SettingsScreen`, `TerminalScreen`. Real errors (`Missing '}`, `Unclosed comment`) were the last two lines of `./gradlew compileGooglePlayDebugKotlin` output, easy to miss. Fix was a two-character rewrite: path patterns now wrapped in backticks AND `/*` → `/...` so the glob-looking character isn't in a block-comment position. Lesson logged in `DEVLOG.md` 2026-04-21; worth a sweep of other KDoc blocks for shell/regex-looking patterns before the next large diff.
+- **KDoc nested-comment trap in `ConnectionViewModel.relayReady` doc block.** A literal `/voice/*` path pattern inside the `relayReady` KDoc opened a nested block comment (Kotlin supports nested `/* */`, Java does not) whose `*/` then closed only the nested level — leaving the outer `/**` open for the remaining ~2200 lines of the file. Symptom: `MainActivity.kt:67` "Unresolved reference 'isReady'" plus ~50 cascading "Cannot infer type" errors across `PairedDevicesScreen`, `SettingsScreen`, `TerminalScreen`. Real errors (`Missing '}`, `Unclosed comment`) were the last two lines of `./gradlew compileGooglePlayDebugKotlin` output, easy to miss. Fix was a two-character rewrite: path patterns now wrapped in backticks AND `/*` → `/...` so the glob-looking character isn't in a block-comment position. Lesson logged in `docs/project/DEVLOG.md` 2026-04-21; worth a sweep of other KDoc blocks for shell/regex-looking patterns before the next large diff.
 
 - **Orphan placeholder connections from abandoned Add-connection flows.** The `beginAddConnection` path pre-creates a placeholder Connection and switches to it before the pair wizard runs — so `applyPairingPayload` lands the token in the right auth store. Previously, cleanup of the placeholder was wired only to the explicit Cancel button and TopAppBar back arrow. System back (gesture back / predictive back) bypassed that branch, leaving the placeholder in the connection list forever. Two-part fix: (a) `PairScreen` now installs a `BackHandler` that routes system back through the same `onCancel` → `discardPlaceholderConnection` branch the explicit back arrow uses; (b) `ConnectionViewModel.init` sweeps for any existing orphans (tuple: `pairedAt == null && apiServerUrl.isBlank() && label == PLACEHOLDER_LABEL`) on cold start and removes them — the tuple cannot be produced by any real pairing, so the sweep is safe without a dry-run. If the active connection at startup points at an orphan, the sweep switches to the first surviving real connection before deleting. Fixes the "why does my chip say 'New connection…'" symptom on devices that were affected pre-fix.
 - **Pair flow now auto-starts the camera on Add connection.** `ConnectionWizard` gains an `autoStart: String?` param (currently only `"scan"` is honored). The Add-connection FAB on `ConnectionsSettingsScreen` passes it so the wizard fires the camera permission launcher on first composition instead of forcing users through the Method chooser — one obvious next step, one-tap flow. Re-pair surfaces intentionally leave `autoStart` null so the full Scan / Enter code / Show code chooser stays available there. The deep-link arg is plumbed through `Screen.Pair`'s route (`pair?connectionId=...&autoStart=...`) and `PairScreen`'s new `autoStart` param; unrecognized values fall through to the default Method step so future builds can add more targets without breaking old ones.
@@ -2088,7 +2112,7 @@ picker.
 - **`CLAUDE.md`** — updated Git section with the new branching policy,
   added file-table entries for `hermes-relay-update`,
   `register_code_command`, and the expanded `install.sh`
-- **`TODO.md`** — captures open research questions around proper
+- **`docs/project/TODO.md`** — captures open research questions around proper
   Hermes plugin/skill/tool distribution
 - **`user-docs` vitepress site** — new "For AI Agents" copy-paste
   block on the home view, Feature Matrix component, two-track explainer,

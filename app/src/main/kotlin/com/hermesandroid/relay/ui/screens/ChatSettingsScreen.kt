@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.ui.components.ChatBusyActionSelector
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -497,6 +498,22 @@ fun ChatSettingsScreen(
                         )
                     }
 
+                    HorizontalDivider()
+
+                    val busyMessageAction by connectionViewModel.busyMessageAction.collectAsState()
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(R.string.chat_busy_default_title), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            stringResource(R.string.chat_busy_default_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        ChatBusyActionSelector(
+                            action = busyMessageAction,
+                            onActionChange = connectionViewModel::setBusyMessageAction,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     HorizontalDivider()
 
                     val physicalKeyboardEnterBehavior by

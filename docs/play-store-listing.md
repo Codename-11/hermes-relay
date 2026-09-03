@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.15.0 - Standard Hermes first, with clearer Relay boundaries
+v1.15.1 - Steadier chat, media, and voice
 
-Standard Chat, Voice, attachments, returned files, current-session Git, usage, and Hermes notices now prefer upstream Dashboard and Gateway support without requiring Relay. Returned media stays loaded, voice survives Relay removal, and Settings clearly separates standard Hermes from Relay tools. Supervised Mode also gains app-specific parent access and recovery.
+More reliable chats and media: fewer memory-heavy refreshes, smoother large histories, and attachment previews that survive rotation. Choose whether follow-ups correct the current response or wait in a queue. Voice errors are easier to read, image-generation progress stays visible, and wake-word startup and first-message readiness are fixed.
 ```
 ## Category
 

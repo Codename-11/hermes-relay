@@ -367,8 +367,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
 
-    // Media3 ExoPlayer — gapless TTS queue playback (replaces MediaPlayer in VoicePlayer)
+    // Media3 ExoPlayer + lifecycle-aware Compose video surface.
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui.compose)
 
     // android-vad Silero — on-device VAD for barge-in (B2)
     // Bundled ONNX Silero model (~2.2 MB); pulled from JitPack.

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Run the optional full local Android pre-push gate.
+"""Run focused local Android feedback or the optional full pre-push gate.
 
 By default the command checks the primary Play debug variant and focused CI
 unit tests in one Gradle invocation. `--both-flavors` expands that to full lint
 and both focused flavor shards. Agents should prefer Android On-Demand after an
 exact commit is already pushed; this remains available when full local proof is
-explicitly wanted or cloud execution is unavailable.
+explicitly wanted or cloud execution is unavailable. ``--release-prep`` keeps
+local release iteration to metadata plus the release-presentation tests; cloud
+CI and Play preflight own the expensive exact-commit build lanes.
 """
 
 from __future__ import annotations
@@ -37,6 +39,10 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest",
     "com.hermesandroid.relay.ui.screens.ChangelogScreenTest",
     "com.hermesandroid.relay.ui.screens.ChatUnreadStateTest",
+)
+RELEASE_PREP_TESTS = (
+    "com.hermesandroid.relay.screenshots.ChangelogHistoryScreenshotTest",
+    "com.hermesandroid.relay.screenshots.WhatsNewToastScreenshotTest",
 )
 REPOSITORY_CHECKS = (
     "check-android-locales.py",
@@ -79,14 +85,22 @@ def main() -> int:
         action="store_true",
         help="Run full lint and focused tests for sideload and Google Play",
     )
+    parser.add_argument(
+        "--release-prep",
+        action="store_true",
+        help="Run metadata checks and release-presentation tests only",
+    )
     args = parser.parse_args()
+    if args.release_prep and (args.skip_lint or args.skip_tests or args.both_flavors):
+        parser.error("--release-prep cannot be combined with other lane flags")
 
     env = android_environment()
     for script in REPOSITORY_CHECKS:
         run(script, [sys.executable, str(REPO_ROOT / "scripts" / script)], env)
 
     tasks: list[str] = []
-    if not args.skip_lint:
+    selected_tests = RELEASE_PREP_TESTS if args.release_prep else FOCUSED_TESTS
+    if not args.skip_lint and not args.release_prep:
         tasks.append("lint" if args.both_flavors else ":app:lintGooglePlayDebug")
     if not args.skip_tests:
         tasks.append(":app:testSideloadDebugUnitTest")
@@ -114,12 +128,16 @@ def main() -> int:
         *tasks,
     ])
     if not args.skip_tests:
-        for test_name in FOCUSED_TESTS:
+        for test_name in selected_tests:
             gradle.extend(("--tests", test_name))
     label = (
-        "Full local Android lint and focused tests"
-        if args.both_flavors
-        else "Google Play lint and focused tests"
+        "Android release metadata and presentation tests"
+        if args.release_prep
+        else (
+            "Full local Android lint and focused tests"
+            if args.both_flavors
+            else "Google Play lint and focused tests"
+        )
     )
     run(label, gradle, env)
     print("\nAndroid pre-push checks passed.")

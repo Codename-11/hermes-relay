@@ -13,6 +13,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -30,6 +32,23 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class DashboardApiClientTest {
+
+    @Test
+    fun boundedJsonReaderRejectsDeclaredAndObservedOverflow() {
+        val declared = "{}".toResponseBody("application/json".toMediaType())
+        assertThrows(IOException::class.java) {
+            declared.readUtf8Bounded(1)
+        }
+
+        val chunked = object : okhttp3.ResponseBody() {
+            override fun contentType() = "application/json".toMediaType()
+            override fun contentLength() = -1L
+            override fun source() = Buffer().writeUtf8("{\"value\":123}")
+        }
+        assertThrows(IOException::class.java) {
+            chunked.readUtf8Bounded(8)
+        }
+    }
 
     @Test
     fun `multiplex API routing uses served profiles instead of installed inventory`() {
@@ -1466,7 +1485,7 @@ class DashboardApiClientTest {
         assertEquals("mizu", url.queryParameter("profile"))
         assertEquals("500", url.queryParameter("limit"))
         assertEquals("0", url.queryParameter("offset"))
-        assertEquals("oldest", url.queryParameter("order"))
+        assertEquals("latest", url.queryParameter("order"))
         assertEquals(2, messages.size)
         assertEquals("user", messages[0].role)
         assertEquals("assistant", messages[1].role)
@@ -1478,7 +1497,11 @@ class DashboardApiClientTest {
         server.enqueue(messagePageResponse(key = "messages", start = 500, count = 1, returned = 1))
 
         val messages = DashboardApiClient(baseUrl = server.url("/").toString())
-            .getSessionMessages("sess-a", profile = "mizu")
+            .getSessionMessages(
+                "sess-a",
+                profile = "mizu",
+                mode = SessionMessageLoadMode.COMPLETE,
+            )
             .getOrThrow()
 
         val first = server.takeRequest().requestUrl!!
@@ -2042,13 +2065,15 @@ class DashboardApiClientTest {
                 .setBody("audio-bytes"),
         )
 
+        val output = ByteArrayOutputStream()
         val fetched = DashboardApiClient(baseUrl = server.url("/").toString())
-            .downloadManagedFile("/tmp/Hermes audio/voice reply.mp3", 1024)
+            .downloadManagedFile("/tmp/Hermes audio/voice reply.mp3", 1024, output)
             .getOrThrow()
 
         assertEquals("audio/mpeg", fetched.contentType)
         assertEquals("voice reply.mp3", fetched.fileName)
-        assertEquals("audio-bytes", fetched.bytes.decodeToString())
+        assertEquals(11L, fetched.sizeBytes)
+        assertEquals("audio-bytes", output.toString(Charsets.UTF_8.name()))
         val request = server.takeRequest()
         assertEquals("/api/files/download", request.requestUrl!!.encodedPath)
         assertEquals("/tmp/Hermes audio/voice reply.mp3", request.requestUrl!!.queryParameter("path"))
@@ -2059,9 +2084,26 @@ class DashboardApiClientTest {
         server.enqueue(MockResponse().setHeader("Content-Length", 2048))
 
         val result = DashboardApiClient(baseUrl = server.url("/").toString())
-            .downloadManagedFile("/tmp/large.bin", 1024)
+            .downloadManagedFile("/tmp/large.bin", 1024, ByteArrayOutputStream())
 
         assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun downloadManagedFile_rejectsChunkedBodyAfterStreamingCap() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/octet-stream")
+                .setChunkedBody("seventeen-byte-doc", 3),
+        )
+        val output = ByteArrayOutputStream()
+
+        val result = DashboardApiClient(baseUrl = server.url("/").toString())
+            .downloadManagedFile("/tmp/growing.bin", 16, output)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("configured download limit"))
+        assertTrue(output.size() <= 16)
     }
 
     @Test

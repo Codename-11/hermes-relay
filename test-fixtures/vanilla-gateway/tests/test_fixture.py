@@ -123,6 +123,25 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_ownership_rejection_is_terminal_without_persisted_turn(self) -> None:
+        fixture, base_url = await self.start("ownership_rejection")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.create", {"profile": "default"})
+        await ws.receive_json()
+        await self.rpc(ws, 2, "prompt.submit", {"text": "not recorded in evidence"})
+        frames = await self.frames_until(
+            ws,
+            lambda frame: frame.get("params", {}).get("type") == "error",
+        )
+        error = frames[-1]["params"]["payload"]["message"]
+        self.assertIn("already has a live owner (webui", error)
+        self.assertIn("Only one surface at a time may run a session", error)
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+        ) as response:
+            history = await response.json()
+        self.assertEqual([], history["messages"])
+
     async def test_compaction_status_repeats_before_terminal_completion(self) -> None:
         fixture, base_url = await self.start("compaction_status")
         ws, _ = await self.connect(base_url)
@@ -297,6 +316,21 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(2, len(completes))
 
+    async def test_interrupt_stops_old_turn_before_explicit_queue_resume(self) -> None:
+        fixture, base_url = await self.start("queued_stop_resume")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "original"})
+        await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.delta")
+        await self.rpc(ws, 2, "session.interrupt")
+        frames = await self.frames_until(ws, lambda f: f.get("id") == 2)
+        self.assertFalse(fixture._running)
+        self.assertFalse(fixture._turn_active)
+        await self.rpc(ws, 3, "prompt.submit", {"text": "resumed", "queued": True})
+        frames += await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        completes = [f["params"]["payload"]["text"] for f in frames if f.get("params", {}).get("type") == "message.complete"]
+        self.assertEqual(["", "Resumed follow-up."], completes)
+        self.assertEqual(1, sum(f.get("params", {}).get("payload", {}).get("status") == "interrupted" for f in frames))
+
     async def test_scope_scenario_exposes_rejection_inputs_and_exact_terminal(self) -> None:
         fixture, base_url = await self.start("scope_rejection_inputs")
         ws, _ = await self.connect(base_url)
@@ -381,12 +415,14 @@ class ScenarioTestCase(unittest.TestCase):
             "cross_client_observation",
             "initial_history_bind",
             "ordinary_turn",
+            "ownership_rejection",
             "rapid_tools_interims",
             "subagent_child_preview",
             "terminal_gap_activate",
             "terminal_gap_active_list",
             "terminal_gap_session_info",
             "queued_follow_up",
+            "queued_stop_resume",
             "scope_rejection_inputs",
         ):
             scenario = load_scenario(name)
@@ -432,6 +468,10 @@ class ScenarioTestCase(unittest.TestCase):
         self.assertEqual(
             ("gateway.message_complete", "gateway.session_active_list"),
             load_scenario("cross_client_observation").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_exclusive_submit",),
+            load_scenario("ownership_rejection").contract_requirements,
         )
 
     def test_tls_arguments_must_be_paired(self) -> None:

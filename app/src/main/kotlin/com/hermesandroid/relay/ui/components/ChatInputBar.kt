@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
+import com.hermesandroid.relay.data.BusyMessageAction
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -191,6 +192,9 @@ fun ChatInputBar(
     physicalEnterSends: Boolean = true,
     largePasteThreshold: Int? = null,
     onLargePaste: (String) -> Unit = {},
+    busyAction: BusyMessageAction? = null,
+    correctionAvailable: Boolean = true,
+    onBusyActionChange: (BusyMessageAction) -> Unit = {},
 ) {
     val canSubmit = enabled && submitEnabled && trailing in setOf(
         ChatInputTrailing.SEND,
@@ -236,7 +240,7 @@ fun ChatInputBar(
         // Correction and queueing are materially different actions. Keep the
         // explanation, but lead with a visible state pill so the distinction
         // does not depend on the trailing icon or accent color alone.
-        AnimatedVisibility(visible = caption != null) {
+        AnimatedVisibility(visible = caption != null && busyAction == null) {
             val detail = caption ?: lastCaption.orEmpty()
             val actionLabel = when (trailing) {
                 ChatInputTrailing.STEER -> stringResource(R.string.chat_input_steer_response)
@@ -319,6 +323,12 @@ fun ChatInputBar(
             )
         }
 
+        ChatComposerLayers(
+            action = busyAction,
+            onActionChange = onBusyActionChange,
+            correctionAvailable = correctionAvailable,
+            onStop = onStop.takeUnless { trailing == ChatInputTrailing.STOP },
+        ) {
         Surface(
             shape = appearanceComposerShape(),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -644,6 +654,7 @@ fun ChatInputBar(
             }
         }
     }
+}
 }
 }
 

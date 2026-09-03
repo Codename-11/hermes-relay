@@ -23,6 +23,8 @@ from typing import Iterable, Sequence
 
 SERVER = "tui_gateway/server.py"
 SESSION_METHODS = "tui_gateway/methods_session.py"
+PROMPT_METHODS = "tui_gateway/methods_prompt.py"
+ACTIVE_SESSIONS = "hermes_cli/active_sessions.py"
 API_SERVER = "gateway/platforms/api_server.py"
 
 GATEWAY_TERMINAL = "gateway.message_complete"
@@ -30,6 +32,7 @@ GATEWAY_SETTLED_INFO = "gateway.settled_session_info"
 SESSION_ACTIVATE = "gateway.session_activate_live"
 SESSION_RESUME = "gateway.session_resume_durable"
 SESSION_ACTIVE_LIST = "gateway.session_active_list"
+SESSION_EXCLUSIVE_SUBMIT = "gateway.session_exclusive_submit"
 SUBAGENT_CHILD_WATCH = "gateway.subagent_child_watch"
 API_BOUNDARY = "api.fallback_boundary"
 ALL_CONTRACTS = (
@@ -38,6 +41,7 @@ ALL_CONTRACTS = (
     SESSION_ACTIVATE,
     SESSION_RESUME,
     SESSION_ACTIVE_LIST,
+    SESSION_EXCLUSIVE_SUBMIT,
     SUBAGENT_CHILD_WATCH,
     API_BOUNDARY,
 )
@@ -409,6 +413,59 @@ def _check_subagent_child_watch(server: SourceFile, methods: SourceFile) -> Chec
         return CheckResult(contract, False, (), str(exc))
 
 
+def _check_session_exclusive_submit(
+    server: SourceFile,
+    session_methods: SourceFile,
+    prompt_methods: SourceFile,
+    active_sessions: SourceFile,
+) -> CheckResult:
+    contract = SESSION_EXCLUSIVE_SUBMIT
+    try:
+        submit = prompt_methods.method_handler("prompt.submit")
+        create = session_methods.method_handler("session.create")
+        build = server.function("_start_agent_build")
+        run_submit = server.function("_run_prompt_submit")
+        submit_text = prompt_methods.segment(submit)
+        create_text = session_methods.segment(create)
+        build_text = server.segment(build)
+        run_text = server.segment(run_submit)
+        active_text = active_sessions.text
+        missing: list[str] = []
+        if "_ensure_active_session_slot" not in submit_text or "4090" not in submit_text:
+            missing.append("prompt.submit atomic ownership refusal")
+        if '"reason"' not in submit_text:
+            missing.append("machine-readable refusal reason")
+        if "_ensure_active_session_slot" not in run_text or '"error"' not in run_text:
+            missing.append("defense-in-depth terminal error event")
+        if "_schedule_agent_build" not in create_text or '"lazy"' not in create_text:
+            missing.append("lazy session.create readiness contract")
+        if '"session.info"' not in build_text or "ready.set()" not in build_text:
+            missing.append("deferred agent-ready session.info edge")
+        for marker in (
+            'SESSION_NOT_OWNED = "SESSION_NOT_OWNED"',
+            "PER_SESSION_EXCLUSIVE_SUBMIT = True",
+            "already has a live owner",
+            "Only one surface at a time may run a session",
+        ):
+            if marker not in active_text:
+                missing.append(marker)
+        if missing:
+            raise ValueError("exclusive submit contract missing: " + ", ".join(missing))
+        return CheckResult(
+            contract,
+            True,
+            (
+                prompt_methods.evidence(submit, "prompt.submit refuses ownership conflicts before turn start"),
+                session_methods.evidence(create, "session.create advertises a lazy deferred build"),
+                server.evidence(build, "deferred build emits session.info before setting ready"),
+                server.evidence(run_submit, "synthesized turns recheck ownership and emit terminal error"),
+                f"{ACTIVE_SESSIONS}: SESSION_NOT_OWNED and canonical holder-aware message",
+            ),
+        )
+    except ValueError as exc:
+        return CheckResult(contract, False, (), str(exc))
+
+
 def load_requirements(manifest: Path | None) -> tuple[str, ...]:
     if manifest is None:
         return ALL_CONTRACTS
@@ -433,8 +490,10 @@ def load_requirements(manifest: Path | None) -> tuple[str, ...]:
 def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
     server = SourceFile(root, SERVER)
     methods = SourceFile(root, SESSION_METHODS)
+    prompt_methods = SourceFile(root, PROMPT_METHODS)
+    active_sessions = SourceFile(root, ACTIVE_SESSIONS)
     api = SourceFile(root, API_SERVER)
-    source_files = (server, methods, api)
+    source_files = (server, methods, prompt_methods, active_sessions, api)
     fork_hits = [
         f"{source.relative}:{marker}"
         for source in source_files
@@ -450,6 +509,9 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         SESSION_ACTIVATE: lambda: _check_activate(server, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
         SESSION_ACTIVE_LIST: lambda: _check_active_list(server, methods),
+        SESSION_EXCLUSIVE_SUBMIT: lambda: _check_session_exclusive_submit(
+            server, methods, prompt_methods, active_sessions,
+        ),
         SUBAGENT_CHILD_WATCH: lambda: _check_subagent_child_watch(server, methods),
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }

@@ -14,7 +14,7 @@ contract test (Plan C).
 ## Working rules
 
 - One branch off `dev`: `feature/upstream-relay-isolation`. Conventional Commits, one logical
-  commit per step. `--no-ff` PR into `dev` at the end. Update `DEVLOG.md`.
+  commit per step. `--no-ff` PR into `dev` at the end. Update `docs/project/DEVLOG.md`.
 - Do **NOT** run a full gradle assemble or `adb install` (on-device builds are Bailey's via
   Android Studio). DO verify with `./gradlew lint` and focused unit tests.
 - If the real code contradicts this plan, **stop and report** rather than guessing.
@@ -85,7 +85,7 @@ renamed/removed routes, misses only runtime-auth regressions. Note the tradeoff 
 
 ## Acceptance
 
-- ADR in `docs/decisions.md`; `DEVLOG.md` updated.
+- ADR in `docs/decisions.md`; `docs/project/DEVLOG.md` updated.
 - `network/` split into `upstream|relay|shared`; all imports updated; `./gradlew lint` clean.
 - `ArchitectureBoundaryTest` exists, is in the CI explicit `--tests` list, and passes.
 - Contract job exists, runs without the bootstrap, asserts route existence on pinned vanilla

@@ -196,7 +196,8 @@ class GatewayEventMapper(
 
             "tool.start" -> {
                 clearActivityStatuses()
-                val name = payload.string("name") ?: "unknown"
+                val identity = payload.effectiveToolIdentity()
+                val name = identity.name
                 // A pending generating placeholder for this name is adopted
                 // (consumed FIFO) whether or not the server sent a real id.
                 val adopted = generatingIdsByName[name]?.removeFirstOrNull()
@@ -208,7 +209,7 @@ class GatewayEventMapper(
                     }
                     else -> syntheticToolId(name)
                 }
-                val argsPreview = payload?.get("args")
+                val argsPreview = identity.argsPreview ?: payload?.get("args")
                     ?.takeUnless { it is JsonPrimitive && it.contentOrNull.isNullOrBlank() }
                     ?.toString()
                     ?.takeIf { it.isNotBlank() && it != "null" }
@@ -220,7 +221,7 @@ class GatewayEventMapper(
 
             "tool.complete" -> {
                 clearActivityStatuses()
-                val name = payload.string("name") ?: "unknown"
+                val name = payload.effectiveToolIdentity().name
                 val toolId = payload.string("tool_id")
                     ?: openSyntheticIdsByName[name]?.removeFirstOrNull()
                     ?: return
@@ -279,7 +280,12 @@ class GatewayEventMapper(
 
             "error" -> {
                 turnEnded = true
-                callbacks.onError(payload.string("message") ?: "Gateway error")
+                val message = payload.string("message") ?: "Gateway error"
+                if (isSessionOwnershipRejection(message)) {
+                    callbacks.onSubmitRejected(message)
+                } else {
+                    callbacks.onError(message)
+                }
             }
 
             "subagent.spawn_requested", "subagent.start", "subagent.thinking", "subagent.tool",
@@ -469,6 +475,19 @@ class GatewayEventMapper(
         private const val MAX_MOA_REFERENCE_CHARS = 16_000
         private val OUTPUT_RISK_LEVELS = setOf("low", "medium", "high", "critical")
         private val TERMINAL_EVENTS = setOf("message.complete", "error")
+
+        /**
+         * Isolated-turn paths can acknowledge `prompt.submit` and then emit
+         * the ownership refusal as a plain terminal `error` event. That event
+         * has no JSON-RPC code or structured reason, so match both stable
+         * clauses from upstream's canonical message.
+         */
+        internal fun isSessionOwnershipRejection(message: String): Boolean {
+            val normalized = message.lowercase()
+            return "already has a live owner (" in normalized &&
+                "only one surface at a time may run a session" in normalized
+        }
+
         internal fun isFailedMoaReference(text: String): Boolean {
             val normalized = text.trimStart().lowercase()
             return normalized.startsWith("[failed:") || normalized.startsWith("[skipped:")
@@ -608,6 +627,34 @@ class GatewayEventMapper(
 private const val MAX_CLARIFY_CHOICES = 4
 private const val SUDO_TIMEOUT_SECONDS = 120
 private const val SECRET_TIMEOUT_SECONDS = 300
+
+private data class GatewayToolIdentity(
+    val name: String,
+    val argsPreview: String?,
+)
+
+/**
+ * Older Tool Search gateways can expose the model-visible `tool_call` bridge
+ * instead of the effective tool identity that current upstream callbacks use.
+ * Unwrap only the bridge's explicit structured `{name, arguments}` envelope;
+ * never infer a tool from prompt text or result content.
+ */
+private fun JsonObject?.effectiveToolIdentity(): GatewayToolIdentity {
+    val outerName = string("name") ?: "unknown"
+    val outerArgs = this?.get("args") as? JsonObject
+    if (outerName != "tool_call" || outerArgs == null) {
+        return GatewayToolIdentity(outerName, null)
+    }
+    val effectiveName = outerArgs.string("name")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: return GatewayToolIdentity(outerName, null)
+    val effectiveArgs = outerArgs["arguments"]
+        ?.takeUnless { it is JsonPrimitive && it.contentOrNull.isNullOrBlank() }
+        ?.toString()
+        ?.takeIf { it.isNotBlank() && it != "null" }
+    return GatewayToolIdentity(effectiveName, effectiveArgs)
+}
 
 private fun JsonObject?.string(key: String): String? =
     (this?.get(key) as? JsonPrimitive)?.contentOrNull

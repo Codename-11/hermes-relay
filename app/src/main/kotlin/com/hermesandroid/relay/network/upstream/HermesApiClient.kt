@@ -726,10 +726,10 @@ class HermesApiClient(
 
     suspend fun getMessages(
         sessionId: String,
-        mode: SessionMessageLoadMode = SessionMessageLoadMode.COMPLETE,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
     ): List<MessageItem> = withContext(Dispatchers.IO) {
         loadSessionMessages(mode) { page ->
-            runCatching {
+            try {
                 val url = "$baseUrl/api/sessions/$sessionId/messages".toHttpUrlOrNull()
                     ?.newBuilder()
                     ?.addQueryParameter("limit", page.limit.toString())
@@ -740,14 +740,20 @@ class HermesApiClient(
                 val request = authRequest(url.toString()).get().build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) error("HTTP ${response.code}")
-                    val body = response.body?.string() ?: error("empty response body")
+                    val body = response.body.readUtf8Bounded(
+                        DashboardApiClient.MAX_JSON_RESPONSE_BYTES,
+                    )
                     val parsed = json.decodeFromString<MessageListResponse>(body)
                     SessionMessagePage(
                         messages = parsed.data ?: parsed.items ?: parsed.messages ?: emptyList(),
                         pagination = parsed.pagination,
                         payloadChars = body.length,
                     )
-                }
+                }.let { Result.success(it) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
             }
         }.getOrElse { error ->
             if (error is CancellationException) throw error

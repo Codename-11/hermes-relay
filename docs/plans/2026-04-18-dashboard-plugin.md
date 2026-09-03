@@ -310,7 +310,7 @@ Add option (A) to R3's acceptance criteria: `handle_sessions_list` gains a loopb
 
 **Root-level:**
 - `CHANGELOG.md` — new `[Unreleased]` entry under `### Added`: "Dashboard plugin with four tabs: Relay Management, Bridge Activity, Push Console (stub), Media Inspector" + brief bullet list of the three new relay routes.
-- `DEVLOG.md` — session entry for 2026-04-18 dashboard plugin work: Context, Decision summary, Implementation notes (one-liner per wave), Deferred (push console needs FCM).
+- `docs/project/DEVLOG.md` — session entry for 2026-04-18 dashboard plugin work: Context, Decision summary, Implementation notes (one-liner per wave), Deferred (push console needs FCM).
 - `README.md` — add one line under Quick Start mentioning the dashboard tab becomes available after gateway restart.
 - `CLAUDE.md` — add `plugin/dashboard/` to Repository Layout; add four Key Files entries for the dashboard plugin (manifest.json, plugin_api.py, src/index.jsx, dist/index.js one-liners).
 

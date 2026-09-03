@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.hermesandroid.relay.ui.components.ChangelogStore
+import com.hermesandroid.relay.ui.components.ChangelogVersion
 import com.hermesandroid.relay.ui.components.WhatsNewToast
 import com.hermesandroid.relay.ui.components.WhatsNewToastContent
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
@@ -38,10 +39,12 @@ class WhatsNewToastScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun compactNoticeRemainsClearAtLargeText() {
+        lateinit var latest: ChangelogVersion
         compose.setContent {
             val context = LocalContext.current
             val density = LocalDensity.current
             val entry = ChangelogStore.load(context).versions.first()
+            latest = entry
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.35f)) {
                 HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                     Box(
@@ -61,12 +64,12 @@ class WhatsNewToastScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries").assertExists()
-        compose.onNodeWithText("Also: 2 improvements · 9 fixes").assertExists()
-        compose.onNodeWithText(
-            "See which features need Relay, Read the complete release record…",
-        ).assertExists()
-        compose.onNodeWithText("View all").assertExists()
+        compose.onNodeWithText(requireNotNull(latest.title)).assertExists()
+        latest.visibleDigest()?.let { digest ->
+            compose.onNodeWithText("Also: ${digest.countText()}").assertExists()
+            compose.onNodeWithText(digest.preview.joinToString(", ") + "…").assertExists()
+            compose.onNodeWithText("View all").assertExists()
+        }
         compose.onNodeWithContentDescription("Close").assertExists()
         compose.onRoot().captureRoboImage("build/ui-regression/whats-new-toast-large-text.png")
     }
@@ -74,8 +77,10 @@ class WhatsNewToastScreenshotTest {
     @Test fun exposesExpandAndCloseActions() {
         var expanded = false
         var dismissed = false
+        lateinit var latest: ChangelogVersion
         compose.setContent {
             val entry = ChangelogStore.load(LocalContext.current).versions.first()
+            latest = entry
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 WhatsNewToastContent(
                     entry = entry,
@@ -86,9 +91,12 @@ class WhatsNewToastScreenshotTest {
             }
         }
 
-        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries").performClick()
-        expanded = false
-        compose.onNodeWithText("View all").performClick()
+        compose.onNodeWithText(requireNotNull(latest.title)).performClick()
+        assertTrue(expanded)
+        latest.visibleDigest()?.let {
+            expanded = false
+            compose.onNodeWithText("View all").performClick()
+        }
         compose.onNodeWithContentDescription("Close").performClick()
 
         assertTrue(expanded)
@@ -97,8 +105,10 @@ class WhatsNewToastScreenshotTest {
 
     @Test fun horizontalSwipeDismissesTheNotice() {
         var dismissed = false
+        lateinit var latest: ChangelogVersion
         compose.mainClock.autoAdvance = false
         compose.setContent {
+            latest = ChangelogStore.load(LocalContext.current).versions.first()
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
                 WhatsNewToast(
                     onDismiss = { dismissed = true },
@@ -108,10 +118,29 @@ class WhatsNewToastScreenshotTest {
             }
         }
         compose.mainClock.advanceTimeBy(300L)
-        compose.onNodeWithText("Standard Hermes first, with clearer Relay boundaries")
+        compose.onNodeWithText(requireNotNull(latest.title))
             .performTouchInput { swipeLeft(durationMillis = 300L) }
         compose.mainClock.advanceTimeBy(300L)
 
         assertTrue(dismissed)
     }
+
+    private fun com.hermesandroid.relay.ui.components.ChangelogToastDigest.countText(): String =
+        buildList {
+            if (additionalFeatureCount > 0) {
+                add("$additionalFeatureCount additional ${if (additionalFeatureCount == 1) "feature" else "features"}")
+            }
+            if (improvementCount > 0) {
+                add("$improvementCount ${if (improvementCount == 1) "improvement" else "improvements"}")
+            }
+            if (fixCount > 0) {
+                add("$fixCount ${if (fixCount == 1) "fix" else "fixes"}")
+            }
+        }.joinToString(" · ")
+
+    private fun ChangelogVersion.visibleDigest():
+        com.hermesandroid.relay.ui.components.ChangelogToastDigest? =
+        resolvedToastDigest()?.takeIf {
+            it.additionalFeatureCount > 0 || it.improvementCount > 0 || it.fixCount > 0
+        }
 }

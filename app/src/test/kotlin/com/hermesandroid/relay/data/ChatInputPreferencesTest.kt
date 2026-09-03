@@ -16,6 +16,26 @@ import org.junit.Test
 class ChatInputPreferencesTest {
 
     @Test
+    fun `busy action defaults to correction and is shared after repository recreation`() = runTest {
+        val store = InMemoryChatInputDataStore()
+        val repository = ChatInputPreferencesRepository(store)
+        assertEquals(BusyMessageAction.CorrectNow, repository.busyMessageAction.first())
+        repository.setBusyMessageAction(BusyMessageAction.QueueNext)
+        assertEquals(BusyMessageAction.QueueNext, ChatInputPreferencesRepository(store).busyMessageAction.first())
+        assertEquals(BusyMessageAction.CorrectNow, BusyMessageAction.fromStoredValue("unknown"))
+    }
+
+    @Test
+    fun `correction availability rejects attachments blocked input compaction and slash commands`() {
+        assertEquals(true, canCorrectBusyMessage(true, false, false, null, "Correct this"))
+        assertEquals(false, canCorrectBusyMessage(false, false, false, null, "Correct this"))
+        assertEquals(false, canCorrectBusyMessage(true, true, false, null, "Correct this"))
+        assertEquals(false, canCorrectBusyMessage(true, false, true, null, "Correct this"))
+        assertEquals(false, canCorrectBusyMessage(true, false, false, "Compacting context", "Correct this"))
+        assertEquals(false, canCorrectBusyMessage(true, false, false, null, "/model next"))
+    }
+
+    @Test
     fun `large paste conversion defaults on and round trips`() = runTest {
         val store = InMemoryChatInputDataStore()
         val repository = ChatInputPreferencesRepository(store)

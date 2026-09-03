@@ -72,7 +72,7 @@ internal suspend fun loadSessionMessages(
         Result.success(collected)
     } catch (error: CancellationException) {
         throw error
-    } catch (error: Throwable) {
+    } catch (error: Exception) {
         Result.failure(error)
     }
 }

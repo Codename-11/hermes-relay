@@ -267,7 +267,7 @@ not require an API endpoint or API bearer when dashboard chat is ready.
 
 ### 12. Android as a Hermes Platform/Channel — "Threads" (Shipped 2026-06-28; unified-session model 2026-06-29)
 
-> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in TODO.md.
+> **Status (2026-08-12):** SHIPPED as the `phone` platform plugin (`plugin/phone_platform.py`) — registered via `ctx.register_platform` with **no fork** (the ~16-file upstream change sketched below was avoided; the original research predates the open plugin-platform registry). Two-way reply is device-verified. Agent-facing entry is `send_message target=phone` (the stale `target=mobile:<device_id>` syntax below is superseded); standalone cron delivery uses the registered sender, and the adapter publishes its canonical home destination through upstream's channel directory. Live cron certification remains tracked in docs/project/TODO.md.
 >
 > **Decision (2026-06-29) — unified-session "Threads", not a separate surface:** the proactive agent↔phone conversation is **not** a separate app lane/tab/segment. It is a **source-tagged session inside the one Chat surface** — a **Thread** (`source=phone`). The three things distinguishing a Thread from a normal gateway chat are *session properties*, not a separate UI: (a) the agent can initiate a turn, (b) it rides the relay `proactive` transport and is relay-gated, (c) it's a standing/named DM. **Scrollback = the gateway session store** (same read path Chat uses); **live receive = the relay `proactive` push** (→ notification); **send = `proactive.reply`**. The local `ProactiveInboxStore` is demoted to a live-push cache + outbox (no parallel history). The Thread capability is surfaced in the **connection best-path/capability UI** (a relay-tier capability, like terminal/bridge/voice) and as a clean **Threads** entry (thread-spool icon, NOT a phone glyph) pinned atop the session drawer when active — never a connection-wizard step. Degrades cleanly: no relay plugin → no `source=phone` sessions → Chat is unchanged (standard-path-safe). This **supersedes the earlier "separate Agent lane / 4th nav segment" sketch** and folds in the "show chat source/platform attribution in Chat" goal in one stroke.
 >
@@ -3240,7 +3240,7 @@ escalation remains reserved and reports disabled. The optional driver is not
 bundled or updated by Hermes-Relay, and Hermes forces driver telemetry off for
 every child process it starts. The legacy engine remains the default and the
 fail-closed fallback while the live Windows acceptance and remaining scope,
-redaction, and grant-bridge hardening gates tracked in `TODO.md` stay open.
+redaction, and grant-bridge hardening gates tracked in `docs/project/TODO.md` stay open.
 
 **Second-phase refinement (2026-08-13).** CUA is the preferred/default setting
 for new structured-control sessions; the original Windows input path is named
@@ -3743,7 +3743,7 @@ the session, duplicate submission, wrong-session events, or an arbitrary timer.
 Normal terminal delivery is unchanged, queued turns retain their existing
 ownership, Relay remains optional, and unmodified upstream compatibility is
 preserved. Physical certification across the reported device/network matrix
-remains tracked in `TODO.md`.
+remains tracked in `docs/project/TODO.md`.
 
 ---
 
@@ -4118,7 +4118,7 @@ visible without mislabeling their parent turn. Older Gateways remain usable
 but show Unavailable when no exact local terminal truth exists. Declarative
 Gateway scenarios cover all four upstream states, complete-snapshot
 disappearance, client-side profile isolation, and method-not-found; physical
-and current-host certification remains tracked in `TODO.md`. An upstream
+and current-host certification remains tracked in `docs/project/TODO.md`. An upstream
 profile field/filter or explicitly owned aggregate activity route would remove
 the remaining ambiguity for multi-profile clients.
 
@@ -4226,6 +4226,12 @@ longer current.
   hidden-source exclusions server-side. Near-end scrolling appends subsequent
   50-row `offset` pages under the same owner/generation; older rows never block
   the first-open critical path.
+- Routine transcript open, restore, and post-turn reconciliation request one
+  latest 500-row page, matching the rows Android can retain. Complete
+  oldest-first pagination is reserved for positional recovery that proves it
+  needs older anchors. Each Dashboard JSON response is rejected above the
+  Android byte limit before parsing, and aggregate complete reads retain their
+  independent row/payload ceilings.
 - A refresh over existing rows is quiet. The exact connection/profile cache
   remains visible until authoritative replacement rows arrive. An uncached
   profile may show loading, but a failed read never means "no sessions."
@@ -4304,3 +4310,95 @@ API-only/headless clients, compatibility testing, and existing API records, but
 they are no longer automatic recovery for standard Chat. Users retry or sign in
 without losing local work, named profiles cannot cross databases silently, and
 readiness reflects the conversation that will actually receive the next turn.
+
+---
+
+## ADR 72 — Plugin and CLI+UI release tags are approval-created
+
+**Status:** Accepted (2026-09-01).
+
+**Context.** Plugin and CLI+UI tag workflows correctly rejected stable tags
+outside `main` and prerelease tags outside `dev`, but that validation occurred
+only after an operator pushed the tag. The CLI+UI release recipe also told
+operators to tag a prerelease from `main`, contradicting the canonical branch
+contract. A rejected tag therefore left a failed check on an otherwise healthy
+release commit and required destructive tag recovery before publication.
+
+**Decision.** The normal Plugin and CLI+UI release path validates first and
+creates the tag second. A single manual approval workflow:
+
+- always runs the trusted workflow definition from `main`, then selects the
+  exact `origin/main` tip for stable versions or `origin/dev` for prereleases;
+- verifies the surface-owned version metadata and matching changelog heading;
+- refuses an existing tag, then creates the exact `server-v*` or `desktop-v*`
+  ref at the validated commit; and
+- dispatches the trusted release workflow from `main`, whose jobs explicitly
+  check out and revalidate that immutable tag.
+
+Direct tag pushes remain a recovery path and retain the same fail-closed
+metadata and branch-containment checks. Approval does not weaken release tests,
+change stable/prerelease source branches, or combine the independently
+versioned Plugin and CLI+UI artifacts.
+
+**Consequences.** Routine releases cannot create a known-invalid tag before
+discovering a branch mismatch. A tag created with `GITHUB_TOKEN` does not
+recursively trigger Actions, so approval explicitly dispatches the release
+workflow and the release workflow supports both tag-push and approved-dispatch
+events. The workflow must exist on `main` before the approval surface is used.
+
+**Key files:**
+
+- `.github/workflows/approve-release-extensions.yml`
+- `.github/workflows/release-plugin.yml`
+- `.github/workflows/release-cli.yml`
+- `RELEASE.md`
+
+---
+
+## ADR 73 — Release promotion reuses immutable exact-tree evidence
+
+**Status:** Accepted (2026-09-01).
+
+**Context.** A coordinated release previously compiled Android up to four
+times: local release verification, release-prep PR CI, private Play preflight,
+and public tag publication. The canonical `dev` to `main` PR also repeated the
+same path-aware matrix even when its synthetic merge produced the exact Git
+tree already tested before integration. Rebuilding identical source increased
+elapsed time without adding byte-level provenance.
+
+**Decision.** Release evidence is content-addressed by Git tree and promoted
+only through immutable GitHub Actions artifacts.
+
+- Play preflight is the one stable Android signing/build authority. It stores
+  the exact signed sideload APK, Play AAB, both R8 mappings, a manifest with
+  version/commit/tree/size/hash metadata, and checksums for public assets.
+- Stable Android publication downloads that artifact by immutable ID, verifies
+  its successful trusted workflow run and full manifest, reruns package-level
+  DEX/native checks, promotes the existing Play draft, and publishes the same
+  APK/AAB bytes. Prerelease candidates retain their independent build path.
+- Every successful Required-checks run stores a small tree-keyed proof after
+  all selected jobs pass. A canonical `dev` to `main` PR may reuse it only when
+  the simulated merge tree equals the `dev` tree exactly. Missing proof or any
+  content change automatically runs the ordinary matrix.
+- Local Android release iteration runs metadata and release-presentation tests;
+  exact pushed commits still require CI and Play preflight.
+- A coordinated approval workflow dispatches independently validated surface
+  approvals concurrently; it does not combine tags or artifact contracts.
+- Trusted desktop CI and the CLI+UI release workflow share a lockfile- and
+  exact-source-keyed Rust/Tauri target cache. Release tags may restore the
+  default branch's exact build state; cache misses retain the full build path.
+
+**Consequences.** Stable Android bytes are built once, evidence reuse fails
+closed on tree or hash drift, and release PRs avoid duplicate work without
+weakening branch protection. Actions artifact retention becomes part of the
+release window: expired evidence causes a safe rebuild/fallback, never an
+approval bypass.
+
+**Key files:**
+
+- `.github/workflows/play-preflight-android.yml`
+- `.github/workflows/release-android.yml`
+- `.github/workflows/ci-required.yml`
+- `.github/workflows/approve-release-train.yml`
+- `scripts/android_release_artifacts.py`
+- `scripts/android-prepush.py`

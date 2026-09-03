@@ -23,18 +23,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Close
@@ -44,10 +52,11 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -71,7 +80,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -81,6 +92,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.hermesandroid.relay.data.ChatMessage
@@ -92,7 +104,9 @@ import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.LocalAgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.LocalBackgroundVisualizationEnabled
 import com.hermesandroid.relay.ui.LocalSnackbarHost
+import com.hermesandroid.relay.ui.chatResponsiveLayout
 import com.hermesandroid.relay.ui.showHumanError
+import com.hermesandroid.relay.ui.useSplitVoiceLayout
 import com.hermesandroid.relay.util.HumanError
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.viewmodel.BackgroundRunPhase
@@ -112,6 +126,8 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 
 internal const val VOICE_MODE_MIC_TEST_TAG = "voiceModeMic"
+internal const val VOICE_FOCUS_SPLIT_LAYOUT_TEST_TAG = "voiceFocusSplitLayout"
+internal const val VOICE_FOCUS_STACKED_LAYOUT_TEST_TAG = "voiceFocusStackedLayout"
 
 /**
  * Full-screen voice-mode overlay. Renders the MorphingSphere in its voiceMode
@@ -135,8 +151,7 @@ fun VoiceModeOverlay(
     onModeChange: (InteractionMode) -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
-    // Nullable so existing call sites compile; when wired, voice errors
-    // surface as global snackbars in addition to the inline banner below.
+    // Retained for callers; uiState.error owns the modal while voice is visible.
     errorEvents: SharedFlow<HumanError>? = null,
     // === PHASE3-voice-mode-transcript ===
     // Compact rolling transcript of the last N chat messages — the
@@ -186,6 +201,56 @@ fun VoiceModeOverlay(
     val backgroundVisualizationEnabled = LocalBackgroundVisualizationEnabled.current
     val surface = MaterialTheme.colorScheme.surface
     val haptic = LocalHapticFeedback.current
+    val configuration = LocalConfiguration.current
+    val responsiveLayout = chatResponsiveLayout(configuration.screenWidthDp)
+    val splitFocusLayout = useSplitVoiceLayout(
+        screenWidthDp = configuration.screenWidthDp,
+        screenHeightDp = configuration.screenHeightDp,
+    )
+
+    val focusMicTap: () -> Unit = {
+        dispatchVoiceMicTap(
+            uiState = uiState,
+            onStartListening = {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                } catch (_: Exception) { /* ignore */ }
+                onMicTap()
+            },
+            onStopListening = {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                } catch (_: Exception) { /* ignore */ }
+                onMicRelease()
+            },
+            onInterrupt = onInterrupt,
+            onPauseAutoMode = onPauseAutoMode,
+        )
+    }
+    val focusMicHoldPress: () -> Unit = {
+        dispatchVoiceMicHoldPress(
+            uiState = uiState,
+            onStartListening = {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                } catch (_: Exception) { /* ignore */ }
+                onMicTap()
+            },
+            onInterruptAndStart = {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                } catch (_: Exception) { /* ignore */ }
+                onInterrupt()
+                onMicTap()
+            },
+        )
+    }
+    val focusMicHoldRelease: () -> Unit = {
+        try {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        } catch (_: Exception) { /* ignore */ }
+        onMicRelease()
+    }
 
     var controlsExpanded by remember { mutableStateOf(false) }
     val focusMode = presentationMode == VoicePresentationMode.Focus
@@ -195,7 +260,7 @@ fun VoiceModeOverlay(
         )
     }
 
-    // Voice errors surface ONLY on the overlay's own inline top banner
+    // Voice errors surface ONLY in the overlay's dialog
     // (uiState.error) while the overlay is up — we deliberately do NOT also pipe
     // them to the app-wide bottom snackbar. Doing both duplicated the message
     // and left a retry-only, un-dismissable toast at the bottom during long /
@@ -253,6 +318,11 @@ fun VoiceModeOverlay(
                 onOpenSettings = onOpenSettings,
                 onExit = onDismiss,
                 modifier = Modifier
+                    .then(
+                        responsiveLayout.focusVoiceMaxWidth?.let {
+                            Modifier.widthIn(max = it)
+                        } ?: Modifier,
+                    )
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -328,162 +398,93 @@ fun VoiceModeOverlay(
             exit = fadeOut(tween(120)),
             modifier = Modifier.fillMaxSize(),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 92.dp, bottom = 160.dp, start = 20.dp, end = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1.0f),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (backgroundVisualizationEnabled) {
-                        LocalAgentAvatar.current.Render(
-                            state = AvatarRenderState(
-                                state = voiceStateToSphereState(uiState.state),
-                                voiceAmplitude = uiState.amplitude,
-                                voiceMode = true,
-                            ),
-                            modifier = Modifier.fillMaxSize(),
+                if (splitFocusLayout) {
+                    Row(
+                        modifier = Modifier
+                            .widthIn(max = responsiveLayout.focusVoiceMaxWidth ?: 1120.dp)
+                            .fillMaxSize()
+                            .navigationBarsPadding()
+                            .padding(top = 92.dp, bottom = 28.dp, start = 32.dp, end = 32.dp)
+                            .testTag(VOICE_FOCUS_SPLIT_LAYOUT_TEST_TAG),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        VoiceFocusIdentityPane(
+                            uiState = uiState,
+                            backgroundVisualizationEnabled = backgroundVisualizationEnabled,
+                            onMicTap = focusMicTap,
+                            onMicHoldPress = focusMicHoldPress,
+                            onMicHoldRelease = focusMicHoldRelease,
+                            showMic = true,
+                            modifier = Modifier
+                                .weight(0.86f)
+                                .fillMaxHeight(),
+                        )
+                        Spacer(Modifier.width(32.dp))
+                        VoiceFocusStatusAndTranscriptPane(
+                            uiState = uiState,
+                            transcriptMessages = visibleTranscriptMessages,
+                            pendingTranscriptText = pendingTranscriptText,
+                            transcriptListState = transcriptListState,
+                            showThinking = showThinking,
+                            onBackgroundRunCancel = onBackgroundRunCancel,
+                            onBackgroundRunTap = onBackgroundRunTap,
+                            onPermissionDeniedChipTap = onPermissionDeniedChipTap,
+                            onHermesConfirmationAnswer = onHermesConfirmationAnswer,
+                            onPresentationModeChange = onPresentationModeChange,
+                            onCardAction = onCardAction,
+                            onCardInput = onCardInput,
+                            horizontalContentPadding = 0.dp,
+                            modifier = Modifier
+                                .weight(1.14f)
+                                .fillMaxHeight(),
                         )
                     }
-                }
-
-                VoiceWaveform(
-                    amplitude = uiState.amplitude,
-                    state = uiState.state,
-                    outputAudioActive = uiState.outputAudioActive,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp, vertical = 8.dp),
-                )
-
-                AnimatedVisibility(
-                    visible = uiState.handoffStatus != null,
-                    enter = fadeIn(tween(140)),
-                    exit = fadeOut(tween(180)),
-                ) {
-                    VoiceHandoffStrip(
-                        status = uiState.handoffStatus,
+                } else {
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 4.dp),
-                    )
-                }
-
-                BackgroundRunChip(
-                    run = uiState.backgroundRun,
-                    onCancel = onBackgroundRunCancel,
-                    onTap = onBackgroundRunTap,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 4.dp),
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                DestructiveCountdownRow(
-                    countdown = uiState.destructiveCountdown,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                )
-
-                PermissionDeniedChip(
-                    callout = uiState.permissionDeniedCallout,
-                    onTap = onPermissionDeniedChipTap,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 4.dp),
-                )
-
-                HermesConfirmationCard(
-                    confirmation = uiState.hermesConfirmation,
-                    onAnswer = onHermesConfirmationAnswer,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 4.dp),
-                )
-
-                Spacer(Modifier.height(4.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1.25f, fill = true),
-                ) {
-                    val hasTranscript = visibleTranscriptMessages.isNotEmpty() ||
-                        pendingTranscriptText != null
-                    if (hasTranscript) {
-                        val latestId = visibleTranscriptMessages.lastOrNull()?.id
-                        LazyColumn(
-                            state = transcriptListState,
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            // Match ChatScreen's identity contract. A history
-                            // reconcile can adopt the same authoritative server
-                            // id into a live row while Compose still holds the
-                            // pre-reconcile row for a frame. uiKey remains stable
-                            // and unique across that transition.
-                            items(visibleTranscriptMessages, key = ::voiceTranscriptItemKey) { msg ->
-                                CompactTranscriptRow(
-                                    message = msg,
-                                    showThinking = showThinking,
-                                    expanded = msg.id == latestId || msg.isStreaming,
-                                    onViewConversation = {
-                                        onPresentationModeChange(VoicePresentationMode.Conversation)
-                                    },
-                                    onCardAction = onCardAction,
-                                    onCardInput = onCardInput,
-                                )
-                            }
-                            if (pendingTranscriptText != null) {
-                                item(key = "aux:pending-voice-transcript") {
-                                    CompactTranscriptRow(
-                                        message = ChatMessage(
-                                            id = "pending-voice-transcript",
-                                            role = MessageRole.USER,
-                                            content = pendingTranscriptText,
-                                            timestamp = System.currentTimeMillis(),
-                                            isStreaming = true,
-                                        ),
-                                        showThinking = showThinking,
-                                        expanded = true,
-                                        onViewConversation = {
-                                            onPresentationModeChange(VoicePresentationMode.Conversation)
-                                        },
-                                        onCardAction = onCardAction,
-                                        onCardInput = onCardInput,
-                                    )
-                                }
-                            }
-                            item { Spacer(Modifier.height(12.dp)) }
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            AnimatedContent(
-                                targetState = stateHint(uiState.state),
-                                transitionSpec = {
-                                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-                                },
-                                label = "stateHint",
-                            ) { hint ->
-                                Text(
-                                    text = hint,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
+                            .then(
+                                responsiveLayout.focusVoiceMaxWidth?.let {
+                                    Modifier.widthIn(max = it)
+                                } ?: Modifier,
+                            )
+                            .fillMaxSize()
+                            .padding(top = 92.dp, bottom = 160.dp, start = 20.dp, end = 20.dp)
+                            .testTag(VOICE_FOCUS_STACKED_LAYOUT_TEST_TAG),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        VoiceFocusIdentityPane(
+                            uiState = uiState,
+                            backgroundVisualizationEnabled = backgroundVisualizationEnabled,
+                            onMicTap = focusMicTap,
+                            onMicHoldPress = focusMicHoldPress,
+                            onMicHoldRelease = focusMicHoldRelease,
+                            showMic = false,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        )
+                        VoiceFocusStatusAndTranscriptPane(
+                            uiState = uiState,
+                            transcriptMessages = visibleTranscriptMessages,
+                            pendingTranscriptText = pendingTranscriptText,
+                            transcriptListState = transcriptListState,
+                            showThinking = showThinking,
+                            onBackgroundRunCancel = onBackgroundRunCancel,
+                            onBackgroundRunTap = onBackgroundRunTap,
+                            onPermissionDeniedChipTap = onPermissionDeniedChipTap,
+                            onHermesConfirmationAnswer = onHermesConfirmationAnswer,
+                            onPresentationModeChange = onPresentationModeChange,
+                            onCardAction = onCardAction,
+                            onCardInput = onCardInput,
+                            horizontalContentPadding = 24.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1.25f),
+                        )
                     }
                 }
             }
@@ -498,6 +499,12 @@ fun VoiceModeOverlay(
             exit = fadeOut(tween(180)),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .then(
+                    responsiveLayout.chromeMaxWidth?.let {
+                        Modifier.widthIn(max = it)
+                    } ?: Modifier,
+                )
+                .fillMaxWidth()
                 .padding(bottom = 176.dp, start = 24.dp, end = 24.dp),
         ) {
             BackgroundRunChip(
@@ -508,53 +515,15 @@ fun VoiceModeOverlay(
             )
         }
 
-        // Error banner
-        AnimatedVisibility(
-            visible = uiState.error != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 64.dp, start = 16.dp, end = 16.dp),
-        ) {
-            Surface(
-                shape = appearanceRoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                tonalElevation = 2.dp,
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = uiState.error.orEmpty(),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Dismiss clears the error and returns to Idle without
-                    // retrying, so a failed/timed-out turn never traps the user
-                    // on a retry-only banner.
-                    TextButton(onClick = { onClearError() }) {
-                        Text(stringResource(R.string.common_dismiss))
-                    }
-                    TextButton(
-                        onClick = {
-                            onClearError()
-                            onMicTap()
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Text(stringResource(R.string.voice_overlay_retry))
-                    }
-                }
-            }
+        uiState.error?.let { error ->
+            VoiceErrorDialog(
+                error = error,
+                onDismiss = onClearError,
+                onRetry = {
+                    onClearError()
+                    onMicTap()
+                },
+            )
         }
 
         // Mic button — dispatch by current voice state.
@@ -570,54 +539,256 @@ fun VoiceModeOverlay(
         // that visually said "Stop" but was actually wired to "Start."
         VoiceMicButton(
             uiState = uiState,
-            onTap = {
-                dispatchVoiceMicTap(
-                    uiState = uiState,
-                    onStartListening = {
-                        try {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        } catch (_: Exception) { /* ignore */ }
-                        onMicTap()
-                    },
-                    onStopListening = {
-                        try {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        } catch (_: Exception) { /* ignore */ }
-                        onMicRelease()
-                    },
-                    onInterrupt = onInterrupt,
-                    onPauseAutoMode = onPauseAutoMode,
-                )
-            },
-            onHoldPress = {
-                dispatchVoiceMicHoldPress(
-                    uiState = uiState,
-                    onStartListening = {
-                        try {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        } catch (_: Exception) { /* ignore */ }
-                        onMicTap()
-                    },
-                    onInterruptAndStart = {
-                        try {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        } catch (_: Exception) { /* ignore */ }
-                        onInterrupt()
-                        onMicTap()
-                    },
-                )
-            },
-            onHoldRelease = {
-                try {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                } catch (_: Exception) { /* ignore */ }
-                onMicRelease()
-            },
+            onTap = focusMicTap,
+            onHoldPress = focusMicHoldPress,
+            onHoldRelease = focusMicHoldRelease,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 48.dp),
-            visible = focusMode,
+            visible = focusMode && !splitFocusLayout,
         )
+    }
+}
+
+@Composable
+private fun VoiceErrorDialog(
+    error: String,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(error) { keyboard?.hide() }
+
+    // Match ChatFailureDetailsDialog: keep provider detail selectable and inside
+    // a bounded surface, with actions outside the scroll area. A real dialog
+    // owns focus and blocks the underlying chat in both voice presentations.
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text(stringResource(R.string.voice_overlay_error_title)) },
+        text = {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = MaterialTheme.shapes.small,
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.voice_overlay_retry))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_dismiss))
+            }
+        },
+    )
+}
+
+@Composable
+private fun VoiceFocusIdentityPane(
+    uiState: VoiceUiState,
+    backgroundVisualizationEnabled: Boolean,
+    onMicTap: () -> Unit,
+    onMicHoldPress: () -> Unit,
+    onMicHoldRelease: () -> Unit,
+    showMic: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.testTag("voiceFocusIdentityPane"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (backgroundVisualizationEnabled) {
+                LocalAgentAvatar.current.Render(
+                    state = AvatarRenderState(
+                        state = voiceStateToSphereState(uiState.state),
+                        voiceAmplitude = uiState.amplitude,
+                        voiceMode = true,
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        VoiceWaveform(
+            amplitude = uiState.amplitude,
+            state = uiState.state,
+            outputAudioActive = uiState.outputAudioActive,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        if (showMic) {
+            Spacer(Modifier.height(16.dp))
+            VoiceMicButton(
+                uiState = uiState,
+                onTap = onMicTap,
+                onHoldPress = onMicHoldPress,
+                onHoldRelease = onMicHoldRelease,
+                visible = true,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun VoiceFocusStatusAndTranscriptPane(
+    uiState: VoiceUiState,
+    transcriptMessages: List<ChatMessage>,
+    pendingTranscriptText: String?,
+    transcriptListState: LazyListState,
+    showThinking: Boolean,
+    onBackgroundRunCancel: () -> Unit,
+    onBackgroundRunTap: () -> Unit,
+    onPermissionDeniedChipTap: (PermissionDeniedCallout) -> Unit,
+    onHermesConfirmationAnswer: (String) -> Unit,
+    onPresentationModeChange: (VoicePresentationMode) -> Unit,
+    onCardAction: (messageId: String, cardKey: String, action: HermesCardAction) -> Unit,
+    onCardInput: (messageId: String, cardKey: String, value: String) -> Unit,
+    horizontalContentPadding: Dp,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.testTag("voiceFocusTranscriptPane")) {
+        AnimatedVisibility(
+            visible = uiState.handoffStatus != null,
+            enter = fadeIn(tween(140)),
+            exit = fadeOut(tween(180)),
+        ) {
+            VoiceHandoffStrip(
+                status = uiState.handoffStatus,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalContentPadding, vertical = 4.dp),
+            )
+        }
+        BackgroundRunChip(
+            run = uiState.backgroundRun,
+            onCancel = onBackgroundRunCancel,
+            onTap = onBackgroundRunTap,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = horizontalContentPadding, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        DestructiveCountdownRow(
+            countdown = uiState.destructiveCountdown,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = horizontalContentPadding),
+        )
+        PermissionDeniedChip(
+            callout = uiState.permissionDeniedCallout,
+            onTap = onPermissionDeniedChipTap,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = horizontalContentPadding, vertical = 4.dp),
+        )
+        HermesConfirmationCard(
+            confirmation = uiState.hermesConfirmation,
+            onAnswer = onHermesConfirmationAnswer,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = horizontalContentPadding, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = true),
+        ) {
+            val hasTranscript = transcriptMessages.isNotEmpty() || pendingTranscriptText != null
+            if (hasTranscript) {
+                val latestId = transcriptMessages.lastOrNull()?.id
+                LazyColumn(
+                    state = transcriptListState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    // uiKey remains stable while Gateway reconciliation adopts
+                    // an authoritative server id into a live transcript row.
+                    items(transcriptMessages, key = ::voiceTranscriptItemKey) { msg ->
+                        CompactTranscriptRow(
+                            message = msg,
+                            showThinking = showThinking,
+                            expanded = msg.id == latestId || msg.isStreaming,
+                            onViewConversation = {
+                                onPresentationModeChange(VoicePresentationMode.Conversation)
+                            },
+                            onCardAction = onCardAction,
+                            onCardInput = onCardInput,
+                        )
+                    }
+                    if (pendingTranscriptText != null) {
+                        item(key = "aux:pending-voice-transcript") {
+                            CompactTranscriptRow(
+                                message = ChatMessage(
+                                    id = "pending-voice-transcript",
+                                    role = MessageRole.USER,
+                                    content = pendingTranscriptText,
+                                    timestamp = System.currentTimeMillis(),
+                                    isStreaming = true,
+                                ),
+                                showThinking = showThinking,
+                                expanded = true,
+                                onViewConversation = {
+                                    onPresentationModeChange(VoicePresentationMode.Conversation)
+                                },
+                                onCardAction = onCardAction,
+                                onCardInput = onCardInput,
+                            )
+                        }
+                    }
+                    item { Spacer(Modifier.height(12.dp)) }
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AnimatedContent(
+                        targetState = stateHint(uiState.state),
+                        transitionSpec = {
+                            fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                        },
+                        label = "stateHint",
+                    ) { hint ->
+                        Text(
+                            text = hint,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

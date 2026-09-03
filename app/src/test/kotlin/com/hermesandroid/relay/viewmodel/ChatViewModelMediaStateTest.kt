@@ -11,6 +11,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.util.MediaCacheWriter
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.OkHttpClient
@@ -25,6 +26,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -52,7 +54,9 @@ class ChatViewModelMediaStateTest {
             pairedTokenSnapshot = { "paired-session" },
         )
         cache = mockk()
-        coEvery { cache.cache(any(), any(), any()) } returns
+        coEvery { cache.cache(any<ByteArray>(), any(), any()) } returns
+            Uri.parse("content://com.axiomlabs.hermesrelay.fileprovider/hermes-media/photo.jpg")
+        coEvery { cache.cache(any<File>(), any(), any()) } returns
             Uri.parse("content://com.axiomlabs.hermesrelay.fileprovider/hermes-media/photo.jpg")
         handler = ChatHandler()
         viewModel = ChatViewModel().also {
@@ -197,6 +201,8 @@ class ChatViewModelMediaStateTest {
         }.attachments.single()
         assertEquals("audio/mpeg", loaded.contentType)
         assertEquals("test-voice-message.mp3", loaded.fileName)
+        coVerify(exactly = 1) { cache.cache(any<File>(), "audio/mpeg", "test-voice-message.mp3") }
+        coVerify(exactly = 0) { cache.cache(any<ByteArray>(), any(), any()) }
         val request = dashboardServer.takeRequest()
         assertEquals("/api/files/download", request.requestUrl?.encodedPath)
         assertEquals(path, request.requestUrl?.queryParameter("path"))

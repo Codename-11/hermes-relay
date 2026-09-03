@@ -34,7 +34,7 @@
 
 ## Integration sequence
 
-1. Update ROADMAP.md with the alpha.6 scope + deferred items.
+1. Update docs/project/ROADMAP.md with the alpha.6 scope + deferred items.
 2. Launch 6 parallel agents (A–F) with isolated file ownership.
 3. I integrate cli.ts + desktop_tool.py after all agents report.
 4. Expand `npm run smoke` to cover new subcommands.

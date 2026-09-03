@@ -73,7 +73,7 @@ fun MarkdownContent(
     modifier: Modifier = Modifier
 ) {
     ConfiguredMarkdownContent(
-        content = content,
+        content = markdownRenderWindow(content),
         textColor = textColor,
         modifier = modifier,
     )
@@ -318,7 +318,7 @@ fun StreamingMarkdownContent(
     var generation by remember { mutableIntStateOf(0) }
     key(generation) {
         NativeStreamingMarkdownGeneration(
-            content = content.withoutLeadingBlankLines(),
+            content = markdownRenderWindow(content.withoutLeadingBlankLines()),
             textColor = textColor,
             modifier = modifier,
             onResetRequired = { generation += 1 },
@@ -352,6 +352,17 @@ private fun NativeStreamingMarkdownGeneration(
         modifier = modifier,
     )
 }
+
+internal const val MAX_RENDERED_MARKDOWN_CHARS = 256_000
+private const val MARKDOWN_TRUNCATION_NOTICE =
+    "\n\n---\n_Response display was shortened for Android memory safety._"
+
+internal fun markdownRenderWindow(content: String): String =
+    if (content.length <= MAX_RENDERED_MARKDOWN_CHARS) {
+        content
+    } else {
+        content.take(MAX_RENDERED_MARKDOWN_CHARS) + MARKDOWN_TRUNCATION_NOTICE
+    }
 
 internal data class StreamingMarkdownAppendPlan(
     val resetRequired: Boolean,

@@ -1,5 +1,9 @@
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.data.BusyMessageAction
+import com.hermesandroid.relay.data.canCorrectBusyMessage
+import com.hermesandroid.relay.ui.components.ChatComposerLayers
+import com.hermesandroid.relay.ui.components.ChatMessageQueue
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +62,7 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.ChatViewModel
@@ -84,24 +89,28 @@ fun BotChatScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
-    BotChatScreen(
-        route = route,
-        bot = bot,
-        sessionId = sessionId,
-        gatewayClient = gatewayClient,
-        dashboardClient = dashboardClient,
-        chatViewModel = chatViewModel,
-        onBack = onBack,
-        handlerFactory = ::ChatHandler,
-        historyLoader = { profileName, storedSessionId, mode ->
-            dashboardClient.getSessionMessages(
-                sessionId = storedSessionId,
-                profile = profileName,
-                mode = mode,
-            )
-        },
-        profileIconFlow = connectionViewModel::profileIconFlow,
-    )
+    val busyMessageAction by connectionViewModel.busyMessageAction.collectAsState()
+    ChatMediaViewerHost(route.key, sessionId) {
+        BotChatScreen(
+            route = route,
+            bot = bot,
+            sessionId = sessionId,
+            gatewayClient = gatewayClient,
+            dashboardClient = dashboardClient,
+            chatViewModel = chatViewModel,
+            onBack = onBack,
+            handlerFactory = ::ChatHandler,
+            historyLoader = { profileName, storedSessionId, mode ->
+                dashboardClient.getSessionMessages(
+                    sessionId = storedSessionId,
+                    profile = profileName,
+                    mode = mode,
+                )
+            },
+            profileIconFlow = connectionViewModel::profileIconFlow,
+            busyMessageAction = busyMessageAction,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +126,7 @@ internal fun BotChatScreen(
     handlerFactory: () -> ChatHandler,
     historyLoader: BotChatHistoryLoader,
     profileIconFlow: BotChatProfileIconFlow,
+    busyMessageAction: BusyMessageAction = BusyMessageAction.CorrectNow,
 ) {
     val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
@@ -133,6 +143,21 @@ internal fun BotChatScreen(
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
     var composer by remember(route.key, sessionId) { mutableStateOf("") }
+    var editingQueuedMessage by remember(route.key, sessionId) { mutableStateOf(false) }
+    var busyActionOverride by remember(route.key, sessionId, busyMessageAction) {
+        mutableStateOf<BusyMessageAction?>(null)
+    }
+    val steerable by chatViewModel.steerableTurn.collectAsState()
+    val attachments by chatViewModel.pendingAttachments.collectAsState()
+    val pendingAsk by chatViewModel.pendingAsk.collectAsState()
+    val turnStatus by handler.turnStatus.collectAsState()
+    val queue by chatViewModel.queuedMessages.collectAsState()
+    val queuePaused by chatViewModel.queuePaused.collectAsState()
+    val correctionAvailable = canCorrectBusyMessage(
+        steerable, attachments.isNotEmpty(), pendingAsk != null, turnStatus, composer,
+    )
+    val effectiveBusyAction = if (correctionAvailable && !editingQueuedMessage) busyActionOverride ?: busyMessageAction
+        else BusyMessageAction.QueueNext
 
     DisposableEffect(chatViewModel, gatewayClient, dashboardClient, route.key) {
         chatViewModel.initialize(apiClient = null, chatHandler = handler)
@@ -234,48 +259,81 @@ internal fun BotChatScreen(
             )
         },
         bottomBar = {
+            ChatComposerLayers(
+                action = effectiveBusyAction.takeIf { isStreaming },
+                onActionChange = {
+                    editingQueuedMessage = false
+                    busyActionOverride = it
+                },
+                correctionAvailable = correctionAvailable,
+                onStop = if (composer.isNotBlank()) chatViewModel::cancelStream else null,
+                modifier = Modifier.imePadding(),
+            ) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
-                modifier = Modifier.imePadding(),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    OutlinedTextField(
-                        value = composer,
-                        onValueChange = { composer = it },
-                        placeholder = { Text(stringResource(R.string.chat_placeholder_message)) },
-                        modifier = Modifier.weight(1f),
-                        minLines = 1,
-                        maxLines = 6,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    IconButton(
-                        onClick = {
-                            if (isStreaming) {
-                                chatViewModel.cancelStream()
-                            } else {
-                                val text = composer.trim()
-                                if (text.isNotEmpty()) {
-                                    composer = ""
-                                    chatViewModel.sendMessage(text)
-                                }
+                Column {
+                    ChatMessageQueue(
+                        messages = queue,
+                        paused = queuePaused,
+                        onResume = chatViewModel::resumeQueue,
+                        onClear = chatViewModel::clearQueue,
+                        onRemove = chatViewModel::removeQueuedAt,
+                        canEdit = composer.isBlank() && attachments.isEmpty(),
+                        onEdit = { index ->
+                            chatViewModel.takeQueuedForEdit(index)?.let {
+                                composer = it
+                                editingQueuedMessage = true
                             }
                         },
-                        enabled = isStreaming || composer.isNotBlank(),
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Bottom,
                     ) {
-                        Icon(
-                            if (isStreaming) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(
-                                if (isStreaming) R.string.chat_input_stop_streaming
-                                else R.string.chat_input_send_message,
-                            ),
+                        OutlinedTextField(
+                            value = composer,
+                            onValueChange = { composer = it },
+                            placeholder = { Text(stringResource(R.string.chat_placeholder_message)) },
+                            modifier = Modifier.weight(1f),
+                            minLines = 1,
+                            maxLines = 6,
                         )
+                        Spacer(Modifier.width(6.dp))
+                        IconButton(
+                            onClick = {
+                                if (isStreaming && composer.isBlank()) {
+                                    chatViewModel.cancelStream()
+                                } else {
+                                    val text = composer.trim()
+                                    if (text.isNotEmpty()) {
+                                        composer = ""
+                                        chatViewModel.sendMessage(text, effectiveBusyAction)
+                                        editingQueuedMessage = false
+                                        busyActionOverride = null
+                                    }
+                                }
+                            },
+                            enabled = isStreaming || composer.isNotBlank(),
+                        ) {
+                            Icon(
+                                if (isStreaming && composer.isBlank()) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(
+                                    when {
+                                        isStreaming && composer.isBlank() -> R.string.chat_input_stop_streaming
+                                        isStreaming && effectiveBusyAction == BusyMessageAction.CorrectNow -> R.string.chat_correct_now
+                                        isStreaming -> R.string.chat_queue_next
+                                        else -> R.string.chat_input_send_message
+                                    },
+                                ),
+                            )
+                        }
                     }
                 }
+            }
             }
         },
     ) { padding ->

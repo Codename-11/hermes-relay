@@ -30,7 +30,7 @@ class HermesApiClientTest {
             server.enqueue(apiMessagePageResponse(start = 500, count = 1, returned = 1))
 
             val messages = HermesApiClient(server.url("/").toString(), "test-key")
-                .getMessages("sess-a")
+                .getMessages("sess-a", SessionMessageLoadMode.COMPLETE)
 
             val first = server.takeRequest().requestUrl!!
             val second = server.takeRequest().requestUrl!!
