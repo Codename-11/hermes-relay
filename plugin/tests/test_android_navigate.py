@@ -34,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from plugin.tools import android_navigate as nav  # noqa: E402
+from plugin.tools import android_tool  # noqa: E402
 from plugin.tools.android_navigate_prompt import (  # noqa: E402
     ParsedAction,
     VALID_ACTIONS,
@@ -239,6 +240,39 @@ class TestBuildPrompt(unittest.TestCase):
 
 def _mk_screenshot(token: str = "hermes-relay://fake-token") -> nav._Screenshot:
     return nav._Screenshot(token=token, local_path="/tmp/fake.jpg")
+
+
+class TestSharedBridgeTransport(unittest.TestCase):
+    def test_uses_the_canonical_unified_relay_config(self) -> None:
+        self.assertIs(nav._bridge_request, android_tool._bridge_request)
+        with mock.patch.dict(
+            os.environ,
+            {"ANDROID_BRIDGE_URL": "", "ANDROID_BRIDGE_TIMEOUT": "30"},
+        ):
+            os.environ.pop("ANDROID_BRIDGE_URL")
+            self.assertEqual(android_tool._bridge_url(), "http://localhost:8767")
+
+    def test_get_uses_android_tool_bridge_transport(self) -> None:
+        response = mock.Mock()
+        response.json.return_value = {"ok": True}
+        with mock.patch.object(
+            nav, "_bridge_request", return_value=response
+        ) as request:
+            self.assertEqual(nav._get("/screen"), {"ok": True})
+        request.assert_called_once_with("GET", "/screen", timeout=5.0)
+        response.raise_for_status.assert_called_once_with()
+
+    def test_post_uses_android_tool_bridge_transport(self) -> None:
+        response = mock.Mock()
+        response.json.return_value = {"ok": True}
+        with mock.patch.object(
+            nav, "_bridge_request", return_value=response
+        ) as request:
+            self.assertEqual(nav._post("/tap", {"x": 1, "y": 2}), {"ok": True})
+        request.assert_called_once_with(
+            "POST", "/tap", json={"x": 1, "y": 2}, timeout=5.0
+        )
+        response.raise_for_status.assert_called_once_with()
 
 
 class TestNavigateLoop(unittest.TestCase):

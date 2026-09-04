@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **`android_*` tools resolve bridge credentials written after host startup.** Requests retry profile-scoped env and active bridge-session credentials after a stale token is rejected, and vision navigation now shares the same current Relay transport instead of the retired standalone default.
+- **`android_setup` accepts both its canonical and legacy schema keys.** `bridge_session_token` and `pairing_code` are accepted, while a missing token returns a structured error.
+- **Android tool setup tests use a temporary Hermes home.** Test runs no longer write bridge settings into a developer environment.
+
 ## [Android 1.15.1] - 2026-09-02
 
 ### Changed
