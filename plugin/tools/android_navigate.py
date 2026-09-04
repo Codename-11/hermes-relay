@@ -31,41 +31,19 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Optional
-
-import requests
+from typing import Any, Callable
 
 from .android_navigate_prompt import ParsedAction, build_prompt, parse_response
+from .android_tool import _bridge_request, _timeout
 
 logger = logging.getLogger("hermes_relay.tools.android_navigate")
 
 # ── Config (shared with android_tool.py conventions) ─────────────────────────
 
 
-def _bridge_url() -> str:
-    return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8766")
-
-
-def _bridge_token() -> Optional[str]:
-    return os.getenv("ANDROID_BRIDGE_TOKEN")
-
-
-def _timeout() -> float:
-    return float(os.getenv("ANDROID_BRIDGE_TIMEOUT", "30"))
-
-
-def _auth_headers() -> dict:
-    token = _bridge_token()
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
-
-
 def _check_requirements() -> bool:
     try:
-        r = requests.get(
-            f"{_bridge_url()}/ping", headers=_auth_headers(), timeout=2
-        )
+        r = _bridge_request("GET", "/ping", timeout=2)
         if r.status_code == 200:
             data = r.json()
             return data.get("phone_connected", False) or data.get(
@@ -77,18 +55,16 @@ def _check_requirements() -> bool:
 
 
 def _get(path: str) -> dict:
-    r = requests.get(
-        f"{_bridge_url()}{path}", headers=_auth_headers(), timeout=_timeout()
-    )
+    r = _bridge_request("GET", path, timeout=_timeout())
     r.raise_for_status()
     return r.json()
 
 
 def _post(path: str, payload: dict) -> dict:
-    r = requests.post(
-        f"{_bridge_url()}{path}",
+    r = _bridge_request(
+        "POST",
+        path,
         json=payload,
-        headers=_auth_headers(),
         timeout=_timeout(),
     )
     r.raise_for_status()

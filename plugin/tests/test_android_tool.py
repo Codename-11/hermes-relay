@@ -1,5 +1,7 @@
 import json
 import os
+import sys
+import time
 from pathlib import Path
 from unittest import mock
 import responses
@@ -334,11 +336,16 @@ class TestSetup:
         (fake_home / ".hermes").mkdir(parents=True)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
         monkeypatch.setenv("HERMES_HOME", str(fake_home / ".hermes"))
+        monkeypatch.setitem(
+            sys.modules,
+            "hermes_constants",
+            mock.Mock(get_hermes_home=lambda: fake_home / ".hermes"),
+        )
         monkeypatch.delenv("ANDROID_BRIDGE_TOKEN", raising=False)
         monkeypatch.delenv("ANDROID_BRIDGE_URL", raising=False)
-        android_tool._token_cache = (0.0, None)
+        android_tool._reset_token_cache()
         yield
-        android_tool._token_cache = (0.0, None)
+        android_tool._reset_token_cache()
 
     @responses.activate
     def test_setup_saves_config(self, monkeypatch):
@@ -350,6 +357,9 @@ class TestSetup:
         # Config should be saved regardless of relay import
         assert os.environ.get("ANDROID_BRIDGE_TOKEN") == "ABC123"
         assert "localhost" in os.environ.get("ANDROID_BRIDGE_URL", "")
+        assert "ANDROID_BRIDGE_TOKEN=ABC123" in (
+            Path(os.environ["HERMES_HOME"]) / ".env"
+        ).read_text()
 
     @responses.activate
     def test_setup_accepts_legacy_pairing_code_kwarg(self, monkeypatch):
@@ -389,12 +399,12 @@ class TestBridgeTokenResolution:
 
     def _clear(self, monkeypatch):
         monkeypatch.delenv("ANDROID_BRIDGE_TOKEN", raising=False)
-        android_tool._token_cache = (0.0, None)
+        android_tool._reset_token_cache()
 
     def test_env_var_wins(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         monkeypatch.setenv("ANDROID_BRIDGE_TOKEN", "from-env")
-        android_tool._token_cache = (0.0, None)
+        android_tool._reset_token_cache()
         (tmp_path / ".env").write_text("ANDROID_BRIDGE_TOKEN=from-file\n")
         assert android_tool._bridge_token() == "from-env"
 
@@ -412,8 +422,18 @@ class TestBridgeTokenResolution:
         (tmp_path / "hermes-relay-sessions.json").write_text(
             json.dumps({
                 "sessions": [
-                    {"token": "older", "last_seen": 1.0},
-                    {"token": "newest", "last_seen": 2.0},
+                    {
+                        "token": "older",
+                        "last_seen": 1.0,
+                        "expires_at": "never",
+                        "grants": {"bridge": "never"},
+                    },
+                    {
+                        "token": "newest",
+                        "last_seen": 2.0,
+                        "expires_at": "never",
+                        "grants": {"bridge": "never"},
+                    },
                 ]
             })
         )
@@ -431,3 +451,124 @@ class TestBridgeTokenResolution:
         assert android_tool._auth_headers() == {
             "Authorization": "Bearer hdr-token"
         }
+
+    def test_uses_request_scoped_profile_home(self, monkeypatch, tmp_path):
+        launch_home = tmp_path / "launch"
+        profile_home = tmp_path / "profile"
+        launch_home.mkdir()
+        profile_home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(launch_home))
+        monkeypatch.setenv("ANDROID_BRIDGE_TOKEN", "launch-token")
+        monkeypatch.setitem(
+            sys.modules,
+            "hermes_constants",
+            mock.Mock(get_hermes_home=lambda: profile_home),
+        )
+        (profile_home / ".env").write_text("ANDROID_BRIDGE_TOKEN=profile-token\n")
+        android_tool._reset_token_cache()
+        assert android_tool._bridge_token() == "profile-token"
+
+    def test_cache_is_scoped_to_profile_home(self, monkeypatch, tmp_path):
+        active_home = tmp_path / "one"
+        active_home.mkdir()
+        monkeypatch.delenv("ANDROID_BRIDGE_TOKEN", raising=False)
+        monkeypatch.setitem(
+            sys.modules,
+            "hermes_constants",
+            mock.Mock(get_hermes_home=lambda: active_home),
+        )
+        (active_home / ".env").write_text("ANDROID_BRIDGE_TOKEN=one\n")
+        android_tool._reset_token_cache()
+        accepted = mock.Mock(status_code=200)
+        with mock.patch.object(android_tool.requests, "get", return_value=accepted):
+            android_tool._bridge_request("GET", "/ping")
+        assert android_tool._token_cache[active_home][1] == "one"
+
+        active_home = tmp_path / "two"
+        active_home.mkdir()
+        (active_home / ".env").write_text("ANDROID_BRIDGE_TOKEN=two\n")
+        assert android_tool._bridge_token() == "two"
+
+    def test_skips_expired_or_ungranted_sessions(self, monkeypatch, tmp_path):
+        now = time.time()
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        self._clear(monkeypatch)
+        (tmp_path / "hermes-relay-sessions.json").write_text(json.dumps({
+            "sessions": [
+                {
+                    "token": "valid",
+                    "last_seen": 1.0,
+                    "expires_at": now + 60,
+                    "grants": {"bridge": now + 60},
+                },
+                {
+                    "token": "newer-expired-session",
+                    "last_seen": 2.0,
+                    "expires_at": now - 1,
+                    "grants": {"bridge": now + 60},
+                },
+                {
+                    "token": "newer-expired-bridge",
+                    "last_seen": 3.0,
+                    "expires_at": now + 60,
+                    "grants": {"bridge": now - 1},
+                },
+                {
+                    "token": "newest-no-bridge",
+                    "last_seen": 4.0,
+                    "expires_at": now + 60,
+                    "grants": {},
+                },
+            ]
+        }))
+        assert android_tool._bridge_token() == "valid"
+
+    def test_auth_denial_retries_disk_token_and_caches_success(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("ANDROID_BRIDGE_TOKEN", "startup-stale")
+        (tmp_path / ".env").write_text("ANDROID_BRIDGE_TOKEN=rotated-live\n")
+        android_tool._reset_token_cache()
+        denied = mock.Mock(status_code=401)
+        accepted = mock.Mock(status_code=200)
+        with mock.patch.object(
+            android_tool.requests,
+            "get",
+            side_effect=[denied, accepted],
+        ) as request:
+            response = android_tool._bridge_request("GET", "/ping")
+        assert response.status_code == 200
+        assert request.call_args_list[0].kwargs["headers"]["Authorization"] == (
+            "Bearer startup-stale"
+        )
+        assert request.call_args_list[1].kwargs["headers"]["Authorization"] == (
+            "Bearer rotated-live"
+        )
+        assert android_tool._bridge_token() == "rotated-live"
+
+    def test_auth_denial_stops_after_distinct_candidates(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("ANDROID_BRIDGE_TOKEN", "startup-stale")
+        (tmp_path / ".env").write_text("ANDROID_BRIDGE_TOKEN=file-stale\n")
+        now = time.time()
+        (tmp_path / "hermes-relay-sessions.json").write_text(json.dumps({
+            "sessions": [{
+                "token": "session-stale",
+                "last_seen": now,
+                "expires_at": now + 60,
+                "grants": {"bridge": now + 60},
+            }]
+        }))
+        android_tool._reset_token_cache()
+        denied = mock.Mock(status_code=401)
+        with mock.patch.object(
+            android_tool.requests,
+            "get",
+            return_value=denied,
+        ) as request:
+            response = android_tool._bridge_request("GET", "/ping")
+        assert response is denied
+        assert request.call_count == 3
