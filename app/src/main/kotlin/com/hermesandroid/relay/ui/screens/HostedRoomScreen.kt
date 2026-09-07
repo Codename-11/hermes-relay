@@ -137,7 +137,7 @@ fun HostedRoomContent(
                 DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; onRefresh() })
                 DropdownMenuItem(text = { Text("Room settings") }, onClick = { menu = false; onManage() })
                 DropdownMenuItem(text = { Text("Shared files") }, enabled = "groups.attachment.list" in state.capabilities.methods, onClick = { menu = false; onFiles() })
-                DropdownMenuItem(text = { Text("Export canonical history") }, enabled = state.ready, onClick = { menu = false; onExport() })
+                DropdownMenuItem(text = { Column { Text("Export immutable source log"); Text("Original edited/deleted content is retained.", style = MaterialTheme.typography.bodySmall) } }, enabled = state.ready, onClick = { menu = false; onExport() })
             }
         }) },
         bottomBar = {
@@ -173,8 +173,14 @@ fun HostedRoomContent(
         }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                Text("${state.room?.route?.connectionLabel.orEmpty()} | ${state.unread} unread in this view", style = MaterialTheme.typography.labelMedium)
-                Row { TextButton(onClick = onRead) { Text("Mark read") }
+                val readSummary = when {
+                    !state.capabilities.sharedRead -> "${state.unread} unread (local-only)"
+                    state.serverUnread != null -> "${state.serverUnread} unread (shared)"
+                    else -> "Shared read state unavailable"
+                }
+                Text("${state.room?.route?.connectionLabel.orEmpty()} | $readSummary", style = MaterialTheme.typography.labelMedium)
+                state.readError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Row { TextButton(onClick = onRead, enabled = state.ready && !state.busy) { Text(if (state.capabilities.sharedRead) "Mark read" else "Mark read (local-only)") }
                     TextButton(onClick = { onAction(null, null) }, enabled = state.ready && state.capabilities.driver && "groups.stop" in state.capabilities.methods) { Text("Stop whole room") } }
                 if (state.status.isNotEmpty()) {
                     val summary = when { state.status.roomBool("blocked") -> "Blocked"; state.status.roomBool("working") -> "Working"; state.status.roomBool("running") -> "Idle"; else -> "Driver unavailable" }

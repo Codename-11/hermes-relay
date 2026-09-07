@@ -86,6 +86,34 @@ class HostedRoomScreenshotTest {
         capture("hosted-room-failed-member-dark")
     }
 
+    @Test fun exportClearlyIdentifiesImmutableSourceRetention() {
+        compose.setContent { HermesRelayTheme { HostedRoomContent(HostedRoomViewState(room = room, ready = true)) } }
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Export immutable source log").assertExists()
+        compose.onNodeWithText("Original edited/deleted content is retained.").assertExists()
+        capture("hosted-room-source-export")
+    }
+
+    @Test fun legacyReadTrackingIsExplicitlyLocalOnly() {
+        compose.setContent { HermesRelayTheme { HostedRoomContent(HostedRoomViewState(room = room, capabilities = capabilities, ready = true)) } }
+        compose.onNodeWithText("Local gateway | 3 unread (local-only)").assertExists()
+        compose.onNodeWithText("Mark read (local-only)").assertExists()
+    }
+
+    @Test fun negotiatedReadTruthNeverPresentsFallbackAsSharedSuccess() {
+        val shared = capabilities.copy(methods = capabilities.methods + setOf("groups.read.get", "groups.read.mark"), features = capabilities.features + "room_read_cursors_v1")
+        val current = androidx.compose.runtime.mutableStateOf(HostedRoomViewState(room = room, capabilities = shared, ready = true, serverUnread = 7))
+        compose.setContent { HermesRelayTheme { HostedRoomContent(current.value) } }
+        compose.onNodeWithText("Local gateway | 7 unread (shared)").assertExists()
+        compose.onNodeWithText("Mark read").assertIsEnabled()
+        capture("mobile-ui-final-shared-read")
+        compose.runOnIdle { current.value = current.value.copy(serverUnread = null, readError = "Reader service unavailable") }
+        compose.onNodeWithText("Local gateway | Shared read state unavailable").assertExists()
+        compose.onNodeWithText("Reader service unavailable").assertExists()
+        compose.onNodeWithText("Local gateway | 3 unread (shared)").assertDoesNotExist()
+        capture("mobile-ui-final-read-unavailable")
+    }
+
     private fun capture(name: String) {
         val output = File("build/ui-evidence/$name.png"); output.parentFile?.mkdirs()
         if (compose.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty()) compose.onNode(isDialog()).captureRoboImage(output.absolutePath)
