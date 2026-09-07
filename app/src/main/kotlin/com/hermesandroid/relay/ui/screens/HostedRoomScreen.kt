@@ -94,6 +94,10 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
         onThread = { scope.launch { controller.selectThread(it, room.key) } },
         onRefresh = { scope.launch { controller.refresh() } },
         onRead = { scope.launch { controller.markRead(room.key) } },
+        onSearch = { query, more, owner -> controller.searchMessages(query, more, owner) },
+        onEditMessage = { target, text -> controller.editMessage(target.message.id.orEmpty(), target.message.revision, text, target.roomKey) },
+        onDeleteMessage = { target -> controller.deleteMessage(target.message.id.orEmpty(), target.message.revision, target.roomKey) },
+        onReactMessage = { target, reaction, present -> controller.reactMessage(target.message.id.orEmpty(), reaction, present, target.roomKey) },
         onAction = { action, choice -> scope.launch { controller.act(action, choice, room.key) } },
         onAttach = { pickerOwner = room.key to state.selectedThread; picker.launch(arrayOf("*/*")) },
         onDiscard = { scope.launch { controller.discardDraft(room.key) } },
@@ -120,15 +124,24 @@ fun HostedRoomContent(
     onThread: (String?) -> Unit = {}, onRefresh: () -> Unit = {}, onRead: () -> Unit = {},
     onAction: (JsonObject?, String?) -> Unit = { _, _ -> }, onAttach: () -> Unit = {},
     onMention: ((String) -> Unit)? = null,
+    onSearch: suspend (String, Boolean, String?) -> Result<Unit> = { _, _, _ -> Result.success(Unit) },
+    onEditMessage: suspend (HostedMessageTarget, String) -> Result<Unit> = { _, _ -> Result.success(Unit) },
+    onDeleteMessage: suspend (HostedMessageTarget) -> Result<Unit> = { Result.success(Unit) },
+    onReactMessage: suspend (HostedMessageTarget, String, Boolean) -> Result<Unit> = { _, _, _ -> Result.success(Unit) },
     onManage: () -> Unit = {}, onFiles: () -> Unit = {}, onExport: () -> Unit = {},
     onDiscard: () -> Unit = {},
     onRemoveAttachment: (String) -> Unit = {}, onDownload: (String, JsonObject) -> Unit = { _, _ -> },
 ) {
-    var menu by remember { mutableStateOf(false) }
-    var search by remember(state.room?.key) { mutableStateOf("") }
+    var menu by remember(state.room?.key) { mutableStateOf(false) }
+    var messageAction by remember(state.room?.key) { mutableStateOf<HostedMessageTarget?>(null) }
+    var search by remember(state.room?.key, state.selectedThread) { mutableStateOf("") }
+    var searching by remember(state.room?.key, state.selectedThread) { mutableStateOf(false) }
+    var showSearch by remember(state.room?.key, state.selectedThread) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var confirmDiscard by remember(state.room?.key) { mutableStateOf(false) }
     var confirmRetry by remember(state.room?.key) { mutableStateOf<JsonObject?>(null) }
-    val messages = state.visibleMessages.filter { search.isBlank() || it.text.contains(search, true) || it.senderName.contains(search, true) }
+    val searchView = state.capabilities.searchable && showSearch && state.searchSnapshot != null
+    val messages = if (searchView) state.searchResults else state.visibleMessages.filter { state.capabilities.searchable || search.isBlank() || it.text.contains(search, true) || it.senderName.contains(search, true) }
     Scaffold(topBar = { TopAppBar(title = { Text(state.room?.name ?: "Shared room") },
         navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
         actions = {
@@ -137,7 +150,7 @@ fun HostedRoomContent(
                 DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; onRefresh() })
                 DropdownMenuItem(text = { Text("Room settings") }, onClick = { menu = false; onManage() })
                 DropdownMenuItem(text = { Text("Shared files") }, enabled = "groups.attachment.list" in state.capabilities.methods, onClick = { menu = false; onFiles() })
-                DropdownMenuItem(text = { Column { Text("Export immutable source log"); Text("Original edited/deleted content is retained.", style = MaterialTheme.typography.bodySmall) } }, enabled = state.ready, onClick = { menu = false; onExport() })
+                DropdownMenuItem(text = { Column { Text("Export immutable source log"); Text("Original edited/deleted content is retained.", style = MaterialTheme.typography.bodySmall) } }, enabled = state.ready && state.capabilities.rawExport, onClick = { menu = false; onExport() })
             }
         }) },
         bottomBar = {
@@ -195,7 +208,22 @@ fun HostedRoomContent(
                 }
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 state.operationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text("Search loaded history") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text(if (state.capabilities.searchable) "Search canonical history" else "Search loaded history") }, modifier = Modifier.fillMaxWidth())
+                if (state.capabilities.searchable) {
+                    Row {
+                        TextButton(enabled = state.ready && !searching && search.isNotBlank(), onClick = {
+                            val owner = state.room?.key; val query = search
+                            scope.launch { searching = true; onSearch(query, false, owner).onSuccess { showSearch = true }; searching = false }
+                        }) { Text("Search messages") }
+                        if (searchView) TextButton(onClick = { showSearch = false }) { Text("Current history") }
+                    }
+                    state.searchError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (searchView) {
+                        Text("Search results · snapshot ${state.searchSnapshot}", style = MaterialTheme.typography.titleSmall)
+                        Text("Pinned historical results for: ${state.searchQuery}. Return to current history to change a message.", style = MaterialTheme.typography.bodySmall)
+                        if (state.searchResults.isEmpty()) Text("No matching messages")
+                    }
+                }
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -247,13 +275,20 @@ fun HostedRoomContent(
                     if (payload.roomString("thread_id").isNotBlank()) TextButton(onClick = { onThread(payload.roomString("thread_id")) }) { Text("Open activity thread") }
                 } }
             }
+            if (searchView && state.searchHasMore) item {
+                TextButton(enabled = state.ready && !searching, onClick = {
+                    val owner = state.room?.key; val query = state.searchQuery
+                    scope.launch { searching = true; onSearch(query, true, owner); searching = false }
+                }) { Text("Load more results") }
+            }
             items(messages, key = { it.id ?: it.seq.toString() }) { message ->
                 Surface(tonalElevation = 1.dp, shape = MaterialTheme.shapes.medium) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         Text(message.senderName, style = MaterialTheme.typography.titleSmall)
                         Text("${message.senderKind} | ${message.senderId.orEmpty()}${message.senderSource?.let { " | $it" }.orEmpty()}", style = MaterialTheme.typography.labelSmall)
-                        Text(message.text)
-                        message.attachments.forEach { attachment ->
+                        Text(if (message.deleted) "Message deleted" else message.text)
+                        HostedMessageControls(state, message, searchView, { messageAction = it }, onReactMessage)
+                        (if (message.deleted) emptyList() else message.attachments).forEach { attachment ->
                             TextButton(enabled = state.ready && "groups.attachment.read" in state.capabilities.methods,
                                 onClick = { onDownload(message.id.orEmpty(), attachment) }) { Text("Save ${attachment.roomString("name")} | ${attachment.roomLong("size")} bytes") }
                         }
@@ -263,6 +298,7 @@ fun HostedRoomContent(
             }
         }
     }
+    messageAction?.let { target -> HostedMessageDialog(target, state, { messageAction = null }, onEditMessage, onDeleteMessage, onReactMessage) }
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Discard this local draft?") },
         text = { Text("The original send may already have been accepted. This only removes the local draft and retry record; canonical history is preserved.") },
         confirmButton = { TextButton(onClick = { confirmDiscard = false; onDiscard() }) { Text("Discard draft") } },
