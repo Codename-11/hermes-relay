@@ -1535,3 +1535,17 @@ Follow-ups:
   - `**attention` one-shot (only deferred behavior).** A reaction on notification arrival — needs a host event the avatar doesn't yet receive (unlike `greet`/`done`, which ride state transitions). Would plumb a notification edge into `AvatarRenderState` (or a side channel) + a `PetOneShot.Attention`. Low priority: the avatar is rarely on-screen when notifications land (backgrounded) — see the value analysis; revisit only if the avatar becomes an always-on surface (persistent overlay / Quest port).
   - **On-device verification (working + one-shots + intensity).** Use the normal Chat background visualization, which receives `toolCallBurst`, `streamingIntensity`, and state transitions. Confirm: a `working` clip swaps in during a tool run and releases ~600ms after (`WORKING_BURST_THRESHOLD` 0.5); a `done` clip plays once on reply completion then returns to idle; a `greet` clip plays once when the avatar appears; with `intensity:true`, a writing/working loop visibly quickens while streaming. Confirm each decoded clip swap holds the previous complete visual until the new state is ready.
 - **Undecodable-but-present image appears valid (audit 2026-06-19).** A file that exists but isn't a decodable image passes the loader's `isFile` check, so the pet shows in the picker but renders blank. Documented as a caveat; consider a cheap header sniff at load time if false-valid pets become a support issue.
+
+## Hosted-room Android follow-ups
+
+- Complete native-runtime and real media acceptance against the hosted-room upstream
+  dependency; Android fixture/emulator results do not prove vendor runtime delivery.
+- Add shared-room input responses, thread-local Stop, message edit/delete/reaction,
+  full-text host history search, shared read receipts and native tool/session activity
+  only after real room-scoped RPCs are available. Do not reuse unrelated session controls.
+- Extend local read/attention state to replay-deduplicated notification delivery and
+  cross-client read state when supported. Closed-app push is not part of current evidence.
+- Certify the document picker/save flow and lifecycle on a separately authorized
+  physical-device lane. Current acceptance uses isolated fixtures and an API 36 emulator.
+- Preserve the hosted-room prerequisite provenance when preparing an upstream submission;
+  see `docs/hosted-rooms-android.md` and the dependency-gated Gateway scenario manifest.

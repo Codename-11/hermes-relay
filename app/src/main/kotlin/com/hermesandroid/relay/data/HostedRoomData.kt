@@ -44,8 +44,8 @@ internal fun hostedMessage(event: JsonObject, room: BotGroupRoom): BotGroupMessa
     return BotGroupMessage(
         id = event.roomString("event_id"), seq = event.roomLong("seq"),
         senderId = id, senderKind = actor.roomString("kind"),
-        senderName = room.members.firstOrNull { it.memberId == id }?.name ?: id.ifBlank { "Unknown author" },
-        senderSource = actor.roomString("source").ifBlank { null },
+        senderName = room.members.firstOrNull { it.memberId == id }?.name ?: actor.roomString("display_name").ifBlank { id.ifBlank { "Unknown author" } },
+        senderSource = listOf(actor.roomString("profile"), actor.roomString("connection_id")).filter { it.isNotBlank() }.joinToString(" / ").ifBlank { null },
         threadId = payload.roomString("thread_id"), text = payload.roomString("text"),
         attachments = payload.roomObjects("attachments"),
         atMs = ((event["created_at"] as? JsonPrimitive)?.doubleOrNull?.times(1000))?.toLong() ?: 0L,

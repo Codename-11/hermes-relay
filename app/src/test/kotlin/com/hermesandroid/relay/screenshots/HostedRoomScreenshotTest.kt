@@ -1,11 +1,11 @@
 package com.hermesandroid.relay.screenshots
 
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.hermesandroid.relay.data.*
-import com.hermesandroid.relay.ui.screens.HostedRoomContent
+import com.hermesandroid.relay.ui.screens.*
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.connection.HostedRoomViewState
 import java.io.File
@@ -70,8 +70,25 @@ class HostedRoomScreenshotTest {
         capture("hosted-room-attention")
     }
 
+    @Test fun unavailableMemberAndCanonicalFailureHaveThreadScopedDetails() {
+        val status = Json.parseToJsonElement("""{"peer_routes":[{"member_id":"writer-1","status":"unavailable"}]}""") as JsonObject
+        val failure = Json.parseToJsonElement("""{"event_id":"failed-event","kind":"turn.failed","payload":{"member_id":"writer-1","thread_id":"thread-a","task_id":"task-failed","error":"Native worker is unavailable"}}""") as JsonObject
+        var opened: String? = null
+        compose.setContent { HermesRelayTheme(themePreference = "dark") {
+            HostedRoomContent(HostedRoomViewState(room = room.copy(messages = emptyList()), capabilities = capabilities, ready = true,
+                status = status, activity = listOf(failure)), onThread = { opened = it })
+        } }
+        compose.onNodeWithText("Writer: unavailable").assertExists()
+        compose.onNodeWithText("@writer").assertIsNotEnabled()
+        compose.onNodeWithText("Native worker is unavailable").assertExists()
+        compose.onNodeWithText("Open activity thread").performClick()
+        assertEquals("thread-a", opened)
+        capture("hosted-room-failed-member-dark")
+    }
+
     private fun capture(name: String) {
         val output = File("build/ui-evidence/$name.png"); output.parentFile?.mkdirs()
-        compose.onRoot().captureRoboImage(output.absolutePath)
+        if (compose.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty()) compose.onNode(isDialog()).captureRoboImage(output.absolutePath)
+        else compose.onRoot().captureRoboImage(output.absolutePath)
     }
 }

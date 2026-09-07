@@ -134,9 +134,18 @@ class BotModeController(
             val capabilities = lease.client.hostedRoomRpc("groups.capabilities").getOrNull()
                 ?.let(HostedRoomCapabilities::parse)
             if (capabilities != null && "groups.list" in capabilities.methods) {
-                lease.client.hostedRoomRpc("groups.list").map { page ->
+                runCatching {
+                    val rooms = mutableListOf<BotGroupRoom>()
+                    var offset = 0L
                     val route = BotGatewayRoute(BotGatewayRouteKey(connection.id, "default"), connection.label, installId)
-                    (legacy.getOrNull() ?: BotModeRoster()).copy(groups = page.roomObjects("rooms").map { hostedRoom(it, route) })
+                    do {
+                        val page = lease.client.hostedRoomRpc("groups.list", buildJsonObject { put("offset", offset); put("limit", 100) }).getOrThrow()
+                        rooms.addAll(page.roomObjects("rooms").map { hostedRoom(it, route) })
+                        val next = (page["next_offset"] as? JsonPrimitive)?.longOrNull
+                        check(next == null || next > offset) { "Room list cursor did not advance" }
+                        offset = next ?: -1L
+                    } while (offset >= 0)
+                    (legacy.getOrNull() ?: BotModeRoster()).copy(groups = rooms, hostedCapabilities = capabilities)
                 }
             } else legacy
         }
@@ -255,6 +264,26 @@ class BotModeController(
         return result
     }
 
+    suspend fun createRoom(connectionId: String, roomId: String, name: String, bots: List<BotRosterEntry>): Result<BotGroupRoom> = runCatching {
+        require(name.trim().isNotEmpty()) { "Enter a room name" }
+        require(bots.size in 2..6 && bots.map { it.profile.name }.distinct().size == bots.size) { "Choose two to six distinct members" }
+        require(bots.all { !it.stale && it.route?.connectionId == connectionId }) { "Choose available members from the same gateway" }
+        val connection = connections.value.firstOrNull { it.id == connectionId } ?: error("Gateway removed")
+        val route = BotGatewayRoute(BotGatewayRouteKey(connectionId, "default"), connection.label)
+        acquireGateway(route).getOrThrow().use { lease ->
+            val capabilities = HostedRoomCapabilities.parse(lease.client.hostedRoomRpc("groups.capabilities").getOrThrow())
+            check(capabilities.driver && "groups.create" in capabilities.methods) { "Room creation is unavailable on this gateway" }
+            val response = lease.client.hostedRoomRpc("groups.create", buildJsonObject {
+                put("room_id", roomId); put("name", name.trim())
+                put("members", JsonArray(bots.map { bot -> buildJsonObject {
+                    put("member_id", java.util.UUID.nameUUIDFromBytes("$roomId:${bot.profile.name}".toByteArray(Charsets.UTF_8)).toString())
+                    put("profile", bot.profile.name); put("handle", handleSlug(bot.profile.name)); put("display_name", bot.displayName)
+                } }))
+            }).getOrThrow()
+            hostedRoom(response["room"] as? JsonObject ?: error("Missing room receipt"), route)
+        }.also { refreshNow() }
+    }
+
     fun connectionRemoved(connectionId: String) {
         snapshots.remove(connectionId)
         refreshGeneration.incrementAndGet()
@@ -339,6 +368,8 @@ class BotModeController(
                 stale = snapshot?.stale == true,
                 error = snapshot?.error,
                 botCount = snapshot?.roster?.bots?.size ?: 0,
+                canCreateRooms = snapshot?.stale == false && snapshot.roster.hostedCapabilities.driver &&
+                    "groups.create" in snapshot.roster.hostedCapabilities.methods,
             )
         }
         val errors = statuses.mapNotNull(BotGatewayRosterStatus::error)

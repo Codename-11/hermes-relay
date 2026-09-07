@@ -100,6 +100,7 @@ data class BotGroupRoom(
 }
 
 data class BotModeRoster(
+    val hostedCapabilities: HostedRoomCapabilities = HostedRoomCapabilities(),
     val bots: List<BotRosterEntry> = emptyList(),
     val groups: List<BotGroupRoom> = emptyList(),
     val botModeProtocolSupported: Boolean = false,
@@ -113,6 +114,7 @@ data class BotGatewayRosterStatus(
     val stale: Boolean = false,
     val error: String? = null,
     val botCount: Int = 0,
+    val canCreateRooms: Boolean = false,
 )
 
 data class BotChatTarget(

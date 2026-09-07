@@ -3,6 +3,8 @@ package com.hermesandroid.relay.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,7 +26,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
 @Composable
-fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBack: () -> Unit) {
+fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBack: () -> Unit, availableBots: List<BotRosterEntry> = emptyList()) {
     if (room?.hosted != true) {
         BotGroupDetailScreen(room, onBack)
         return
@@ -33,6 +35,8 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var manageRoom by remember { mutableStateOf(false) }
+    var showFiles by remember { mutableStateOf(false) }
     var fileError by remember { mutableStateOf<String?>(null) }
     var download by remember { mutableStateOf<ByteArray?>(null) }
     var pickerOwner by remember { mutableStateOf<Pair<String, String?>?>(null) }
@@ -81,21 +85,29 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
     HostedRoomContent(
         state = if (state.room?.key == room.key) state else HostedRoomViewState(room = room),
         onBack = onBack,
-        onDraft = { scope.launch { controller.editDraft(it) } },
-        onSend = { scope.launch { controller.send() } },
-        onThread = { scope.launch { controller.selectThread(it) } },
+        onManage = { manageRoom = true },
+        onFiles = { showFiles = true },
+        onExport = { scope.launch { runCatching { controller.exportHistory(room.key) }.onSuccess { download = it; saveFile.launch("room-history.json") }.onFailure { fileError = it.message } } },
+        onMention = { member -> scope.launch { controller.mention(member, room.key) } },
+        onDraft = { scope.launch { controller.editDraft(it, room.key) } },
+        onSend = { scope.launch { controller.send(room.key) } },
+        onThread = { scope.launch { controller.selectThread(it, room.key) } },
         onRefresh = { scope.launch { controller.refresh() } },
-        onRead = { scope.launch { controller.markRead() } },
-        onAction = { action, choice -> scope.launch { controller.act(action, choice) } },
+        onRead = { scope.launch { controller.markRead(room.key) } },
+        onAction = { action, choice -> scope.launch { controller.act(action, choice, room.key) } },
         onAttach = { pickerOwner = room.key to state.selectedThread; picker.launch(arrayOf("*/*")) },
-        onDiscard = { scope.launch { controller.discardDraft() } },
-        onRemoveAttachment = { scope.launch { controller.removeAttachment(it) } },
+        onDiscard = { scope.launch { controller.discardDraft(room.key) } },
+        onRemoveAttachment = { scope.launch { controller.removeAttachment(it, room.key) } },
         onDownload = { eventId, attachment -> scope.launch {
-            controller.readAttachment(eventId, attachment).onSuccess {
+            controller.readAttachment(eventId, attachment, room.key).onSuccess {
                 download = it; saveFile.launch(attachment.roomString("name").ifBlank { "attachment" })
             }.onFailure { fileError = it.message }
         } },
     )
+    if (manageRoom) HostedRoomManagementDialog(state, availableBots, controller, { manageRoom = false }, onBack)
+    if (showFiles) HostedRoomFilesDialog(state, controller, { showFiles = false }) { eventId, attachment ->
+        scope.launch { controller.readAttachment(eventId, attachment, room.key).onSuccess { download = it; saveFile.launch(attachment.roomString("name")) }.onFailure { fileError = it.message } }
+    }
     fileError?.let { error -> AlertDialog(onDismissRequest = { fileError = null }, title = { Text("File unavailable") },
         text = { Text(error) }, confirmButton = { TextButton(onClick = { fileError = null }) { Text("OK") } }) }
 }
@@ -107,16 +119,27 @@ fun HostedRoomContent(
     onBack: () -> Unit = {}, onDraft: (String) -> Unit = {}, onSend: () -> Unit = {},
     onThread: (String?) -> Unit = {}, onRefresh: () -> Unit = {}, onRead: () -> Unit = {},
     onAction: (JsonObject?, String?) -> Unit = { _, _ -> }, onAttach: () -> Unit = {},
+    onMention: ((String) -> Unit)? = null,
+    onManage: () -> Unit = {}, onFiles: () -> Unit = {}, onExport: () -> Unit = {},
     onDiscard: () -> Unit = {},
     onRemoveAttachment: (String) -> Unit = {}, onDownload: (String, JsonObject) -> Unit = { _, _ -> },
 ) {
+    var menu by remember { mutableStateOf(false) }
     var search by remember(state.room?.key) { mutableStateOf("") }
     var confirmDiscard by remember(state.room?.key) { mutableStateOf(false) }
     var confirmRetry by remember(state.room?.key) { mutableStateOf<JsonObject?>(null) }
     val messages = state.visibleMessages.filter { search.isBlank() || it.text.contains(search, true) || it.senderName.contains(search, true) }
     Scaffold(topBar = { TopAppBar(title = { Text(state.room?.name ?: "Shared room") },
         navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-        actions = { TextButton(onClick = onRefresh) { Text("Refresh") } }) },
+        actions = {
+            TextButton(onClick = { menu = true }) { Text("More") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; onRefresh() })
+                DropdownMenuItem(text = { Text("Room settings") }, onClick = { menu = false; onManage() })
+                DropdownMenuItem(text = { Text("Shared files") }, enabled = "groups.attachment.list" in state.capabilities.methods, onClick = { menu = false; onFiles() })
+                DropdownMenuItem(text = { Text("Export canonical history") }, enabled = state.ready, onClick = { menu = false; onExport() })
+            }
+        }) },
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(12.dp)) {
@@ -124,8 +147,8 @@ fun HostedRoomContent(
                     if (state.capabilities.writable) {
                         LazyRow {
                             items(state.room?.members.orEmpty().filter { !it.retired && !it.handle.isNullOrBlank() }) { member ->
-                                TextButton(enabled = state.canSend && state.pendingId == null,
-                                    onClick = { onDraft(state.draft + " @${member.handle} ") }) { Text("@${member.handle}") }
+                                TextButton(enabled = state.canSend && state.pendingId == null && state.status.roomObjects("peer_routes").none { it.roomString("member_id") == member.memberId && it.roomString("status") != "ready" },
+                                    onClick = { if (onMention != null && member.memberId != null) onMention(member.memberId) else onDraft(state.draft + " @${member.handle} ") }) { Text("@${member.handle}") }
                             }
                         }
                         state.attachments.forEach { attachment ->
@@ -160,6 +183,10 @@ fun HostedRoomContent(
                         Text(counts.entries.joinToString(" | ") { "${it.key}: ${it.value}" }, style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                state.status.roomObjects("peer_routes").filter { it.roomString("status") != "ready" }.forEach { route ->
+                    val member = state.room?.members?.firstOrNull { it.memberId == route.roomString("member_id") }
+                    Text("${member?.name ?: route.roomString("member_id")}: ${route.roomString("status").replace('_', ' ')}", color = MaterialTheme.colorScheme.error)
+                }
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 state.operationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text("Search loaded history") }, modifier = Modifier.fillMaxWidth())
@@ -183,13 +210,35 @@ fun HostedRoomContent(
                         Text("Request ${action.roomString("request_id")}", style = MaterialTheme.typography.labelSmall)
                     }
                     when (kind) {
-                        "retry" -> TextButton(enabled = state.ready && "groups.retry" in state.capabilities.methods, onClick = { confirmRetry = action }) { Text("Retry task") }
+                        "retry" -> TextButton(enabled = state.ready && state.capabilities.driver && action.roomString("task_id").isNotBlank() && "groups.retry" in state.capabilities.methods, onClick = { confirmRetry = action }) { Text("Retry task") }
                         "approval" -> Row {
-                            TextButton(enabled = state.ready && "groups.approve" in state.capabilities.methods, onClick = { onAction(action, "once") }) { Text("Allow once") }
-                            TextButton(enabled = state.ready && "groups.approve" in state.capabilities.methods, onClick = { onAction(action, "deny") }) { Text("Deny") }
+                            TextButton(enabled = state.ready && state.capabilities.driver && listOf("task_id", "member_id", "request_id").all { action.roomString(it).isNotBlank() } && action.roomLong("execution_generation") > 0 && "groups.approve" in state.capabilities.methods, onClick = { onAction(action, "once") }) { Text("Allow once") }
+                            TextButton(enabled = state.ready && state.capabilities.driver && listOf("task_id", "member_id", "request_id").all { action.roomString(it).isNotBlank() } && action.roomLong("execution_generation") > 0 && "groups.approve" in state.capabilities.methods, onClick = { onAction(action, "deny") }) { Text("Deny") }
                         }
                         else -> Text("This request needs the owning runtime. This gateway has no supported room input action.")
                     }
+                } }
+            }
+            val activity = state.activity.filter { event -> state.selectedThread == null || (event["payload"] as? JsonObject)?.roomString("thread_id") == state.selectedThread }.takeLast(5).reversed()
+            if (activity.isNotEmpty()) item { Text("Recent room activity", style = MaterialTheme.typography.titleSmall) }
+            items(activity, key = { "activity:${it.roomString("event_id")}" }) { event ->
+                val payload = event["payload"] as? JsonObject ?: JsonObject(emptyMap())
+                val member = state.room?.members?.firstOrNull { it.memberId == payload.roomString("member_id") }
+                val phase = when (event.roomString("kind")) {
+                    "member.unavailable" -> "Unavailable"
+                    "turn.started" -> "Working"
+                    "turn.settled" -> "Finished"
+                    "turn.failed" -> "Failed"
+                    "turn.cancelled" -> "Stopped"
+                    "turn.deferred" -> "Waiting"
+                    else -> payload.roomString("status").ifBlank { "Activity" }
+                }
+                Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.small) { Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                    Text("$phase | ${member?.name ?: payload.roomString("member_id")}", style = MaterialTheme.typography.labelLarge)
+                    val detail = payload.roomString("error").ifBlank { payload.roomString("reason").ifBlank { payload.roomString("reason_code").replace('_', ' ') } }
+                    if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall)
+                    if (payload.roomString("task_id").isNotBlank()) Text("Task ${payload.roomString("task_id")}", style = MaterialTheme.typography.labelSmall)
+                    if (payload.roomString("thread_id").isNotBlank()) TextButton(onClick = { onThread(payload.roomString("thread_id")) }) { Text("Open activity thread") }
                 } }
             }
             items(messages, key = { it.id ?: it.seq.toString() }) { message ->
@@ -216,4 +265,107 @@ fun HostedRoomContent(
         text = { Text("The previous outcome may be uncertain. Retry may repeat native work for task ${action.roomString("task_id")}.") },
         confirmButton = { TextButton(onClick = { confirmRetry = null; onAction(action, null) }) { Text("Retry task") } },
         dismissButton = { TextButton(onClick = { confirmRetry = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+internal fun CreateHostedRoomDialog(
+    available: List<BotRosterEntry>, supported: Boolean, onDismiss: () -> Unit,
+    onCreate: suspend (String, String, List<BotRosterEntry>) -> Result<Unit>,
+) {
+    val roomId = androidx.compose.runtime.saveable.rememberSaveable { java.util.UUID.randomUUID().toString() }
+    var title by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text("New shared room") },
+        text = { Column {
+            if (!supported) Text("This gateway does not support hosted room creation. Select a gateway with an active room driver.")
+            OutlinedTextField(title, { title = it }, enabled = !saving, label = { Text("Room name") })
+            available.firstOrNull()?.route?.connectionLabel?.let { Text("Gateway: $it") }
+            Text("Choose two to six members on this gateway.")
+            Column(Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState())) { available.forEach { bot ->
+                Row { Checkbox(checked = bot.profile.name in selected, enabled = !saving && supported,
+                    onCheckedChange = { selected = if (it) selected + bot.profile.name else selected - bot.profile.name })
+                    Text(bot.displayName, Modifier.padding(top = 12.dp)) }
+            } }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } },
+        confirmButton = { TextButton(enabled = supported && !saving && selected.size in 2..6 && title.isNotBlank(), onClick = {
+            scope.launch { saving = true; onCreate(roomId, title, available.filter { it.profile.name in selected }).onFailure { error = it.message }; saving = false }
+        }) { Text("Create room") } },
+        dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+internal fun HostedRoomManagementDialog(state: HostedRoomViewState, available: List<BotRosterEntry>, controller: HostedRoomController, onDismiss: () -> Unit, onClosed: () -> Unit) {
+    val openedRevision = remember { state.room?.revision }
+    val unchanged = openedRevision == state.room?.revision
+    val members = state.room?.members.orEmpty().filterNot { it.retired }
+    var name by remember { mutableStateOf(state.room?.name.orEmpty()) }
+    var keep by remember { mutableStateOf(members.mapNotNull { it.memberId }.toSet()) }
+    var added by remember { mutableStateOf(emptySet<String>()) }
+    var saving by remember { mutableStateOf(false) }
+    var confirmClose by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val candidates = available.filter { bot -> bot.route?.connectionId == state.room?.route?.connectionId && !bot.stale &&
+        state.roomRecord.roomObjects("members").none { it.roomString("profile") == bot.profile.name } &&
+        state.roomRecord.roomObjects("retired_members").none { it.roomString("profile") == bot.profile.name } }
+    val canMembers = state.ready && unchanged && "groups.members.update" in state.capabilities.methods && "local_membership_revision" in state.capabilities.features
+    AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, title = { Text("Room settings") }, text = {
+        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+            Column {
+                OutlinedTextField(name, { name = it }, enabled = !saving, label = { Text("Room name") })
+                TextButton(enabled = !saving && state.ready && unchanged && name.isNotBlank() && "groups.rename" in state.capabilities.methods && "rename_revision" in state.capabilities.features,
+                    onClick = { scope.launch { saving = true; controller.rename(name, state.room?.key, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false } }) { Text("Save name") }
+                if (!unchanged) Text("Room changed while editing. Close and reopen settings before saving.")
+                if (!canMembers) Text("This gateway cannot revise membership here.")
+            }
+            members.forEach { member -> Row {
+                Checkbox(checked = member.memberId in keep, enabled = canMembers && !saving,
+                    onCheckedChange = { checked -> member.memberId?.let { keep = if (checked) keep + it else keep - it } })
+                Text(member.name, Modifier.padding(top = 12.dp))
+            } }
+            candidates.forEach { bot -> Row {
+                Checkbox(checked = bot.profile.name in added, enabled = canMembers && !saving,
+                    onCheckedChange = { added = if (it) added + bot.profile.name else added - bot.profile.name })
+                Text("Add ${bot.displayName}", Modifier.padding(top = 12.dp))
+            } }
+            Column {
+                TextButton(enabled = canMembers && !saving && (keep.size + added.size) in 2..6, onClick = {
+                    scope.launch { saving = true; controller.changeMembers(keep, candidates.filter { it.profile.name in added }, state.room?.key, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false }
+                }) { Text("Save members") }
+                Text("Membership updates use the displayed room revision. If the room changed or is busy, refresh before trying again.", style = MaterialTheme.typography.bodySmall)
+                TextButton(enabled = state.ready && !saving && "groups.disband" in state.capabilities.methods, onClick = { confirmClose = true }) { Text("Close room permanently") }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }, confirmButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Done") } })
+    if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("Permanently close this room?") },
+        text = { Text("This stops the whole room and closes it for all members. This gateway does not provide an undoable archive. Export history first if you need a retained copy.") },
+        confirmButton = { TextButton(enabled = !saving, onClick = { scope.launch { saving = true; controller.disband(state.room?.key).onSuccess { confirmClose = false; onDismiss(); onClosed() }.onFailure { error = it.message; confirmClose = false }; saving = false } }) { Text("Close room") } },
+        dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("Cancel") } })
+}
+
+@Composable
+internal fun HostedRoomFilesDialog(state: HostedRoomViewState, controller: HostedRoomController, onDismiss: () -> Unit, onSave: (String, JsonObject) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { controller.searchFiles("", expectedRoomKey = state.room?.key).onFailure { error = it.message } }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Shared files") }, text = { Column {
+        OutlinedTextField(query, { query = it }, label = { Text("Search file names") })
+        TextButton(enabled = !loading, onClick = { scope.launch { loading = true; controller.searchFiles(query, expectedRoomKey = state.room?.key).onSuccess { error = null }.onFailure { error = it.message }; loading = false } }) { Text("Search") }
+        Text(if (state.fileQuery.isBlank()) "All shared files" else "Results for: ${state.fileQuery}", style = MaterialTheme.typography.labelSmall)
+        Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())) { state.files.forEach { file ->
+            TextButton(onClick = { onSave(file.roomString("event_id"), file) }) { Column {
+                Text(file.roomString("name"))
+                Text("${file.roomLong("size")} bytes | ${(file["producer"] as? JsonObject)?.roomString("label").orEmpty()}", style = MaterialTheme.typography.bodySmall)
+            } }
+        } }
+        if (state.fileCursor != null) TextButton(enabled = !loading, onClick = { scope.launch { loading = true; controller.searchFiles(state.fileQuery, more = true, expectedRoomKey = state.room?.key).onFailure { error = it.message }; loading = false } }) { Text("Load more files") }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
 }

@@ -25,6 +25,11 @@ data class HostedRoomViewState(
     val status: JsonObject = JsonObject(emptyMap()),
     val readSeq: Long = 0,
     val threadRead: Map<String, Long> = emptyMap(),
+    val roomRecord: JsonObject = JsonObject(emptyMap()),
+    val activity: List<JsonObject> = emptyList(),
+    val files: List<JsonObject> = emptyList(),
+    val fileCursor: String? = null,
+    val fileQuery: String = "",
 ) {
     val canSend: Boolean get() = ready && !busy && capabilities.writable && room?.stale != true
     val visibleMessages: List<BotGroupMessage> get() = room?.messages.orEmpty().filter {
@@ -92,17 +97,33 @@ class HostedRoomController(
         if (token == generation) showDraft()
     }
 
-    suspend fun selectThread(threadId: String?) = operations.withLock {
+    suspend fun selectThread(threadId: String?, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey) return@withLock
         mutable.value = state.value.copy(selectedThread = threadId)
         showDraft()
     }
 
-    suspend fun editDraft(text: String) = operations.withLock {
+    suspend fun editDraft(text: String, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey) return@withLock
         if (state.value.pendingId != null) return@withLock
-        saveRecord(JsonObject(draftRecord() + ("text" to JsonPrimitive(text))))
+        val mentions = draftRecord()["mentions"] as? JsonObject ?: JsonObject(emptyMap())
+        val handles = Regex("@([A-Za-z0-9][A-Za-z0-9._:-]*)").findAll(text).map { it.groupValues[1].lowercase() }.toSet()
+        saveRecord(JsonObject(draftRecord() + mapOf("text" to JsonPrimitive(text),
+            "mentions" to JsonObject(mentions.filterValues { (it as? JsonPrimitive)?.contentOrNull?.lowercase() in handles }))))
+        mutable.value = state.value.copy(operationError = null)
     }
 
-    suspend fun markRead() = operations.withLock {
+    suspend fun mention(memberId: String, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey || state.value.pendingId != null) return@withLock
+        val member = state.value.room?.members?.firstOrNull { it.memberId == memberId && !it.retired } ?: return@withLock
+        val handle = member.handle ?: return@withLock
+        val mentions = draftRecord()["mentions"] as? JsonObject ?: JsonObject(emptyMap())
+        saveRecord(JsonObject(draftRecord() + mapOf("text" to JsonPrimitive(state.value.draft + " @$handle "),
+            "mentions" to JsonObject(mentions + (memberId to JsonPrimitive(handle))))))
+    }
+
+    suspend fun markRead(expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey) return@withLock
         val last = state.value.visibleMessages.maxOfOrNull { it.seq } ?: return@withLock
         saveRecord(JsonObject(draftRecord() + ("read_seq" to JsonPrimitive(last))))
     }
@@ -154,9 +175,13 @@ class HostedRoomController(
                 operations.withLock {
                     if (token != generation) return@withLock
                     history = events; historyCursor = cursor; historyEpoch = epoch
-                    mutable.value = state.value.copy(capabilities = capabilities,
+                    mutable.value = state.value.copy(capabilities = capabilities, roomRecord = raw,
+                        activity = events.filter { it.roomString("kind").startsWith("turn.") || it.roomString("kind") in setOf("room.activity", "member.unavailable") }.takeLast(30),
                         room = canonical.copy(messages = events.mapNotNull { hostedMessage(it, canonical) }.distinctBy { it.id }),
                         status = response["driver_status"] as? JsonObject ?: JsonObject(emptyMap()), ready = true, error = null)
+                    if (state.value.pendingId?.let { id -> events.any { it.roomString("event_id") == hostedUserEventId(id) } } == true) {
+                        mutable.value = state.value.copy(operationError = null)
+                    }
                     val reconciled = drafts.mapValues { (_, value) ->
                         val record = value as? JsonObject ?: return@mapValues value
                         val id = record.roomString("event_id")
@@ -175,8 +200,11 @@ class HostedRoomController(
         }
     }
 
-    suspend fun send() {
+    suspend fun send(expectedRoomKey: String? = state.value.room?.key) {
+        if (state.value.room?.key != expectedRoomKey) return
+        refresh()
         operations.withLock {
+            if (state.value.room?.key != expectedRoomKey) return@withLock
             if (!state.value.canSend) return@withLock
             if (state.value.draft.isBlank() && state.value.attachments.isEmpty()) return@withLock
             val token = generation
@@ -184,6 +212,12 @@ class HostedRoomController(
                 require(state.value.draft.toByteArray(Charsets.UTF_8).size <= 65_536) { "Message exceeds the 64 KiB text limit" }
                 require(state.value.attachments.size <= 8) { "A message supports at most eight files" }
                 val record = draftRecord()
+                if (state.value.pendingId == null) {
+                    val mentions = record["mentions"] as? JsonObject ?: JsonObject(emptyMap())
+                    require(mentions.all { (id, handle) -> state.value.room?.members.orEmpty().any { !it.retired && it.memberId == id && it.handle == (handle as? JsonPrimitive)?.contentOrNull } }) {
+                        "A selected mention changed or left the room. Remove it and choose an active member."
+                    }
+                }
                 val id = state.value.pendingId ?: UUID.randomUUID().toString()
                 val payload = record["payload"] as? JsonObject ?: buildJsonObject {
                     put("text", state.value.draft.trim())
@@ -209,8 +243,9 @@ class HostedRoomController(
         }
         refresh()
     }
-    suspend fun act(action: JsonObject? = null, choice: String? = null) {
+    suspend fun act(action: JsonObject? = null, choice: String? = null, expectedRoomKey: String? = state.value.room?.key) {
         operations.withLock {
+            if (state.value.room?.key != expectedRoomKey) return@withLock
             val current = state.value
             if (!current.ready || current.busy) return@withLock
             val kind = action?.roomString("kind") ?: "stop"
@@ -243,6 +278,7 @@ class HostedRoomController(
                     }).getOrThrow()
                 }
                 if (token == generation) {
+                    mutable.value = state.value.copy(operationError = null)
                     local = JsonObject(local + ("commands" to JsonObject(commands - commandKey)))
                     writeLocal(localKey, local.toString())
                 }
@@ -264,16 +300,23 @@ class HostedRoomController(
             require(bytes.isNotEmpty() && bytes.size <= 15_000_000) { "Files must be between 1 byte and 15 MB" }
             require(current.attachments.sumOf { it.roomLong("size") } + bytes.size <= 25_000_000) { "Message files exceed 25 MB" }
             val kind = when { mime.startsWith("image/") -> "image"; mime == "application/pdf" -> "pdf"; else -> "file" }
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val uploadKey = JsonArray(listOf(name, mime, digest).map(::JsonPrimitive)).toString()
+            val uploads = draftRecord()["uploads"] as? JsonObject ?: JsonObject(emptyMap())
+            val uploadId = uploads.roomString(uploadKey).ifBlank { UUID.randomUUID().toString() }
+            saveRecord(JsonObject(draftRecord() + ("uploads" to JsonObject(uploads + (uploadKey to JsonPrimitive(uploadId))))))
+            if (token != generation) return@withLock
             withOwner { room, client, _ ->
                 val result = client.hostedRoomRpc("groups.attachment.put", buildJsonObject {
-                    put("room_id", room.roomId); put("upload_id", UUID.randomUUID().toString())
+                    put("room_id", room.roomId); put("upload_id", uploadId)
                     put("kind", kind); put("name", name); put("mime", mime)
                     put("content_base64", java.util.Base64.getEncoder().encodeToString(bytes))
                 }).getOrThrow()
                 if (token != generation) return@withOwner
                 val attachment = result["attachment"] as? JsonObject ?: error("Missing attachment receipt")
                 require(attachment.roomString("attachment_id").isNotBlank() && attachment.roomLong("size") == bytes.size.toLong()) { "Invalid attachment receipt" }
-                saveRecord(JsonObject(draftRecord() + ("attachments" to JsonArray(current.attachments + attachment))))
+                saveRecord(JsonObject(draftRecord() + mapOf("attachments" to JsonArray(current.attachments + attachment), "uploads" to JsonObject(uploads - uploadKey))))
+                if (token == generation) mutable.value = state.value.copy(operationError = null)
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -281,20 +324,110 @@ class HostedRoomController(
         }
     }
 
-    suspend fun discardDraft() = operations.withLock {
+    suspend fun rename(name: String, expectedRoomKey: String? = state.value.room?.key, expectedRevision: Long? = state.value.room?.revision): Result<Unit> = manage("groups.rename", buildJsonObject { put("name", name.trim()) }, "rename_revision", expectedRoomKey, expectedRevision)
+
+    suspend fun changeMembers(keep: Set<String>, added: List<BotRosterEntry>, expectedRoomKey: String? = state.value.room?.key, expectedRevision: Long? = state.value.room?.revision): Result<Unit> {
+        if (state.value.room?.key != expectedRoomKey) return Result.failure(IllegalStateException("Room changed before membership edit"))
+        val current = state.value
+        if (current.room?.revision != expectedRevision) return Result.failure(IllegalStateException("Room changed while editing. Reopen room settings."))
+        if (added.any { it.route?.connectionId != current.room?.route?.connectionId || it.stale }) return Result.failure(IllegalArgumentException("Choose available members from this gateway"))
+        val members = current.roomRecord.roomObjects("members").filter { it.roomString("member_id") in keep } + added.map { bot ->
+            require(bot.route?.connectionId == current.room?.route?.connectionId && !bot.stale) { "Member belongs to another gateway" }
+            buildJsonObject {
+                put("member_id", UUID.nameUUIDFromBytes("${current.room?.roomId}:${bot.profile.name}".toByteArray(Charsets.UTF_8)).toString())
+                put("profile", bot.profile.name); put("handle", bot.profile.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-'))
+                put("display_name", bot.displayName)
+            }
+        }
+        if (members.size !in 2..6) return Result.failure(IllegalArgumentException("A room needs two to six members"))
+        return manage("groups.members.update", buildJsonObject { put("members", JsonArray(members)) }, "local_membership_revision", expectedRoomKey, expectedRevision)
+    }
+
+    suspend fun disband(expectedRoomKey: String? = state.value.room?.key): Result<Unit> = manage("groups.disband", JsonObject(emptyMap()), expectedRoomKey = expectedRoomKey)
+
+    private suspend fun manage(method: String, values: JsonObject, feature: String? = null, expectedRoomKey: String? = state.value.room?.key, expectedRevision: Long? = state.value.room?.revision): Result<Unit> {
+        val token = generation
+        val result = operations.withLock {
+            runCatching {
+                val current = state.value
+                require(current.room?.key == expectedRoomKey && token == generation) { "Room changed before action" }
+                require(current.ready && method in current.capabilities.methods && (feature == null || feature in current.capabilities.features)) { "This gateway does not support this room action" }
+                val room = current.room ?: error("Room unavailable")
+                if (method != "groups.disband") require(room.revision == expectedRevision) { "Room changed while editing. Reopen room settings." }
+                val route = room.route ?: error("Gateway unavailable")
+                val base = buildJsonObject {
+                    put("room_id", room.roomId)
+                    if (method != "groups.disband") put("expected_revision", expectedRevision)
+                    for ((key, value) in values) put(key, value)
+                }
+                val commands = local["commands"] as? JsonObject ?: JsonObject(emptyMap())
+                val key = "$method:$base"
+                val id = commands.roomString(key).ifBlank { UUID.randomUUID().toString() }
+                local = JsonObject(local + ("commands" to JsonObject(commands + (key to JsonPrimitive(id)))))
+                writeLocal(localKey, local.toString())
+                check(token == generation) { "Room changed before action" }
+                acquire(route).getOrThrow().use { lease ->
+                    lease.client.hostedRoomRpc(method, JsonObject(base + ((if (method == "groups.disband") "cancel_id" else "event_id") to JsonPrimitive(id)))).getOrThrow()
+                }
+                if (token == generation) {
+                    local = JsonObject(local + ("commands" to JsonObject(commands - key)))
+                    writeLocal(localKey, local.toString())
+                }
+            }
+        }
+        if (result.isSuccess && token == generation && method != "groups.disband") refresh()
+        return result
+    }
+
+    suspend fun searchFiles(query: String, more: Boolean = false, expectedRoomKey: String? = state.value.room?.key): Result<Unit> = operations.withLock {
+        runCatching {
+            val token = generation
+            val current = state.value
+            require(current.room?.key == expectedRoomKey) { "Room changed before file search" }
+            require(current.ready && "groups.attachment.list" in current.capabilities.methods) { "File search is unavailable on this gateway" }
+            if (more && (current.fileCursor == null || current.fileQuery != query)) return@runCatching
+            withOwner { room, client, _ ->
+                val page = client.hostedRoomRpc("groups.attachment.list", buildJsonObject {
+                    put("room_id", room.roomId); put("purpose", "viewer"); put("limit", 50); put("query", query)
+                    if (more) put("cursor", current.fileCursor)
+                }).getOrThrow()
+                if (token == generation) mutable.value = state.value.copy(files =
+                    ((if (more) current.files else emptyList()) + page.roomObjects("items")).distinctBy { "${it.roomString("event_id")}:${it.roomString("attachment_id")}" },
+                    fileCursor = page.roomString("next_cursor").ifBlank { null }, fileQuery = query)
+            }
+            Unit
+        }
+    }
+
+    suspend fun exportHistory(expectedRoomKey: String? = state.value.room?.key): ByteArray = operations.withLock {
+        check(state.value.room?.key == expectedRoomKey) { "Room changed before export" }
+        check(state.value.ready) { "Refresh canonical history before exporting" }
+        buildJsonObject {
+            put("format", "hermes-hosted-room-history-v1")
+            put("connection_id", state.value.room?.route?.connectionId)
+            put("profile", state.value.room?.route?.profileName)
+            put("room", state.value.roomRecord); put("through_seq", historyCursor)
+            put("events", JsonArray(history))
+        }.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    suspend fun discardDraft(expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey) return@withLock
         saveRecord(buildJsonObject { put("read_seq", draftRecord().roomLong("read_seq")) })
     }
 
-    suspend fun removeAttachment(id: String) = operations.withLock {
+    suspend fun removeAttachment(id: String, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
+        if (state.value.room?.key != expectedRoomKey) return@withLock
         if (state.value.pendingId == null) saveRecord(JsonObject(draftRecord() +
             ("attachments" to JsonArray(state.value.attachments.filterNot { it.roomString("attachment_id") == id }))))
     }
 
-    suspend fun readAttachment(eventId: String, attachment: JsonObject): Result<ByteArray> = operations.withLock {
+    suspend fun readAttachment(eventId: String, attachment: JsonObject, expectedRoomKey: String? = state.value.room?.key): Result<ByteArray> = operations.withLock {
         runCatching {
             val current = state.value
+            require(current.room?.key == expectedRoomKey) { "Room changed before file read" }
             require(current.ready && "groups.attachment.read" in current.capabilities.methods) { "File reads are unavailable on this gateway" }
-            require(current.room?.messages.orEmpty().any { it.id == eventId && attachment in it.attachments }) { "Attachment is not part of this room event" }
+            require(current.room?.messages.orEmpty().any { it.id == eventId && it.attachments.any { descriptor -> descriptor.roomString("attachment_id") == attachment.roomString("attachment_id") && descriptor.roomLong("size") == attachment.roomLong("size") } }) { "Attachment is not part of this room event" }
             val token = generation
             withOwner { room, client, _ ->
                 val response = client.hostedRoomRpc("groups.attachment.read", buildJsonObject {

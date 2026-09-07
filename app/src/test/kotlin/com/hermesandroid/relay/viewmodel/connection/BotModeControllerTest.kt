@@ -80,6 +80,31 @@ class BotModeControllerTest {
         }
     }
 
+    @Test fun createRoomUsesOneGatewayAndStableRoomAndMemberIds() = runBlocking {
+        val harness = GatewayClientHarness()
+        val routeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val client = routeClient(harness, routeScope)
+        harness.hostedRoomHandler = { method, params -> when (method) {
+            "groups.capabilities" -> kotlinx.serialization.json.Json.parseToJsonElement("""{"driver":true,"methods":["groups.create","groups.list"]}""") as kotlinx.serialization.json.JsonObject
+            "groups.create" -> buildJsonObject { put("room", params) }
+            "groups.list" -> buildJsonObject { put("rooms", JsonArray(emptyList())) }
+            else -> buildJsonObject {}
+        } }
+        val controller = BotModeController(scope = this, connections = MutableStateFlow(listOf(connection("a", "Fixture", harness))),
+            activeConnectionId = MutableStateFlow("a"), dashboardUrlProvider = Connection::resolvedDashboardUrl,
+            dashboardClientFactory = { _, url -> DashboardApiClient(url, OkHttpClient()) },
+            gatewayLeaseFactory = { _, _, _, _ -> UpstreamTransportController.RouteGatewayLease(client) {} })
+        val route = com.hermesandroid.relay.data.BotGatewayRoute(com.hermesandroid.relay.data.BotGatewayRouteKey("a", "default"), "Fixture")
+        val bots = listOf("writer", "reviewer").map { com.hermesandroid.relay.data.BotRosterEntry(com.hermesandroid.relay.data.Profile(name = it, model = "fixture"), it, route) }
+        try {
+            controller.createRoom("a", "stable-room", "Review", bots).getOrThrow()
+            controller.createRoom("a", "stable-room", "Review", bots).getOrThrow()
+            val calls = harness.rpcLog.filter { it.first == "groups.create" }.map { it.second }
+            assertEquals(2, calls.size); assertEquals(calls[0], calls[1])
+            assertTrue(harness.rpcLog.none { it.first.startsWith("session.") })
+        } finally { client.shutdown(); routeScope.cancel(); harness.shutdown() }
+    }
+
     private fun routeClient(harness: GatewayClientHarness, scope: CoroutineScope) = GatewayChatClient(
         initialDashboardClient = DashboardApiClient(
             harness.server.url("/").toString().trimEnd('/'),

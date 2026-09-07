@@ -2314,6 +2314,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
     val botModeState: StateFlow<BotModeState> get() = botModeController.state
 
+    suspend fun createHostedRoom(connectionId: String, roomId: String, name: String, bots: List<com.hermesandroid.relay.data.BotRosterEntry>) =
+        botModeController.createRoom(connectionId, roomId, name, bots)
+
     val hostedRooms get() = botModeController.rooms
 
     fun refreshBotMode() = botModeController.refresh()

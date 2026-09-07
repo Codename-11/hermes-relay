@@ -2609,6 +2609,7 @@ fun RelayApp() {
                     val botModeState by connectionViewModel.botModeState.collectAsState()
                     HostedRoomRoute(
                         controller = connectionViewModel.hostedRooms,
+                        availableBots = botModeState.roster.bots,
                         room = botModeState.roster.groups.firstOrNull { it.key == roomKey },
                         onBack = { navController.popBackStack() },
                     )

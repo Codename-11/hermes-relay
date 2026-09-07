@@ -110,6 +110,7 @@ fun BotModeScreen(
     val resources = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
     var openingProfile by remember { mutableStateOf<String?>(null) }
+    var showCreateRoom by remember { mutableStateOf(false) }
     var showCreateBot by remember { mutableStateOf(false) }
     var creatingBot by remember { mutableStateOf(false) }
     var selectedGatewayId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -152,6 +153,7 @@ fun BotModeScreen(
         },
         onOpenGroup = { onOpenGroup(it.key) },
         onNewBot = { showCreateBot = true },
+        onNewRoom = { showCreateRoom = true },
         snackbarHost = { SnackbarHost(snackbar) },
         botAvatar = { bot, size ->
             BotProfileAvatar(
@@ -161,6 +163,21 @@ fun BotModeScreen(
             )
         },
     )
+
+    if (showCreateRoom) {
+        val target = selectedGatewayId ?: activeConnection?.id
+        val available = state.roster.bots.filter { it.route?.connectionId == target && !it.stale }
+        CreateHostedRoomDialog(
+            available = available,
+            supported = state.gateways.any { it.connectionId == target && it.canCreateRooms },
+            onDismiss = { showCreateRoom = false },
+            onCreate = { id, title, selected ->
+                connectionViewModel.createHostedRoom(target.orEmpty(), id, title, selected).onSuccess {
+                    showCreateRoom = false; onOpenGroup(it.key)
+                }.map { Unit }
+            },
+        )
+    }
 
     if (showCreateBot) {
         CreateBotDialog(
@@ -210,6 +227,7 @@ internal fun BotModeContent(
     onOpenBot: (BotRosterEntry) -> Unit,
     onOpenGroup: (BotGroupRoom) -> Unit,
     onNewBot: () -> Unit,
+    onNewRoom: () -> Unit = {},
     snackbarHost: @Composable () -> Unit = {},
     nowMs: Long = System.currentTimeMillis(),
     botAvatar: @Composable (BotRosterEntry, Dp) -> Unit = { bot, size ->
@@ -269,6 +287,7 @@ internal fun BotModeContent(
                     }
                 },
                 actions = {
+                    TextButton(onClick = onNewRoom) { Text("New room") }
                     IconButton(onClick = { searchOpen = !searchOpen }) {
                         Icon(
                             Icons.Filled.Search,
@@ -630,7 +649,7 @@ private fun BotGroupRow(room: BotGroupRoom, onClick: () -> Unit, nowMs: Long) {
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    stringResource(R.string.bot_mode_read_only),
+                    if (room.hosted) "Shared room" else stringResource(R.string.bot_mode_read_only),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
