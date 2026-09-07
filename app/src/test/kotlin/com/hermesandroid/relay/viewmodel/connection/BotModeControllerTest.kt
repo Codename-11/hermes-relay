@@ -29,6 +29,13 @@ class BotModeControllerTest {
             "b" to routeClient(bHarness, routeScope),
         )
         aHarness.profilesListPayload = rosterPayload("default")
+        aHarness.hostedRoomHandler = { method, _ ->
+            kotlinx.serialization.json.Json.parseToJsonElement(when (method) {
+                "groups.capabilities" -> """{"driver":true,"methods":["groups.list","groups.state","groups.log","groups.send"],"features":["idempotent_send","actor_identity","monotonic_log"]}"""
+                "groups.list" -> """{"rooms":[{"room_id":"hosted","name":"Canonical room","members":[],"revision":1}]}"""
+                else -> "{}"
+            }) as kotlinx.serialization.json.JsonObject
+        }
         bHarness.profilesListPayload = rosterPayload("researcher")
         val connections = MutableStateFlow(
             listOf(
@@ -51,6 +58,7 @@ class BotModeControllerTest {
             controller.refreshNow()
             assertEquals(setOf("default", "researcher"), controller.state.value.roster.bots.map { it.profile.name }.toSet())
             assertEquals("a", active.value)
+            assertTrue(controller.state.value.roster.groups.any { it.roomId == "hosted" })
 
             bHarness.rpcErrors["profiles.list"] = 5006 to "offline"
             controller.refreshNow()

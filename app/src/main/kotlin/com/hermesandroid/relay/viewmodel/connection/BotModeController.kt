@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.viewmodel.connection
 
+import com.hermesandroid.relay.data.*
+import kotlinx.serialization.json.*
 import com.hermesandroid.relay.data.BotChatTarget
 import com.hermesandroid.relay.data.BotGatewayRosterStatus
 import com.hermesandroid.relay.data.BotGatewayRoute
@@ -124,7 +126,15 @@ class BotModeController(
             statusClient.shutdown()
         }
         val rosterResult = gatewayLeaseFactory(connection.id, dashboardUrl, "default", false).use { lease ->
-            lease.client.listBotModeRoster()
+            val legacy = lease.client.listBotModeRoster()
+            val capabilities = lease.client.hostedRoomRpc("groups.capabilities").getOrNull()
+                ?.let(HostedRoomCapabilities::parse)
+            if (capabilities != null && "groups.list" in capabilities.methods) {
+                lease.client.hostedRoomRpc("groups.list").map { page ->
+                    val route = BotGatewayRoute(BotGatewayRouteKey(connection.id, "default"), connection.label, installId)
+                    (legacy.getOrNull() ?: BotModeRoster()).copy(groups = page.roomObjects("rooms").map { hostedRoom(it, route) })
+                }
+            } else legacy
         }
         return rosterResult.fold(
             onSuccess = { roster ->
@@ -301,7 +311,7 @@ class BotModeController(
             .flatMap { snapshot ->
                 snapshot.roster.groups.map { group -> Triple(snapshot, group, group.roomId ?: group.key) }
             }
-            .groupBy { it.third }
+            .groupBy { if (it.second.hosted) "${it.first.connection.id}:${it.third}" else it.third }
             .values
             .map { candidates ->
                 val selected = candidates.maxWithOrNull(

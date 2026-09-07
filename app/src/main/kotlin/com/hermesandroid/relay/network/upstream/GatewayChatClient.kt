@@ -4279,6 +4279,22 @@ class GatewayChatClient(
     // JSON-RPC
     // ------------------------------------------------------------------
 
+    /** Hosted-room calls never create, resume or activate a native chat session. */
+    suspend fun hostedRoomRpc(method: String, params: JsonObject = JsonObject(emptyMap())): Result<JsonObject> {
+        require(method in setOf(
+            "groups.capabilities", "groups.list", "groups.state", "groups.log", "groups.send",
+            "groups.stop", "groups.retry", "groups.approve", "groups.attachment.put",
+            "groups.attachment.read", "groups.attachment.list", "groups.create", "groups.rename",
+            "groups.members.update", "groups.disband",
+        ))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(method, params)
+    }
+
     private suspend fun rpc(
         method: String,
         params: JsonObject,

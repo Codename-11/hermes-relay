@@ -58,6 +58,7 @@ class GatewayClientHarness(
     val serverSockets = LinkedBlockingQueue<WebSocket>()
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
+    var hostedRoomHandler: ((String, JsonObject) -> JsonObject?)? = null
     var failTicketMint = false
     var malformedTicketMint = false
     val transientTicketFailures = AtomicInteger(0)
@@ -271,6 +272,16 @@ class GatewayClientHarness(
             val id = (frame["id"] as? JsonPrimitive)?.contentOrNull ?: return
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
+            if (method.startsWith("groups.") && hostedRoomHandler != null) {
+                hostedRoomHandler?.invoke(method, params)?.let { result ->
+                    webSocket.send(buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("id", id.toLong())
+                        put("result", result)
+                    }.toString())
+                }
+                return
+            }
             if (!autoRespondEnabled) return
             if (method in suppressAckMethods) {
                 pendingAcks.add(PendingAck(webSocket, method, id.toLong()))
