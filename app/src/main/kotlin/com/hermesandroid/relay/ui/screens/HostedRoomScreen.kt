@@ -35,8 +35,8 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var manageRoom by remember { mutableStateOf(false) }
-    var showFiles by remember { mutableStateOf(false) }
+    var manageRoom by remember(room.key) { mutableStateOf(false) }
+    var showFiles by remember(room.key) { mutableStateOf(false) }
     var fileError by remember { mutableStateOf<String?>(null) }
     var download by remember { mutableStateOf<ByteArray?>(null) }
     var pickerOwner by remember { mutableStateOf<Pair<String, String?>?>(null) }
@@ -341,8 +341,9 @@ internal fun CreateHostedRoomDialog(
 
 @Composable
 internal fun HostedRoomManagementDialog(state: HostedRoomViewState, available: List<BotRosterEntry>, controller: HostedRoomController, onDismiss: () -> Unit, onClosed: () -> Unit) {
+    val openedRoomKey = remember { state.room?.key }
     val openedRevision = remember { state.room?.revision }
-    val unchanged = openedRevision == state.room?.revision
+    val unchanged = openedRoomKey == state.room?.key && openedRevision == state.room?.revision
     val members = state.room?.members.orEmpty().filterNot { it.retired }
     var name by remember { mutableStateOf(state.room?.name.orEmpty()) }
     var keep by remember { mutableStateOf(members.mapNotNull { it.memberId }.toSet()) }
@@ -360,7 +361,7 @@ internal fun HostedRoomManagementDialog(state: HostedRoomViewState, available: L
             Column {
                 OutlinedTextField(name, { name = it }, enabled = !saving, label = { Text("Room name") })
                 TextButton(enabled = !saving && state.ready && unchanged && name.isNotBlank() && "groups.rename" in state.capabilities.methods && "rename_revision" in state.capabilities.features,
-                    onClick = { scope.launch { saving = true; controller.rename(name, state.room?.key, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false } }) { Text("Save name") }
+                    onClick = { scope.launch { saving = true; controller.rename(name, openedRoomKey, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false } }) { Text("Save name") }
                 if (!unchanged) Text("Room changed while editing. Close and reopen settings before saving.")
                 if (!canMembers) Text("This gateway cannot revise membership here.")
             }
@@ -376,17 +377,17 @@ internal fun HostedRoomManagementDialog(state: HostedRoomViewState, available: L
             } }
             Column {
                 TextButton(enabled = canMembers && !saving && (keep.size + added.size) in 2..6, onClick = {
-                    scope.launch { saving = true; controller.changeMembers(keep, candidates.filter { it.profile.name in added }, state.room?.key, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false }
+                    scope.launch { saving = true; controller.changeMembers(keep, candidates.filter { it.profile.name in added }, openedRoomKey, openedRevision).onSuccess { onDismiss() }.onFailure { error = it.message }; saving = false }
                 }) { Text("Save members") }
                 Text("Membership updates use the displayed room revision. If the room changed or is busy, refresh before trying again.", style = MaterialTheme.typography.bodySmall)
-                TextButton(enabled = state.ready && !saving && "groups.disband" in state.capabilities.methods, onClick = { confirmClose = true }) { Text("Close room permanently") }
+                TextButton(enabled = state.ready && unchanged && !saving && "groups.disband" in state.capabilities.methods, onClick = { confirmClose = true }) { Text("Close room permanently") }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
     }, confirmButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Done") } })
     if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("Permanently close this room?") },
         text = { Text("This stops the whole room and closes it for all members. This gateway does not provide an undoable archive. Export history first if you need a retained copy.") },
-        confirmButton = { TextButton(enabled = !saving, onClick = { scope.launch { saving = true; controller.disband(state.room?.key).onSuccess { confirmClose = false; onDismiss(); onClosed() }.onFailure { error = it.message; confirmClose = false }; saving = false } }) { Text("Close room") } },
+        confirmButton = { TextButton(enabled = !saving && unchanged && state.ready, onClick = { scope.launch { saving = true; controller.disband(openedRoomKey).onSuccess { confirmClose = false; onDismiss(); onClosed() }.onFailure { error = it.message; confirmClose = false }; saving = false } }) { Text("Close room") } },
         dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("Cancel") } })
 }
 

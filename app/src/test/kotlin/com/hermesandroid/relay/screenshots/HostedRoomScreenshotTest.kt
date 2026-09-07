@@ -114,6 +114,22 @@ class HostedRoomScreenshotTest {
         capture("mobile-ui-final-read-unavailable")
     }
 
+    @Test fun authorAffordancesUseServerIdentityNotDisplayNamesAndFailClosed() {
+        val own = room.messages.first().copy(revision = 4)
+        val other = own.copy(id = "other", seq = 4, senderId = "different", senderName = own.senderName)
+        val caps = HostedRoomCapabilities(methods = setOf("groups.state", "groups.history", "groups.message.edit", "groups.message.delete", "groups.message.react"), features = setOf("message_history_projection_v1", "message_mutations_v1"), driver = true)
+        val current = androidx.compose.runtime.mutableStateOf(HostedRoomViewState(room = room.copy(messages = listOf(own, other)), capabilities = caps, ready = true, reader = Json.parseToJsonElement("""{"kind":"user","id":"desktop"}""") as JsonObject))
+        compose.setContent { HermesRelayTheme { HostedRoomContent(current.value) } }
+        compose.onNodeWithTag("edit:event-1").assertExists()
+        compose.onNodeWithTag("edit:other").assertDoesNotExist()
+        compose.onNodeWithTag("delete:other").assertDoesNotExist()
+        compose.onNodeWithText("Edited · revision 4").assertExists()
+        compose.runOnIdle { current.value = current.value.copy(reader = JsonObject(emptyMap())) }
+        compose.onNodeWithTag("edit:event-1").assertDoesNotExist()
+        compose.runOnIdle { current.value = current.value.copy(ready = false) }
+        compose.onNodeWithTag("react:event-1").assertDoesNotExist()
+    }
+
     private fun capture(name: String) {
         val output = File("build/ui-evidence/$name.png"); output.parentFile?.mkdirs()
         if (compose.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty()) compose.onNode(isDialog()).captureRoboImage(output.absolutePath)

@@ -97,6 +97,34 @@ class HostedRoomHistoryInstrumentedTest {
         } finally { controller.close(); client.shutdown(); networkScope.cancel(); fixture.shutdown() }
     }
 
+    @Test fun settingsCannotRetargetAnotherRoomWithTheSameRevision() {
+        val capabilities = HostedRoomCapabilities(methods = setOf("groups.state", "groups.log", "groups.rename"), features = setOf("rename_revision"))
+        val first = BotGroupRoom(key = "room-a", roomId = "a", name = "First room", revision = 1, hosted = true)
+        val state = androidx.compose.runtime.mutableStateOf(HostedRoomViewState(room = first, capabilities = capabilities, ready = true))
+        val controller = HostedRoomController(acquire = { Result.failure(IllegalStateException("No fixture RPC expected")) })
+        compose.setContent { HermesRelayTheme { HostedRoomManagementDialog(state.value, emptyList(), controller, {}, {}) } }
+        compose.onNodeWithText("Save name").assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(room = first.copy(key = "room-b", roomId = "b")) }
+        compose.onNodeWithText("Save name").assertIsNotEnabled()
+        capture("mobile-ui-final-room-binding-api36")
+    }
+
+    @Test fun exactEditorRejectsRevisionDriftAndRoomSwitchDismissesIt() {
+        val own = BotGroupMessage(id = "own", seq = 1, revision = 2, senderId = "viewer", senderKind = "user", senderName = "Viewer", text = "Original", atMs = 0)
+        val first = BotGroupRoom(key = "room-a", roomId = "a", name = "First room", hosted = true, messages = listOf(own))
+        val capabilities = HostedRoomCapabilities(methods = setOf("groups.state", "groups.history", "groups.message.edit"), features = setOf("message_history_projection_v1", "message_mutations_v1"), driver = true)
+        val state = androidx.compose.runtime.mutableStateOf(HostedRoomViewState(room = first, capabilities = capabilities, ready = true, reader = obj("""{"kind":"user","id":"viewer"}""")))
+        compose.setContent { HermesRelayTheme { HostedRoomContent(state.value) } }
+        compose.onNodeWithTag("edit:own").performScrollTo().performClick()
+        compose.onNodeWithText("Save edit").assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(room = first.copy(messages = listOf(own.copy(revision = 3)))) }
+        compose.onNodeWithText("Save edit").assertIsNotEnabled()
+        compose.onNodeWithText("Message or room changed. Close and reopen this action.").assertExists()
+        capture("mobile-ui-final-revision-conflict-api36")
+        compose.runOnIdle { state.value = state.value.copy(room = first.copy(key = "room-b", roomId = "b")) }
+        compose.onNodeWithText("Save edit").assertDoesNotExist()
+    }
+
     private fun obj(text: String) = Json.parseToJsonElement(text) as JsonObject
     private fun capture(name: String) {
         compose.waitForIdle()
