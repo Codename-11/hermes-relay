@@ -53,7 +53,11 @@ class BotModeController(
         profileName: String,
         retain: Boolean,
     ) -> UpstreamTransportController.RouteGatewayLease,
+    private val readRoomLocal: suspend (String) -> String? = { null },
+    private val writeRoomLocal: suspend (String, String) -> Unit = { _, _ -> },
 ) {
+    val rooms = HostedRoomController(acquire = ::acquireGateway, readLocal = readRoomLocal, writeLocal = writeRoomLocal)
+
     private val refreshMutex = Mutex()
     private val refreshGeneration = AtomicLong(0L)
     private val snapshots = linkedMapOf<String, BotModeGatewaySnapshot>()

@@ -166,7 +166,7 @@ import com.hermesandroid.relay.ui.screens.DiagnosticsScreen
 import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
-import com.hermesandroid.relay.ui.screens.BotGroupDetailScreen
+import com.hermesandroid.relay.ui.screens.HostedRoomRoute
 import com.hermesandroid.relay.ui.screens.BotChatScreen
 import com.hermesandroid.relay.ui.screens.BotModeScreen
 // === END PHASE3-safety-rails ===
@@ -2607,7 +2607,8 @@ fun RelayApp() {
                 ) { entry ->
                     val roomKey = entry.arguments?.getString(Screen.BotGroup.ARG_ROOM_KEY)
                     val botModeState by connectionViewModel.botModeState.collectAsState()
-                    BotGroupDetailScreen(
+                    HostedRoomRoute(
+                        controller = connectionViewModel.hostedRooms,
                         room = botModeState.roster.groups.firstOrNull { it.key == roomKey },
                         onBack = { navController.popBackStack() },
                     )

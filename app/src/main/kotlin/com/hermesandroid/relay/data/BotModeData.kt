@@ -64,6 +64,7 @@ data class BotRosterEntry(
 data class BotGroupMember(
     val name: String,
     val memberId: String? = null,
+    val retired: Boolean = false,
     val handle: String? = null,
     val connectionId: String? = null,
     val connectionLabel: String? = null,

@@ -31,6 +31,7 @@ internal fun hostedRoom(value: JsonObject, route: BotGatewayRoute? = null) = Bot
     name = value.roomString("name"), revision = value.roomLong("revision"),
     members = (value.roomObjects("members") + value.roomObjects("retired_members")).map {
         BotGroupMember(name = it.roomString("display_name").ifBlank { it.roomString("profile") },
+            retired = it !in value.roomObjects("members"),
             memberId = it.roomString("member_id"), handle = it.roomString("handle"))
     },
 )

@@ -1364,6 +1364,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         },
         dashboardClientFactory = upstreamTransport::dashboardClientFor,
         gatewayLeaseFactory = upstreamTransport::acquireGatewayRoute,
+        readRoomLocal = { key -> application.relayDataStore.data.first()[stringPreferencesKey("hosted_room:$key")] },
+        writeRoomLocal = { key, value -> application.relayDataStore.edit { it[stringPreferencesKey("hosted_room:$key")] = value } },
     )
 
     // --- Relay connection state ---
@@ -2311,6 +2313,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     val agentProfiles: StateFlow<List<Profile>> get() = profileController.agentProfiles
     val botModeState: StateFlow<BotModeState> get() = botModeController.state
+
+    val hostedRooms get() = botModeController.rooms
 
     fun refreshBotMode() = botModeController.refresh()
 
