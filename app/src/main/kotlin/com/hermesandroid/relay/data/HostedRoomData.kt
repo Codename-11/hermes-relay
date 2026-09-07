@@ -16,7 +16,9 @@ data class HostedRoomCapabilities(
     val features: Set<String> = emptySet(),
     val driver: Boolean = false,
 ) {
-    val readable: Boolean get() = methods.containsAll(setOf("groups.state", "groups.log"))
+    val projection: Boolean get() = "groups.history" in methods && "message_history_projection_v1" in features
+    val sharedRead: Boolean get() = "room_read_cursors_v1" in features && methods.containsAll(setOf("groups.read.get", "groups.read.mark"))
+    val readable: Boolean get() = "groups.state" in methods && (projection || "groups.log" in methods)
     val writable: Boolean get() = readable && driver && "groups.send" in methods &&
         features.containsAll(setOf("idempotent_send", "actor_identity", "monotonic_log"))
     companion object {
@@ -40,7 +42,7 @@ internal fun hostedRoom(value: JsonObject, route: BotGatewayRoute? = null) = Bot
 )
 
 internal fun hostedMessage(event: JsonObject, room: BotGroupRoom): BotGroupMessage? {
-    if (!event.roomString("kind").startsWith("message.")) return null
+    if (event.roomString("kind") !in setOf("message.user", "message.member", "message.participant")) return null
     val actor = event["actor"] as? JsonObject ?: return null
     val payload = event["payload"] as? JsonObject ?: return null
     val id = actor.roomString("id")
@@ -54,6 +56,18 @@ internal fun hostedMessage(event: JsonObject, room: BotGroupRoom): BotGroupMessa
         atMs = ((event["created_at"] as? JsonPrimitive)?.doubleOrNull?.times(1000))?.toLong() ?: 0L,
     )
 }
+
+internal fun hostedProjectedMessage(message: JsonObject, room: BotGroupRoom): BotGroupMessage? =
+    hostedMessage(buildJsonObject {
+        put("kind", "message.user"); put("event_id", message.roomString("event_id")); put("seq", message.roomLong("seq"))
+        put("actor", message["actor"] ?: JsonNull); put("payload", message)
+        put("created_at", message["updated_at"] ?: JsonNull)
+    }, room)?.copy(
+        text = if (message.roomBool("deleted")) "Message deleted" else message.roomString("text"),
+        attachments = if (message.roomBool("deleted")) emptyList() else message.roomObjects("attachments"),
+        deleted = message.roomBool("deleted"), revision = message.roomLong("revision"),
+        reactions = message.roomObjects("reactions"),
+    )
 
 internal fun hostedUserEventId(clientId: String): String = "user:" +
     MessageDigest.getInstance("SHA-256").digest(clientId.toByteArray(Charsets.UTF_8))

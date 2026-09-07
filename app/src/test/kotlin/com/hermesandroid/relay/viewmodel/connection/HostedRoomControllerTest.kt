@@ -348,6 +348,62 @@ class HostedRoomControllerTest {
         }
     }
 
+    @Test fun desktopMutationUsesCurrentProjectionNotUnsupportedRawReader() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            var edited = "Edited on Desktop"
+            harness.hostedRoomHandler = { method, params -> when(method) {
+                "groups.capabilities" -> obj("""{"driver":true,"methods":["groups.state","groups.log","groups.history"],"features":["message_history_projection_v1","message_mutations_v1"]}""")
+                "groups.history" -> buildJsonObject {
+                    put("messages", JsonArray(listOf(obj("""{"event_id":"root","seq":1,"thread_id":"root","actor":{"kind":"user","id":"desktop"},"original_text":"Original","text":"$edited","revision":3,"deleted":false}"""))))
+                    put("cursor",3); put("snapshot_seq",3); put("latest_seq",3); put("has_more",false)
+                }
+                "groups.log" -> null // New core rejects an unnegotiated mutation reader.
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route))
+            assertTrue("Desktop-edited room must remain readable", controller.state.value.ready)
+            assertEquals(edited, controller.state.value.room!!.messages.single().text)
+            edited = "Edited again"
+            controller.refresh()
+            assertEquals(edited, controller.state.value.room!!.messages.single().text)
+            assertTrue(harness.rpcLog.none { it.first == "groups.log" })
+            assertTrue(harness.rpcLog.filter { it.first == "groups.history" }.all { it.second.roomLong("after_seq") == 0L })
+        }
+    }
+
+    @Test fun deletedProjectionDoesNotExposeOriginalTextOrAttachments() {
+        val projected = obj("""{"event_id":"root","seq":1,"thread_id":"root","actor":{"kind":"user","id":"desktop"},"original_text":"Sensitive original","text":null,"revision":3,"deleted":true,"attachments":[{"attachment_id":"file"}],"reactions":[{"reaction":"👍","actors":[{"kind":"user","id":"desktop"}]}]}""")
+        val message = hostedProjectedMessage(projected, hostedRoom(roomJson, route))!!
+        assertEquals("Message deleted", message.text)
+        assertTrue(message.attachments.isEmpty())
+        assertNull(hostedMessage(obj("""{"kind":"message.edited","actor":{"kind":"user","id":"desktop"},"payload":{"target_event_id":"root","text":"not a new message"}}"""), hostedRoom(roomJson, route)))
+    }
+
+    @Test fun sharedReadCursorUsesServerIdentityAndExactVisibleThread() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            var through = 1L
+            harness.hostedRoomHandler = { method, params -> when(method) {
+                "groups.capabilities" -> obj("""{"methods":["groups.state","groups.log","groups.history","groups.read.get","groups.read.mark"],"features":["message_history_projection_v1","room_read_cursors_v1"]}""")
+                "groups.history" -> obj("""{"messages":[{"event_id":"root","seq":1,"thread_id":"root","actor":{"kind":"member","id":"writer-id"},"text":"Read on desktop","revision":1}],"cursor":3,"snapshot_seq":3,"has_more":false}""")
+                "groups.read.get", "groups.read.mark" -> {
+                    if(method.endsWith("mark")) through = params.roomLong("through_seq")
+                    obj("""{"room_id":"room","thread_id":${params["thread_id"] ?: JsonNull},"reader":{"kind":"user","id":"desktop"},"through_seq":$through,"unread_count":0,"latest_seq":3}""")
+                }
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route))
+            assertEquals("Desktop read state must replace local unread", 0, controller.state.value.unread)
+            controller.selectThread("root"); controller.markRead()
+            val read = harness.rpcLog.single { it.first == "groups.read.mark" }.second
+            assertEquals("root", read.roomString("thread_id")); assertEquals(3L, read.roomLong("through_seq"))
+            assertFalse(read.containsKey("reader")); assertFalse(read.containsKey("actor"))
+            controller.editDraft("Keep shared cursor while editing")
+            assertEquals(0, controller.state.value.unread)
+        }
+    }
+
     private val route = BotGatewayRoute(BotGatewayRouteKey("connection", "default"), "Fixture")
     private suspend fun withController(persistHook: suspend (String) -> Unit = {}, block: suspend (HostedRoomController, GatewayClientHarness, MutableList<JsonObject>) -> Unit) {
         val harness = GatewayClientHarness()

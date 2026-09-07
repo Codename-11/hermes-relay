@@ -24,6 +24,9 @@ data class HostedRoomViewState(
     val operationError: String? = null,
     val status: JsonObject = JsonObject(emptyMap()),
     val readSeq: Long = 0,
+    val serverUnread: Int? = null,
+    val reader: JsonObject = JsonObject(emptyMap()),
+    val readError: String? = null,
     val threadRead: Map<String, Long> = emptyMap(),
     val roomRecord: JsonObject = JsonObject(emptyMap()),
     val activity: List<JsonObject> = emptyList(),
@@ -35,7 +38,7 @@ data class HostedRoomViewState(
     val visibleMessages: List<BotGroupMessage> get() = room?.messages.orEmpty().filter {
         selectedThread == null || it.threadId == selectedThread
     }
-    val unread: Int get() = visibleMessages.count { it.seq > maxOf(readSeq, threadRead[it.threadId].orZero()) }
+    val unread: Int get() = serverUnread ?: visibleMessages.count { it.seq > maxOf(readSeq, threadRead[it.threadId].orZero()) }
     val explanation: String? get() = when {
         !capabilities.readable -> "This gateway provides a read-only room snapshot. Hosted history is unavailable."
         !ready -> "Room is offline. Reconnect to verify canonical history before sending."
@@ -86,7 +89,7 @@ class HostedRoomController(
         val record = draftRecord()
         mutable.value = state.value.copy(draft = record.roomString("text"),
             attachments = record.roomObjects("attachments"), pendingId = record.roomString("event_id").ifBlank { null },
-            readSeq = (drafts[""] as? JsonObject)?.roomLong("read_seq") ?: 0,
+            readSeq = if (state.value.capabilities.sharedRead) state.value.readSeq else (drafts[""] as? JsonObject)?.roomLong("read_seq") ?: 0,
             threadRead = drafts.mapValues { (_, value) -> (value as? JsonObject)?.roomLong("read_seq") ?: 0 })
     }
 
@@ -99,8 +102,9 @@ class HostedRoomController(
 
     suspend fun selectThread(threadId: String?, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
         if (state.value.room?.key != expectedRoomKey) return@withLock
-        mutable.value = state.value.copy(selectedThread = threadId)
-        showDraft()
+        mutable.value = state.value.copy(selectedThread = threadId, serverUnread = null)
+                showDraft()
+                if (state.value.capabilities.sharedRead) updateReadCursor()
     }
 
     suspend fun editDraft(text: String, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
@@ -124,8 +128,34 @@ class HostedRoomController(
 
     suspend fun markRead(expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
         if (state.value.room?.key != expectedRoomKey) return@withLock
-        val last = state.value.visibleMessages.maxOfOrNull { it.seq } ?: return@withLock
-        saveRecord(JsonObject(draftRecord() + ("read_seq" to JsonPrimitive(last))))
+        if (!state.value.ready) return@withLock
+        if (state.value.capabilities.sharedRead) updateReadCursor(mark = true)
+        else {
+            val last = state.value.visibleMessages.maxOfOrNull { it.seq } ?: return@withLock
+            saveRecord(JsonObject(draftRecord() + ("read_seq" to JsonPrimitive(last))))
+        }
+    }
+
+    private suspend fun updateReadCursor(mark: Boolean = false) {
+        val token = generation
+        val thread = state.value.selectedThread
+        try {
+            withOwner { room, client, _ ->
+                val result = client.hostedRoomRpc(if (mark) "groups.read.mark" else "groups.read.get", buildJsonObject {
+                    put("room_id", room.roomId)
+                    thread?.let { put("thread_id", it) }
+                    if (mark) put("through_seq", historyCursor)
+                }).getOrThrow()
+                check(result.roomString("room_id") == room.roomId && result.roomString("thread_id") == thread.orEmpty()) { "Read cursor scope mismatch" }
+                val reader = result["reader"] as? JsonObject ?: error("Missing server reader identity")
+                check(reader.roomString("id").isNotBlank() && result.containsKey("unread_count")) { "Invalid server read cursor" }
+                if (token == generation && thread == state.value.selectedThread) mutable.value = state.value.copy(
+                    readSeq = result.roomLong("through_seq"), serverUnread = result.roomLong("unread_count").toInt(), reader = reader, readError = null)
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (token == generation) mutable.value = state.value.copy(serverUnread = null, reader = JsonObject(emptyMap()), readError = e.message ?: "Shared read state unavailable")
+        }
     }
 
     private suspend fun <T> withOwner(block: suspend (BotGroupRoom, com.hermesandroid.relay.network.upstream.GatewayChatClient, Long) -> T): T? {
@@ -153,17 +183,24 @@ class HostedRoomController(
                 check(raw.roomString("room_id") == owner.roomId) { "Room identity mismatch" }
                 val canonical = hostedRoom(raw, route)
                 val epoch = raw.roomLong("authority_epoch")
-                val reuse = epoch == historyEpoch && (!raw.containsKey("latest_seq") || raw.roomLong("latest_seq") >= historyCursor)
+                val reuse = !capabilities.projection && epoch == historyEpoch && (!raw.containsKey("latest_seq") || raw.roomLong("latest_seq") >= historyCursor)
                 var cursor = if (reuse) historyCursor else 0L
                 val events = (if (reuse) history else emptyList()).toMutableList()
+                var snapshot: Long? = null
                 do {
-                    val page = client.hostedRoomRpc("groups.log", buildJsonObject {
-                        put("room_id", owner.roomId); put("since_seq", cursor); put("limit", 100)
-                    }).getOrThrow()
-                    val batch = page.roomObjects("events")
+                    val page = client.hostedRoomRpc(if (capabilities.projection) "groups.history" else "groups.log", buildJsonObject {
+                                            put("room_id", owner.roomId); put(if (capabilities.projection) "after_seq" else "since_seq", cursor); put("limit", 100)
+                                            if (capabilities.projection && snapshot != null) put("snapshot_seq", snapshot)
+                                        }).getOrThrow()
+                                        if (capabilities.projection) {
+                                            check(page.containsKey("snapshot_seq")) { "Missing history snapshot" }
+                                            if (snapshot != null) check(snapshot == page.roomLong("snapshot_seq")) { "History snapshot changed during paging" }
+                                            snapshot = page.roomLong("snapshot_seq")
+                                        }
+                                        val batch = page.roomObjects(if (capabilities.projection) "messages" else "events")
                     var previous = cursor
                     for (event in batch) {
-                        check(event.roomString("room_id") == owner.roomId && event.roomLong("seq") > previous) { "Foreign or nonmonotonic room history" }
+                        check((capabilities.projection || event.roomString("room_id") == owner.roomId) && event.roomLong("seq") > previous) { "Foreign or nonmonotonic room history" }
                         previous = event.roomLong("seq")
                     }
                     events.addAll(batch)
@@ -177,7 +214,7 @@ class HostedRoomController(
                     history = events; historyCursor = cursor; historyEpoch = epoch
                     mutable.value = state.value.copy(capabilities = capabilities, roomRecord = raw,
                         activity = events.filter { it.roomString("kind").startsWith("turn.") || it.roomString("kind") in setOf("room.activity", "member.unavailable") }.takeLast(30),
-                        room = canonical.copy(messages = events.mapNotNull { hostedMessage(it, canonical) }.distinctBy { it.id }),
+                        room = canonical.copy(messages = events.mapNotNull { if (capabilities.projection) hostedProjectedMessage(it, canonical) else hostedMessage(it, canonical) }.distinctBy { it.id }),
                         status = response["driver_status"] as? JsonObject ?: JsonObject(emptyMap()), ready = true, error = null)
                     if (state.value.pendingId?.let { id -> events.any { it.roomString("event_id") == hostedUserEventId(id) } } == true) {
                         mutable.value = state.value.copy(operationError = null)
@@ -191,7 +228,10 @@ class HostedRoomController(
                     }
                     local = JsonObject(local + ("drafts" to JsonObject(reconciled)))
                     writeLocal(localKey, local.toString())
-                    if (token == generation) showDraft()
+                    if (token == generation) {
+                        showDraft()
+                        if (capabilities.sharedRead) updateReadCursor()
+                    }
                 }
             }
         } catch (e: Exception) {
