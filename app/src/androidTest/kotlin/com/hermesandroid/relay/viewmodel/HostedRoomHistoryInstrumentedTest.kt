@@ -78,9 +78,12 @@ class HostedRoomHistoryInstrumentedTest {
             compose.onNodeWithTag("react:message-own").performScrollTo().performClick()
             compose.onNodeWithText("Reaction").performTextInput("like")
             androidx.test.espresso.Espresso.closeSoftKeyboard()
+            capture("mobile-ui-final-reaction-dialog-dark-api36")
             compose.onNodeWithText("Add reaction").performClick()
             compose.waitUntil(10_000) { controller.state.value.room?.messages?.first()?.reactions?.isNotEmpty() == true }
-            compose.onNodeWithText("Remove like (1)").performScrollTo().performClick()
+            compose.onNodeWithText("Remove like (1)").performScrollTo().assertIsDisplayed()
+            capture("mobile-ui-final-reaction-present-dark-api36")
+            compose.onNodeWithText("Remove like (1)").performClick()
             compose.waitUntil(10_000) { requests.count { it.first == "groups.message.react" } == 2 && controller.state.value.room?.messages?.first()?.reactions?.isEmpty() == true }
             assertEquals(listOf(true, false), requests.filter { it.first == "groups.message.react" }.map { it.second.roomBool("present") })
             compose.onNodeWithTag("delete:message-own").performScrollTo().performClick()
@@ -127,7 +130,11 @@ class HostedRoomHistoryInstrumentedTest {
 
     private fun obj(text: String) = Json.parseToJsonElement(text) as JsonObject
     private fun capture(name: String) {
+        compose.mainClock.advanceTimeBy(500)
         compose.waitForIdle()
+        // Native dialog window animations are outside the Compose idle clock.
+        android.os.SystemClock.sleep(350)
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
         val directory = requireNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir"))
         val output = File(directory, "$name.png"); output.parentFile?.mkdirs()
         val bitmap = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
