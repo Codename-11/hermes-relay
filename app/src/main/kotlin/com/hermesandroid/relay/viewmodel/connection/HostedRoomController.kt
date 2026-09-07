@@ -33,6 +33,12 @@ data class HostedRoomViewState(
     val files: List<JsonObject> = emptyList(),
     val fileCursor: String? = null,
     val fileQuery: String = "",
+    val searchQuery: String = "",
+    val searchResults: List<BotGroupMessage> = emptyList(),
+    val searchCursor: Long = 0,
+    val searchSnapshot: Long? = null,
+    val searchHasMore: Boolean = false,
+    val searchError: String? = null,
 ) {
     val canSend: Boolean get() = ready && !busy && capabilities.writable && room?.stale != true
     val visibleMessages: List<BotGroupMessage> get() = room?.messages.orEmpty().filter {
@@ -60,6 +66,7 @@ class HostedRoomController(
     private var history = emptyList<JsonObject>()
     private var historyCursor = 0L
     private var historyEpoch = 0L
+    private var historyIsProjection = false
     private var generation = 0L
     private var local = JsonObject(emptyMap())
     private var localKey = ""
@@ -102,9 +109,11 @@ class HostedRoomController(
 
     suspend fun selectThread(threadId: String?, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
         if (state.value.room?.key != expectedRoomKey) return@withLock
-        mutable.value = state.value.copy(selectedThread = threadId, serverUnread = null)
-                showDraft()
-                if (state.value.capabilities.sharedRead) updateReadCursor()
+        mutable.value = state.value.copy(selectedThread = threadId, serverUnread = null,
+            searchQuery = "", searchResults = emptyList(), searchCursor = 0, searchSnapshot = null,
+            searchHasMore = false, searchError = null)
+        showDraft()
+        if (state.value.ready && state.value.capabilities.sharedRead) updateReadCursor()
     }
 
     suspend fun editDraft(text: String, expectedRoomKey: String? = state.value.room?.key) = operations.withLock {
@@ -183,21 +192,24 @@ class HostedRoomController(
                 check(raw.roomString("room_id") == owner.roomId) { "Room identity mismatch" }
                 val canonical = hostedRoom(raw, route)
                 val epoch = raw.roomLong("authority_epoch")
-                val reuse = !capabilities.projection && epoch == historyEpoch && (!raw.containsKey("latest_seq") || raw.roomLong("latest_seq") >= historyCursor)
+                val reuse = !capabilities.projection && !historyIsProjection && epoch == historyEpoch && (!raw.containsKey("latest_seq") || raw.roomLong("latest_seq") >= historyCursor)
                 var cursor = if (reuse) historyCursor else 0L
                 val events = (if (reuse) history else emptyList()).toMutableList()
                 var snapshot: Long? = null
                 do {
                     val page = client.hostedRoomRpc(if (capabilities.projection) "groups.history" else "groups.log", buildJsonObject {
-                                            put("room_id", owner.roomId); put(if (capabilities.projection) "after_seq" else "since_seq", cursor); put("limit", 100)
-                                            if (capabilities.projection && snapshot != null) put("snapshot_seq", snapshot)
-                                        }).getOrThrow()
-                                        if (capabilities.projection) {
-                                            check(page.containsKey("snapshot_seq")) { "Missing history snapshot" }
-                                            if (snapshot != null) check(snapshot == page.roomLong("snapshot_seq")) { "History snapshot changed during paging" }
-                                            snapshot = page.roomLong("snapshot_seq")
-                                        }
-                                        val batch = page.roomObjects(if (capabilities.projection) "messages" else "events")
+                        put("room_id", owner.roomId)
+                        put(if (capabilities.projection) "after_seq" else "since_seq", cursor)
+                        put("limit", 100)
+                        if (capabilities.projection && snapshot != null) put("snapshot_seq", snapshot)
+                    }).getOrThrow()
+                    if (capabilities.projection) {
+                        check(page.containsKey("snapshot_seq")) { "Missing history snapshot" }
+                        if (snapshot != null) check(snapshot == page.roomLong("snapshot_seq")) { "History snapshot changed during paging" }
+                        snapshot = page.roomLong("snapshot_seq")
+                        check(snapshot >= cursor && page.roomLong("cursor") <= snapshot) { "History cursor exceeds its snapshot" }
+                    }
+                    val batch = page.roomObjects(if (capabilities.projection) "messages" else "events")
                     var previous = cursor
                     for (event in batch) {
                         check((capabilities.projection || event.roomString("room_id") == owner.roomId) && event.roomLong("seq") > previous) { "Foreign or nonmonotonic room history" }
@@ -211,8 +223,9 @@ class HostedRoomController(
                 } while (page.roomBool("has_more"))
                 operations.withLock {
                     if (token != generation) return@withLock
-                    history = events; historyCursor = cursor; historyEpoch = epoch
+                    history = events; historyCursor = cursor; historyEpoch = epoch; historyIsProjection = capabilities.projection
                     mutable.value = state.value.copy(capabilities = capabilities, roomRecord = raw,
+                        serverUnread = null, reader = JsonObject(emptyMap()), readError = null,
                         activity = events.filter { it.roomString("kind").startsWith("turn.") || it.roomString("kind") in setOf("room.activity", "member.unavailable") }.takeLast(30),
                         room = canonical.copy(messages = events.mapNotNull { if (capabilities.projection) hostedProjectedMessage(it, canonical) else hostedMessage(it, canonical) }.distinctBy { it.id }),
                         status = response["driver_status"] as? JsonObject ?: JsonObject(emptyMap()), ready = true, error = null)
@@ -430,6 +443,113 @@ class HostedRoomController(
         return result
     }
 
+    /** Search is a snapshot view, not a replacement for the canonical room history. */
+    suspend fun searchMessages(query: String, more: Boolean = false, expectedRoomKey: String? = state.value.room?.key): Result<Unit> {
+        val token = generation
+        return operations.withLock {
+            try {
+                val current = state.value
+                require(token == generation && current.room?.key == expectedRoomKey) { "Room changed before message search" }
+                require(current.ready && current.capabilities.searchable) { "Message search is unavailable on this gateway" }
+                require(query.isNotBlank() && query.codePointCount(0, query.length) <= 512 && query.toByteArray(Charsets.UTF_8).size <= 2048) { "Search requires 1–512 characters" }
+                if (more && (!current.searchHasMore || current.searchQuery != query)) return@withLock Result.success(Unit)
+                val after = if (more) current.searchCursor else 0L
+                val pinned = if (more) current.searchSnapshot else null
+                withOwner { room, client, _ ->
+                    val page = client.hostedRoomRpc("groups.history.search", buildJsonObject {
+                        put("room_id", room.roomId); put("query", query); put("after_seq", after); put("limit", 100)
+                        current.selectedThread?.let { put("thread_id", it) }
+                        pinned?.let { put("snapshot_seq", it) }
+                    }).getOrThrow()
+                    check(token == generation) { "Room changed during message search" }
+                    check(page.containsKey("snapshot_seq")) { "Missing search snapshot" }
+                    val snapshot = page.roomLong("snapshot_seq")
+                    check(snapshot >= after && (pinned == null || snapshot == pinned)) { "Search snapshot changed" }
+                    var previous = after
+                    val rows = page.roomObjects("messages")
+                    val messages = rows.map { row ->
+                        check(row.roomLong("seq") in (previous + 1)..snapshot &&
+                            (current.selectedThread == null || row.roomString("thread_id") == current.selectedThread) && !row.roomBool("deleted")) { "Invalid search order or scope" }
+                        previous = row.roomLong("seq")
+                        hostedProjectedMessage(row, room) ?: error("Invalid search message")
+                    }
+                    val cursor = page.roomLong("cursor")
+                    check(cursor in previous..snapshot && (!page.roomBool("has_more") || cursor > after)) { "Search cursor did not advance" }
+                    mutable.value = state.value.copy(searchQuery = query,
+                        searchResults = ((if (more) current.searchResults else emptyList()) + messages).distinctBy { it.id },
+                        searchCursor = cursor, searchSnapshot = snapshot, searchHasMore = page.roomBool("has_more"), searchError = null)
+                } ?: error("Room unavailable")
+                Result.success(Unit)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (token == generation) mutable.value = state.value.copy(searchError = e.message ?: "Message search failed")
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun editMessage(eventId: String, expectedRevision: Long, text: String, expectedRoomKey: String? = state.value.room?.key): Result<Unit> =
+        mutateMessage("edit", eventId, buildJsonObject { put("expected_revision", expectedRevision); put("text", text) }, expectedRoomKey)
+
+    suspend fun deleteMessage(eventId: String, expectedRevision: Long, expectedRoomKey: String? = state.value.room?.key): Result<Unit> =
+        mutateMessage("delete", eventId, buildJsonObject { put("expected_revision", expectedRevision) }, expectedRoomKey)
+
+    /** Desired presence, never a toggle; repeating a lost request is safe. */
+    suspend fun reactMessage(eventId: String, reaction: String, present: Boolean, expectedRoomKey: String? = state.value.room?.key): Result<Unit> =
+        mutateMessage("react", eventId, buildJsonObject { put("reaction", reaction); put("present", present) }, expectedRoomKey)
+
+    private suspend fun mutateMessage(operation: String, eventId: String, values: JsonObject, expectedRoomKey: String?): Result<Unit> {
+        val token = generation
+        val method = "groups.message.$operation"
+        val result = operations.withLock {
+            try {
+                val current = state.value
+                require(token == generation && current.room?.key == expectedRoomKey) { "Room changed before message action" }
+                require(current.ready && !current.busy && current.capabilities.mutations && method in current.capabilities.methods) { "This gateway does not support this message action" }
+                val base = JsonObject(values + mapOf("room_id" to JsonPrimitive(current.room!!.roomId), "target_event_id" to JsonPrimitive(eventId)))
+                val commands = local["commands"] as? JsonObject ?: JsonObject(emptyMap())
+                val key = "$method:$base"
+                val pending = commands.roomString(key)
+                if (pending.isBlank()) {
+                    val message = current.room.messages.firstOrNull { it.id == eventId } ?: error("Message is not in this room")
+                    require(!message.deleted) { "Message has been deleted" }
+                    if (operation != "react") require(values.roomLong("expected_revision") > 0 && message.revision == values.roomLong("expected_revision")) { "Message revision changed; reload before editing" }
+                }
+                if (operation == "edit") require(values.roomString("text").isNotBlank() && values.roomString("text").toByteArray(Charsets.UTF_8).size <= 65536) { "Edit requires nonempty text up to 64 KiB" }
+                if (operation == "react") {
+                    val reaction = values.roomString("reaction")
+                    require(reaction.isNotBlank() && reaction.codePointCount(0, reaction.length) <= 64 && reaction.toByteArray(Charsets.UTF_8).size <= 128) { "Reaction is too long or empty" }
+                }
+                val id = pending.ifBlank { UUID.randomUUID().toString() }
+                local = JsonObject(local + ("commands" to JsonObject(commands + (key to JsonPrimitive(id)))))
+                writeLocal(localKey, local.toString())
+                check(token == generation) { "Room changed before message action" }
+                mutable.value = state.value.copy(busy = true)
+                withOwner { room, client, _ ->
+                    val receipt = client.hostedRoomRpc(method, JsonObject(base + ("event_id" to JsonPrimitive(id)))).getOrThrow()
+                    check(token == generation) { "Room changed during message action" }
+                    val event = receipt["event"] as? JsonObject ?: error("Missing mutation event")
+                    val message = receipt["message"] as? JsonObject ?: error("Missing mutation projection")
+                    check(event.roomString("room_id") == room.roomId && message.roomString("event_id") == eventId) { "Mutation receipt scope mismatch" }
+                } ?: error("Room unavailable")
+                local = JsonObject(local + ("commands" to JsonObject(commands - key)))
+                writeLocal(localKey, local.toString())
+                if (token == generation) mutable.value = state.value.copy(operationError = null,
+                    searchResults = emptyList(), searchQuery = "", searchCursor = 0, searchSnapshot = null, searchHasMore = false)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (token == generation) mutable.value = state.value.copy(operationError = e.message ?: "Message action failed; retry the same action")
+                Result.failure(e)
+            } finally {
+                if (token == generation) mutable.value = state.value.copy(busy = false)
+            }
+        }
+        // Read back the canonical projection, never present a speculative local edit.
+        if (result.isSuccess && token == generation) refresh()
+        return result
+    }
+
     suspend fun searchFiles(query: String, more: Boolean = false, expectedRoomKey: String? = state.value.room?.key): Result<Unit> = operations.withLock {
         runCatching {
             val token = generation
@@ -453,12 +573,36 @@ class HostedRoomController(
     suspend fun exportHistory(expectedRoomKey: String? = state.value.room?.key): ByteArray = operations.withLock {
         check(state.value.room?.key == expectedRoomKey) { "Room changed before export" }
         check(state.value.ready) { "Refresh canonical history before exporting" }
+        val token = generation
+        check(state.value.capabilities.rawExport) { "Immutable source export is unavailable" }
+        val events = mutableListOf<JsonObject>()
+        var cursor = 0L
+        withOwner { room, client, _ ->
+            do {
+                val page = client.hostedRoomRpc("groups.log", buildJsonObject {
+                    put("room_id", room.roomId); put("since_seq", cursor); put("limit", 100)
+                    // These semantics are preserved as immutable source, never presented as current messages.
+                    put("supported_features", JsonArray(listOf("message_mutations_v1", "participant_messages_v1", "scoped_stop_v1", "responder_policy_v1").map(::JsonPrimitive)))
+                }).getOrThrow()
+                check(token == generation) { "Room changed during export" }
+                var previous = cursor
+                for (event in page.roomObjects("events")) {
+                    check(event.roomString("room_id") == room.roomId && event.roomLong("seq") > previous) { "Invalid source log order or scope" }
+                    previous = event.roomLong("seq"); events.add(event)
+                }
+                val next = page.roomLong("cursor")
+                check(next >= previous && (!page.roomBool("has_more") || next > cursor)) { "Source log cursor did not advance" }
+                cursor = next
+            } while (page.roomBool("has_more"))
+        }
         buildJsonObject {
             put("format", "hermes-hosted-room-history-v1")
+            put("semantics", "immutable_source_log")
+            put("notice", "Original edited and deleted content is retained; this is not the current message projection.")
             put("connection_id", state.value.room?.route?.connectionId)
             put("profile", state.value.room?.route?.profileName)
-            put("room", state.value.roomRecord); put("through_seq", historyCursor)
-            put("events", JsonArray(history))
+            put("room", state.value.roomRecord); put("through_seq", cursor)
+            put("events", JsonArray(events))
         }.toString().toByteArray(Charsets.UTF_8)
     }
 

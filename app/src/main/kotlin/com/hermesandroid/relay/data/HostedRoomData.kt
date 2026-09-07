@@ -18,6 +18,9 @@ data class HostedRoomCapabilities(
 ) {
     val projection: Boolean get() = "groups.history" in methods && "message_history_projection_v1" in features
     val sharedRead: Boolean get() = "room_read_cursors_v1" in features && methods.containsAll(setOf("groups.read.get", "groups.read.mark"))
+    val searchable: Boolean get() = projection && "groups.history.search" in methods && "message_history_search_v1" in features
+    val mutations: Boolean get() = projection && driver && "message_mutations_v1" in features
+    val rawExport: Boolean get() = "groups.log" in methods
     val readable: Boolean get() = "groups.state" in methods && (projection || "groups.log" in methods)
     val writable: Boolean get() = readable && driver && "groups.send" in methods &&
         features.containsAll(setOf("idempotent_send", "actor_identity", "monotonic_log"))
@@ -52,6 +55,7 @@ internal fun hostedMessage(event: JsonObject, room: BotGroupRoom): BotGroupMessa
         senderName = room.members.firstOrNull { it.memberId == id }?.name ?: actor.roomString("display_name").ifBlank { id.ifBlank { "Unknown author" } },
         senderSource = listOf(actor.roomString("profile"), actor.roomString("connection_id")).filter { it.isNotBlank() }.joinToString(" / ").ifBlank { null },
         threadId = payload.roomString("thread_id"), text = payload.roomString("text"),
+        parentEventId = payload.roomString("parent_event_id").ifBlank { null },
         attachments = payload.roomObjects("attachments"),
         atMs = ((event["created_at"] as? JsonPrimitive)?.doubleOrNull?.times(1000))?.toLong() ?: 0L,
     )

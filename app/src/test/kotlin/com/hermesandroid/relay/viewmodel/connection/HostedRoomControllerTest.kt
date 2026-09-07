@@ -404,6 +404,167 @@ class HostedRoomControllerTest {
         }
     }
 
+    @Test fun sourceExportReadsImmutableLogSeparatelyFromProjection() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            val source = obj("""{"room_id":"room","event_id":"original","seq":1,"kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"Original source"}}""")
+            harness.hostedRoomHandler = { method, params -> when(method) {
+                "groups.capabilities" -> obj("""{"methods":["groups.state","groups.log","groups.history"],"features":["message_history_projection_v1","message_mutations_v1"]}""")
+                "groups.history" -> obj("""{"messages":[],"cursor":3,"snapshot_seq":3,"has_more":false}""")
+                "groups.log" -> buildJsonObject { put("events",JsonArray(listOf(source)));put("cursor",3);put("has_more",false) }
+                else -> original(method,params)
+            } }
+            controller.open(hostedRoom(roomJson, route))
+            val export = obj(controller.exportHistory().toString(Charsets.UTF_8))
+            assertEquals(listOf(source), export.roomObjects("events"))
+            assertEquals("immutable_source_log", export.roomString("semantics"))
+            val request = harness.rpcLog.single { it.first == "groups.log" }.second
+            assertTrue((request["supported_features"] as JsonArray).contains(JsonPrimitive("message_mutations_v1")))
+        }
+    }
+
+    private val projectionRow = obj("""{"event_id":"root","seq":1,"thread_id":"thread","actor":{"kind":"user","id":"desktop"},"text":"before","revision":1,"deleted":false}""")
+    private val historyCaps = obj("""{"driver":true,"methods":["groups.state","groups.history","groups.history.search","groups.message.edit","groups.message.delete","groups.message.react"],"features":["message_history_projection_v1","message_history_search_v1","message_mutations_v1"]}""")
+
+    @Test fun searchPinsSnapshotAndThreadWithoutReplacingRoomMessages() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> historyCaps
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(projectionRow))); put("cursor", 5); put("snapshot_seq", 5); put("has_more", false) }
+                "groups.history.search" -> buildJsonObject {
+                    put("messages", JsonArray(if (params.roomLong("after_seq") == 0L) listOf(projectionRow) else emptyList()))
+                    put("cursor", if (params.roomLong("after_seq") == 0L) 1 else 5); put("snapshot_seq", 5)
+                    put("has_more", params.roomLong("after_seq") == 0L)
+                }
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route)); controller.selectThread("thread")
+            controller.searchMessages("before").getOrThrow()
+            assertEquals(1, controller.state.value.searchResults.size)
+            controller.searchMessages("before", more = true).getOrThrow()
+            val pages = harness.rpcLog.filter { it.first == "groups.history.search" }.map { it.second }
+            assertEquals(2, pages.size); assertEquals(5L, pages[1].roomLong("snapshot_seq"))
+            assertEquals(1L, pages[1].roomLong("after_seq")); assertEquals("thread", pages[1].roomString("thread_id"))
+            assertFalse(controller.state.value.searchHasMore)
+            assertEquals("before", controller.state.value.room!!.messages.single().text)
+            controller.selectThread(null)
+            assertTrue(controller.state.value.searchResults.isEmpty())
+        }
+    }
+
+    @Test fun mutationsRetryExactDurableCommandAndRefreshProjection() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            var row = projectionRow
+            var lose = true
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> historyCaps
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(row))); put("cursor", 9); put("snapshot_seq", 9); put("has_more", false) }
+                "groups.message.edit", "groups.message.delete", "groups.message.react" -> {
+                    row = when (method) {
+                        "groups.message.edit" -> JsonObject(row + mapOf("text" to params.getValue("text"), "revision" to JsonPrimitive(2)))
+                        "groups.message.delete" -> JsonObject(row + mapOf("text" to JsonNull, "deleted" to JsonPrimitive(true), "revision" to JsonPrimitive(3)))
+                        else -> JsonObject(row + ("reactions" to JsonArray(listOf(obj("""{"reaction":"👍","actors":[{"kind":"user","id":"desktop"}]}""")))))
+                    }
+                    if (method == "groups.message.edit" && lose) { lose = false; null }
+                    else buildJsonObject { put("message", row); put("event", obj("""{"room_id":"room","event_id":"mutation","seq":9}""")) }
+                }
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route)); controller.editDraft("keep this draft")
+            assertTrue(controller.editMessage("root", 1, "after").isFailure)
+            controller.refresh() // A lost success can already be visible; retry must still use its original CAS.
+            controller.editMessage("root", 1, "after").getOrThrow()
+            val edits = harness.rpcLog.filter { it.first == "groups.message.edit" }.map { it.second }
+            assertEquals(2, edits.size); assertEquals(edits[0], edits[1])
+            assertEquals("root", edits[0].roomString("target_event_id")); assertFalse(edits[0].containsKey("actor"))
+            assertEquals("after", controller.state.value.room!!.messages.single().text)
+            assertTrue(controller.editMessage("root", 1, "stale change").isFailure)
+            controller.reactMessage("root", "👍", true).getOrThrow()
+            assertEquals(1, controller.state.value.room!!.messages.single().reactions.size)
+            assertTrue(harness.rpcLog.single { it.first == "groups.message.react" }.second.roomBool("present"))
+            controller.deleteMessage("root", 2).getOrThrow()
+            assertTrue(controller.state.value.room!!.messages.single().deleted)
+            assertEquals("keep this draft", controller.state.value.draft)
+        }
+    }
+
+    @Test fun downgradeDoesNotReuseProjectedRowsAsRawEventsOrSharedUnread() = runBlocking {
+        withController { controller, harness, events ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> obj("""{"methods":["groups.state","groups.history","groups.read.get","groups.read.mark"],"features":["message_history_projection_v1","room_read_cursors_v1"]}""")
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(projectionRow))); put("cursor", 1); put("snapshot_seq", 1); put("has_more", false) }
+                "groups.read.get" -> obj("""{"room_id":"room","thread_id":null,"reader":{"kind":"user","id":"desktop"},"through_seq":1,"latest_seq":1,"unread_count":0}""")
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route)); assertEquals(0, controller.state.value.unread)
+            events.add(obj("""{"room_id":"room","event_id":"root","seq":1,"kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"legacy"}}"""))
+            harness.hostedRoomHandler = original; controller.refresh()
+            assertTrue(controller.state.value.ready)
+            assertEquals("legacy", controller.state.value.room!!.messages.single().text)
+            assertNull(controller.state.value.serverUnread)
+            assertEquals(1, controller.state.value.unread)
+            assertTrue(controller.searchMessages("legacy").isFailure)
+            assertTrue(controller.editMessage("root", 1, "blocked").isFailure)
+            assertTrue(harness.rpcLog.none { it.first == "groups.history.search" || it.first.startsWith("groups.message.") })
+        }
+    }
+
+    @Test fun projectionCannotAdvanceBeyondPinnedSnapshot() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> historyCaps
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(projectionRow))); put("cursor", 9); put("snapshot_seq", 1); put("has_more", false) }
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route))
+            assertFalse("A malformed cursor cannot become the shared mark-read bound", controller.state.value.ready)
+            assertNotNull(controller.state.value.error)
+        }
+    }
+
+    @Test fun mutationRoomSwitchDuringPersistenceCannotRetargetCommand() = runBlocking {
+        val saving = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        withController(persistHook = { value ->
+            if (value.contains("groups.message.edit")) { saving.complete(Unit); release.await() }
+        }) { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> historyCaps
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(projectionRow))); put("cursor", 1); put("snapshot_seq", 1); put("has_more", false) }
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route))
+            val editing = async { controller.editMessage("root", 1, "after") }
+            saving.await()
+            val opening = launch { controller.open(hostedRoom(JsonObject(roomJson + ("room_id" to JsonPrimitive("other"))), route)) }
+            yield(); release.complete(Unit)
+            assertTrue(editing.await().isFailure); opening.join()
+            assertTrue(harness.rpcLog.none { it.first == "groups.message.edit" })
+            assertEquals("other", controller.state.value.room!!.roomId)
+        }
+    }
+
+    @Test fun sharedReadFailureStaysExplicitAndNeverWritesLocalReadReceipt() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params -> when (method) {
+                "groups.capabilities" -> obj("""{"methods":["groups.state","groups.history","groups.read.get","groups.read.mark"],"features":["message_history_projection_v1","room_read_cursors_v1"]}""")
+                "groups.history" -> buildJsonObject { put("messages", JsonArray(listOf(projectionRow))); put("cursor", 1); put("snapshot_seq", 1); put("has_more", false) }
+                "groups.read.get", "groups.read.mark" -> null
+                else -> original(method, params)
+            } }
+            controller.open(hostedRoom(roomJson, route)); controller.markRead()
+            assertTrue(controller.state.value.ready); assertNull(controller.state.value.serverUnread)
+            assertNotNull(controller.state.value.readError)
+            harness.hostedRoomHandler = original; controller.refresh()
+            assertEquals(0L, controller.state.value.readSeq)
+        }
+    }
+
     private val route = BotGatewayRoute(BotGatewayRouteKey("connection", "default"), "Fixture")
     private suspend fun withController(persistHook: suspend (String) -> Unit = {}, block: suspend (HostedRoomController, GatewayClientHarness, MutableList<JsonObject>) -> Unit) {
         val harness = GatewayClientHarness()

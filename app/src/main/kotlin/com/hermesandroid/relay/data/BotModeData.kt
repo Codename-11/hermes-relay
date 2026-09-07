@@ -76,6 +76,7 @@ data class BotGroupMessage(
     val threadId: String? = null,
     val seq: Long = 0L,
     val revision: Long = 0L,
+    val parentEventId: String? = null,
     val deleted: Boolean = false,
     val reactions: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     val attachments: List<kotlinx.serialization.json.JsonObject> = emptyList(),

@@ -4286,6 +4286,7 @@ class GatewayChatClient(
             "groups.stop", "groups.retry", "groups.approve", "groups.attachment.put",
             "groups.attachment.read", "groups.attachment.list", "groups.create", "groups.rename",
             "groups.members.update", "groups.disband", "groups.history", "groups.read.get", "groups.read.mark",
+            "groups.history.search", "groups.message.edit", "groups.message.delete", "groups.message.react",
         ))
         try {
             connectMutex.withLock { ensureConnected() }
