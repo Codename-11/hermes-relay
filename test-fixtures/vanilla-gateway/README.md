@@ -117,6 +117,19 @@ and both issue #365 terminal-gap forms:
 - `terminal_gap_session_info`: live deltas and history are followed by an exact-
   session `session.info {running:false}` without `message.complete`.
 
+## Hosted shared rooms (dependency-gated)
+
+`hosted_room_response_loss` exercises hosted Gateway discovery, a fresh thread
+with a textual roster mention, socket loss after accepted ingress, an idempotent
+retry, a same-thread reply, and paginated `groups.log` recovery. It uses the real
+`groups.*` method shapes rather than session RPCs or Relay routes. The fixture
+advertises only the methods implemented by this text lane.
+
+See [HOSTED_ROOMS.md](HOSTED_ROOMS.md) for exact request/result shapes, the
+upstream source/dependency boundary, RED/GREEN regression commands, and explicit
+runtime/device limitations. Hosted-room conformance is opt-in; the existing
+standard upstream checks and clean-checkout policy are unchanged.
+
 ## Evidence and privacy
 
 Evidence is a fixed-size ring buffer. Entries contain only sequence number,

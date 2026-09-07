@@ -12,6 +12,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from .evidence import EvidenceLog
+from .hosted_rooms import HostedRoomRpcError, HostedRoomsFixture
 from .scenario import Scenario
 
 
@@ -27,6 +28,7 @@ class GatewayFixture:
 
     def __init__(self, scenario: Scenario, *, evidence_limit: int = 512) -> None:
         self.scenario = scenario
+        self._groups = HostedRoomsFixture(scenario.hosted_groups) if scenario.hosted_groups else None
         self.evidence = EvidenceLog(evidence_limit)
         self.app = web.Application()
         self.app.add_routes(
@@ -121,7 +123,18 @@ class GatewayFixture:
         if not isinstance(method, str) or request_id is None:
             return
         self.evidence.add("rpc", connection=connection, method=method, outcome="received")
-        if method == "session.create":
+        if self._groups is not None and method in self._groups.methods:
+            try:
+                result = self._groups.call(method, params)
+            except HostedRoomRpcError as exc:
+                await self._rpc_error(socket, request_id, exc.code, str(exc))
+                return
+            if method == "groups.send" and params.get("event_id") in self._groups.lost_responses:
+                self._groups.lost_responses.remove(params["event_id"])
+                self.evidence.add("fault", connection=connection, method=method, outcome="response_loss")
+                await socket.close(code=1011, message=b"fixture response loss after commit")
+                return
+        elif method == "session.create":
             result = self._session_snapshot(include_stored=True)
         elif method == "session.resume":
             requested = params.get("session_id")
