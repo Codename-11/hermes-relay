@@ -286,6 +286,68 @@ class HostedRoomControllerTest {
         }
     }
 
+    @Test fun sendClickCannotRetargetAnotherThreadDuringCanonicalRefresh() = runBlocking {
+        withController { controller, harness, _ ->
+            controller.open(hostedRoom(roomJson, route))
+            controller.selectThread("thread-b"); controller.editDraft("Draft B")
+            controller.selectThread("thread-a"); controller.editDraft("Draft A")
+            val original = harness.hostedRoomHandler!!
+            val entered = CompletableDeferred<Unit>()
+            val release = java.util.concurrent.CountDownLatch(1)
+            harness.hostedRoomHandler = { method, params ->
+                if (method == "groups.log") { entered.complete(Unit); release.await(3, java.util.concurrent.TimeUnit.SECONDS) }
+                original(method, params)
+            }
+            val sending = launch { controller.send() }
+            entered.await()
+            controller.selectThread("thread-b")
+            release.countDown(); sending.join()
+            assertTrue("Send from A must never submit B", harness.rpcLog.none { it.first == "groups.send" })
+            assertEquals("Draft B", controller.state.value.draft)
+            controller.selectThread("thread-a")
+            assertEquals("Draft A", controller.state.value.draft)
+            controller.send()
+            val payload = harness.rpcLog.single { it.first == "groups.send" }.second["payload"] as JsonObject
+            assertEquals("thread-a", payload.roomString("thread_id")); assertEquals("Draft A", payload.roomString("text"))
+        }
+    }
+
+    @Test fun sendClickCannotSubmitEditsMadeDuringCanonicalRefresh() = runBlocking {
+        withController { controller, harness, _ ->
+            controller.open(hostedRoom(roomJson, route)); controller.editDraft("Clicked draft")
+            val original = harness.hostedRoomHandler!!
+            val entered = CompletableDeferred<Unit>()
+            val release = java.util.concurrent.CountDownLatch(1)
+            harness.hostedRoomHandler = { method, params ->
+                if (method == "groups.log") { entered.complete(Unit); release.await(3, java.util.concurrent.TimeUnit.SECONDS) }
+                original(method, params)
+            }
+            val sending = launch { controller.send() }
+            entered.await(); controller.editDraft("Still editing, not submitted")
+            release.countDown(); sending.join()
+            assertTrue("Only the clicked draft is authorized", harness.rpcLog.none { it.first == "groups.send" })
+            assertEquals("Still editing, not submitted", controller.state.value.draft)
+            controller.send()
+            assertEquals(1, harness.rpcLog.count { it.first == "groups.send" })
+            assertEquals("", controller.state.value.draft)
+        }
+    }
+
+    @Test fun androidUploadBoundRejectsBeforeEncodingOrDispatch() = runBlocking {
+        withController { controller, harness, _ ->
+            val original = harness.hostedRoomHandler!!
+            harness.hostedRoomHandler = { method, params ->
+                if (method == "groups.capabilities") obj("""{"driver":true,"methods":["groups.state","groups.log","groups.send","groups.attachment.put"],"features":["idempotent_send","actor_identity","monotonic_log"]}""")
+                else original(method, params)
+            }
+            controller.open(hostedRoom(roomJson, route))
+            controller.upload(controller.state.value.room!!.key, null, "large.bin", "application/octet-stream", ByteArray(12_000_001))
+            assertTrue(harness.rpcLog.none { it.first == "groups.attachment.put" })
+            assertTrue(controller.state.value.operationError!!.contains("12 MB"))
+            controller.refresh(); assertTrue(controller.state.value.ready)
+        }
+    }
+
     private val route = BotGatewayRoute(BotGatewayRouteKey("connection", "default"), "Fixture")
     private suspend fun withController(persistHook: suspend (String) -> Unit = {}, block: suspend (HostedRoomController, GatewayClientHarness, MutableList<JsonObject>) -> Unit) {
         val harness = GatewayClientHarness()

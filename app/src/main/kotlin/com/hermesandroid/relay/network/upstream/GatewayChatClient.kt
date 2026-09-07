@@ -4310,9 +4310,21 @@ class GatewayChatClient(
             put("method", method)
             put("params", params)
         }
-        if (!socket.send(json.encodeToString(JsonObject.serializer(), frame))) {
+        val encoded = json.encodeToString(JsonObject.serializer(), frame)
+        val hostedSize = if (method.startsWith("groups.")) encoded.toByteArray(Charsets.UTF_8).size.toLong() else 0L
+        // OkHttp closes the connection on queue overflow, before compression. Keep the
+        // hosted preflight and all RPC enqueues atomic on that socket's own monitor.
+        val sendError = synchronized(socket) {
+            when {
+                hostedSize > 0 && hostedSize + socket.queueSize() > 16L * 1024 * 1024 ->
+                    GatewayRpcException("Hosted request exceeds the WebSocket queue limit. Use a smaller file or retry after queued traffic drains.")
+                !socket.send(encoded) -> GatewayRpcException("send failed - socket closed")
+                else -> null
+            }
+        }
+        if (sendError != null) {
             pendingRpcs.remove(id)
-            return Result.failure(GatewayRpcException("send failed — socket closed"))
+            return Result.failure(sendError)
         }
         return try {
             Result.success(withTimeout(timeoutMs) { deferred.await() })

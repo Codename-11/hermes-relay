@@ -64,7 +64,7 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
                         while (true) {
                             val count = input.read(buffer)
                             if (count < 0) break
-                            require(output.size() + count <= 15_000_000) { "Files must be at most 15 MB" }
+                            require(output.size() + count <= HOSTED_ROOM_ANDROID_UPLOAD_MAX_BYTES) { "Files must be at most 12 MB on Android" }
                             output.write(buffer, 0, count)
                         }
                         output.toByteArray()
@@ -90,7 +90,7 @@ fun HostedRoomRoute(room: BotGroupRoom?, controller: HostedRoomController, onBac
         onExport = { scope.launch { runCatching { controller.exportHistory(room.key) }.onSuccess { download = it; saveFile.launch("room-history.json") }.onFailure { fileError = it.message } } },
         onMention = { member -> scope.launch { controller.mention(member, room.key) } },
         onDraft = { scope.launch { controller.editDraft(it, room.key) } },
-        onSend = { scope.launch { controller.send(room.key) } },
+        onSend = { val clicked = state; scope.launch { controller.send(room.key, clicked.selectedThread, clicked.draft) } },
         onThread = { scope.launch { controller.selectThread(it, room.key) } },
         onRefresh = { scope.launch { controller.refresh() } },
         onRead = { scope.launch { controller.markRead(room.key) } },
@@ -161,7 +161,7 @@ fun HostedRoomContent(
                             label = { Text(if (state.selectedThread == null) "New thread message" else "Reply in selected thread") })
                         if (state.pendingId != null) TextButton(onClick = { confirmDiscard = true }) { Text("Discard local draft") }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton(onClick = onAttach, enabled = state.canSend && state.pendingId == null && "groups.attachment.put" in state.capabilities.methods) { Text("Attach file") }
+                            TextButton(onClick = onAttach, enabled = state.canSend && state.pendingId == null && "groups.attachment.put" in state.capabilities.methods) { Text("Attach file (12 MB max)") }
                             Button(onClick = onSend, enabled = state.canSend && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
                                 Text(if (state.pendingId == null) "Send" else "Retry same send")
                             }

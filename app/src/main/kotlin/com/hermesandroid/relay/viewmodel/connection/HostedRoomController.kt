@@ -200,14 +200,25 @@ class HostedRoomController(
         }
     }
 
-    suspend fun send(expectedRoomKey: String? = state.value.room?.key) {
-        if (state.value.room?.key != expectedRoomKey) return
+    suspend fun send(
+        expectedRoomKey: String? = state.value.room?.key,
+        expectedThread: String? = state.value.selectedThread,
+        expectedDraft: String = state.value.draft,
+    ) {
+        if (state.value.room?.key != expectedRoomKey || state.value.selectedThread != expectedThread || state.value.draft != expectedDraft) return
+        val token = generation
+        val clickedRecord = draftRecord()
         refresh()
         operations.withLock {
-            if (state.value.room?.key != expectedRoomKey) return@withLock
+            if (token != generation || state.value.room?.key != expectedRoomKey) return@withLock
+            val acceptedId = clickedRecord.roomString("event_id")
+            if (acceptedId.isNotBlank() && history.any { it.roomString("event_id") == hostedUserEventId(acceptedId) }) return@withLock
+            if (state.value.selectedThread != expectedThread || draftRecord() != clickedRecord) {
+                mutable.value = state.value.copy(operationError = "Thread or draft changed before sending. Review it and press Send again.")
+                return@withLock
+            }
             if (!state.value.canSend) return@withLock
             if (state.value.draft.isBlank() && state.value.attachments.isEmpty()) return@withLock
-            val token = generation
             try {
                 require(state.value.draft.toByteArray(Charsets.UTF_8).size <= 65_536) { "Message exceeds the 64 KiB text limit" }
                 require(state.value.attachments.size <= 8) { "A message supports at most eight files" }
@@ -297,7 +308,7 @@ class HostedRoomController(
         val token = generation
         try {
             require(current.attachments.size < 8) { "A message supports at most eight files" }
-            require(bytes.isNotEmpty() && bytes.size <= 15_000_000) { "Files must be between 1 byte and 15 MB" }
+            require(bytes.isNotEmpty() && bytes.size <= HOSTED_ROOM_ANDROID_UPLOAD_MAX_BYTES) { "Files must be between 1 byte and 12 MB on Android" }
             require(current.attachments.sumOf { it.roomLong("size") } + bytes.size <= 25_000_000) { "Message files exceed 25 MB" }
             val kind = when { mime.startsWith("image/") -> "image"; mime == "application/pdf" -> "pdf"; else -> "file" }
             val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

@@ -20,7 +20,8 @@ against the canonical namespaced event ID. Acceptance does not create an assista
 reply. Discarding a local pending draft does not undo a potentially accepted send.
 
 The foreground screen incrementally refreshes canonical state. Passive history
-fetches do not hold the draft/action lock. Owner and generation checks reject stale
+fetches do not hold the draft/action lock. Send captures the clicked thread and draft
+before refreshing and refuses dispatch if either changes during that wait. Owner and generation checks reject stale
 room completions and callbacks. These room operations never invoke native session
 create, resume, activate, interrupt, or prompt submission methods.
 
@@ -33,9 +34,11 @@ create, resume, activate, interrupt, or prompt submission methods.
   and sends the exact member/task/request/execution generation with `once` or `deny`.
 - Canonical failure, deferred, cancelled and settled events appear as room activity,
   separately from member messages. Unavailable peer routes remain visibly identified.
-- The document picker reads original bytes, up to 15 MB per file, eight files and
+- The document picker reads original bytes, up to 12 MB per file on Android, eight files and
   25 MB per message. Upload receipts are reduced to the exact five-field send
-  descriptor. Picking the same file after an uncertain upload reuses its upload ID.
+  descriptor. The lower Android upload bound leaves space for base64 within the
+  WebSocket queue; exact encoded-frame and queued-byte checks reject overflow locally
+  without closing the Gateway. Backend viewer downloads retain the 15 MB limit. Picking the same file after an uncertain upload reuses its upload ID.
 - Shared files use the viewer-only metadata catalog, opaque continuation cursors,
   and room/event/attachment-bound reads. Downloads use the system document picker.
   Native image, document, audio and video understanding depends on the recipient

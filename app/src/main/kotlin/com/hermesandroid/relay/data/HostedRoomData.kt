@@ -3,6 +3,9 @@ package com.hermesandroid.relay.data
 import java.security.MessageDigest
 import kotlinx.serialization.json.*
 
+/** Leaves room for base64 and JSON inside the WebSocket outbound queue. */
+const val HOSTED_ROOM_ANDROID_UPLOAD_MAX_BYTES = 12_000_000
+
 internal fun JsonObject.roomString(key: String): String = (get(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
 internal fun JsonObject.roomLong(key: String): Long = (get(key) as? JsonPrimitive)?.longOrNull ?: 0L
 internal fun JsonObject.roomBool(key: String): Boolean = (get(key) as? JsonPrimitive)?.booleanOrNull == true
