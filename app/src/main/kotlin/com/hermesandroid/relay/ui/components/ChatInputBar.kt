@@ -638,8 +638,6 @@ fun ChatInputBar(
         }
     }
 }
-}
-}
 
 internal data class LargeTextInsertion(
     val insertedText: String,
