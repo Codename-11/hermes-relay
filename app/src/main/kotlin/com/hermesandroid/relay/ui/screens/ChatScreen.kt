@@ -4270,10 +4270,12 @@ fun ChatScreen(
                 isStreaming && steerNotice != null -> steerNotice
                 else -> null
             }
+            val activeProfileName = AgentDisplay.profileDisplayName(effectiveProfile)
             val inputPlaceholder = when {
                 editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
                 isStreaming && correctCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
                 isStreaming -> stringResource(R.string.chat_placeholder_queue)
+                !activeProfileName.isNullOrBlank() -> stringResource(R.string.chat_placeholder_ask_agent, activeProfileName)
                 else -> stringResource(R.string.chat_placeholder_message)
             }
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)

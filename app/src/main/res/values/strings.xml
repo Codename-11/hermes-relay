@@ -116,6 +116,7 @@
     <string name="chat_placeholder_steer">Correct the response…</string>
     <string name="chat_placeholder_queue">Queue a message…</string>
     <string name="chat_placeholder_message">Message…</string>
+    <string name="chat_placeholder_ask_agent">Ask %1$s…</string>
     <string name="chat_edit_busy_snackbar">Can\'t edit right now — wait for the current turn to finish</string>
     <string name="chat_select_reasoning_effort">Select reasoning effort</string>
     <string name="reasoning_effort_standard_levels_notice">Hermes doesn\'t advertise exact effort levels for this model, so standard options are shown.</string>
