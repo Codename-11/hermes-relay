@@ -753,6 +753,7 @@ fun ChatScreen(
     gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
     gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
     onNavigateToGitWorkspace: () -> Unit = {},
+    onBindStatusStripActions: (onModelClick: (() -> Unit)?, onEffortClick: (() -> Unit)?, effortLabel: String?) -> Unit = { _, _, _ -> },
 ) {
     val responsiveLayout = chatResponsiveLayout(LocalConfiguration.current.screenWidthDp)
     val supervised = supervisedPolicy.enabled
@@ -4452,6 +4453,19 @@ fun ChatScreen(
                 )
             } else {
                 null
+            }
+
+            LaunchedEffect(modelControl, effortControl, effortControl?.value) {
+                onBindStatusStripActions(
+                    if (modelControl != null) { { showModelSheet = true } } else null,
+                    if (effortControl != null) { { showEffortSheet = true } } else null,
+                    effortControl?.value,
+                )
+            }
+            DisposableEffect(Unit) {
+                onDispose {
+                    onBindStatusStripActions(null, null, null)
+                }
             }
 
             visibleChatFailure
