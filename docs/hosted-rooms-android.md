@@ -2,8 +2,22 @@
 
 Bot Mode discovers hosted rooms using the owning Gateway's `groups.capabilities`
 and paginated `groups.list`. Legacy `ui_meta` room snapshots remain read-only.
-This feature requires the upstream hosted-room protocol dependency. It does not
-introduce a Relay-only scheduler or create another native runtime on Android.
+This feature is a **draft dependent client**, not independently release-ready.
+Its protocol is developed in [Hermes #98307](https://github.com/NousResearch/hermes-agent/pull/98307)
+and the [room-backend companion](https://github.com/dokterdok/hermes-agent/pull/4).
+[Native Codex continuity/control fixes](https://github.com/NousResearch/hermes-agent/pull/105502)
+are an additional dependency for the corresponding native participant guarantees,
+not a replacement for the room backend. Resolve and verify the backend first;
+then validate this client against the accepted protocol before enabling release.
+Desktop and Android are separate clients of that backend. Neither is a prerequisite
+for the other to execute room work, and Android does not become an execution host.
+
+Older gateways remain supported through capability-gated read-only fallback.
+No state/history migration is included. Rollback to an earlier Android build does
+not delete canonical history on the owning gateway.
+
+See [fixture screenshots and provenance](../assets/screenshots/hosted-rooms/README.md)
+for UI evidence and its version-specific limits.
 
 ## Conversation and recovery
 
