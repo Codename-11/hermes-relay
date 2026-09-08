@@ -86,8 +86,14 @@ except ImportError:  # pragma: no cover - direct-script fallback
 # by setting ANDROID_BRIDGE_URL to the phone's IP.
 
 def _bridge_url() -> str:
-    """URL of the relay (default) or direct phone connection."""
-    return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8767")
+    """URL of the relay (default) or direct phone connection.
+
+    ``127.0.0.1`` rather than ``localhost``: on Windows the latter resolves to
+    ``::1`` first, the relay listens on IPv4 only, and every availability probe
+    then burns its full timeout before falling back (a 2 s tax per check on
+    each run start).
+    """
+    return os.getenv("ANDROID_BRIDGE_URL", "http://127.0.0.1:8767")
 
 def _hermes_home() -> Path:
     """Return the request-scoped Hermes home when the host exposes one."""

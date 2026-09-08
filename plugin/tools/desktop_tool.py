@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextvars import ContextVar
 from typing import Any, Optional
 
@@ -112,8 +113,14 @@ def _trusted_call_context(kwargs: dict[str, Any]) -> dict[str, str]:
 
 
 def _relay_url() -> str:
-    """URL of the unified relay. Defaults to localhost:8767."""
-    return os.getenv("DESKTOP_RELAY_URL", "http://localhost:8767")
+    """URL of the unified relay. Defaults to 127.0.0.1:8767.
+
+    Deliberately not ``localhost``: on Windows that resolves to ``::1`` first,
+    the relay listens on IPv4 only, and each probe then burns the full 2 s
+    timeout before falling back. With ~48 desktop tools the availability sweep
+    added over 70 s to every run start when no desktop client was connected.
+    """
+    return os.getenv("DESKTOP_RELAY_URL", "http://127.0.0.1:8767")
 
 
 def _relay_token() -> Optional[str]:

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Relay tool defaults use `127.0.0.1` instead of `localhost`.** On Windows, `localhost` resolves to `::1` first while the relay listens on IPv4 only, so every `desktop_*`/`android_*` availability probe burned its full 2 s timeout before falling back. `DESKTOP_RELAY_URL` and `ANDROID_BRIDGE_URL` overrides are unchanged.
 - **`android_*` tools resolve bridge credentials written after host startup.** Requests retry profile-scoped env and active bridge-session credentials after a stale token is rejected, and vision navigation now shares the same current Relay transport instead of the retired standalone default.
 - **`android_setup` accepts both its canonical and legacy schema keys.** `bridge_session_token` and `pairing_code` are accepted, while a missing token returns a structured error.
 - **Android tool setup tests use a temporary Hermes home.** Test runs no longer write bridge settings into a developer environment.

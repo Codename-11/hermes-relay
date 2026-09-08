@@ -250,7 +250,7 @@ class TestSharedBridgeTransport(unittest.TestCase):
             {"ANDROID_BRIDGE_URL": "", "ANDROID_BRIDGE_TIMEOUT": "30"},
         ):
             os.environ.pop("ANDROID_BRIDGE_URL")
-            self.assertEqual(android_tool._bridge_url(), "http://localhost:8767")
+            self.assertEqual(android_tool._bridge_url(), "http://127.0.0.1:8767")
 
     def test_get_uses_android_tool_bridge_transport(self) -> None:
         response = mock.Mock()
