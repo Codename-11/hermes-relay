@@ -32,6 +32,8 @@ import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.relayMetadataStyle
+import com.hermesandroid.relay.ui.theme.relayPanel
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
