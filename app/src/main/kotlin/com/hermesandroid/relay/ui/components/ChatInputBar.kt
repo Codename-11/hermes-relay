@@ -370,8 +370,9 @@ fun ChatInputBar(
                     BasicTextField(
                         value = value,
                         onValueChange = { updated ->
-                            val converted = largePasteThreshold
-                                ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
+                            val converted = if (largePasteThreshold != null) {
+                                detectLargeTextInsertion(value, updated, largePasteThreshold)
+                            } else null
                             if (converted != null) {
                                 onValueChange(converted.remainingText)
                                 onLargePaste(converted.insertedText)
