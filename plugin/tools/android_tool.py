@@ -314,8 +314,30 @@ def _path_with_device(path: str, device: Optional[str] = None) -> str:
     sep = "&" if "?" in path else "?"
     return f"{path}{sep}{urlencode({'device': selector})}"
 
+_REQUIREMENTS_CACHE_TTL_S = 3.0
+# (monotonic stamp, result). ``None`` result = never evaluated.
+_requirements_cache: tuple[float, Optional[bool]] = (0.0, None)
+
+
 def _check_requirements() -> bool:
     """Returns True if the relay is running and a phone is connected.
+
+    Cached for a few seconds: the host evaluates this once per registered
+    ``android_*`` tool at every run start (~30 tools), and each uncached
+    evaluation is up to two HTTP calls.
+    """
+    global _requirements_cache
+    now = time.monotonic()
+    stamp, cached = _requirements_cache
+    if cached is not None and now - stamp < _REQUIREMENTS_CACHE_TTL_S:
+        return cached
+    result = _check_requirements_uncached()
+    _requirements_cache = (now, result)
+    return result
+
+
+def _check_requirements_uncached() -> bool:
+    """Live check behind ``_check_requirements``.
 
     The relay's ``/ping`` route is forwarded to the phone and only returns a
     basic ``{"pong": true}`` payload, so it cannot be used to decide whether

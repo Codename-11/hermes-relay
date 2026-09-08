@@ -56,10 +56,11 @@ forwards a ``desktop.command`` envelope to the connected desktop client
 (see ``plugin/relay/channels/desktop.py``), awaits a ``desktop.response``,
 and returns the structured result.
 
-``check_fn`` pings ``/desktop/_ping?tool=<name>`` — 200 if a client is
-connected and advertises the tool, 503 otherwise. This is how Hermes
-becomes aware: with no client, the tool fails closed and the LLM learns
-to stop calling it.
+``check_fn`` for each ``desktop_*`` tool reads one cached ``GET
+/desktop/health`` snapshot (see ``_advertised_snapshot``) — available if a
+client is connected and advertises the tool. This is how the host becomes
+aware: with no client, the tool fails closed and the LLM learns to stop
+calling it.
 
 ``desktop_health`` is the one tool that does NOT round-trip to the client
 — the relay already has the client's heartbeat-advertised metadata, so we
@@ -71,6 +72,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextvars import ContextVar
 from typing import Any, Optional
 
@@ -191,22 +193,66 @@ def _get(path: str, params: Optional[dict] = None) -> dict:
     return data
 
 
-def _check_tool(tool_name: str) -> bool:
-    """Returns True if a desktop client is connected AND advertises ``tool_name``.
+_ADVERTISED_CACHE_TTL_S = 3.0
+# (monotonic stamp, snapshot). ``None`` snapshot = relay unreachable / never fetched.
+_advertised_cache: tuple[float, Optional[dict[str, Any]]] = (0.0, None)
 
-    Hits ``/desktop/_ping?tool=<tool_name>``. 200 = available, 503 = no
-    client / tool not advertised.
+
+def _advertised_snapshot() -> Optional[dict[str, Any]]:
+    """One cached ``GET /desktop/health`` shared by every ``check_fn``.
+
+    The host evaluates every registered tool's ``check_fn`` at each run start.
+    ~48 desktop tools each doing their own ``/desktop/_ping`` round-trip made
+    session start scale with the tool count (and with any connect timeout). A
+    single health call already carries ``connected`` plus the full
+    ``advertised_tools`` list, so the whole sweep collapses to one request per
+    ``_ADVERTISED_CACHE_TTL_S`` window.
+
+    Returns ``{"connected": bool, "advertised_tools": frozenset[str]}`` or
+    ``None`` when the relay could not be reached.
     """
+    global _advertised_cache
+    now = time.monotonic()
+    stamp, cached = _advertised_cache
+    if cached is not None and now - stamp < _ADVERTISED_CACHE_TTL_S:
+        return cached
+    snapshot: Optional[dict[str, Any]]
     try:
         r = requests.get(
-            f"{_relay_url()}/desktop/_ping",
-            params={"tool": tool_name},
+            f"{_relay_url()}/desktop/health",
             headers=_auth_headers(),
             timeout=2,
         )
-        return r.status_code == 200
+        data = r.json() if r.status_code == 200 else {}
+        if not isinstance(data, dict):
+            data = {}
+        snapshot = {
+            "connected": bool(data.get("connected", False)),
+            "advertised_tools": frozenset(data.get("advertised_tools") or []),
+        }
     except Exception:
+        snapshot = None
+    # Cache the miss too, so an unreachable relay costs one timeout per window
+    # instead of one per tool.
+    _advertised_cache = (now, snapshot or {"connected": False, "advertised_tools": frozenset()})
+    return snapshot
+
+
+def _check_tool(tool_name: str) -> bool:
+    """Returns True if a desktop client is connected AND advertises ``tool_name``.
+
+    Reads the cached ``/desktop/health`` snapshot instead of hitting
+    ``/desktop/_ping?tool=<name>`` per tool. Mirrors the relay's
+    ``has_client_for`` rule: a connected client that advertises nothing is
+    treated optimistically for everything except ``desktop_computer_*``.
+    """
+    snapshot = _advertised_snapshot()
+    if not snapshot or not snapshot["connected"]:
         return False
+    advertised = snapshot["advertised_tools"]
+    if advertised:
+        return tool_name in advertised
+    return not tool_name.startswith("desktop_computer_")
 
 
 def _check_relay() -> bool:

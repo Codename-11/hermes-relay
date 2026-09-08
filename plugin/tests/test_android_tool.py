@@ -75,6 +75,12 @@ class TestPing:
 
 
 class TestRequirements:
+    @pytest.fixture(autouse=True)
+    def _reset_requirements_cache(self):
+        android_tool._requirements_cache = (0.0, None)
+        yield
+        android_tool._requirements_cache = (0.0, None)
+
     @responses.activate
     def test_requirements_true_for_device_control_phone(self, bridge_url):
         responses.add(
@@ -98,6 +104,36 @@ class TestRequirements:
             },
         )
         assert _check_requirements() is False
+
+    @responses.activate
+    def test_requirements_cached_across_registered_tools(self, bridge_url):
+        # The host runs check_fn for every android_* tool at run start;
+        # only the first evaluation inside the TTL window should hit the relay.
+        responses.add(
+            responses.GET,
+            f"{bridge_url}/bridge/status",
+            json={"phone_connected": True, "bridge": {"device_control_supported": True}},
+        )
+        assert _check_requirements() is True
+        assert _check_requirements() is True
+        assert _check_requirements() is True
+        assert len(responses.calls) == 1
+
+    @responses.activate
+    def test_requirements_cache_expires(self, bridge_url):
+        responses.add(
+            responses.GET,
+            f"{bridge_url}/bridge/status",
+            json={"phone_connected": False},
+        )
+        assert _check_requirements() is False
+        stamp, cached = android_tool._requirements_cache
+        android_tool._requirements_cache = (
+            stamp - android_tool._REQUIREMENTS_CACHE_TTL_S - 1,
+            cached,
+        )
+        assert _check_requirements() is False
+        assert len(responses.calls) == 2
 
 
 class TestReadScreen:
