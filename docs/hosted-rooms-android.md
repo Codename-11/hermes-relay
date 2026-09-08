@@ -51,23 +51,27 @@ create, resume, activate, interrupt, or prompt submission methods.
 
 ## Capability and evidence limits
 
-Each optional operation is gated by advertised methods/features. The current room
-registry has no thread-local Stop, general room user-input response, shared read
-receipt, message edit/delete/reaction, or full native-tool activity inspection RPC.
-Search in the conversation filters loaded history; file-name search uses the host
-catalog. Local read state is not another client's read receipt. Background/closed-app
-push delivery and real native-runtime media delivery require separate acceptance.
+Each optional operation is gated by advertised methods/features. Canonical history
+and server-side message search, exact-message edit/delete/reaction actions, and
+shared read cursors are supported when the owning Gateway advertises them.
+Gateways without shared reads retain local read state; that fallback is not another
+client's read receipt. File-name search uses the host catalog. The current room
+registry has no thread-local Stop, general room user-input response, or full
+native-tool activity inspection RPC. Background/closed-app push delivery and real
+native-runtime media delivery require separate acceptance.
 
 Focused checks use the repository Android lane:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/android-lane.ps1 gradle :app:testSideloadDebugUnitTest --tests '*HostedRoom*Test*' --tests '*BotModeControllerTest*'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/android-lane.ps1 gradle :app:standardPhoneApi36SideloadDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.hermesandroid.relay.viewmodel.HostedRoomInstrumentedTest'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/android-lane.ps1 gradle :app:standardPhoneApi36SideloadDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.hermesandroid.relay.viewmodel.HostedRoomInstrumentedTest,com.hermesandroid.relay.viewmodel.HostedRoomHistoryInstrumentedTest'
 ```
 
 `HostedRoomPythonFixtureTest` runs the declarative repository fixture in a disposable
 loopback subprocess. `HostedRoomInstrumentedTest` exercises the production route,
-controller and WebSocket client through an Activity foreground return. Roborazzi
-screenshots cover writable, unsupported, uncertain-send, approval and unavailable-member
+controller and WebSocket client through an Activity foreground return.
+`HostedRoomHistoryInstrumentedTest` exercises canonical search, exact message
+actions, revision drift, and room-switch dialog fencing through the production
+route. Roborazzi screenshots cover writable, unsupported, uncertain-send, approval and unavailable-member
 states. Creation and stale-settings forms are exercised and captured on the managed
 emulator. Emulator evidence does not certify a physical phone.
