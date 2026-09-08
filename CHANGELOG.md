@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Android Bot Mode can participate in canonical hosted rooms.** Compatible gateways expose room composition, replies, attachments, projected history, search, shared read state, edits, deletion, reactions, retry, approvals, scoped controls, and reconnect recovery; older gateways retain the existing read-only fallback.
+
 ### Fixed
 
 - **`android_*` tools resolve bridge credentials written after host startup.** Requests retry profile-scoped env and active bridge-session credentials after a stale token is rejected, and vision navigation now shares the same current Relay transport instead of the retired standalone default.
