@@ -41,6 +41,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.hermesandroid.relay.ui.components.ModelPickerSheet
+import com.hermesandroid.relay.ui.components.OptionPickerSheet
+import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -1563,6 +1566,12 @@ fun RelayApp() {
         val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+        val modelPickerOptions by chatViewModel.modelPickerOptions.collectAsState()
+        val selectedReasoningEffort by chatViewModel.selectedReasoningEffort.collectAsState()
+        val modelOptionsRefreshing by chatViewModel.modelOptionsRefreshing.collectAsState()
+        val apiModelOptions by chatViewModel.apiModelOptions.collectAsState()
+        var showFooterModelSheet by remember { mutableStateOf(false) }
+        var showFooterEffortSheet by remember { mutableStateOf(false) }
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
         val startupSessionsLoading by chatViewModel.isLoadingSessions.collectAsState()
@@ -2180,6 +2189,15 @@ fun RelayApp() {
                     } else {
                         null
                     }
+                    val activeEffortLabel = selectedReasoningEffort?.let { reasoningEffortLabel(it) }
+                    val effortAvailability = chatViewModel.reasoningEffortAvailability()
+                    val effortPickerOptions = effortAvailability.choices.map { effort ->
+                        com.hermesandroid.relay.ui.components.ChatInputPickerOption(
+                            label = reasoningEffortLabel(effort),
+                            value = effort,
+                            selected = selectedReasoningEffort != null && effort == selectedReasoningEffort,
+                        )
+                    }
                     RelayStatusStrip(
                         leadingBadge = {
                             ChatTransportStatusBadge(
@@ -2189,6 +2207,15 @@ fun RelayApp() {
                         },
                         routeLabel = transportRouteLabel,
                         trailing = "$footerModelLabel / $profileLabel",
+                        modelLabel = footerModelLabel,
+                        effortLabel = activeEffortLabel,
+                        profileLabel = "/ $profileLabel",
+                        onModelClick = if (currentRoute == Screen.Chat.route && !supervisedPolicy.enabled && modelPickerOptions.isNotEmpty()) {
+                            { showFooterModelSheet = true }
+                        } else null,
+                        onEffortClick = if (currentRoute == Screen.Chat.route && !supervisedPolicy.enabled && effortPickerOptions.isNotEmpty()) {
+                            { showFooterEffortSheet = true }
+                        } else null,
                         // Tap the persistent status/route readout to open
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
@@ -2209,6 +2236,37 @@ fun RelayApp() {
                             routes = APP_STATUS_PET_ROUTES,
                         ),
                     )
+
+                    if (showFooterModelSheet) {
+                        ModelPickerSheet(
+                            options = modelPickerOptions,
+                            refreshing = modelOptionsRefreshing,
+                            onRefresh = {
+                                chatViewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+                            },
+                            onSelect = { option ->
+                                showFooterModelSheet = false
+                                if (option.provider == null && apiModelOptions.any { it.id == option.value }) {
+                                    option.value?.let(chatViewModel::selectApiModel)
+                                } else {
+                                    chatViewModel.selectModel(option.value, option.provider)
+                                }
+                            },
+                            onDismiss = { showFooterModelSheet = false },
+                        )
+                    }
+
+                    if (showFooterEffortSheet) {
+                        OptionPickerSheet(
+                            title = stringResource(R.string.chat_select_reasoning_effort),
+                            options = effortPickerOptions,
+                            onSelect = { option ->
+                                showFooterEffortSheet = false
+                                option.value?.let(chatViewModel::selectReasoningEffort)
+                            },
+                            onDismiss = { showFooterEffortSheet = false },
+                        )
+                    }
                 }
             }
         ) { innerPadding ->

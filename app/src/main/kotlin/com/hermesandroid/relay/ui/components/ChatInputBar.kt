@@ -518,24 +518,6 @@ fun ChatInputBar(
                         }
                     }
 
-                    if (modelControl != null) {
-                        ChatInputPickerChip(
-                            control = modelControl,
-                            onSelect = onModelOptionSelected,
-                            modifier = Modifier.widthIn(max = 126.dp),
-                            onClickOverride = onModelPickerClick,
-                        )
-                    }
-
-                    if (effortControl != null) {
-                        ChatInputPickerChip(
-                            control = effortControl,
-                            onSelect = {},
-                            modifier = Modifier.widthIn(max = 104.dp),
-                            onClickOverride = onEffortPickerClick,
-                        )
-                    }
-
                     Spacer(modifier = Modifier.weight(1f))
 
                     // Trailing slot
