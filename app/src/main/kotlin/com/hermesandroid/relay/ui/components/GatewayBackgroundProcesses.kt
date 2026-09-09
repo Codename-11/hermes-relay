@@ -24,12 +24,12 @@ import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.PauseCircleOutline
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,7 +66,6 @@ import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.viewmodel.SubagentActivity
-import com.hermesandroid.relay.viewmodel.SubagentActivityPhase
 import com.hermesandroid.relay.viewmodel.SubagentChildPreview
 import kotlinx.coroutines.launch
 
@@ -84,27 +83,18 @@ internal fun GatewayBackgroundProcessStrip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Initial/switch refreshes are silent. The strip appears only after the
-    // session actually owns a process, avoiding a transient "Checking" row on
-    // every ordinary chat open.
+    // Completed work remains reachable from its transcript receipt. Only active
+    // work owns composer space; refreshing history must not resurrect the strip.
     val visibleActivities = subagentActivities.takeIf { subagentPreviewVisibility.showLifecycle }.orEmpty()
-    if (processes.isEmpty() && visibleActivities.isEmpty()) return
-
     val running = processes.count { it.isRunning }
     val runningAgents = visibleActivities.count { !it.isTerminal }
-    val failed = processes.count { !it.isRunning && (it.exitCode ?: 0) != 0 }
-    val failedAgents = visibleActivities.count { it.phase == SubagentActivityPhase.FAILED }
-    val interruptedAgents = visibleActivities.count {
-        it.phase == SubagentActivityPhase.INTERRUPTED ||
-            it.phase == SubagentActivityPhase.ENDED_WITH_PARENT
-    }
-    val failureCount = failed + failedAgents
+    if (running == 0 && runningAgents == 0) return
     val status = when {
+        runningAgents > 0 && running > 0 -> stringResource(
+            R.string.current_chat_activity_summary, runningAgents, running,
+        )
         runningAgents > 0 -> stringResource(R.string.subagent_lane_running_count, runningAgents)
-        running > 0 -> "$running ${stringResource(R.string.bg_processes_running)}"
-        failureCount > 0 -> "$failureCount ${stringResource(R.string.task_status_failed)}"
-        interruptedAgents > 0 -> stringResource(R.string.agent_activity_status_interrupted)
-        else -> stringResource(R.string.task_status_complete)
+        else -> "$running ${stringResource(R.string.bg_processes_running)}"
     }
     val openDescription = stringResource(R.string.current_chat_activity_open)
 
@@ -130,24 +120,7 @@ internal fun GatewayBackgroundProcessStrip(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (running > 0 || runningAgents > 0 || loading) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    imageVector = when {
-                        failureCount > 0 -> Icons.Filled.ErrorOutline
-                        interruptedAgents > 0 -> Icons.Filled.PauseCircleOutline
-                        else -> Icons.Filled.CheckCircle
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = when {
-                        failureCount > 0 -> MaterialTheme.colorScheme.error
-                        interruptedAgents > 0 -> MaterialTheme.colorScheme.tertiary
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(9.dp))
             Text(
                 text = stringResource(R.string.current_chat_activity_title),
@@ -157,11 +130,7 @@ internal fun GatewayBackgroundProcessStrip(
             Text(
                 text = status,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (failureCount > 0 && running == 0) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Icon(
                 imageVector = Icons.Filled.Visibility,
@@ -190,6 +159,8 @@ internal fun GatewayBackgroundProcessSheet(
     onDismissProcess: (String) -> Unit,
     onOpenSubagentChild: (String) -> Unit,
     onDismiss: () -> Unit,
+    readOnlyHistory: Boolean = false,
+    historyNotice: String? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -246,17 +217,19 @@ internal fun GatewayBackgroundProcessSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        stringResource(R.string.current_chat_activity_title),
+                        stringResource(
+                            if (readOnlyHistory) R.string.chat_activity_history_title else R.string.current_chat_activity_title,
+                        ),
                         modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Text(
-                        stringResource(R.string.current_chat_activity_subtitle),
+                        historyNotice ?: stringResource(R.string.current_chat_activity_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (processes.isNotEmpty()) IconButton(onClick = onRefresh, enabled = !loading) {
+                if (processes.isNotEmpty() && !readOnlyHistory) IconButton(onClick = onRefresh, enabled = !loading) {
                     if (loading) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
@@ -300,7 +273,9 @@ internal fun GatewayBackgroundProcessSheet(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        stringResource(R.string.current_chat_activity_empty),
+                        stringResource(
+                            if (readOnlyHistory) R.string.chat_activity_history_empty else R.string.current_chat_activity_empty,
+                        ),
                         modifier = Modifier.padding(top = 12.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -341,7 +316,7 @@ internal fun GatewayBackgroundProcessSheet(
                             GatewayProcessRow(
                                 process = process,
                                 stopping = process.id in stoppingProcessIds,
-                                onStop = { onStop(process.id) },
+                                onStop = if (readOnlyHistory) null else ({ onStop(process.id) }),
                                 onDismiss = null,
                             )
                         }
@@ -356,7 +331,7 @@ internal fun GatewayBackgroundProcessSheet(
                                 process = process,
                                 stopping = false,
                                 onStop = null,
-                                onDismiss = { onDismissProcess(process.id) },
+                                onDismiss = if (readOnlyHistory) null else ({ onDismissProcess(process.id) }),
                             )
                         }
                     }
@@ -384,7 +359,7 @@ private fun GatewayProcessRow(
     onDismiss: (() -> Unit)?,
 ) {
     var expanded by remember(process.id) { mutableStateOf(false) }
-    val failed = !process.isRunning && (process.exitCode ?: 0) != 0
+    val failed = processDisplayPhase(process) == ProcessDisplayPhase.FAILED
     val output = sanitizeTerminalText(
         process.outputTail.orEmpty().ifBlank { process.outputPreview.orEmpty() },
     ).trimEnd()
@@ -478,9 +453,11 @@ private fun GatewayProcessRow(
 
 @Composable
 private fun ProcessStateIcon(process: GatewayProcess, failed: Boolean, stopping: Boolean) {
+    val phase = processDisplayPhase(process)
     val tint: Color = when {
         failed -> MaterialTheme.colorScheme.error
         process.isRunning || stopping -> MaterialTheme.colorScheme.primary
+        phase == ProcessDisplayPhase.UNKNOWN || phase == ProcessDisplayPhase.CANCELLED -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.tertiary
     }
     Surface(
@@ -501,6 +478,14 @@ private fun ProcessStateIcon(process: GatewayProcess, failed: Boolean, stopping:
                     modifier = Modifier.size(18.dp),
                     tint = tint,
                 )
+                phase == ProcessDisplayPhase.UNKNOWN || phase == ProcessDisplayPhase.CANCELLED -> Icon(
+                    imageVector = if (phase == ProcessDisplayPhase.UNKNOWN) Icons.Filled.HelpOutline else Icons.Filled.PauseCircleOutline,
+                    contentDescription = stringResource(
+                        if (phase == ProcessDisplayPhase.UNKNOWN) R.string.agent_activity_status_unavailable else R.string.task_status_cancelled,
+                    ),
+                    modifier = Modifier.size(18.dp),
+                    tint = tint,
+                )
                 else -> Icon(
                     Icons.Filled.CheckCircle,
                     contentDescription = stringResource(R.string.tool_completed_a11y),
@@ -514,8 +499,11 @@ private fun ProcessStateIcon(process: GatewayProcess, failed: Boolean, stopping:
 
 @Composable
 private fun processMetadata(process: GatewayProcess, failed: Boolean): String {
+    val phase = processDisplayPhase(process)
     val state = when {
         process.isRunning -> stringResource(R.string.bg_processes_running)
+        phase == ProcessDisplayPhase.UNKNOWN -> stringResource(R.string.agent_activity_status_unavailable)
+        phase == ProcessDisplayPhase.CANCELLED -> stringResource(R.string.task_status_cancelled)
         failed -> stringResource(R.string.task_status_failed) +
             process.exitCode?.let { " · exit $it" }.orEmpty()
         else -> stringResource(R.string.task_status_complete) +
@@ -523,6 +511,19 @@ private fun processMetadata(process: GatewayProcess, failed: Boolean): String {
     }
     return "$state · ${formatElapsed(process.uptimeSeconds)}" +
         if (process.detached) " · recovered" else ""
+}
+
+internal enum class ProcessDisplayPhase { RUNNING, COMPLETE, FAILED, CANCELLED, UNKNOWN }
+
+/** A recovered or unfamiliar state is not evidence of successful completion. */
+internal fun processDisplayPhase(process: GatewayProcess): ProcessDisplayPhase = when {
+    process.isRunning -> ProcessDisplayPhase.RUNNING
+    process.status.equals("unknown", ignoreCase = true) -> ProcessDisplayPhase.UNKNOWN
+    process.status.equals("cancelled", ignoreCase = true) ||
+        process.status.equals("canceled", ignoreCase = true) -> ProcessDisplayPhase.CANCELLED
+    process.status.equals("failed", ignoreCase = true) || (process.exitCode ?: 0) != 0 -> ProcessDisplayPhase.FAILED
+    process.exitCode == 0 || process.status.lowercase() in setOf("complete", "completed", "exited") -> ProcessDisplayPhase.COMPLETE
+    else -> ProcessDisplayPhase.UNKNOWN
 }
 
 private val ansiTerminalEscape = Regex(

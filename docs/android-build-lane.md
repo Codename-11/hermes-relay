@@ -46,6 +46,16 @@ Android workflow from the selected `dev` ref.
 
 ## Local use
 
+### Message appearance previews
+
+In a development build, open Developer settings → Message previews to exercise
+the production info, success, progress, warning, error, and Retry/Dismiss surfaces.
+These samples make no network requests and do not change connection state.
+Progress remains visible until replaced or cleared. Clear previews and leaving
+the screen remove only sample messages, preserving real app feedback. Use these
+controls for on-device theme, text sizing, readability, and action checks; they
+do not substitute for transport/error-routing tests.
+
 The Windows `scripts/dev.bat` commands and `scripts/android-prepush.py` acquire
 the lane automatically. For an ad hoc Gradle command, use:
 

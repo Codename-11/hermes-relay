@@ -4586,4 +4586,14 @@
     <string name="chat_queue_paused">Warteschlange pausiert</string>
     <string name="chat_queue_resume">Fortsetzen</string>
     <string name="chat_queue_remove">Nachricht aus Warteschlange entfernen</string>
+    <string name="chat_activity_receipt_subagents">Unteragenten</string>
+    <string name="chat_activity_receipt_process">Hintergrundbefehl</string>
+    <string name="chat_activity_receipt_view_activity">Aktivität anzeigen</string>
+    <string name="chat_activity_receipt_view_output">Ausgabe anzeigen</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">Chat-Aktivität</string>
+    <string name="chat_activity_history_empty">Detaillierte Aktivitäten wurden auf diesem Gerät nicht gespeichert. Der Abschlusseintrag bleibt im Chat.</string>
+    <string name="tool_progress_status_dispatched">Übergeben</string>
+    <string name="chat_activity_history_notice">Gespeicherte Aktivität. Fortschrittsmeldungen werden nicht gespeichert; der verfügbare Verlauf der Unteragenten kann schreibgeschützt geöffnet werden.</string>
+    <string name="chat_activity_output_unavailable">Die Ausgabe ist nicht mehr verfügbar. Dieser Eintrag enthält den gespeicherten Prozessstatus.</string>
 </resources>

@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,10 +22,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.hermesandroid.relay.viewmodel.ConnectionStepState
 
 data class ConnectionSetupTimelineStep(
     val title: String,
     val detail: String,
+    val state: ConnectionStepState = ConnectionStepState.Done,
 )
 
 /** Compact completed-state timeline shared by connection and auth flows. */
@@ -43,13 +47,21 @@ fun ConnectionSetupTimeline(
                     Box(
                         modifier = Modifier
                             .size(28.dp)
-                            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                            .background(when (step.state) {
+                                ConnectionStepState.Failed -> MaterialTheme.colorScheme.errorContainer
+                                ConnectionStepState.Pending -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.primaryContainer
+                            }, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
+                        if (step.state == ConnectionStepState.Active) {
+                            CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                        } else if (step.state == ConnectionStepState.Pending) {
+                            Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else Icon(
+                            imageVector = if (step.state == ConnectionStepState.Failed) Icons.Filled.Close else Icons.Filled.Check,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            tint = if (step.state == ConnectionStepState.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.size(17.dp),
                         )
                     }

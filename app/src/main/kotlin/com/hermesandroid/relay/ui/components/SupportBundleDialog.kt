@@ -1,6 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,68 +92,70 @@ fun SupportBundleDialog(state: SupportReviewState, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f),
-            shape = appearanceRoundedCornerShape(24.dp),
-            tonalElevation = 6.dp,
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(stringResource(R.string.support_bundle_title), style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    stringResource(R.string.support_bundle_privacy, state.recordCount),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(14.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 420.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            appearanceRoundedCornerShape(12.dp),
-                        ),
-                ) {
-                    SelectionContainer {
-                        Text(
-                            text = state.text,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                            modifier = Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
-                        )
+        MessageOverlayScope {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.94f),
+                shape = appearanceRoundedCornerShape(24.dp),
+                tonalElevation = 6.dp,
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(stringResource(R.string.support_bundle_title), style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.support_bundle_privacy, state.recordCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 420.dp)
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                appearanceRoundedCornerShape(12.dp),
+                            ),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = state.text,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                modifier = Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
+                            )
+                        }
                     }
-                }
-                Spacer(Modifier.height(18.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
-                    OutlinedButton(
-                        enabled = state.shareEnabled,
-                        onClick = {
-                            IssueReport.copyToClipboard(context, state.text)
-                            Toast.makeText(context, copied, Toast.LENGTH_LONG).show()
-                        },
-                    ) { Text(stringResource(R.string.common_copy)) }
-                    Button(
-                        enabled = state.shareEnabled,
-                        onClick = {
-                            if (!IssueReport.share(
-                                    context,
-                                    subject = chooser,
-                                    text = state.text,
-                                    chooserTitle = chooser,
-                                )
-                            ) {
+                    Spacer(Modifier.height(18.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
+                        OutlinedButton(
+                            enabled = state.shareEnabled,
+                            onClick = {
                                 IssueReport.copyToClipboard(context, state.text)
-                                Toast.makeText(context, noShare, Toast.LENGTH_LONG).show()
-                            }
-                        },
-                    ) { Text(stringResource(R.string.common_share)) }
+                                UiMessageBus.success(copied)
+                            },
+                        ) { Text(stringResource(R.string.common_copy)) }
+                        Button(
+                            enabled = state.shareEnabled,
+                            onClick = {
+                                if (!IssueReport.share(
+                                        context,
+                                        subject = chooser,
+                                        text = state.text,
+                                        chooserTitle = chooser,
+                                    )
+                                ) {
+                                    IssueReport.copyToClipboard(context, state.text)
+                                    UiMessageBus.warning(noShare)
+                                }
+                            },
+                        ) { Text(stringResource(R.string.common_share)) }
+                    }
                 }
             }
         }

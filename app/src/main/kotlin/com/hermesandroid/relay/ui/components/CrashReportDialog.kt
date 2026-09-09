@@ -1,7 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
-import android.content.Context
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -104,120 +103,119 @@ private fun CrashReportDialog(report: ReliabilityReport, onDismiss: () -> Unit) 
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f),
-            shape = appearanceRoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.WarningAmber,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Spacer(Modifier.width(12.dp))
+        MessageOverlayScope {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.94f),
+                shape = appearanceRoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.WarningAmber,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = stringResource(R.string.crash_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        text = stringResource(R.string.crash_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        text = stringResource(R.string.crash_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
 
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.crash_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                    Text(
+                        text = stringResource(R.string.crash_privacy),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
 
-                Text(
-                    text = stringResource(R.string.crash_privacy),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-
-                if (showDetails) {
-                    Spacer(Modifier.height(14.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 120.dp, max = 300.dp)
-                            .clip(appearanceRoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-                    ) {
-                        SelectionContainer {
-                            Text(
-                                text = reportText,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(12.dp),
-                            )
+                    if (showDetails) {
+                        Spacer(Modifier.height(14.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 120.dp, max = 300.dp)
+                                .clip(appearanceRoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = reportText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(12.dp),
+                                )
+                            }
                         }
                     }
-                }
 
-                Spacer(Modifier.height(18.dp))
-                // FlowRow so the actions wrap instead of clipping on narrow /
-                // foldable cover screens now that a fourth (Share) action exists.
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss)) }
-                    if (!showDetails) {
-                        Button(onClick = { showDetails = true }) {
-                            Text(stringResource(R.string.crash_review))
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = {
-                                IssueReport.copyToClipboard(context, reportText)
-                                toast(context, copiedMessage)
-                            },
-                        ) { Text(stringResource(R.string.common_copy)) }
-                    // Universal, GitHub-free path: hand the full report to the
-                    // system share sheet (email, chat apps, notes, Drive…). The
-                    // user picks the destination, so nothing leaves the device
-                    // until they choose to send it — same privacy posture as Copy.
-                        OutlinedButton(
-                            onClick = {
-                                val shared = IssueReport.share(
-                                    context,
-                                    reportSubject,
-                                    reportText,
-                                    chooserTitle = shareTitle,
-                                )
-                                if (!shared) {
+                    Spacer(Modifier.height(18.dp))
+                    // FlowRow so the actions wrap instead of clipping on narrow /
+                    // foldable cover screens now that a fourth (Share) action exists.
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_dismiss)) }
+                        if (!showDetails) {
+                            Button(onClick = { showDetails = true }) {
+                                Text(stringResource(R.string.crash_review))
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = {
                                     IssueReport.copyToClipboard(context, reportText)
-                                    toast(context, noShareMessage)
-                                }
-                                onDismiss()
-                            },
-                        ) { Text(stringResource(R.string.common_share)) }
-                        Button(
-                            onClick = {
-                                IssueReport.copyToClipboard(context, reportText)
-                                val opened = IssueReport.openUrl(context, CrashReporter.buildGithubIssueUrl(report))
-                                toast(context, if (opened) openedMessage else noBrowserMessage)
-                                onDismiss()
-                            },
-                        ) { Text(stringResource(R.string.common_report)) }
+                                    UiMessageBus.success(copiedMessage)
+                                },
+                            ) { Text(stringResource(R.string.common_copy)) }
+                        // Universal, GitHub-free path: hand the full report to the
+                        // system share sheet (email, chat apps, notes, Drive…). The
+                        // user picks the destination, so nothing leaves the device
+                        // until they choose to send it — same privacy posture as Copy.
+                            OutlinedButton(
+                                onClick = {
+                                    val shared = IssueReport.share(
+                                        context,
+                                        reportSubject,
+                                        reportText,
+                                        chooserTitle = shareTitle,
+                                    )
+                                    if (!shared) {
+                                        IssueReport.copyToClipboard(context, reportText)
+                                        UiMessageBus.warning(noShareMessage)
+                                    }
+                                    onDismiss()
+                                },
+                            ) { Text(stringResource(R.string.common_share)) }
+                            Button(
+                                onClick = {
+                                    IssueReport.copyToClipboard(context, reportText)
+                                    val opened = IssueReport.openUrl(context, CrashReporter.buildGithubIssueUrl(report))
+                                    if (opened) UiMessageBus.success(openedMessage)
+                                    else UiMessageBus.warning(noBrowserMessage)
+                                    onDismiss()
+                                },
+                            ) { Text(stringResource(R.string.common_report)) }
+                        }
                     }
                 }
             }
         }
     }
-}
-
-private fun toast(context: Context, message: String) {
-    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 }

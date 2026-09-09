@@ -57,6 +57,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.ToolCall
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
+/** A completed dispatch call is not evidence that its detached child finished. */
+internal fun isDetachedDelegationDispatch(toolCall: ToolCall): Boolean {
+    if (toolCall.name != "delegate_task" || !toolCall.isComplete || toolCall.success != true) return false
+    val result = toolCall.result ?: return false
+    val payload = runCatching { Json.parseToJsonElement(result) as? JsonObject }.getOrNull() ?: return false
+    return (payload["status"] as? JsonPrimitive)?.content == "dispatched" ||
+        (payload["mode"] as? JsonPrimitive)?.content == "background"
+}
 
 @Composable
 fun ToolProgressCard(
@@ -116,7 +128,9 @@ fun ToolProgressCard(
     }
 
     val toolIcon = toolIcon(toolCall.name)
+    val detachedDispatch = isDetachedDelegationDispatch(toolCall)
     val statusText = when {
+        detachedDispatch -> stringResource(R.string.tool_progress_status_dispatched)
         toolCall.isComplete && toolCall.success == true -> stringResource(R.string.tool_progress_status_completed)
         toolCall.isComplete && toolCall.success == false -> stringResource(R.string.tool_progress_status_failed)
         isPreparing -> stringResource(R.string.tool_preparing_a11y)
@@ -187,7 +201,7 @@ fun ToolProgressCard(
                 )
 
                 // Duration + completion time ("3.1s · 5:32 PM")
-                val metaLabel = listOfNotNull(duration, timeLabel).joinToString(" · ")
+                val metaLabel = if (detachedDispatch) statusText else listOfNotNull(duration, timeLabel).joinToString(" · ")
                 if (metaLabel.isNotEmpty()) {
                     Text(
                         text = metaLabel,

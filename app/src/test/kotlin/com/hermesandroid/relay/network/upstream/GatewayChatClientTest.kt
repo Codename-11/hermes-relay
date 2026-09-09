@@ -2409,6 +2409,27 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `session child listener receives detached updates after parent terminal and rejects foreign frames`() = runBlocking {
+        val events = LinkedBlockingQueue<GatewaySubagentEvent>()
+        client.setSubagentEventListener { _, _, event -> events.add(event) }
+        val recorder = Recorder()
+        client.sendTurn(null, "delegate", null, recorder.callbacks) { recorder.preflightFailures += it }
+        val socket = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        val payload = buildJsonObject { put("subagent_id", "child"); put("status", "completed") }
+        socket.send(harness.eventFrame("subagent.start", payload, "live-1"))
+        assertEquals(GatewaySubagentEvent.Phase.START, events.poll(5, TimeUnit.SECONDS)?.phase)
+        socket.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Launched") }, "live-1"))
+        socket.send(harness.eventFrame("subagent.tool", payload, "foreign"))
+        socket.send(harness.eventFrame("subagent.tool", payload, null))
+        socket.send(harness.eventFrame("subagent.progress", payload, "live-1"))
+        socket.send(harness.eventFrame("subagent.complete", payload, "live-1"))
+        assertEquals(GatewaySubagentEvent.Phase.PROGRESS, events.poll(5, TimeUnit.SECONDS)?.phase)
+        assertEquals(GatewaySubagentEvent.Phase.COMPLETE, events.poll(5, TimeUnit.SECONDS)?.phase)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
     fun `child watch is profile pinned bounded and isolated from main session`() = runBlocking {
         harness.sessionProfileOverride = "operator"
         harness.resumeLiveSessionIds["parent-session"] = "live-parent"
@@ -3990,6 +4011,27 @@ class GatewayChatClientTest {
 
         harness.awaitRpc("prompt.submit")
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `agent init failure before lazy acknowledgement remains authoritative`() {
+        harness.suppressAckMethods += "session.create"
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ack = harness.awaitPendingAck()
+        ack.ws.send(harness.eventFrame("error", buildJsonObject {
+            put("message", "agent init failed: incompatible runtime helper")
+        }, "live-1"))
+        harness.releaseAck(ack, buildJsonObject {
+            put("session_id", "live-1")
+            put("stored_session_id", "stored-1")
+            put("profile", "default")
+            put("info", buildJsonObject { put("lazy", true) })
+        })
+        waitUntil { r.preflightFailures.isNotEmpty() }
+        assertTrue(r.preflightFailures.single().contains("incompatible runtime helper"))
+        assertTrue(harness.rpcLog.none { it.first == "prompt.submit" })
+        assertNull(client.preparingSessionId.value)
     }
 
     @Test

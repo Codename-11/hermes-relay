@@ -123,6 +123,11 @@ class GatewayFixture:
         self.evidence.add("rpc", connection=connection, method=method, outcome="received")
         if method == "session.create":
             result = self._session_snapshot(include_stored=True)
+            if self.scenario.session_initialization_error:
+                result["info"]["lazy"] = True
+                await self._send_event(socket, connection, "error", {
+                    "message": self.scenario.session_initialization_error,
+                }, self.scenario.live_session_id)
         elif method == "session.resume":
             requested = params.get("session_id")
             if requested != self.scenario.stored_session_id:

@@ -293,6 +293,8 @@ data class GatewaySubagentEvent(
     val depth: Int? = null,
     /** Effective child model, when the emitter exposes it. */
     val model: String? = null,
+    /** Exact delegation group id shared with persisted async completion metadata. */
+    val delegationId: String? = null,
 ) {
     enum class Phase { SPAWN_REQUESTED, START, THINKING, TOOL, PROGRESS, COMPLETE }
 }
