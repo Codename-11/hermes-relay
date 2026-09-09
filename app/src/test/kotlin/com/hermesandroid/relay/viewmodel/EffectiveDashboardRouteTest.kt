@@ -14,6 +14,31 @@ import org.junit.Test
 
 class EffectiveDashboardRouteTest {
     @Test
+    fun `outgoing resolver endpoint cannot retarget incoming connection credentials`() {
+        val incomingRoute = EndpointCandidate(
+            role = "public",
+            dashboard = DashboardEndpoint("https://b.example.invalid"),
+        )
+        val outgoingRoute = EndpointCandidate(
+            role = "public",
+            dashboard = DashboardEndpoint("https://a.example.invalid"),
+        )
+        val incoming = connection(
+            dashboardUrl = "https://b.example.invalid",
+            apiServerUrl = "",
+        ).copy(routeCandidates = listOf(incomingRoute))
+
+        assertEquals(
+            "https://b.example.invalid",
+            resolveEffectiveDashboardUrl(incoming, outgoingRoute),
+        )
+        assertEquals(
+            "https://b.example.invalid",
+            resolveEffectiveDashboardUrl(incoming, incomingRoute),
+        )
+    }
+
+    @Test
     fun `late dashboard probe cannot publish across connection or route change`() {
         assertTrue(
             isCurrentDashboardProbe(
@@ -82,7 +107,7 @@ class EffectiveDashboardRouteTest {
 
         assertEquals(
             "http://100.71.8.56:9119",
-            resolveEffectiveDashboardUrl(connection, tailscale),
+            resolveEffectiveDashboardUrl(connection.copy(routeCandidates = listOf(tailscale)), tailscale),
         )
     }
 
@@ -102,7 +127,7 @@ class EffectiveDashboardRouteTest {
 
         assertEquals(
             "https://hermes.example.com",
-            resolveEffectiveDashboardUrl(connection, tailscale),
+            resolveEffectiveDashboardUrl(connection.copy(routeCandidates = listOf(tailscale)), tailscale),
         )
         assertEquals("http://100.71.8.56:8642", resolveEffectiveApiServerUrl(connection.apiServerUrl, tailscale))
     }
@@ -138,7 +163,7 @@ class EffectiveDashboardRouteTest {
 
         assertEquals(
             "https://hermes.example.com:443",
-            resolveEffectiveDashboardUrl(connection, fallback),
+            resolveEffectiveDashboardUrl(connection.copy(routeCandidates = listOf(fallback)), fallback),
         )
     }
 
@@ -156,7 +181,7 @@ class EffectiveDashboardRouteTest {
 
         assertEquals(
             "http://100.71.8.56:9119",
-            resolveEffectiveDashboardUrl(connection, tailscale),
+            resolveEffectiveDashboardUrl(connection.copy(routeCandidates = listOf(tailscale)), tailscale),
         )
     }
 
