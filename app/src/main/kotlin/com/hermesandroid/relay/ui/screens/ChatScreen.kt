@@ -12,6 +12,14 @@ import androidx.compose.foundation.MutatePriority
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.testTag
+import com.hermesandroid.relay.ui.components.ChatDebugDrawer
+import com.hermesandroid.relay.ui.components.ChatActivityReceipt
+import com.hermesandroid.relay.data.projectChatActivityReceipts
+import com.hermesandroid.relay.viewmodel.previewActivities
+import com.hermesandroid.relay.ui.components.ChatDebugOverlay
+import com.hermesandroid.relay.ui.components.chatDebugHeaderGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -150,7 +158,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.SmallFloatingActionButton
-import androidx.compose.material3.SnackbarHost
+import com.hermesandroid.relay.ui.components.ThemedMessageHost
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
@@ -159,7 +167,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -870,9 +878,17 @@ fun ChatScreen(
 
 
     val rawMessages by chatViewModel.messages.collectAsState()
-    val messages = remember(rawMessages, supervised, supervisedPolicy.capabilities.generatedImages) {
-        if (!supervised) rawMessages
-        else rawMessages.map { message ->
+    val activityRecords by chatViewModel.activityRecords.collectAsState()
+    val activityOwner by chatViewModel.conversationBinding.collectAsState()
+    val activitySessionId by chatViewModel.currentSessionId.collectAsState()
+    val receiptMessages = remember(rawMessages, activityRecords, activityOwner, activitySessionId, supervised, supervisedVisibility) {
+        if (activityOwner.transport == com.hermesandroid.relay.data.SessionTransport.SSE ||
+            (supervised && !supervisedVisibility.showWorkingStatus)
+        ) rawMessages else projectChatActivityReceipts(rawMessages, activityRecords, activityOwner.contextKey, activitySessionId)
+    }
+    val messages = remember(receiptMessages, supervised, supervisedPolicy.capabilities.generatedImages) {
+        if (!supervised) receiptMessages
+        else receiptMessages.map { message ->
             if (message.role == MessageRole.ASSISTANT) {
                 message.copy(
                     attachments = if (supervisedPolicy.capabilities.generatedImages) {
@@ -935,6 +951,10 @@ fun ChatScreen(
     val sessionArchivingSupported by chatViewModel.sessionArchivingSupported.collectAsState()
     val currentSessionId by chatViewModel.currentSessionId.collectAsState()
     val structuredChatFailure by chatViewModel.chatFailure.collectAsState()
+    val preparingGatewaySessionId by chatViewModel.gatewayPreparingSessionId.collectAsState()
+    val gatewaySocketState by chatViewModel.gatewaySocketState.collectAsState()
+    val preparingGatewaySession = isStreaming && currentSessionId != null &&
+        preparingGatewaySessionId == currentSessionId
     val visibleChatFailure = scopedChatFailure(
         structuredChatFailure,
         currentSessionId,
@@ -961,6 +981,7 @@ fun ChatScreen(
     val backgroundProcessesLoading by chatViewModel.backgroundProcessesLoading.collectAsState()
     val stoppingProcessIds by chatViewModel.stoppingProcessIds.collectAsState()
     val subagentActivities by chatViewModel.subagentActivities.collectAsState()
+    val retainedActivityPreview by chatViewModel.retainedActivityPreview.collectAsState()
     val subagentChildPreview by chatViewModel.subagentChildPreview.collectAsState()
     val isLoadingHistory by chatViewModel.isLoadingHistory.collectAsState()
     val isLoadingSessions by chatViewModel.isLoadingSessions.collectAsState()
@@ -1199,7 +1220,10 @@ fun ChatScreen(
         // RPC burst while the session directory was also trying to hydrate.
     }
     DisposableEffect(chatViewModel) {
-        onDispose { chatViewModel.setChatVisible(false) }
+        onDispose {
+            chatViewModel.setChatVisible(false)
+            chatViewModel.closeActivityPreview()
+        }
     }
 
     // Cold-open recovery: the dashboard probe that flips gatewayAvailability to
@@ -1370,14 +1394,10 @@ fun ChatScreen(
                 }
         }
         if (request.payload.omittedUriCount > 0) {
-            Toast.makeText(
-                context,
-                context.getString(
+            UiMessageBus.warning(context.getString(
                     R.string.chat_shared_files_limited,
                     com.hermesandroid.relay.util.MAX_SHARED_CONTENT_ATTACHMENTS,
-                ),
-                Toast.LENGTH_LONG,
-            ).show()
+                ))
         }
         com.hermesandroid.relay.util.SharedContentRequest.consume(request.id)
     }
@@ -1416,6 +1436,9 @@ fun ChatScreen(
     var showEffortSheet by remember { mutableStateOf(false) }
     var showAgentInfo by remember { mutableStateOf(false) }
     var showProfileShelf by remember { mutableStateOf(false) }
+    var showChatDebug by remember { mutableStateOf(false) }
+    var chatHeaderHeightPx by remember { mutableStateOf(0) }
+    LaunchedEffect(currentSessionId, activeConnection?.id, supervised) { showChatDebug = false }
     var showProfileSwitcher by remember { mutableStateOf(false) }
     var showProfileManager by remember { mutableStateOf(false) }
     var showBackgroundProcesses by remember { mutableStateOf(false) }
@@ -1432,7 +1455,7 @@ fun ChatScreen(
     // A process inventory is scoped to one gateway session. Never leave a
     // sheet opened onto a different chat after a drawer/profile switch.
     LaunchedEffect(currentSessionId, selectedProfile?.name, activeConnection?.id) {
-        chatViewModel.closeSubagentChildPreview()
+        chatViewModel.closeActivityPreview()
         showBackgroundProcesses = false
     }
 
@@ -1799,7 +1822,7 @@ fun ChatScreen(
             cameraLauncher.launch(uri)
         }.onFailure {
             pendingCameraUri = null
-            Toast.makeText(context, context.getString(R.string.chat_camera_open_failed), Toast.LENGTH_SHORT).show()
+            UiMessageBus.error(context.getString(R.string.chat_camera_open_failed))
         }
     }
     var pendingCameraAfterPermission by remember { mutableStateOf(false) }
@@ -1811,11 +1834,7 @@ fun ChatScreen(
         if (granted && wanted) {
             launchCamera()
         } else if (!granted) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.chat_camera_perm_needed),
-                Toast.LENGTH_SHORT,
-            ).show()
+            UiMessageBus.warning(context.getString(R.string.chat_camera_perm_needed))
         }
     }
     val requestCameraCapture: () -> Unit = {
@@ -2613,11 +2632,7 @@ fun ChatScreen(
                         clipboard.setClipEntry(
                             ClipEntry(ClipData.newPlainText(copySessionIdLabel, sessionId))
                         )
-                        Toast.makeText(
-                            context,
-                            copiedToClipboardMsg,
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        UiMessageBus.success(copiedToClipboardMsg)
                     }
                 },
                 threadsCapabilityActive = threadsCapabilityActive,
@@ -2763,6 +2778,7 @@ fun ChatScreen(
         ) {
             // Top bar — messaging app style with avatar, name, model subtitle
             TopAppBar(
+                modifier = Modifier.onSizeChanged { chatHeaderHeightPx = it.height },
                 navigationIcon = {
                     if (!supervised || supervisedPolicy.capabilities.conversationHistory) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -2806,6 +2822,7 @@ fun ChatScreen(
                     val showStreamingState = isStreaming &&
                         (!supervised || supervisedVisibility.showWorkingStatus)
                     val statusText = when {
+                        preparingGatewaySession -> stringResource(R.string.chat_debug_preparing)
                         headerChatReady -> if (showStreamingState) {
                             stringResource(R.string.chat_streaming)
                         } else {
@@ -2882,13 +2899,21 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier
-                            .clickable(enabled = !supervised) {
+                            .chatDebugHeaderGesture(enabled = !supervised,
+                                onHold = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showProfileShelf = false
+                                    showChatDebug = !showChatDebug
+                                },
+                                onClick = {
+                                showChatDebug = false
                                 if (profileShelfAvailable) {
                                     showProfileShelf = !showProfileShelf
                                 } else {
                                     showAgentInfo = true
                                 }
-                            }
+                            })
+                            .testTag("chat-agent-header")
                             .semantics {
                                 contentDescription = if (profileShelfAvailable) {
                                     context.getString(
@@ -3669,7 +3694,15 @@ fun ChatScreen(
                                 )
                             }
 
-                            if (processNotification != null) {
+                            if (message.activityRecord != null && (!supervised || supervisedVisibility.showWorkingStatus)) {
+                                ChatActivityReceipt(
+                                    record = message.activityRecord,
+                                    onClick = {
+                                        showBackgroundProcesses = chatViewModel.openRetainedActivity(message.activityRecord, processNotification?.detail)
+                                    },
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                )
+                            } else if (processNotification != null) {
                                 val notificationModifier = Modifier.padding(
                                     top = if (isFirstInGroup) 6.dp else 2.dp,
                                 )
@@ -3911,6 +3944,9 @@ fun ChatScreen(
                                 // optional diagnostic scaffolding. Keep lanes
                                 // visible in Off, Compact, and Detailed modes.
                                 laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
+                                    val laneCalls = laneGroups.getValue(taskIndex)
+                                    val retainedIds = activityRecords.flatMap { it.children }.mapTo(HashSet()) { it.id }
+                                    if (laneCalls.all { it.subagentId != null && it.subagentId in retainedIds }) return@forEach
                                     Spacer(modifier = Modifier.height(4.dp))
                                     SubagentLane(
                                         taskIndex = taskIndex,
@@ -4046,7 +4082,7 @@ fun ChatScreen(
                     }
 
                     // Copy feedback snackbar
-                    SnackbarHost(
+                    ThemedMessageHost(
                         hostState = snackbarHostState,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -4061,7 +4097,7 @@ fun ChatScreen(
                     subagentActivities = subagentActivities,
                     subagentPreviewVisibility = subagentPreviewVisibility,
                     loading = backgroundProcessesLoading,
-                    onClick = { showBackgroundProcesses = true },
+                    onClick = { chatViewModel.openCurrentActivityPreview(); showBackgroundProcesses = true },
                 )
             }
 
@@ -4569,17 +4605,11 @@ fun ChatScreen(
                         isDemoMode = isDemoMode,
                         voiceReady = voiceReady,
                         onDemoNotice = {
-                            Toast.makeText(
-                                context,
-                                "Voice is unavailable in the offline demo — connect to Hermes to use it",
-                                Toast.LENGTH_LONG,
-                            ).show()
+                            UiMessageBus.warning("Voice is unavailable in the offline demo — connect to Hermes to use it")
                         },
                         onStartVoice = requestVoiceMode,
                         onSetupNotice = {
-                            Toast.makeText(
-                                context,
-                                when (standardVoiceAvailability) {
+                            UiMessageBus.warning(when (standardVoiceAvailability) {
                                     com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
                                         standardVoiceSignInRouteHint?.let { route ->
                                             "Voice needs a one-time sign-in on the $route route — open Manage"
@@ -4588,9 +4618,7 @@ fun ChatScreen(
                                         "This Hermes build has no voice routes — update hermes-agent or pair Relay"
                                     else ->
                                         context.getString(R.string.chat_voice_needs_route)
-                                },
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                                })
                         },
                     )
                 },
@@ -4814,6 +4842,30 @@ fun ChatScreen(
             }
         } // end Column
 
+        ChatDebugOverlay(
+            visible = showChatDebug && !supervised,
+            headerHeight = with(density) { chatHeaderHeightPx.toDp() },
+            onClose = { showChatDebug = false },
+        ) {
+            ChatDebugDrawer(
+                profile = AgentDisplay.profileDisplayName(conversationProfile)
+                    ?: stringResource(R.string.chat_server_default),
+                model = AgentDisplay.displayModelName(sessionModelState.model).orEmpty(),
+                sessionId = currentSessionId,
+                gateway = isGatewayTransport,
+                signedIn = chatGatewayAvailability == GatewayAvailability.Ready,
+                signInRequired = chatGatewayAvailability == GatewayAvailability.SignInRequired,
+                socketState = gatewaySocketState,
+                preparing = preparingGatewaySession,
+                streaming = isStreaming,
+                loadingHistory = isLoadingHistory,
+                directoryUnavailable = sessionListUnavailable,
+                failure = visibleChatFailure?.rawError,
+                onClose = { showChatDebug = false },
+                onConnections = { showChatDebug = false; onNavigateToConnections() },
+            )
+        }
+
         // Mic permission denied banner — title + body + Open Settings action.
         // System "Don't ask again" gives no callback, so a toast would leave
         // the user stranded. Banner + direct-to-app-details deep link is the
@@ -4953,8 +5005,8 @@ fun ChatScreen(
 
     if (showBackgroundProcesses) {
         GatewayBackgroundProcessSheet(
-            processes = backgroundProcesses,
-            subagentActivities = subagentActivities,
+            processes = retainedActivityPreview?.processes ?: backgroundProcesses,
+            subagentActivities = retainedActivityPreview?.record?.previewActivities() ?: subagentActivities,
             subagentChildPreview = subagentChildPreview,
             subagentPreviewVisibility = subagentPreviewVisibility,
             loading = backgroundProcessesLoading,
@@ -4963,8 +5015,10 @@ fun ChatScreen(
             onStop = chatViewModel::stopBackgroundProcess,
             onDismissProcess = chatViewModel::dismissBackgroundProcess,
             onOpenSubagentChild = chatViewModel::openSubagentChildPreview,
+            readOnlyHistory = retainedActivityPreview != null,
+            historyNotice = if (retainedActivityPreview != null) stringResource(R.string.chat_activity_history_notice) else null,
             onDismiss = {
-                chatViewModel.closeSubagentChildPreview()
+                chatViewModel.closeActivityPreview()
                 showBackgroundProcesses = false
             },
         )
@@ -5505,13 +5559,9 @@ private suspend fun ingestAttachmentFromUri(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: AttachmentTooLargeException) {
-        Toast.makeText(
-            context,
-            context.getString(R.string.chat_file_too_large, maxAttachmentMb),
-            Toast.LENGTH_SHORT,
-        ).show()
+        UiMessageBus.warning(context.getString(R.string.chat_file_too_large, maxAttachmentMb))
     } catch (e: Exception) {
-        Toast.makeText(context, context.getString(R.string.chat_failed_read_file), Toast.LENGTH_SHORT).show()
+        UiMessageBus.error(context.getString(R.string.chat_failed_read_file))
     }
 }
 

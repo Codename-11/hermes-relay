@@ -41,7 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import com.hermesandroid.relay.ui.components.ThemedMessageHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -161,7 +161,7 @@ fun BotModeScreen(
         },
         onOpenGroup = { onOpenGroup(it.key) },
         onNewBot = { showCreateBot = true },
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { ThemedMessageHost(snackbar) },
         botAvatar = { bot, size ->
             BotProfileAvatar(
                 connectionViewModel = connectionViewModel,

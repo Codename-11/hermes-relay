@@ -20,6 +20,29 @@ import org.junit.Test
 class GatewayProcessControllerTest {
 
     @Test
+    fun retainedStatusListenerOnlyReceivesAuthoritativeSnapshots() = runTest {
+        val source = FakeProcessSource().apply {
+            snapshot = listOf(process(id = "p1", status = "running"))
+        }
+        val snapshots = mutableListOf<List<GatewayProcess>>()
+        val controller = GatewayProcessController(this)
+        controller.setSnapshotListener { snapshots += it }
+        controller.bind(source, "chat")
+        controller.sessionReady("chat")
+        runCurrent()
+        assertEquals(1, snapshots.size)
+        source.emit(GatewayProcessEvent.Output("p1", "new output"))
+        runCurrent()
+        assertEquals(1, snapshots.size)
+        source.snapshot = emptyList()
+        controller.refresh()
+        runCurrent()
+        assertEquals(2, snapshots.size)
+        assertTrue(snapshots.last().isEmpty())
+        controller.close()
+    }
+
+    @Test
     fun duplicateProcessSnapshotsPublishOneComposeIdentityWithLatestState() = runTest {
         val source = FakeProcessSource().apply {
             snapshot = listOf(

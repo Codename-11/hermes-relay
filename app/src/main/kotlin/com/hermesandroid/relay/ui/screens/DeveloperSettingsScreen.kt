@@ -2,7 +2,7 @@
 
 package com.hermesandroid.relay.ui.screens
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.hermesandroid.relay.ui.theme.LocalBrand
@@ -92,11 +92,7 @@ fun DeveloperSettingsScreen(
     ) { uri ->
         if (uri != null && backupJson != null) {
             connectionViewModel.writeBackupToUri(uri, backupJson!!) { success ->
-                Toast.makeText(
-                    context,
-                    if (success) context.getString(R.string.dev_settings_exported) else context.getString(R.string.dev_settings_export_failed),
-                    Toast.LENGTH_SHORT
-                ).show()
+                UiMessageBus.post(if (success) context.getString(R.string.dev_settings_exported) else context.getString(R.string.dev_settings_export_failed), severity = if (success) com.hermesandroid.relay.ui.UiMessageSeverity.Success else com.hermesandroid.relay.ui.UiMessageSeverity.Error)
                 backupJson = null
             }
         }
@@ -108,11 +104,7 @@ fun DeveloperSettingsScreen(
     ) { uri ->
         if (uri != null) {
             connectionViewModel.importFromUri(uri) { success ->
-                Toast.makeText(
-                    context,
-                    if (success) context.getString(R.string.dev_settings_imported) else context.getString(R.string.dev_settings_import_failed),
-                    Toast.LENGTH_SHORT
-                ).show()
+                UiMessageBus.post(if (success) context.getString(R.string.dev_settings_imported) else context.getString(R.string.dev_settings_import_failed), severity = if (success) com.hermesandroid.relay.ui.UiMessageSeverity.Success else com.hermesandroid.relay.ui.UiMessageSeverity.Error)
             }
         }
     }
@@ -184,15 +176,11 @@ fun DeveloperSettingsScreen(
                         }
                         IconButton(onClick = {
                             connectionViewModel.resetOnboarding { success ->
-                                Toast.makeText(
-                                    context,
-                                    if (success) {
+                                UiMessageBus.post(if (success) {
                                         context.getString(R.string.dev_settings_onboarding_reset_toast)
                                     } else {
                                         context.getString(R.string.dev_settings_reset_failed)
-                                    },
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                                    }, severity = if (success) com.hermesandroid.relay.ui.UiMessageSeverity.Success else com.hermesandroid.relay.ui.UiMessageSeverity.Error)
                             }
                         }) {
                             Icon(
@@ -433,11 +421,7 @@ fun DeveloperSettingsScreen(
                         IconButton(onClick = {
                             scope.launch {
                                 FeatureFlags.lockDevOptions(context)
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.dev_settings_locked_toast),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                                UiMessageBus.info(context.getString(R.string.dev_settings_locked_toast))
                                 onBack()
                             }
                         }) {
@@ -455,6 +439,7 @@ fun DeveloperSettingsScreen(
             // logged error, a live update). Gated by isDevBuild so it never
             // ships in a release APK.
             if (FeatureFlags.isDevBuild) {
+                MessagePreviewControls()
                 Text(
                     text = stringResource(R.string.dev_settings_test_harness),
                     style = MaterialTheme.typography.titleMedium,
@@ -501,7 +486,7 @@ fun DeveloperSettingsScreen(
                                         context.getString(R.string.dev_settings_sample_stacktrace),
                                     ),
                                 )
-                                Toast.makeText(context, context.getString(R.string.dev_settings_diagnostics_emitted_toast), Toast.LENGTH_SHORT).show()
+                                UiMessageBus.info(context.getString(R.string.dev_settings_diagnostics_emitted_toast))
                             },
                         )
 
@@ -518,7 +503,7 @@ fun DeveloperSettingsScreen(
                                     is UpdateStatus.Downloaded -> context.getString(R.string.dev_settings_update_state_downloaded)
                                     else -> context.getString(R.string.dev_settings_update_state_off)
                                 }
-                                Toast.makeText(context, context.getString(R.string.dev_settings_update_banner_preview_toast, state), Toast.LENGTH_SHORT).show()
+                                UiMessageBus.info(context.getString(R.string.dev_settings_update_banner_preview_toast, state))
                             },
                         )
 
@@ -568,11 +553,7 @@ fun DeveloperSettingsScreen(
                         showExportDialog = false
                         connectionViewModel.exportSettings { json ->
                             if (json == null) {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.dev_settings_export_failed),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                                UiMessageBus.error(context.getString(R.string.dev_settings_export_failed))
                             } else {
                                 backupJson = json
                                 exportLauncher.launch("hermes-relay-sensitive-backup.json")
@@ -633,15 +614,11 @@ fun DeveloperSettingsScreen(
                     onClick = {
                         showResetDialog = false
                         connectionViewModel.resetAppData { success ->
-                            Toast.makeText(
-                                context,
-                                if (success) {
+                            UiMessageBus.post(if (success) {
                                     context.getString(R.string.dev_settings_app_data_reset_toast)
                                 } else {
                                     context.getString(R.string.dev_settings_reset_failed)
-                                },
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                                }, severity = if (success) com.hermesandroid.relay.ui.UiMessageSeverity.Success else com.hermesandroid.relay.ui.UiMessageSeverity.Error)
                         }
                     }
                 ) {
@@ -658,7 +635,7 @@ fun DeveloperSettingsScreen(
 }
 
 @Composable
-private fun TestHarnessRow(
+internal fun TestHarnessRow(
     title: String,
     subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,

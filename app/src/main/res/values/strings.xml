@@ -1,5 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="chat_debug_title" translatable="false">Session diagnostics</string>
+    <string name="chat_debug_open" translatable="false">Open session diagnostics</string>
+    <string name="chat_debug_close" translatable="false">Close session diagnostics</string>
+    <string name="chat_debug_preparing" translatable="false">Preparing session…</string>
+    <string name="chat_debug_sign_in" translatable="false">Dashboard sign-in</string>
+    <string name="chat_debug_sign_in_needed" translatable="false">Sign in to continue this conversation.</string>
+    <string name="chat_debug_authenticated" translatable="false">Authenticated for this connection.</string>
+    <string name="chat_debug_auth_unknown" translatable="false">Sign-in has not been confirmed.</string>
+    <string name="chat_debug_gateway" translatable="false">Live connection</string>
+    <string name="chat_debug_socket_ready" translatable="false">Gateway is ready to receive requests.</string>
+    <string name="chat_debug_ticket" translatable="false">Requesting a secure connection ticket…</string>
+    <string name="chat_debug_socket_connecting" translatable="false">Opening the Gateway connection…</string>
+    <string name="chat_debug_socket_waiting" translatable="false">Waiting for the Gateway to become ready…</string>
+    <string name="chat_debug_socket_idle" translatable="false">No live Gateway connection.</string>
+    <string name="chat_debug_session" translatable="false">Conversation session</string>
+    <string name="chat_debug_preparing_detail" translatable="false">Hermes is initializing this session. The message has not been sent yet.</string>
+    <string name="chat_debug_history_loading" translatable="false">Loading saved messages…</string>
+    <string name="chat_debug_history_failed" translatable="false">Saved conversations could not be refreshed.</string>
+    <string name="chat_debug_session_selected" translatable="false">Session selected.</string>
+    <string name="chat_debug_session_new" translatable="false">A session will be created when you send.</string>
+    <string name="chat_debug_response" translatable="false">Agent response</string>
+    <string name="chat_debug_response_failed" translatable="false">The request failed. Details are below.</string>
+    <string name="chat_debug_response_waiting" translatable="false">Waiting for session initialization.</string>
+    <string name="chat_debug_response_active" translatable="false">Waiting for the current reply to finish.</string>
+    <string name="chat_debug_response_idle" translatable="false">No reply is currently in progress.</string>
+    <string name="chat_debug_init_recovery" translatable="false">Hermes could not initialize the agent. Check the server runtime and logs before retrying; signing in again may not resolve this.</string>
+    <string name="chat_debug_session_id" translatable="false">Session · %1$s</string>
+    <string name="chat_debug_connections" translatable="false">Connection settings</string>
     <string name="app_name">Hermes-Relay</string>
     <string name="app_title">Hermes-Relay</string>
     <string name="agent_interface">agent interface</string>
@@ -4602,4 +4630,28 @@
     <string name="chat_queue_paused">Queue paused</string>
     <string name="chat_queue_resume">Resume</string>
     <string name="chat_queue_remove">Remove queued message</string>
+    <string name="chat_activity_receipt_subagents">Subagents</string>
+    <string name="chat_activity_receipt_process">Background command</string>
+    <string name="chat_activity_receipt_view_activity">View activity</string>
+    <string name="chat_activity_receipt_view_output">View output</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">Chat activity</string>
+    <string name="chat_activity_history_empty">Detailed activity was not retained on this device. The completion entry remains in chat.</string>
+    <string name="tool_progress_status_dispatched">Dispatched</string>
+    <string name="chat_activity_history_notice">Recorded activity. Progress updates are not retained; available child history can be opened read-only.</string>
+    <string name="chat_activity_output_unavailable">Output is no longer available. This entry preserves the recorded process status.</string>
+    <string name="dev_message_previews" translatable="false">Message previews</string>
+    <string name="dev_message_previews_desc" translatable="false">Local-only samples using the app’s real message surfaces. No requests are sent. Samples clear when you leave this screen.</string>
+    <string name="dev_message_info" translatable="false">Info preview</string>
+    <string name="dev_message_success" translatable="false">Success preview</string>
+    <string name="dev_message_progress" translatable="false">Progress preview</string>
+    <string name="dev_message_warning" translatable="false">Warning preview</string>
+    <string name="dev_message_error" translatable="false">Error preview</string>
+    <string name="dev_message_preview_sample" translatable="false">Show a themed sample. Progress stays until replaced or cleared.</string>
+    <string name="dev_message_action" translatable="false">Actionable error preview</string>
+    <string name="dev_message_action_body" translatable="false">This is a simulated error with a longer explanation. Expand or scroll to check readability. Retry only confirms the preview action; it does not contact a server.</string>
+    <string name="dev_message_retry" translatable="false">Retry</string>
+    <string name="dev_message_retry_result" translatable="false">Preview retry selected — no request sent.</string>
+    <string name="dev_message_clear" translatable="false">Clear previews</string>
+    <string name="dev_message_clear_desc" translatable="false">Dismiss only these samples; real app messages are preserved.</string>
 </resources>

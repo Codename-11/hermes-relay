@@ -62,6 +62,10 @@ internal class GatewayProcessController(
     private var generation = 0L
     private var refreshSequence = 0L
     private var allProcesses: List<GatewayProcess> = emptyList()
+    private var snapshotListener: ((List<GatewayProcess>) -> Unit)? = null
+
+    /** Only successful process.list results, never cached output-tail changes. */
+    fun setSnapshotListener(listener: ((List<GatewayProcess>) -> Unit)?) { snapshotListener = listener }
 
     /** A dismissal applies only to this concrete process identity. */
     private val dismissedIdentities = mutableMapOf<String, ProcessIdentity>()
@@ -179,6 +183,7 @@ internal class GatewayProcessController(
     }
 
     fun close() {
+        snapshotListener = null
         source?.setEventListener(null)
         source = null
         capabilityJob?.cancel()
@@ -229,6 +234,7 @@ internal class GatewayProcessController(
         allProcesses = coalesced
         publishVisibleSnapshot()
         updatePoller()
+        snapshotListener?.invoke(coalesced)
     }
 
     private fun publishVisibleSnapshot() {

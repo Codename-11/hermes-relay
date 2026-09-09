@@ -4510,4 +4510,14 @@
     <string name="chat_queue_paused">队列已暂停</string>
     <string name="chat_queue_resume">继续</string>
     <string name="chat_queue_remove">移除队列消息</string>
+    <string name="chat_activity_receipt_subagents">子代理</string>
+    <string name="chat_activity_receipt_process">后台命令</string>
+    <string name="chat_activity_receipt_view_activity">查看活动</string>
+    <string name="chat_activity_receipt_view_output">查看输出</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">聊天活动</string>
+    <string name="chat_activity_history_empty">此设备未保留详细活动。完成记录仍保留在聊天中。</string>
+    <string name="tool_progress_status_dispatched">已分派</string>
+    <string name="chat_activity_history_notice">已记录的活动。进度更新不会保留；可用的子代理历史记录可以以只读方式打开。</string>
+    <string name="chat_activity_output_unavailable">输出已不可用。此条目保留了记录的进程状态。</string>
 </resources>

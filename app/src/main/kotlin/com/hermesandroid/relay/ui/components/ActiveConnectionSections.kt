@@ -1,6 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -209,7 +209,7 @@ fun ActiveCardRelayStatusSection(
     val relayUiState by connectionViewModel.relayUiState.collectAsState()
     val relayRowState by connectionViewModel.relayRowState.collectAsState()
 
-    // Pre-resolve strings for Toast (non-composable context)
+    // Pre-resolve strings for action callbacks (non-composable context).
     val reconnectingRelayToast = stringResource(R.string.active_section_reconnecting_relay)
     val relayStatusText = when (relayRowState.phase) {
         RelayUiState.NotConfigured -> stringResource(R.string.relay_state_optional)
@@ -250,11 +250,7 @@ fun ActiveCardRelayStatusSection(
         onClick = {
             if (relayUiState == RelayUiState.Stale) {
                 connectionViewModel.reconnectIfStale()
-                Toast.makeText(
-                    context,
-                    reconnectingRelayToast,
-                    Toast.LENGTH_SHORT,
-                ).show()
+                UiMessageBus.status(reconnectingRelayToast)
             } else {
                 onOpenRelayInfo()
             }
@@ -817,7 +813,7 @@ private fun ManualUrlSubsection(
     }
     val autoRelayUrl = RelayUrlDeriver.deriveFromApiUrl(apiUrlInput)
 
-    // Pre-resolve strings for Toast (non-composable context)
+    // Pre-resolve strings for action callbacks (non-composable context).
     val apiHermesVoiceReachableToast = stringResource(R.string.active_section_api_hermes_voice_reachable)
     val apiRelayVoiceReachableToast = stringResource(R.string.active_section_api_relay_voice_reachable)
     val apiReachableVoiceReviewToast = stringResource(R.string.active_section_api_reachable_voice_review)
@@ -926,21 +922,21 @@ private fun ManualUrlSubsection(
                         relayOverrideVisible = true
                         result.relayUrl?.let { relayUrlInput = it }
                     }
-                    Toast.makeText(
-                        context,
-                        when {
-                            result.apiReachable && result.voiceConfigReachable ->
-                                if (result.voiceRoute == "standard") {
-                                    apiHermesVoiceReachableToast
-                                } else {
-                                    apiRelayVoiceReachableToast
-                                }
-                            result.apiReachable ->
-                                apiReachableVoiceReviewToast
-                            else -> cannotReachApiToast
-                        },
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    val feedback = when {
+                        result.apiReachable && result.voiceConfigReachable ->
+                            if (result.voiceRoute == "standard") {
+                                apiHermesVoiceReachableToast
+                            } else {
+                                apiRelayVoiceReachableToast
+                            }
+                        result.apiReachable -> apiReachableVoiceReviewToast
+                        else -> cannotReachApiToast
+                    }
+                    when {
+                        result.apiReachable && result.voiceConfigReachable -> UiMessageBus.success(feedback)
+                        result.apiReachable -> UiMessageBus.warning(feedback)
+                        else -> UiMessageBus.error(feedback)
+                    }
                 }
             },
             enabled = apiUrlInput.isNotBlank() && !isTestingApi && inputApiKeyError == null,
