@@ -3,6 +3,7 @@ package com.hermesandroid.relay.viewmodel
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.filterIsInstance
@@ -147,12 +148,14 @@ class GitStateWriteViewModelTest {
         val vm = viewModel()
         selectAlpha(vm)
         enqueuePostSuccess("abc")
-        var committedTarget: GitTarget? = null
+        val committedTarget = CompletableDeferred<GitTarget>()
 
-        vm.commit("add feature") { committedTarget = it }
+        vm.commit("add feature") { committedTarget.complete(it) }
         withTimeout(5_000) { vm.mutation.filterIsInstance<GitMutationState.Success>().first() }
 
-        assertEquals("alpha", committedTarget?.repoId)
+        // Success is published before detail refresh and the callback complete.
+        val target = withTimeout(5_000) { committedTarget.await() }
+        assertEquals("alpha", target.repoId)
     }
 
     @Test
