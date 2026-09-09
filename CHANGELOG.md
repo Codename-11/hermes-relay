@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Bot Mode no longer crashes when different connections have bots with the same profile name. Both the conversation list and Active Now strip preserve each bot's connection, and opening progress appears only on the selected bot.
 - Android feedback uses themed banners and action cards instead of platform toasts and default snackbars. Dashboard errors no longer misidentify missing resources as an outdated Relay. Developer settings includes local-only message previews.
 - Missing chat attachments show their error and retry in the attachment card without repeated global popups. Global action messages occupy the top message area instead of covering the composer.
 - Chat distinguishes session preparation from response streaming and retains initialization errors that arrive before the session acknowledgement. Long-press the agent header to open a live session-diagnostics drawer.

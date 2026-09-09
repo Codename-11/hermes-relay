@@ -73,6 +73,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BotGroupMessage
 import com.hermesandroid.relay.data.BotGroupRoom
 import com.hermesandroid.relay.data.BotGatewayRoute
+import com.hermesandroid.relay.data.BotGatewayRouteKey
 import com.hermesandroid.relay.data.BotModeState
 import com.hermesandroid.relay.data.BotRosterEntry
 import com.hermesandroid.relay.data.Connection
@@ -83,6 +84,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal enum class BotModeFilter { All, Bots, Groups }
+
+/** Bundle-compatible key; length-prefix the connection so delimiters cannot alias owners. */
+internal val BotRosterEntry.lazyItemKey: String
+    get() {
+        val owner = route?.key ?: return "bot:unbound:${profile.name}"
+        return "bot:route:${owner.connectionId.length}:${owner.connectionId}:${owner.profileName}"
+    }
 
 private sealed interface BotModeRow {
     val activityAtMs: Long
@@ -109,7 +117,7 @@ fun BotModeScreen(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
-    var openingProfile by remember { mutableStateOf<String?>(null) }
+    var openingRoute by remember { mutableStateOf<BotGatewayRouteKey?>(null) }
     var showCreateBot by remember { mutableStateOf(false) }
     var creatingBot by remember { mutableStateOf(false) }
     var selectedGatewayId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -136,10 +144,11 @@ fun BotModeScreen(
         onBack = onBack,
         onRefresh = connectionViewModel::refreshBotMode,
         onSelectGateway = { selectedGatewayId = it },
-        openingProfile = openingProfile,
+        openingRoute = openingRoute,
         onOpenBot = { bot ->
             val route = bot.route ?: return@BotModeContent
-            openingProfile = bot.profile.name
+            if (openingRoute != null) return@BotModeContent
+            openingRoute = route.key
             scope.launch {
                 val result = connectionViewModel.ensureCanonicalBotChat(route)
                     .map { it.resolvedSessionId }
@@ -147,7 +156,7 @@ fun BotModeScreen(
                     onSuccess = { onOpenBotChat(route, it) },
                     onFailure = { snackbar.showSnackbar(it.message ?: chatOpenFailed) },
                 )
-                openingProfile = null
+                openingRoute = null
             }
         },
         onOpenGroup = { onOpenGroup(it.key) },
@@ -206,7 +215,7 @@ internal fun BotModeContent(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onSelectGateway: (String?) -> Unit,
-    openingProfile: String? = null,
+    openingRoute: BotGatewayRouteKey? = null,
     onOpenBot: (BotRosterEntry) -> Unit,
     onOpenGroup: (BotGroupRoom) -> Unit,
     onNewBot: () -> Unit,
@@ -404,12 +413,12 @@ internal fun BotModeContent(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
-                    items(activeBots, key = { it.profile.name }) { bot ->
+                    items(activeBots, key = { it.lazyItemKey }) { bot ->
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .width(78.dp)
-                                .clickable(enabled = openingProfile == null) { onOpenBot(bot) },
+                                .clickable(enabled = openingRoute == null) { onOpenBot(bot) },
                         ) {
                             Box {
                                 botAvatar(bot, 56.dp)
@@ -455,7 +464,7 @@ internal fun BotModeContent(
                     itemsIndexed(
                         items = rows,
                         key = { _, row -> when (row) {
-                            is BotModeRow.Bot -> "bot:${row.value.profile.name}"
+                            is BotModeRow.Bot -> row.value.lazyItemKey
                             is BotModeRow.Group -> "group:${row.value.key}"
                         } },
                     ) { index, row ->
@@ -463,7 +472,7 @@ internal fun BotModeContent(
                             is BotModeRow.Bot -> BotConversationRow(
                                 bot = row.value,
                                 connectionLabel = row.value.route?.connectionLabel,
-                                opening = openingProfile == row.value.profile.name,
+                                opening = openingRoute != null && openingRoute == row.value.route?.key,
                                 onClick = { onOpenBot(row.value) },
                                 avatar = { botAvatar(row.value, 56.dp) },
                                 nowMs = nowMs,
