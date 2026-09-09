@@ -30,6 +30,7 @@ class Scenario:
     turns: tuple[dict[str, Any], ...]
     active_list_supported: bool
     active_list_snapshots: tuple[tuple[dict[str, Any], ...], ...]
+    hosted_groups: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Scenario":
@@ -114,6 +115,26 @@ class Scenario:
                     )
                 validated_rows.append(dict(row))
             validated_snapshots.append(tuple(validated_rows))
+        groups = raw.get("hosted_groups")
+        if groups is not None:
+            if not isinstance(groups, dict) or not all(
+                    isinstance(groups.get(key), dict) for key in ("capabilities", "room", "driver_status")):
+                raise ScenarioError("hosted_groups requires capabilities, room, and driver_status objects")
+            room, caps = groups["room"], groups["capabilities"]
+            if not {"room_id", "members", "authority_gateway_id", "authority_epoch", "latest_seq"} <= room.keys():
+                raise ScenarioError("hosted_groups room requires identity, membership, authority, and cursor")
+            if room["latest_seq"] != 0:
+                raise ScenarioError("hosted_groups starts with an empty log (latest_seq=0)")
+            if (not isinstance(caps.get("driver"), bool)
+                    or type(caps.get("protocol_version")) is not int
+                    or type(caps.get("max_log_limit")) is not int or caps["max_log_limit"] < 1
+                    or not isinstance(caps.get("methods"), list)
+                    or not isinstance(caps.get("features"), list)
+                    or caps.get("authority_gateway_id") != room["authority_gateway_id"]):
+                raise ScenarioError("hosted_groups capabilities must declare matching authority and typed negotiation")
+            losses = groups.get("lose_response_event_ids", [])
+            if not isinstance(losses, list) or not all(isinstance(key, str) and key for key in losses):
+                raise ScenarioError("hosted_groups lose_response_event_ids must be a string list")
         return cls(
             name=str(raw["name"]),
             live_session_id=str(raw["live_session_id"]),
@@ -124,6 +145,7 @@ class Scenario:
             turns=tuple(dict(turn) for turn in raw["turns"]),
             active_list_supported=active_list_supported,
             active_list_snapshots=tuple(validated_snapshots),
+            hosted_groups=groups,
         )
 
 

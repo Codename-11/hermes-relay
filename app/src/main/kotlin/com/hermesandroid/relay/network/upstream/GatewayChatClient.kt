@@ -4279,6 +4279,23 @@ class GatewayChatClient(
     // JSON-RPC
     // ------------------------------------------------------------------
 
+    /** Hosted-room calls never create, resume or activate a native chat session. */
+    suspend fun hostedRoomRpc(method: String, params: JsonObject = JsonObject(emptyMap())): Result<JsonObject> {
+        require(method in setOf(
+            "groups.capabilities", "groups.list", "groups.state", "groups.log", "groups.send",
+            "groups.stop", "groups.retry", "groups.approve", "groups.attachment.put",
+            "groups.attachment.read", "groups.attachment.list", "groups.create", "groups.rename",
+            "groups.members.update", "groups.disband", "groups.history", "groups.read.get", "groups.read.mark",
+            "groups.history.search", "groups.message.edit", "groups.message.delete", "groups.message.react",
+        ))
+        try {
+            connectMutex.withLock { ensureConnected() }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        return rpc(method, params)
+    }
+
     private suspend fun rpc(
         method: String,
         params: JsonObject,
@@ -4294,9 +4311,21 @@ class GatewayChatClient(
             put("method", method)
             put("params", params)
         }
-        if (!socket.send(json.encodeToString(JsonObject.serializer(), frame))) {
+        val encoded = json.encodeToString(JsonObject.serializer(), frame)
+        val hostedSize = if (method.startsWith("groups.")) encoded.toByteArray(Charsets.UTF_8).size.toLong() else 0L
+        // OkHttp closes the connection on queue overflow, before compression. Keep the
+        // hosted preflight and all RPC enqueues atomic on that socket's own monitor.
+        val sendError = synchronized(socket) {
+            when {
+                hostedSize > 0 && hostedSize + socket.queueSize() > 16L * 1024 * 1024 ->
+                    GatewayRpcException("Hosted request exceeds the WebSocket queue limit. Use a smaller file or retry after queued traffic drains.")
+                !socket.send(encoded) -> GatewayRpcException("send failed - socket closed")
+                else -> null
+            }
+        }
+        if (sendError != null) {
             pendingRpcs.remove(id)
-            return Result.failure(GatewayRpcException("send failed — socket closed"))
+            return Result.failure(sendError)
         }
         return try {
             Result.success(withTimeout(timeoutMs) { deferred.await() })

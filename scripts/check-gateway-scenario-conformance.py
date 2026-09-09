@@ -7,7 +7,8 @@ opening a database, creating a session, or resolving provider credentials.
 
 An optional JSON scenario manifest may select a subset of contracts with a
 top-level ``contract_requirements`` (or ``requires``) string array. Without a
-manifest, all known contracts are checked.
+manifest, all standard contracts are checked. Hosted-room contracts are explicitly
+selected by a dependency-gated manifest; checkout safety checks are identical.
 """
 
 from __future__ import annotations
@@ -46,6 +47,16 @@ ALL_CONTRACTS = (
     API_BOUNDARY,
 )
 
+GROUPS_CAPABILITIES = "gateway.groups_capabilities"
+GROUPS_SEND = "gateway.groups_send_idempotent"
+GROUPS_STATE_LOG = "gateway.groups_state_log"
+HOSTED_CONTRACTS = (GROUPS_CAPABILITIES, GROUPS_SEND, GROUPS_STATE_LOG)
+KNOWN_CONTRACTS = ALL_CONTRACTS + HOSTED_CONTRACTS
+GROUPS_METHODS = "tui_gateway/methods_groups.py"
+HOSTED_ROOMS = "gateway/hosted_rooms.py"
+HOSTED_SERVICE = "tui_gateway/hosted_room_service.py"
+HOSTED_DISCUSSION = "gateway/hosted_room_discussion.py"
+
 FORK_MARKERS = ("hermes_relay", "hermes-relay", "RelayPlugin")
 VANILLA_REMOTE_MARKER = "nousresearch/hermes-agent"
 
@@ -76,7 +87,7 @@ class SourceFile:
                 return node
         raise ValueError(f"missing function {name} in {self.relative}")
 
-    def method_handler(self, method_name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    def method_handler(self, method_name: str, *, decorators: tuple[str, ...] = ("method",)) -> ast.FunctionDef | ast.AsyncFunctionDef:
         for node in ast.walk(self.tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -84,7 +95,7 @@ class SourceFile:
                 if (
                     isinstance(decorator, ast.Call)
                     and isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "method"
+                    and decorator.func.id in decorators
                     and decorator.args
                     and isinstance(decorator.args[0], ast.Constant)
                     and decorator.args[0].value == method_name
@@ -480,11 +491,96 @@ def load_requirements(manifest: Path | None) -> tuple[str, ...]:
         return ALL_CONTRACTS
     if not isinstance(raw, list) or not raw or not all(isinstance(item, str) for item in raw):
         raise ValueError("scenario manifest contract_requirements must be a non-empty string array")
-    unknown = sorted(set(raw) - set(ALL_CONTRACTS))
+    unknown = sorted(set(raw) - set(KNOWN_CONTRACTS))
     if unknown:
         raise ValueError("unknown scenario contract requirement(s): " + ", ".join(unknown))
     requested = set(raw)
-    return tuple(contract for contract in ALL_CONTRACTS if contract in requested)
+    return tuple(contract for contract in KNOWN_CONTRACTS if contract in requested)
+
+
+def _check_hosted_contract(root: Path, contract: str) -> CheckResult:
+    """Trace hosted RPC declarations into their storage/service seams, source-only."""
+    evidence: list[str] = []
+    try:
+        methods = SourceFile(root, GROUPS_METHODS)
+        storage = SourceFile(root, HOSTED_ROOMS)
+        service = SourceFile(root, HOSTED_SERVICE)
+        discussion = SourceFile(root, HOSTED_DISCUSSION)
+        for source in (methods, storage, service, discussion):
+            if any(marker in source.text for marker in FORK_MARKERS):
+                raise ValueError(f"fork marker in {source.relative}")
+
+        def require(source: SourceFile, node: ast.AST, fields: set[str], *expressions: str) -> None:
+            missing = sorted(fields - _string_constants(node))
+            text = ast.unparse(node)
+            missing.extend(expr for expr in expressions if ast.unparse(ast.parse(expr)) not in text)
+            if missing:
+                raise ValueError(f"{source.relative}: hosted contract missing: {', '.join(missing)}")
+            evidence.append(source.evidence(node, "hosted wire/storage seam"))
+
+        if contract == GROUPS_CAPABILITIES:
+            handler = methods.method_handler("groups.capabilities")
+            require(methods, handler,
+                    {"protocol_version", "driver", "authority_gateway_id", "features", "methods",
+                     "max_log_limit", "idempotent_send", "monotonic_log", "room_identity", "typed_events", "actor_identity"},
+                    'get_hosted_room_service()', 'service.runtime.status()["running"]',
+                    'local_authority_gateway_id()', 'list(_methods)',
+                    'driver_ready = bool(service and service.runtime.status()["running"])')
+            if not any(isinstance(node, ast.Dict) and any(
+                    isinstance(key, ast.Constant) and key.value == "driver"
+                    and isinstance(value, ast.Name) and value.id == "driver_ready"
+                    for key, value in zip(node.keys, node.values)) for node in ast.walk(handler)):
+                raise ValueError("capabilities driver must derive from service readiness")
+            catalog = next((node for node in methods.tree.body if isinstance(node, ast.Assign)
+                            and any(isinstance(t, ast.Name) and t.id == "_METHODS" for t in node.targets)), None)
+            if catalog is None:
+                raise ValueError("hosted method catalog missing")
+            require(methods, catalog, {"groups.capabilities", "groups.list", "groups.state", "groups.send", "groups.log"})
+        elif contract == GROUPS_SEND:
+            handler = methods.method_handler("groups.send", decorators=("method", "_room_method"))
+            require(methods, handler, {"room_id", "event_id", "payload", "event", "client_event_id", "accepted", "driver_started"},
+                    'service.send(room_id=params.get("room_id"), event_id=user_event_id(client_event_id), payload=params.get("payload"))',
+                    '_ok(rid, {"event": event, "client_event_id": client_event_id, "accepted": True, "driver_started": True})')
+            require(storage, storage.function("user_event_id"), {"user:"},
+                    "hashlib.sha256(_event_id(client_event_id).encode('utf-8')).hexdigest()")
+            append = storage.function("append_event")
+            require(storage, append, set(), '_transaction(db_path, immediate=True)',
+                    '_load_event(conn, room_id, event_id)', '_event_content(existing)',
+                    '_event_from_row(existing, idempotent=True)', 'EventConflictError')
+            reads, writes = _call_lines(append, "_load_event"), _call_lines(append, "_insert_event")
+            if not reads or not writes or reads[0] >= writes[0]:
+                raise ValueError("idempotent lookup must precede insert")
+            require(service, service.function("send"), {"user", "desktop"}, 'self.send_server_owned')
+            require(service, service.function("send_server_owned"), {"thread_id", "message.user"},
+                    '"thread_id" not in payload', '{**payload, "thread_id": event_id}',
+                    'discussion.validate_user_payload', 'hosted_rooms.append_event')
+            require(discussion, discussion.function("validate_user_payload"), {"text", "thread_id"}, '_exact_fields')
+            require(discussion, discussion.function("resolve_mentions"), set(), 'member.handle.casefold()', '_MENTION_RE.finditer')
+        else:
+            state = methods.method_handler("groups.state", decorators=("method", "_room_method"))
+            require(methods, state, {"room", "room_id", "driver_status"}, 'room_state', 'service.status_with_grant_fingerprints')
+            listing = methods.method_handler("groups.list", decorators=("method", "_room_method"))
+            require(methods, listing, {"rooms", "next_offset", "limit", "offset"}, 'list_rooms')
+            passthrough = next((node for node in ast.walk(methods.tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "_passthrough" and node.args
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == "groups.log"), None)
+            if passthrough is None:
+                raise ValueError("groups.log passthrough registration missing")
+            require(methods, passthrough, {"gateway.hosted_rooms", "read_events", "room_id", "since_seq", "limit", "include_disbanded"},
+                    'p.get("since_seq", 0)', 'p.get("limit", 100)')
+            require(methods, methods.function("_passthrough"), set(), 'getattr(_import(module), fn_name)(db_path, **kwargs)',
+                    '_ok(rid, {wrap: result} if wrap else result)')
+            log = storage.function("read_events")
+            require(storage, log, {"events", "cursor", "latest_seq", "has_more", "authority", "gateway_id", "epoch"},
+                    '_non_negative(since_seq, "since_seq")', '_bounded_limit(limit, MAX_LOG_LIMIT)',
+                    'cursor < latest_seq')
+            sql = " ".join(_string_constants(log))
+            if "room_id=? AND seq>?" not in sql or "ORDER BY seq ASC" not in sql:
+                raise ValueError("log must select exact room rows strictly after cursor in sequence order")
+        return CheckResult(contract, True, tuple(evidence))
+    except ValueError as exc:
+        return CheckResult(contract, False, (), str(exc))
 
 
 def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
@@ -515,6 +611,8 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         SUBAGENT_CHILD_WATCH: lambda: _check_subagent_child_watch(server, methods),
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }
+    checks.update({contract: lambda contract=contract: _check_hosted_contract(root, contract)
+                   for contract in HOSTED_CONTRACTS})
     return [checks[requirement]() for requirement in requirements]
 
 

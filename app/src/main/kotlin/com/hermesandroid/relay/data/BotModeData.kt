@@ -63,6 +63,8 @@ data class BotRosterEntry(
 
 data class BotGroupMember(
     val name: String,
+    val memberId: String? = null,
+    val retired: Boolean = false,
     val handle: String? = null,
     val connectionId: String? = null,
     val connectionLabel: String? = null,
@@ -70,6 +72,14 @@ data class BotGroupMember(
 
 data class BotGroupMessage(
     val id: String? = null,
+    val senderId: String? = null,
+    val threadId: String? = null,
+    val seq: Long = 0L,
+    val revision: Long = 0L,
+    val parentEventId: String? = null,
+    val deleted: Boolean = false,
+    val reactions: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    val attachments: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     val senderName: String,
     val senderKind: String,
     val senderSource: String? = null,
@@ -80,6 +90,8 @@ data class BotGroupMessage(
 data class BotGroupRoom(
     val key: String,
     val roomId: String? = null,
+    val route: BotGatewayRoute? = null,
+    val hosted: Boolean = false,
     val name: String,
     val revision: Long = 0L,
     val members: List<BotGroupMember> = emptyList(),
@@ -92,6 +104,7 @@ data class BotGroupRoom(
 }
 
 data class BotModeRoster(
+    val hostedCapabilities: HostedRoomCapabilities = HostedRoomCapabilities(),
     val bots: List<BotRosterEntry> = emptyList(),
     val groups: List<BotGroupRoom> = emptyList(),
     val botModeProtocolSupported: Boolean = false,
@@ -105,6 +118,7 @@ data class BotGatewayRosterStatus(
     val stale: Boolean = false,
     val error: String? = null,
     val botCount: Int = 0,
+    val canCreateRooms: Boolean = false,
 )
 
 data class BotChatTarget(

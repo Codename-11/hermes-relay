@@ -530,6 +530,7 @@ internal class AndroidGatewayContractFixture {
     private val sockets = LinkedBlockingQueue<WebSocket>()
     private val allSockets = ConcurrentLinkedQueue<WebSocket>()
     private val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
+    var hostedRoomHandler: ((String, JsonObject) -> JsonObject?)? = null
     private val requestPaths = ConcurrentLinkedQueue<String>()
     private val ticketCount = AtomicInteger(0)
 
@@ -558,6 +559,12 @@ internal class AndroidGatewayContractFixture {
             val id = (frame["id"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: return
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
+            if (method.startsWith("groups.") && hostedRoomHandler != null) {
+                hostedRoomHandler?.invoke(method, params)?.let { result ->
+                    webSocket.send(buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }.toString())
+                }
+                return
+            }
 
             val result = when (method) {
                 "session.resume" -> sessionSnapshot("fixture-live-1")

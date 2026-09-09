@@ -1,0 +1,53 @@
+{
+  "name": "hosted_room_response_loss",
+  "live_session_id": "unused-hosted-live",
+  "stored_session_id": "unused-hosted-stored",
+  "turns": [],
+  "contract_requirements": [
+    "gateway.groups_capabilities",
+    "gateway.groups_send_idempotent",
+    "gateway.groups_state_log"
+  ],
+  "conformance_dependency": {
+    "status": "dependency_gated",
+    "source": "tui_gateway/methods_groups.py",
+    "note": "Requires hosted-room upstream integration; not a clean-current-upstream certification. No bypass of checkout checks."
+  },
+  "hosted_groups": {
+    "capabilities": {
+      "protocol_version": 2,
+      "driver": true,
+      "authority_gateway_id": "fixture-authority",
+      "features": ["room_identity", "monotonic_log", "idempotent_send", "typed_events", "actor_identity"],
+      "methods": ["groups.capabilities", "groups.list", "groups.state", "groups.send", "groups.log"],
+      "max_log_limit": 500
+    },
+    "room": {
+      "room_id": "fixture-room",
+      "name": "Shared review",
+      "members": [
+        {"member_id": "member-writer", "profile": "writer", "handle": "writer", "display_name": "Writer"},
+        {"member_id": "member-reviewer", "profile": "reviewer", "handle": "reviewer", "display_name": "Reviewer"}
+      ],
+      "authority_gateway_id": "fixture-authority",
+      "authority_epoch": 1,
+      "revision": 1,
+      "created_at": 1000.0,
+      "updated_at": 1000.0,
+      "idempotent": false,
+      "latest_seq": 0
+    },
+    "driver_status": {
+      "running": true, "working": false, "blocked": false,
+      "counts": {}, "pending_actions": [], "needs_attention": false,
+      "replication": {"running": false, "workers": 0, "routes": null, "error": null,
+                      "mode": "passive_async_copy", "source_loss_safe": false},
+      "peer_routes": []
+    },
+    "lose_response_event_ids": ["fixture-first-send"],
+    "examples": {
+      "fresh_thread": {"room_id": "fixture-room", "event_id": "fixture-first-send", "payload": {"text": "@reviewer Review this draft."}},
+      "reply": {"room_id": "fixture-room", "event_id": "fixture-reply", "payload": {"text": "@writer Keep this in the same thread.", "thread_id": "user:a1d4cead3758952fa84b42f211b0d4d4ad52785c465e1b64506b10134fce8069"}}
+    }
+  }
+}
