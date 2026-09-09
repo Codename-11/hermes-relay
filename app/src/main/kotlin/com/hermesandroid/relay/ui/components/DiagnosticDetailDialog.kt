@@ -1,7 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import android.text.format.DateFormat
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,159 +78,158 @@ fun DiagnosticDetailDialog(entry: DiagnosticLogEntry, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f),
-            shape = appearanceRoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    DiagnosticSeverityChip(entry.severity)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = entry.category.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        MessageOverlayScope {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.94f),
+                shape = appearanceRoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        DiagnosticSeverityChip(entry.severity)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = entry.category.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
 
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = entry.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-
-                Spacer(Modifier.height(10.dp))
-                // Metadata rows — only render the ones that are present.
-                MetaRow("When", DateFormat.format("yyyy-MM-dd HH:mm:ss", entry.timestampMs).toString())
-                MetaRow("Severity", severityName)
-                MetaRow("Category", entry.category.label)
-                entry.operation?.let { MetaRow("Operation", it) }
-                entry.endpointRole?.let { MetaRow("Route", it) }
-                entry.configuredUrl?.let { MetaRow("Configured URL", it) }
-                entry.requestUrl?.let { MetaRow("Request", it) }
-                if (entry.configuredUrl == null && entry.requestUrl == null) {
-                    entry.url?.let { MetaRow("URL", it) }
-                }
-                entry.elapsedMs?.let { MetaRow("Elapsed", "${it}ms") }
-                entry.suggestion?.let { suggestion ->
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "Suggested next step",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = entry.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                    Text(
-                        text = suggestion,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
 
-                Spacer(Modifier.height(14.dp))
-                val body = entry.stacktrace ?: entry.detail
-                if (body != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 120.dp, max = 320.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                appearanceRoundedCornerShape(12.dp),
-                            ),
-                    ) {
-                        SelectionContainer {
-                            Text(
-                                text = body,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(12.dp),
-                            )
-                        }
+                    Spacer(Modifier.height(10.dp))
+                    // Metadata rows — only render the ones that are present.
+                    MetaRow("When", DateFormat.format("yyyy-MM-dd HH:mm:ss", entry.timestampMs).toString())
+                    MetaRow("Severity", severityName)
+                    MetaRow("Category", entry.category.label)
+                    entry.operation?.let { MetaRow("Operation", it) }
+                    entry.endpointRole?.let { MetaRow("Route", it) }
+                    entry.configuredUrl?.let { MetaRow("Configured URL", it) }
+                    entry.requestUrl?.let { MetaRow("Request", it) }
+                    if (entry.configuredUrl == null && entry.requestUrl == null) {
+                        entry.url?.let { MetaRow("URL", it) }
                     }
-                } else {
-                    Text(
-                        text = stringResource(R.string.diagnostic_no_detail),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                    entry.elapsedMs?.let { MetaRow("Elapsed", "${it}ms") }
+                    entry.suggestion?.let { suggestion ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "Suggested next step",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = suggestion,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
 
-                if (expectationVisible) {
                     Spacer(Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = expectation,
-                        onValueChange = { expectation = it },
-                        label = { Text("What were you expecting to happen?") },
-                        supportingText = {
-                            Text(stringResource(R.string.diagnostic_routine_hint))
-                        },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                Spacer(Modifier.height(18.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
-                    OutlinedButton(
-                        onClick = {
-                            IssueReport.copyToClipboard(context, plainText)
-                            toast(context, copiedToast)
-                        },
-                    ) { Text(stringResource(R.string.common_copy)) }
-                    OutlinedButton(
-                        onClick = {
-                            val shared = IssueReport.share(
-                                context,
-                                subject = "Hermes-Relay diagnostic — ${entry.title}",
-                                text = plainText,
-                                chooserTitle = exportChooserTitle,
-                            )
-                            if (!shared) {
-                                IssueReport.copyToClipboard(context, plainText)
-                                toast(context, "Copied — no app found to share to")
-                            }
-                        },
-                    ) { Text(stringResource(R.string.common_export)) }
-                    Button(
-                        enabled = !expectationVisible || expectation.isNotBlank(),
-                        onClick = {
-                            if (needsExpectation && !expectationVisible) {
-                                expectationVisible = true
-                                return@Button
-                            }
-                            // Copy full text first; the GitHub URL only carries the
-                            // head of long traces, so the user can paste the rest.
-                            IssueReport.copyToClipboard(context, plainText)
-                            val opened = IssueReport.openUrl(
-                                context,
-                                IssueReport.buildGithubIssueUrl(
-                                    title = DiagnosticIssuePrefill.issueTitle(entry),
-                                    bodyMarkdown = DiagnosticIssuePrefill.issueBody(
-                                        entry,
-                                        expectation = expectation.takeIf { expectationVisible },
-                                    ),
-                                    labels = DiagnosticIssuePrefill.issueLabels(entry),
+                    val body = entry.stacktrace ?: entry.detail
+                    if (body != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 120.dp, max = 320.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    appearanceRoundedCornerShape(12.dp),
                                 ),
-                            )
-                            toast(
-                                context,
-                                if (opened) "Full diagnostic copied — paste it into the issue if truncated"
-                                else "Copied — no browser found to open GitHub",
-                            )
-                        },
-                    ) { Text(stringResource(R.string.common_report)) }
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = body,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(12.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = stringResource(R.string.diagnostic_no_detail),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (expectationVisible) {
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = expectation,
+                            onValueChange = { expectation = it },
+                            label = { Text("What were you expecting to happen?") },
+                            supportingText = {
+                                Text(stringResource(R.string.diagnostic_routine_hint))
+                            },
+                            minLines = 2,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
+                        OutlinedButton(
+                            onClick = {
+                                IssueReport.copyToClipboard(context, plainText)
+                                UiMessageBus.success(copiedToast)
+                            },
+                        ) { Text(stringResource(R.string.common_copy)) }
+                        OutlinedButton(
+                            onClick = {
+                                val shared = IssueReport.share(
+                                    context,
+                                    subject = "Hermes-Relay diagnostic — ${entry.title}",
+                                    text = plainText,
+                                    chooserTitle = exportChooserTitle,
+                                )
+                                if (!shared) {
+                                    IssueReport.copyToClipboard(context, plainText)
+                                    UiMessageBus.warning("Copied — no app found to share to")
+                                }
+                            },
+                        ) { Text(stringResource(R.string.common_export)) }
+                        Button(
+                            enabled = !expectationVisible || expectation.isNotBlank(),
+                            onClick = {
+                                if (needsExpectation && !expectationVisible) {
+                                    expectationVisible = true
+                                    return@Button
+                                }
+                                // Copy full text first; the GitHub URL only carries the
+                                // head of long traces, so the user can paste the rest.
+                                IssueReport.copyToClipboard(context, plainText)
+                                val opened = IssueReport.openUrl(
+                                    context,
+                                    IssueReport.buildGithubIssueUrl(
+                                        title = DiagnosticIssuePrefill.issueTitle(entry),
+                                        bodyMarkdown = DiagnosticIssuePrefill.issueBody(
+                                            entry,
+                                            expectation = expectation.takeIf { expectationVisible },
+                                        ),
+                                        labels = DiagnosticIssuePrefill.issueLabels(entry),
+                                    ),
+                                )
+                                if (opened) UiMessageBus.success("Full diagnostic copied — paste it into the issue if truncated")
+                                else UiMessageBus.warning("Copied — no browser found to open GitHub")
+                            },
+                        ) { Text(stringResource(R.string.common_report)) }
+                    }
                 }
             }
         }
@@ -274,10 +273,6 @@ internal fun DiagnosticSeverityChip(severity: DiagnosticSeverity) {
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
         )
     }
-}
-
-private fun toast(context: android.content.Context, message: String) {
-    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 }
 
 /** Full, copy/share-ready plain-text rendering of a single diagnostic entry. */

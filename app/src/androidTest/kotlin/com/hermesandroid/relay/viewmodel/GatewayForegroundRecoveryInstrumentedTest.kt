@@ -28,6 +28,8 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
+import com.hermesandroid.relay.ui.components.SubagentPreviewVisibility
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -115,9 +117,18 @@ class GatewayForegroundRecoveryInstrumentedTest {
         compose.setContent {
             val messages by viewModel.messages.collectAsStateWithLifecycle()
             val streaming by viewModel.isStreaming.collectAsStateWithLifecycle()
+            val children by viewModel.subagentActivities.collectAsStateWithLifecycle()
             val signInRequired by historySignInRequired.collectAsStateWithLifecycle()
             MaterialTheme {
                 Column(Modifier.testTag("contract-transcript")) {
+                    GatewayBackgroundProcessStrip(
+                        processes = emptyList(),
+                        subagentActivities = children,
+                        subagentPreviewVisibility = SubagentPreviewVisibility(),
+                        loading = false,
+                        onClick = {},
+                        modifier = Modifier.testTag("child-activity"),
+                    )
                     Text(
                         text = if (streaming) "STREAMING" else "IDLE",
                         modifier = Modifier.testTag("stream-state"),
@@ -151,6 +162,37 @@ class GatewayForegroundRecoveryInstrumentedTest {
         gatewayClient.shutdown()
         gatewayScope.cancel()
         fixture.shutdown()
+    }
+
+    @Test
+    fun detachedChildActivity_survivesParentTerminalAndActivityResume() {
+        viewModel.sendMessage("Delegate a background task")
+        fixture.awaitRpc("prompt.submit")
+        serverSocket.send(fixture.event("message.start", null, LIVE_SESSION_ID))
+        serverSocket.send(fixture.event("subagent.start", buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("goal", "Inspect")
+        }, LIVE_SESSION_ID))
+        compose.waitUntil(5_000) { viewModel.subagentActivities.value.size == 1 }
+        compose.onNodeWithTag("child-activity").assertIsDisplayed()
+        serverSocket.send(fixture.event("message.complete", buildJsonObject { put("text", "Launched") }, LIVE_SESSION_ID))
+        compose.waitUntil(5_000) { !handler.isStreaming.value }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        serverSocket.send(fixture.event("subagent.progress", buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("text", "Still working")
+        }, LIVE_SESSION_ID))
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitUntil(5_000) { viewModel.subagentActivities.value.single().events.last().text == "Still working" }
+        compose.onNodeWithTag("child-activity").assertIsDisplayed()
+        assertFalse(viewModel.subagentActivities.value.single().isTerminal)
+        compose.onNodeWithTag("stream-state").assertTextEquals("IDLE")
+        serverSocket.send(fixture.event("subagent.complete", buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("status", "completed")
+        }, LIVE_SESSION_ID))
+        compose.waitUntil(5_000) { viewModel.subagentActivities.value.single().isTerminal }
+        compose.onNodeWithTag("child-activity").assertDoesNotExist()
     }
 
     @Test

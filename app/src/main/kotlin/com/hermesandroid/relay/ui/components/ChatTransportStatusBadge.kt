@@ -1,6 +1,6 @@
 package com.hermesandroid.relay.ui.components
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.padding
@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
@@ -140,18 +139,13 @@ fun ChatTransportStatusBadge(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    val context = LocalContext.current
     val textColor = status.textColor()
     val background = status.backgroundColor()
     Surface(
         modifier = modifier.combinedClickable(
             onClick = { onClick?.invoke() },
             onLongClick = {
-                Toast.makeText(
-                    context,
-                    "${status.reason}: ${status.detail}",
-                    Toast.LENGTH_LONG,
-                ).show()
+                UiMessageBus.info("${status.reason}: ${status.detail}")
             },
         ),
         shape = RoundedCornerShape(999.dp),

@@ -14,6 +14,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import com.hermesandroid.relay.util.HumanError
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -283,6 +287,35 @@ class ChatViewModelMediaStateTest {
         assertEquals("image/png", loaded.contentType)
         assertEquals("/api/files/download", dashboardServer.takeRequest().requestUrl?.encodedPath)
         assertEquals("/media/by-path", server.takeRequest().requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun missingDashboardMediaStaysInAttachmentWithoutGlobalError() {
+        dashboardServer.enqueue(MockResponse().setResponseCode(404).setBody("{\"detail\":\"Path not found\"}"))
+        viewModel.cellularNetworkOverride = false
+        viewModel.initializeMedia(
+            context = RuntimeEnvironment.getApplication(),
+            relayHttpClient = RelayHttpClient(
+                okHttpClient = OkHttpClient(), relayUrlProvider = { null },
+                sessionTokenProvider = { null }, pairedTokenSnapshot = { null },
+            ),
+            mediaSettingsRepo = MediaSettingsRepository(RuntimeEnvironment.getApplication()),
+            mediaCacheWriter = cache,
+            dashboardMediaClientProvider = { DashboardApiClient(baseUrl = dashboardServer.url("/").toString()) },
+        )
+        val errors = mutableListOf<HumanError>()
+        val collector = CoroutineScope(Dispatchers.Unconfined).launch { viewModel.errorEvents.collect { errors.add(it) } }
+        try {
+            handler.loadMessageHistory(listOf(MessageItem(
+                id = "missing-image", role = "assistant", content = JsonPrimitive("MEDIA:/tmp/missing-image.png"),
+            )))
+            val failed = awaitMessage { it.attachments.singleOrNull()?.state == AttachmentState.FAILED }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(AttachmentState.FAILED, failed.attachments.single().state)
+            assertEquals(1, dashboardServer.requestCount)
+            assertEquals(0, server.requestCount)
+            assertEquals(emptyList<HumanError>(), errors)
+        } finally { collector.cancel() }
     }
 
     @Test

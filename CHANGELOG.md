@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android feedback uses themed banners and action cards instead of platform toasts and default snackbars. Dashboard errors no longer misidentify missing resources as an outdated Relay. Developer settings includes local-only message previews.
+- Missing chat attachments show their error and retry in the attachment card without repeated global popups. Global action messages occupy the top message area instead of covering the composer.
+- Chat distinguishes session preparation from response streaming and retains initialization errors that arrive before the session acknowledgement. Long-press the agent header to open a live session-diagnostics drawer.
+- Delegated-agent activity survives parent replies and leaves compact history entries for later read-only review. The activity strip appears only while work runs; historical process views cannot stop or dismiss live work. (#447)
 - **`android_*` tools resolve bridge credentials written after host startup.** Requests retry profile-scoped env and active bridge-session credentials after a stale token is rejected, and vision navigation now shares the same current Relay transport instead of the retired standalone default.
 - **`android_setup` accepts both its canonical and legacy schema keys.** `bridge_session_token` and `pairing_code` are accepted, while a missing token returns a structured error.
 - **Android tool setup tests use a temporary Hermes home.** Test runs no longer write bridge settings into a developer environment.

@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
+import com.hermesandroid.relay.ui.components.ThemedMessageHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
@@ -230,11 +230,7 @@ val LocalSnackbarHost = staticCompositionLocalOf<SnackbarHostState> {
 // Short-lived snackbar by default; retryable errors get Long so users have
 // time to tap the action before it auto-dismisses.
 suspend fun SnackbarHostState.showHumanError(err: HumanError): SnackbarResult {
-    return showSnackbar(
-        message = err.body,
-        actionLabel = err.actionLabel,
-        duration = if (err.retryable) SnackbarDuration.Long else SnackbarDuration.Short,
-    )
+    return showSnackbar(com.hermesandroid.relay.ui.components.HumanErrorVisuals(err))
 }
 
 /** Startup chrome should wait for either standard chat surface, not Relay. */
@@ -1952,6 +1948,8 @@ fun RelayApp() {
         // child TopAppBar doesn't double-pad when this banner owns the top edge.
         val activeMessageCount by UiMessageBus.activeCount.collectAsState()
         val showMessageBanner = activeMessageCount > 0
+        val modalMessageHostActive by UiMessageBus.modalHostActive.collectAsState()
+        val showActionMessage = snackbarHostState.currentSnackbarData != null && !modalMessageHostActive
         // Update availability (unified): googlePlay = Play In-App Update FLEXIBLE,
         // sideload = GitHub releases. The handle filters dismissed versions +
         // throttles checks internally, exposing a surfaceable status for the
@@ -2077,6 +2075,14 @@ fun RelayApp() {
             includeStatusBarPadding =
                 !showUnattendedBanner && !showDemoBanner && !showHostResourcePressure,
         )
+        // Action feedback owns layout space at the top, never the composer's
+        // touch area. Modal windows keep their own scoped host.
+        ThemedMessageHost(
+            snackbarHostState,
+            modifier = if (showActionMessage && !showMessageBanner &&
+                !showUnattendedBanner && !showDemoBanner && !showHostResourcePressure
+            ) Modifier.windowInsetsPadding(WindowInsets.statusBars) else Modifier,
+        )
 
         // The update banner AND the connection-status indicator now render as
         // floating overlay TOASTS in the Box below (see the top-overlay Column
@@ -2117,7 +2123,7 @@ fun RelayApp() {
                     // participates in the top-inset accounting.
                     if (showUnattendedBanner || showDemoBanner || showHostResourcePressure ||
                         connectionChipVisible ||
-                        showMessageBanner
+                        showMessageBanner || showActionMessage
                     ) {
                         Modifier.consumeWindowInsets(WindowInsets.statusBars)
                     } else {
@@ -2125,7 +2131,6 @@ fun RelayApp() {
                     }
                 ),
             contentWindowInsets = WindowInsets(0),
-            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (
                     !suppressGlobalChrome &&
@@ -2212,7 +2217,10 @@ fun RelayApp() {
                 }
             }
         ) { innerPadding ->
-            CompositionLocalProvider(LocalSnackbarHost provides snackbarHostState) {
+            CompositionLocalProvider(
+                LocalSnackbarHost provides snackbarHostState,
+                com.hermesandroid.relay.ui.components.LocalMessageActionHost provides snackbarHostState,
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()

@@ -59,7 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SnackbarHost
+import com.hermesandroid.relay.ui.components.ThemedMessageHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
@@ -268,7 +268,7 @@ fun AppearanceSettingsScreen(
                 }
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { ThemedMessageHost(snackbarHostState) },
     ) { innerPadding ->
         Column(
             modifier = Modifier

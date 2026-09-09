@@ -36,7 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import com.hermesandroid.relay.ui.components.ThemedMessageHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -189,7 +189,7 @@ fun PetdexBrowseScreen(
                 ),
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { ThemedMessageHost(snackbarHostState) },
     ) { innerPadding ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(156.dp),

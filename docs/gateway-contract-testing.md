@@ -68,6 +68,8 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `session_initialization_failure` | Exact-session initialization error arrives before a lazy create acknowledgement; Android must fail the pending send without waiting for the readiness deadline |
+| `subagent_child_preview` | Child activity continues after the parent terminal, followed by child completion and a separate completion wake; preview ownership remains on the same profile/session |
 | `ownership_rejection` | A submit acknowledged before the defense-in-depth ownership check emits the canonical terminal refusal; no user/model row is persisted and clients must not enter history recovery |
 | `compaction_status` | Compaction status is client-visible before terminal completion and may repeat as a heartbeat |
 | `rapid_tools_interims` | Rapid chunks, reasoning, tool activity, and interim assistant boundaries |
@@ -81,6 +83,14 @@ the upstream contract identifiers it depends on.
 | `active_status_profile_scope` | A row has no profile metadata and a caller profile hint has no effect; the client must use exact client-held ownership and reject invented attribution |
 | `active_status_unsupported` | An older Gateway returns JSON-RPC method-not-found; the client retains Unknown rather than inventing Idle or Working |
 | `cross_client_observation` | A second client observes a Desktop-owned working session through active status and history without resume, activate, submit, or interrupt; the producing client receives the terminal event |
+
+Activity receipts join canonical completion metadata by exact delegation identity
+within the connection/profile/session owner. Process notices use the canonical
+process ID; ambiguous reused process generations do not attach cached output.
+Local metadata recovery never asserts live execution, and receipt projection
+does not modify the transport/model/voice transcript. Controller/store tests
+cover late identity enrichment, partial groups, stale loads, removal, and bounded
+retention; rendered tests cover active-strip disappearance and historical controls.
 
 Fixture evidence is a bounded metadata-only ring. It records sequence,
 connection number, RPC method, event type, scope classification, and outcome.

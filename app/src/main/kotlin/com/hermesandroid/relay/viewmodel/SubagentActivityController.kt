@@ -30,9 +30,8 @@ internal data class SubagentActivityEvent(
 /**
  * A bounded, ephemeral projection of parent-session `subagent.*` events.
  *
- * This is intentionally not a child transcript. Upstream currently exposes no
- * durable child-session key or child-history route, so the projection is owned
- * by the exact profile-scoped parent session and parent turn that emitted it.
+ * The owning profile/session outlives individual parent turns. Child identity
+ * keeps detached work visible until its own terminal event arrives.
  */
 internal data class SubagentActivity(
     val laneId: Long,
@@ -41,6 +40,7 @@ internal data class SubagentActivity(
     val taskCount: Int,
     val goal: String,
     val subagentId: String? = null,
+    val delegationId: String? = null,
     val childSessionId: String? = null,
     val parentId: String? = null,
     val depth: Int? = null,
@@ -91,6 +91,9 @@ internal class SubagentActivityController(
     private var laneSequence = 0L
     private var connectionWasReady = false
     private var pendingGap = false
+    private var interrupted = false
+    private var previewOpen = false
+    private val retiredChildIds = linkedSetOf<String>()
 
     fun selectSession(sessionId: String?, newScopeKey: String?) {
         if (storedSessionId == sessionId && scopeKey == newScopeKey) return
@@ -101,10 +104,16 @@ internal class SubagentActivityController(
         laneSequence = 0L
         connectionWasReady = false
         pendingGap = false
+        interrupted = false
+        previewOpen = false
+        retiredChildIds.clear()
         _activities.value = emptyList()
     }
 
     fun resetConnection() {
+        interrupted = false
+        previewOpen = false
+        retiredChildIds.clear()
         activeTurnId = null
         sequence = 0L
         laneSequence = 0L
@@ -133,9 +142,34 @@ internal class SubagentActivityController(
         if (sessionId == null || sessionId != storedSessionId || eventScopeKey != scopeKey) return
         if (activeTurnId == turnId) return
         activeTurnId = turnId
-        sequence = 0L
-        laneSequence = 0L
-        _activities.value = emptyList()
+        interrupted = false
+        _activities.value.filter { it.isTerminal }.forEach { activity ->
+            activity.subagentId?.let(retiredChildIds::add)
+            activity.childSessionId?.let(retiredChildIds::add)
+        }
+        while (retiredChildIds.size > 256) retiredChildIds.remove(retiredChildIds.first())
+        val visibleTerminalKeys = _activities.value.filter { it.isTerminal }.takeLast(32)
+            .mapTo(HashSet()) { it.stableKey }
+        _activities.value = _activities.value.filter {
+            (previewOpen && it.stableKey in visibleTerminalKeys) ||
+                (!it.isTerminal && (!it.subagentId.isNullOrBlank() || !it.childSessionId.isNullOrBlank()))
+        }
+    }
+
+    fun setPreviewOpen(open: Boolean) {
+        previewOpen = open
+        if (!open) _activities.value = _activities.value.filterNot { it.isTerminal }
+    }
+
+    fun onSessionEvent(sessionId: String, eventScopeKey: String?, event: GatewaySubagentEvent, profile: String?) {
+        onEvent(sessionId, eventScopeKey, activeTurnId ?: "session", event, profile)
+    }
+
+    fun interrupt() {
+        interrupted = true
+        _activities.value = _activities.value.map {
+            if (it.isTerminal) it else it.copy(phase = SubagentActivityPhase.INTERRUPTED, revision = it.revision + 1)
+        }
     }
 
     fun onEvent(
@@ -146,18 +180,21 @@ internal class SubagentActivityController(
         profile: String? = null,
     ) {
         if (sessionId == null || sessionId != storedSessionId || eventScopeKey != scopeKey) return
-        if (activeTurnId != turnId) return
+        if (interrupted) return
 
         val taskIndex = event.taskIndex.coerceAtLeast(0)
         val eventIdentity = event.subagentId?.takeIf(String::isNotBlank)
             ?: event.childSessionId?.takeIf(String::isNotBlank)
+        if (eventIdentity != null && eventIdentity in retiredChildIds) return
         val identityMatch = eventIdentity?.let { identity ->
             _activities.value.firstOrNull {
                 it.subagentId == identity || it.childSessionId == identity
             }
         }
         val compatibleIndexMatches = _activities.value.filter { activity ->
-            activity.taskIndex == taskIndex &&
+            activity.turnId == turnId && activity.taskIndex == taskIndex &&
+                (event.delegationId.isNullOrBlank() || activity.delegationId.isNullOrBlank() ||
+                    event.delegationId == activity.delegationId) &&
                 (event.subagentId.isNullOrBlank() || activity.subagentId.isNullOrBlank() ||
                     event.subagentId == activity.subagentId) &&
                 (event.childSessionId.isNullOrBlank() || activity.childSessionId.isNullOrBlank() ||
@@ -167,13 +204,14 @@ internal class SubagentActivityController(
                 (event.depth == null || activity.depth == null || event.depth == activity.depth)
         }
         val current = identityMatch ?: compatibleIndexMatches.singleOrNull()
-        if (
-            current?.isTerminal == true &&
-            event.phase != GatewaySubagentEvent.Phase.SPAWN_REQUESTED &&
+        if (activeTurnId != turnId && identityMatch == null && eventIdentity == null) return
+        if (current?.isTerminal == true) return
+        // Progress and completion cannot invent children when their start was missed.
+        if (current == null && event.phase != GatewaySubagentEvent.Phase.SPAWN_REQUESTED &&
             event.phase != GatewaySubagentEvent.Phase.START
         ) return
 
-        val base = if (current?.isTerminal == true) null else current
+        val base = current
         val phase = event.toActivityPhase()
         val goal = sanitize(event.goal, MAX_GOAL_CHARS)
         val preview = sanitize(event.preview, MAX_EVENT_TEXT_CHARS).ifBlank { null }
@@ -206,16 +244,17 @@ internal class SubagentActivityController(
         val (boundedEvents, truncated) = boundEvents(appended)
         val next = SubagentActivity(
             laneId = base?.laneId ?: laneSequence++,
-            turnId = turnId,
+            turnId = base?.turnId ?: turnId,
             taskIndex = taskIndex,
             taskCount = maxOf(1, event.taskCount, base?.taskCount ?: 1),
             goal = goal.ifBlank { base?.goal.orEmpty() },
             subagentId = event.subagentId?.takeIf(String::isNotBlank) ?: base?.subagentId,
+            delegationId = event.delegationId?.takeIf(String::isNotBlank) ?: base?.delegationId,
             childSessionId = event.childSessionId?.takeIf(String::isNotBlank) ?: base?.childSessionId,
             parentId = event.parentId?.takeIf(String::isNotBlank) ?: base?.parentId,
             depth = event.depth ?: base?.depth,
             model = event.model?.takeIf(String::isNotBlank) ?: base?.model,
-            profile = profile?.takeIf(String::isNotBlank) ?: base?.profile,
+            profile = if (base != null) base.profile else profile?.takeIf(String::isNotBlank),
             phase = phase,
             summary = summary ?: base?.summary,
             durationSeconds = event.durationSeconds ?: base?.durationSeconds,
@@ -231,7 +270,9 @@ internal class SubagentActivityController(
     fun endTurn(turnId: String) {
         if (activeTurnId != turnId) return
         _activities.value = _activities.value.map { activity ->
-            if (activity.isTerminal) activity else activity.copy(
+            if (activity.isTerminal || !activity.subagentId.isNullOrBlank() ||
+                !activity.childSessionId.isNullOrBlank()
+            ) activity else activity.copy(
                 phase = SubagentActivityPhase.ENDED_WITH_PARENT,
                 partialAfterGap = true,
                 revision = activity.revision + 1,
@@ -261,9 +302,9 @@ private fun GatewaySubagentEvent.toActivityPhase(): SubagentActivityPhase = when
     GatewaySubagentEvent.Phase.TOOL -> SubagentActivityPhase.TOOL
     GatewaySubagentEvent.Phase.PROGRESS -> SubagentActivityPhase.PROGRESS
     GatewaySubagentEvent.Phase.COMPLETE -> when (status?.trim()?.lowercase()) {
-        "failed", "error" -> SubagentActivityPhase.FAILED
+        "completed", "complete" -> SubagentActivityPhase.COMPLETED
         "interrupted", "cancelled", "canceled" -> SubagentActivityPhase.INTERRUPTED
-        else -> SubagentActivityPhase.COMPLETED
+        else -> SubagentActivityPhase.FAILED
     }
 }
 
