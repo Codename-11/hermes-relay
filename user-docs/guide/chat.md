@@ -101,10 +101,23 @@ requested result stay independent instead of being buried in a run.
 
 ### Subagent lanes
 
-When the agent delegates work to subagents, each one renders as its own
-collapsible **lane** beneath the reply — a guide rail with that subagent's
-thinking and tool rows, so a complex multi-agent turn stays readable instead of
-interleaving into one stream. Lanes auto-collapse as each subagent finishes.
+While delegated agents or background commands run, **Current chat activity**
+appears above the composer. Tap it to view their progress. The strip disappears
+when no work is running; an open detail sheet stays open until you close it.
+
+Completed work leaves a compact entry in the conversation. **View activity**
+opens recorded subagent details and available read-only child history;
+**View output** opens available process output. Historical views have no Stop
+or other process-control actions. A **Dispatched** tool card means the
+delegation was launched, not that its children finished. Ordinary tool groups
+and Realtime Agent task cards keep their own existing presentation.
+
+The app retains bounded metadata and child references locally for up to 30 days
+(32 entries per session, 128 overall), without storing full child transcripts
+or process output. A persisted completion entry remains useful even when its
+details are unavailable; the sheet explains that limitation. Work recovered
+without fresh live evidence is marked unavailable rather than still running.
+Older events without stable child identity can still use inline subagent lanes.
 
 ### Rich cards & interactive prompts
 

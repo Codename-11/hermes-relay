@@ -4325,4 +4325,14 @@
     <string name="chat_queue_paused">Очередь приостановлена</string>
     <string name="chat_queue_resume">Продолжить</string>
     <string name="chat_queue_remove">Удалить сообщение из очереди</string>
+    <string name="chat_activity_receipt_subagents">Субагенты</string>
+    <string name="chat_activity_receipt_process">Фоновая команда</string>
+    <string name="chat_activity_receipt_view_activity">Посмотреть активность</string>
+    <string name="chat_activity_receipt_view_output">Посмотреть вывод</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">Активность чата</string>
+    <string name="chat_activity_history_empty">Подробная активность не сохранена на этом устройстве. Запись о завершении остаётся в чате.</string>
+    <string name="tool_progress_status_dispatched">Отправлено</string>
+    <string name="chat_activity_history_notice">Сохранённая активность. Обновления хода работы не сохраняются; доступную историю субагентов можно открыть только для чтения.</string>
+    <string name="chat_activity_output_unavailable">Вывод больше недоступен. Эта запись сохраняет зафиксированное состояние процесса.</string>
 </resources>

@@ -9,7 +9,7 @@ import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -312,110 +312,112 @@ fun AttachmentViewer(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        val context = LocalContext.current
-        val exportAllowed = LocalImageExportAllowed.current ||
-            attachment.renderMode != AttachmentRenderMode.IMAGE
-        AllowDeviceRotation()
-        val scope = rememberCoroutineScope()
-        var busy by remember { mutableStateOf(false) }
+        MessageOverlayScope {
+            val context = LocalContext.current
+            val exportAllowed = LocalImageExportAllowed.current ||
+                attachment.renderMode != AttachmentRenderMode.IMAGE
+            AllowDeviceRotation()
+            val scope = rememberCoroutineScope()
+            var busy by remember { mutableStateOf(false) }
 
-        val blurMode = LocalMediaBlurMode.current
-        var revealed by remember(attachment.cachedUri, attachment.relayToken) {
-            mutableStateOf(initiallyRevealed)
-        }
-        val blurred = !revealed &&
-            attachment.renderMode == AttachmentRenderMode.IMAGE &&
-            shouldBlurImage(blurMode, attachment.sensitive)
-
-        val title = attachment.fileName
-            ?: attachment.contentType.substringBefore(';').ifBlank { stringResource(R.string.attachment_title) }
-
-        // --- One shared Share / Save / Open-externally action set ----------
-        fun runWithBytes(action: suspend (ByteArray) -> Unit) {
-            scope.launch {
-                busy = true
-                val bytes = attachmentBytes(context, attachment)
-                if (bytes == null) {
-                    busy = false
-                    viewerToast(context, context.getString(R.string.inbound_attach_share_failed))
-                    return@launch
-                }
-                action(bytes)
-                busy = false
+            val blurMode = LocalMediaBlurMode.current
+            var revealed by remember(attachment.cachedUri, attachment.relayToken) {
+                mutableStateOf(initiallyRevealed)
             }
-        }
+            val blurred = !revealed &&
+                attachment.renderMode == AttachmentRenderMode.IMAGE &&
+                shouldBlurImage(blurMode, attachment.sensitive)
 
-        val onShare = {
-            runWithBytes { bytes ->
-                val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
-                MediaSaver.share(context, uri, attachment.contentType)
-            }
-        }
-        val onSave = {
-            runWithBytes { bytes ->
-                val result = if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
-                    MediaSaver.saveImage(context, bytes, attachment.fileName, attachment.contentType)
-                } else {
-                    MediaSaver.saveFile(context, bytes, attachment.fileName, attachment.contentType)
-                }
-                when (result) {
-                    is MediaSaver.SaveResult.Saved ->
-                        viewerToast(context, context.getString(R.string.inbound_attach_saved, result.location))
-                    MediaSaver.SaveResult.UseShareInstead -> {
-                        val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
-                        MediaSaver.share(context, uri, attachment.contentType)
+            val title = attachment.fileName
+                ?: attachment.contentType.substringBefore(';').ifBlank { stringResource(R.string.attachment_title) }
+
+            // --- One shared Share / Save / Open-externally action set ----------
+            fun runWithBytes(action: suspend (ByteArray) -> Unit) {
+                scope.launch {
+                    busy = true
+                    val bytes = attachmentBytes(context, attachment)
+                    if (bytes == null) {
+                        busy = false
+                        UiMessageBus.error(context.getString(R.string.inbound_attach_share_failed))
+                        return@launch
                     }
-                    is MediaSaver.SaveResult.Failed ->
-                        viewerToast(context, context.getString(R.string.inbound_attach_save_failed, result.message))
+                    action(bytes)
+                    busy = false
                 }
             }
-        }
-        val onOpenExternal = {
-            val cached = attachment.cachedUri
-            if (!cached.isNullOrBlank()) {
-                MediaSaver.open(context, Uri.parse(cached), attachment.contentType)
-            } else {
+
+            val onShare = {
                 runWithBytes { bytes ->
                     val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
-                    MediaSaver.open(context, uri, attachment.contentType)
+                    MediaSaver.share(context, uri, attachment.contentType)
                 }
             }
-        }
-
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.96f))
-                .testTag("attachment-viewer"),
-        ) {
-            // Body fills; toolbar floats on top. PDF/TEXT add their own top
-            // inset so the first line clears the toolbar.
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                when (attachment.renderMode) {
-                    AttachmentRenderMode.IMAGE -> ImageBody(
-                        attachment = attachment,
-                        blurred = blurred,
-                        onReveal = { revealed = true },
-                    )
-                    AttachmentRenderMode.VIDEO -> VideoBody(attachment)
-                    AttachmentRenderMode.AUDIO -> AudioBody(attachment)
-                    AttachmentRenderMode.PDF -> PdfBody(attachment)
-                    AttachmentRenderMode.TEXT -> TextBody(attachment)
-                    AttachmentRenderMode.GENERIC -> GenericBody(attachment, onOpenExternal)
+            val onSave = {
+                runWithBytes { bytes ->
+                    val result = if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
+                        MediaSaver.saveImage(context, bytes, attachment.fileName, attachment.contentType)
+                    } else {
+                        MediaSaver.saveFile(context, bytes, attachment.fileName, attachment.contentType)
+                    }
+                    when (result) {
+                        is MediaSaver.SaveResult.Saved ->
+                            UiMessageBus.success(context.getString(R.string.inbound_attach_saved, result.location))
+                        MediaSaver.SaveResult.UseShareInstead -> {
+                            val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+                            MediaSaver.share(context, uri, attachment.contentType)
+                        }
+                        is MediaSaver.SaveResult.Failed ->
+                            UiMessageBus.error(context.getString(R.string.inbound_attach_save_failed, result.message))
+                    }
+                }
+            }
+            val onOpenExternal = {
+                val cached = attachment.cachedUri
+                if (!cached.isNullOrBlank()) {
+                    MediaSaver.open(context, Uri.parse(cached), attachment.contentType)
+                } else {
+                    runWithBytes { bytes ->
+                        val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
+                        MediaSaver.open(context, uri, attachment.contentType)
+                    }
                 }
             }
 
-            MediaViewerToolbar(
-                title = title,
-                busy = busy,
-                actionsEnabled = !blurred,
-                exportAllowed = exportAllowed,
-                onShare = onShare,
-                onSave = onSave,
-                onOpenExternal = onOpenExternal,
-                onClose = onDismiss,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
+            Box(
+                modifier = modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.96f))
+                    .testTag("attachment-viewer"),
+            ) {
+                // Body fills; toolbar floats on top. PDF/TEXT add their own top
+                // inset so the first line clears the toolbar.
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    when (attachment.renderMode) {
+                        AttachmentRenderMode.IMAGE -> ImageBody(
+                            attachment = attachment,
+                            blurred = blurred,
+                            onReveal = { revealed = true },
+                        )
+                        AttachmentRenderMode.VIDEO -> VideoBody(attachment)
+                        AttachmentRenderMode.AUDIO -> AudioBody(attachment)
+                        AttachmentRenderMode.PDF -> PdfBody(attachment)
+                        AttachmentRenderMode.TEXT -> TextBody(attachment)
+                        AttachmentRenderMode.GENERIC -> GenericBody(attachment, onOpenExternal)
+                    }
+                }
+
+                MediaViewerToolbar(
+                    title = title,
+                    busy = busy,
+                    actionsEnabled = !blurred,
+                    exportAllowed = exportAllowed,
+                    onShare = onShare,
+                    onSave = onSave,
+                    onOpenExternal = onOpenExternal,
+                    onClose = onDismiss,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            }
         }
     }
 }
@@ -452,164 +454,165 @@ internal fun AttachmentGalleryViewer(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        val context = LocalContext.current
-        val exportAllowed = LocalImageExportAllowed.current
-        AllowDeviceRotation()
-        val scope = rememberCoroutineScope()
-        var busy by remember { mutableStateOf(false) }
-        val revealed = remember { mutableStateMapOf<String, Boolean>() }
-        LaunchedEffect(initiallyRevealedKeys) {
-            initiallyRevealedKeys.forEach { revealed[it] = true }
-        }
-        val pagerState = rememberPagerState(
-            initialPage = initialIndex.coerceIn(attachments.indices),
-            pageCount = { attachments.size },
-        )
-
-        val currentIndex = pagerState.currentPage.coerceIn(attachments.indices)
-        val attachment = attachments[currentIndex]
-        val currentKey = galleryAttachmentKey(attachment, currentIndex)
-        val blurMode = LocalMediaBlurMode.current
-        val currentBlurred = revealed[currentKey] != true &&
-            shouldBlurImage(blurMode, attachment.sensitive)
-        val title = attachment.fileName
-            ?: attachment.contentType.substringBefore(';').ifBlank { "Image" }
-        val toolbarTitle = "$title · ${currentIndex + 1} of ${attachments.size}"
-
-        // Capture the currently visible attachment in each click lambda. A
-        // swipe while IO is running must not redirect Save/Share to a new page.
-        fun runWithBytes(action: suspend (Attachment, ByteArray) -> Unit) {
-            if (currentBlurred || busy) return
-            val target = attachment
-            scope.launch {
-                busy = true
-                try {
-                    val bytes = attachmentBytes(context, target)
-                    if (bytes == null) {
-                        viewerToast(context, "Couldn't read this image")
-                        return@launch
-                    }
-                    action(target, bytes)
-                } catch (error: Exception) {
-                    viewerToast(
-                        context,
-                        error.message?.takeIf { it.isNotBlank() }
-                            ?: "Couldn't complete that image action",
-                    )
-                } finally {
-                    busy = false
-                }
+        MessageOverlayScope {
+            val context = LocalContext.current
+            val exportAllowed = LocalImageExportAllowed.current
+            AllowDeviceRotation()
+            val scope = rememberCoroutineScope()
+            var busy by remember { mutableStateOf(false) }
+            val revealed = remember { mutableStateMapOf<String, Boolean>() }
+            LaunchedEffect(initiallyRevealedKeys) {
+                initiallyRevealedKeys.forEach { revealed[it] = true }
             }
-        }
+            val pagerState = rememberPagerState(
+                initialPage = initialIndex.coerceIn(attachments.indices),
+                pageCount = { attachments.size },
+            )
 
-        val onShare = {
-            runWithBytes { target, bytes ->
-                val uri = MediaSaver.stageForShare(
-                    context,
-                    bytes,
-                    target.fileName,
-                    target.contentType,
-                )
-                MediaSaver.share(context, uri, target.contentType)
-            }
-        }
-        val onSave = {
-            runWithBytes { target, bytes ->
-                when (val result = MediaSaver.saveImage(
-                    context,
-                    bytes,
-                    target.fileName,
-                    target.contentType,
-                )) {
-                    is MediaSaver.SaveResult.Saved ->
-                        viewerToast(context, "Saved to ${result.location}")
-                    MediaSaver.SaveResult.UseShareInstead -> {
-                        val uri = MediaSaver.stageForShare(
-                            context,
-                            bytes,
-                            target.fileName,
-                            target.contentType,
+            val currentIndex = pagerState.currentPage.coerceIn(attachments.indices)
+            val attachment = attachments[currentIndex]
+            val currentKey = galleryAttachmentKey(attachment, currentIndex)
+            val blurMode = LocalMediaBlurMode.current
+            val currentBlurred = revealed[currentKey] != true &&
+                shouldBlurImage(blurMode, attachment.sensitive)
+            val title = attachment.fileName
+                ?: attachment.contentType.substringBefore(';').ifBlank { "Image" }
+            val toolbarTitle = "$title · ${currentIndex + 1} of ${attachments.size}"
+
+            // Capture the currently visible attachment in each click lambda. A
+            // swipe while IO is running must not redirect Save/Share to a new page.
+            fun runWithBytes(action: suspend (Attachment, ByteArray) -> Unit) {
+                if (currentBlurred || busy) return
+                val target = attachment
+                scope.launch {
+                    busy = true
+                    try {
+                        val bytes = attachmentBytes(context, target)
+                        if (bytes == null) {
+                            UiMessageBus.error("Couldn't read this image")
+                            return@launch
+                        }
+                        action(target, bytes)
+                    } catch (error: Exception) {
+                        UiMessageBus.error(
+                            error.message?.takeIf { it.isNotBlank() }
+                                ?: "Couldn't complete that image action",
                         )
-                        MediaSaver.share(context, uri, target.contentType)
+                    } finally {
+                        busy = false
                     }
-                    is MediaSaver.SaveResult.Failed ->
-                        viewerToast(context, "Save failed: ${result.message}")
                 }
             }
-        }
-        val onOpenExternal: () -> Unit = openExternal@{
-            if (currentBlurred || busy) return@openExternal
-            val target = attachment
-            val cached = target.cachedUri
-            if (!cached.isNullOrBlank()) {
-                runCatching {
-                    MediaSaver.open(context, Uri.parse(cached), target.contentType)
-                }.onFailure {
-                    viewerToast(context, "Couldn't open this image")
-                }
-            } else {
-                runWithBytes { item, bytes ->
+
+            val onShare = {
+                runWithBytes { target, bytes ->
                     val uri = MediaSaver.stageForShare(
                         context,
                         bytes,
-                        item.fileName,
-                        item.contentType,
+                        target.fileName,
+                        target.contentType,
                     )
-                    MediaSaver.open(context, uri, item.contentType)
+                    MediaSaver.share(context, uri, target.contentType)
                 }
             }
-        }
-
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.96f)),
-        ) {
-            HorizontalPager(
-                state = pagerState,
-                beyondViewportPageCount = 0,
-                pageSpacing = 12.dp,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("attachment-gallery-pager"),
-            ) { page ->
-                val pageAttachment = attachments[page]
-                val pageKey = galleryAttachmentKey(pageAttachment, page)
-                val blurred = revealed[pageKey] != true && shouldBlurImage(
-                    blurMode,
-                    pageAttachment.sensitive,
-                )
-                ImageBody(
-                    attachment = pageAttachment,
-                    blurred = blurred,
-                    onReveal = { revealed[pageKey] = true },
-                )
+            val onSave = {
+                runWithBytes { target, bytes ->
+                    when (val result = MediaSaver.saveImage(
+                        context,
+                        bytes,
+                        target.fileName,
+                        target.contentType,
+                    )) {
+                        is MediaSaver.SaveResult.Saved ->
+                            UiMessageBus.success("Saved to ${result.location}")
+                        MediaSaver.SaveResult.UseShareInstead -> {
+                            val uri = MediaSaver.stageForShare(
+                                context,
+                                bytes,
+                                target.fileName,
+                                target.contentType,
+                            )
+                            MediaSaver.share(context, uri, target.contentType)
+                        }
+                        is MediaSaver.SaveResult.Failed ->
+                            UiMessageBus.error("Save failed: ${result.message}")
+                    }
+                }
+            }
+            val onOpenExternal: () -> Unit = openExternal@{
+                if (currentBlurred || busy) return@openExternal
+                val target = attachment
+                val cached = target.cachedUri
+                if (!cached.isNullOrBlank()) {
+                    runCatching {
+                        MediaSaver.open(context, Uri.parse(cached), target.contentType)
+                    }.onFailure {
+                        UiMessageBus.error("Couldn't open this image")
+                    }
+                } else {
+                    runWithBytes { item, bytes ->
+                        val uri = MediaSaver.stageForShare(
+                            context,
+                            bytes,
+                            item.fileName,
+                            item.contentType,
+                        )
+                        MediaSaver.open(context, uri, item.contentType)
+                    }
+                }
             }
 
-            MediaViewerToolbar(
-                title = toolbarTitle,
-                busy = busy,
-                actionsEnabled = !currentBlurred,
-                exportAllowed = exportAllowed,
-                onShare = onShare,
-                onSave = onSave,
-                onOpenExternal = onOpenExternal,
-                onClose = onDismiss,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
+            Box(
+                modifier = modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.96f)),
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    beyondViewportPageCount = 0,
+                    pageSpacing = 12.dp,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("attachment-gallery-pager"),
+                ) { page ->
+                    val pageAttachment = attachments[page]
+                    val pageKey = galleryAttachmentKey(pageAttachment, page)
+                    val blurred = revealed[pageKey] != true && shouldBlurImage(
+                        blurMode,
+                        pageAttachment.sensitive,
+                    )
+                    ImageBody(
+                        attachment = pageAttachment,
+                        blurred = blurred,
+                        onReveal = { revealed[pageKey] = true },
+                    )
+                }
 
-            Text(
-                text = "${currentIndex + 1} / ${attachments.size}",
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(bottom = 12.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+                MediaViewerToolbar(
+                    title = toolbarTitle,
+                    busy = busy,
+                    actionsEnabled = !currentBlurred,
+                    exportAllowed = exportAllowed,
+                    onShare = onShare,
+                    onSave = onSave,
+                    onOpenExternal = onOpenExternal,
+                    onClose = onDismiss,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+
+                Text(
+                    text = "${currentIndex + 1} / ${attachments.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }
@@ -1189,10 +1192,6 @@ private fun rememberPlayableUri(attachment: Attachment): Uri? {
         uri = withContext(Dispatchers.IO) { resolvePlayableUri(context, attachment) }
     }
     return uri
-}
-
-private fun viewerToast(context: Context, message: String) {
-    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
 private const val MAX_TEXT_BYTES = 2 * 1024 * 1024

@@ -431,6 +431,9 @@ class GatewayChatClient(
     private val lazyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val readyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val sessionReadyWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val sessionReadyFailures = ConcurrentHashMap<String, String>()
+    private val _preparingSessionId = MutableStateFlow<String?>(null)
+    val preparingSessionId: StateFlow<String?> = _preparingSessionId.asStateFlow()
 
     /** Monotonic client-local fence for lazy child watch open/close races. */
     private val childWatchGeneration = AtomicLong(0)
@@ -632,6 +635,13 @@ class GatewayChatClient(
      */
     @Volatile
     private var processEventListener: ((GatewayProcessEvent) -> Unit)? = null
+
+    @Volatile
+    private var subagentEventListener: ((String, String?, GatewaySubagentEvent) -> Unit)? = null
+
+    fun setSubagentEventListener(listener: ((String, String?, GatewaySubagentEvent) -> Unit)?) {
+        subagentEventListener = listener
+    }
 
     /** Process-wide durable-session invalidation/liveness edge. */
     @Volatile
@@ -1563,7 +1573,10 @@ class GatewayChatClient(
                         .orEmpty()
                         .also { recoveryEvents = null }
                 }
-                buffered.forEach { event -> boundTurn?.onEvent(event.type, event.payload) }
+                buffered.forEach { event ->
+                    dispatchSubagentEvent(event.type, event.payload, event.sessionId)
+                    boundTurn.onEvent(event.type, event.payload)
+                }
                 queued?.let { queuedTurn ->
                     queuedTurnProvider?.invoke(queuedTurn)?.let { registration ->
                         boundTurn.installQueuedSuccessor(registration)
@@ -2950,6 +2963,7 @@ class GatewayChatClient(
         unmatchedTurnCompleteListener = null
         backgroundInteractionListener = null
         processEventListener = null
+        subagentEventListener = null
         sessionDirectoryInvalidationListener = null
         closeSocket("client shutdown")
         backgroundCloseJob?.cancel()
@@ -3485,6 +3499,7 @@ class GatewayChatClient(
         liveId: String,
         sessionResult: JsonObject? = null,
     ) {
+        sessionReadyFailures[liveId]?.let { throw GatewayPreflightException(it) }
         val lazy = (sessionResult?.get("info") as? JsonObject)?.booleanField("lazy") == true
         if (lazy) lazyLiveSessions += liveId
         if (liveId !in lazyLiveSessions) return
@@ -3494,6 +3509,9 @@ class GatewayChatClient(
         }
         val waiter = sessionReadyWaiters.computeIfAbsent(liveId) { CompletableDeferred() }
         if (readyLiveSessions.remove(liveId)) waiter.complete(Unit)
+        sessionReadyFailures[liveId]?.let { waiter.completeExceptionally(GatewayRpcException(it)) }
+        val preparingStoredId = storedSessionId
+        _preparingSessionId.value = preparingStoredId
         try {
             withTimeout(sessionReadyTimeoutMs) { waiter.await() }
             lazyLiveSessions.remove(liveId)
@@ -3502,11 +3520,14 @@ class GatewayChatClient(
                 error.message ?: "Hermes session initialization timed out",
             )
         } finally {
+            if (_preparingSessionId.value == preparingStoredId) _preparingSessionId.value = null
             sessionReadyWaiters.remove(liveId, waiter)
         }
     }
 
     private fun failSessionReadyWaiters(message: String) {
+        _preparingSessionId.value = null
+        sessionReadyFailures.clear()
         sessionReadyWaiters.values.forEach {
             it.completeExceptionally(GatewayRpcException(message))
         }
@@ -3696,6 +3717,7 @@ class GatewayChatClient(
         if (type == "session.info" && !eventSessionId.isNullOrBlank() &&
             payload?.booleanField("lazy") != true
         ) {
+            sessionReadyFailures.remove(eventSessionId)
             readyLiveSessions += eventSessionId
             sessionReadyWaiters.remove(eventSessionId)?.complete(Unit)
         }
@@ -3705,10 +3727,16 @@ class GatewayChatClient(
         // immediately so the optimistic prompt remains retryable/Not sent
         // instead of waiting for the five-minute readiness timeout.
         if (type == "error" && !eventSessionId.isNullOrBlank() &&
-            (eventSessionId in lazyLiveSessions || sessionReadyWaiters.containsKey(eventSessionId))
+            (eventSessionId in lazyLiveSessions || sessionReadyWaiters.containsKey(eventSessionId) ||
+                payload?.stringField("message")?.startsWith("agent init failed:") == true)
         ) {
             val message = payload?.stringField("message")
                 ?: "Hermes session initialization failed"
+            // A fast deferred build can fail before the lazy RPC acknowledgement.
+            // Retain the exact runtime failure so the subsequent readiness wait
+            // cannot lose that edge and hang until its deadline.
+            if (sessionReadyFailures.size >= 64) sessionReadyFailures.keys.firstOrNull()?.let(sessionReadyFailures::remove)
+            sessionReadyFailures[eventSessionId] = message.take(2_000)
             lazyLiveSessions.remove(eventSessionId)
             readyLiveSessions.remove(eventSessionId)
             sessionReadyWaiters.remove(eventSessionId)
@@ -3915,6 +3943,7 @@ class GatewayChatClient(
         dispatchProcessEvent(type, payload, eventSessionId)
         if (consumeCancelledTurnEvent(type, eventSessionId)) return
         if (consumeSettledTurnTerminal(type, eventSessionId)) return
+        dispatchSubagentEvent(type, payload, eventSessionId)
         var turn = activeTurn
         if (turn == null && type == "message.start") {
             // Unsolicited turns are accepted only with an explicit exact live-
@@ -3976,10 +4005,25 @@ class GatewayChatClient(
     }
 
     /**
-     * Deliver session-scoped process events before the active-turn gate. The
-     * gateway socket is process-wide, so an exact non-blank live id match is
-     * required; missing/foreign ids must never leak another window's process.
+     * Detached child updates belong to the session even between parent turns.
+     * Recheck socket, session, profile and listener ownership on UI dispatch.
      */
+    private fun dispatchSubagentEvent(type: String, payload: JsonObject?, eventSessionId: String?) {
+        val liveId = liveSessionId ?: return
+        val storedId = storedSessionId ?: return
+        if (eventSessionId.isNullOrBlank() || eventSessionId != liveId) return
+        val event = GatewayEventMapper.parseSubagentEvent(type, payload) ?: return
+        val profile = liveSessionProfile
+        val socket = webSocket
+        val listener = subagentEventListener ?: return
+        callbackDispatcher {
+            if (webSocket === socket && liveSessionId == liveId && storedSessionId == storedId &&
+                liveSessionProfile == profile && subagentEventListener === listener
+            ) listener(storedId, profile, event)
+        }
+    }
+
+    /** Process updates likewise require an exact live-session match before turn admission. */
     private fun dispatchProcessEvent(type: String, payload: JsonObject?, eventSessionId: String?) {
         val liveId = liveSessionId ?: return
         if (eventSessionId.isNullOrBlank() || eventSessionId != liveId) return

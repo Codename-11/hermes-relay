@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,21 +66,26 @@ private const val MAX_VISIBLE_EXPANDED = 3
 private const val ROW_MIN_HEIGHT_DP = 34
 
 /**
- * Top, thin, info-only banner host. Collects [UiMessageBus] and renders the
+ * Top, thin, themed banner host. Collects [UiMessageBus] and renders the
  * newest transient message on one line; tapping expands to the recent few
  * (scrolling past three). It takes its own vertical space — the Scaffold below
  * reflows, so content slides down smoothly instead of being covered by an
  * overlay. Auto-dismisses (paused while expanded) and coalesces duplicates so a
  * burst of the same status collapses to one refreshed row.
  *
- * App-owned errors stay on the snackbar. Keyed upstream AgentNotices may also
- * use the warning tone because their sticky/clear lifecycle is server-owned.
+ * Actionable messages use ThemedMessageHost. Modal hosts render above their
+ * dialog while the primary host retains messages for the return to the app.
  */
 @Composable
 fun MessageBannerHost(
     modifier: Modifier = Modifier,
     includeStatusBarPadding: Boolean = true,
+    primary: Boolean = true,
 ) {
+    val hostId = remember { UiMessageBus.registerHost(primary) }
+    val activeHost by UiMessageBus.activeHost.collectAsState()
+    val active = activeHost == hostId
+    DisposableEffect(hostId) { onDispose { UiMessageBus.unregisterHost(hostId) } }
     // Backing queue (oldest first; newest is last). expiresAt is kept in a
     // parallel map so coalescing/auto-dismiss can address rows by id.
     val shown = remember { mutableStateListOf<UiMessage>() }
@@ -122,12 +129,12 @@ fun MessageBannerHost(
     }
 
     // Collapse + report count to the scaffold (for inset accounting).
-    LaunchedEffect(shown.size) {
+    LaunchedEffect(shown.size, active) {
         if (shown.isEmpty()) expanded = false
-        UiMessageBus.reportActiveCount(shown.size)
+        if (primary) UiMessageBus.reportActiveCount(if (active) shown.size else 0)
     }
     DisposableEffect(Unit) {
-        onDispose { UiMessageBus.reportActiveCount(0) }
+        onDispose { if (primary) UiMessageBus.reportActiveCount(0) }
     }
 
     // Mirror the live queue into a retained copy so the exit animation still
@@ -147,7 +154,7 @@ fun MessageBannerHost(
     // under the notch. The smooth "slide" lives in animateContentSize below
     // (collapsed↔expanded and message-count changes).
     AnimatedVisibility(
-        visible = shown.isNotEmpty(),
+        visible = active && shown.isNotEmpty(),
         enter = fadeIn(tween(180)),
         exit = fadeOut(tween(160)),
         modifier = modifier,
@@ -155,7 +162,7 @@ fun MessageBannerHost(
         MessageBannerContent(
             messages = rendered,
             expanded = expanded,
-            onToggle = { if (rendered.size > 1) expanded = !expanded },
+            onToggle = { expanded = !expanded },
             includeStatusBarPadding = includeStatusBarPadding,
         )
     }
@@ -170,6 +177,7 @@ private fun MessageBannerContent(
 ) {
     val newest = messages.lastOrNull() ?: return
     val multiple = messages.size > 1
+    val expandable = multiple || newest.text.length > 80 || newest.severity in setOf(UiMessageSeverity.Warning, UiMessageSeverity.Error)
     val insetModifier = if (includeStatusBarPadding) {
         Modifier.windowInsetsPadding(WindowInsets.statusBars)
     } else {
@@ -190,14 +198,14 @@ private fun MessageBannerContent(
             tonalElevation = 0.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (multiple) Modifier.clickable(onClick = onToggle) else Modifier)
+                .then(if (expandable) Modifier.clickable(onClick = onToggle) else Modifier)
                 .animateContentSize(animationSpec = tween(durationMillis = 180)),
         ) {
             if (!expanded) {
                 MessageRow(
                     message = newest,
                     trailing = {
-                        if (multiple) {
+                        if (expandable) {
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -236,6 +244,7 @@ private fun MessageBannerContent(
                     ordered.forEachIndexed { index, message ->
                         MessageRow(
                             message = message,
+                            expanded = true,
                             trailing = {
                                 if (index == 0) {
                                     Icon(
@@ -256,6 +265,7 @@ private fun MessageBannerContent(
 @Composable
 private fun MessageRow(
     message: UiMessage,
+    expanded: Boolean = false,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(
@@ -275,7 +285,7 @@ private fun MessageRow(
         Text(
             text = message.text,
             style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
+            maxLines = if (expanded) 12 else 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
@@ -284,22 +294,25 @@ private fun MessageRow(
 }
 
 @Composable
-private fun severityContainer(severity: UiMessageSeverity): Color = when (severity) {
+internal fun severityContainer(severity: UiMessageSeverity): Color = (when (severity) {
+    UiMessageSeverity.Error -> MaterialTheme.colorScheme.errorContainer
     UiMessageSeverity.Success -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.58f)
     UiMessageSeverity.Status -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.74f)
     UiMessageSeverity.Warning -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.72f)
     UiMessageSeverity.Info -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.90f)
-}
+}).compositeOver(MaterialTheme.colorScheme.surface)
 
 @Composable
-private fun severityOnContainer(severity: UiMessageSeverity): Color = when (severity) {
+internal fun severityOnContainer(severity: UiMessageSeverity): Color = when (severity) {
+    UiMessageSeverity.Error -> MaterialTheme.colorScheme.onErrorContainer
     UiMessageSeverity.Success -> MaterialTheme.colorScheme.onTertiaryContainer
     UiMessageSeverity.Status -> MaterialTheme.colorScheme.onSecondaryContainer
     UiMessageSeverity.Warning -> MaterialTheme.colorScheme.onErrorContainer
     UiMessageSeverity.Info -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
-private fun severityIcon(severity: UiMessageSeverity): ImageVector = when (severity) {
+internal fun severityIcon(severity: UiMessageSeverity): ImageVector = when (severity) {
+    UiMessageSeverity.Error -> Icons.Filled.Warning
     UiMessageSeverity.Success -> Icons.Filled.CheckCircle
     UiMessageSeverity.Status -> Icons.Filled.Sync
     UiMessageSeverity.Warning -> Icons.Filled.Warning

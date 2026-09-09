@@ -2,7 +2,7 @@
 
 package com.hermesandroid.relay.ui.screens
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -170,7 +170,7 @@ fun PairScreen(
                 ConnectionWizard(
                     connectionViewModel = connectionViewModel,
                     onComplete = {
-                        Toast.makeText(context, context.getString(R.string.pair_connection_updated), Toast.LENGTH_SHORT).show()
+                        UiMessageBus.success(context.getString(R.string.pair_connection_updated))
                         onComplete()
                     },
                     onCancel = onCancel,

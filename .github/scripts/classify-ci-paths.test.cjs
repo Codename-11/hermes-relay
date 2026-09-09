@@ -115,8 +115,8 @@ assert.match(
   /ref: \$\{\{ contains\(inputs\.version, '-'\) && 'dev' \|\| 'main' \}\}/,
 );
 assert.match(cliReleaseWorkflow, /workflow_dispatch:[\s\S]*?Approved CLI\+UI version/);
-assert.match(cliReleaseWorkflow, /name: Restore exact-source tray build cache[\s\S]*?actions\/cache@v5/);
-assert.match(desktopCiWorkflow, /name: Restore exact-source tray build cache[\s\S]*?actions\/cache@v5/);
+assert.match(cliReleaseWorkflow, /name: Restore exact-source tray build cache[\s\S]*?actions\/cache@v6/);
+assert.match(desktopCiWorkflow, /name: Restore exact-source tray build cache[\s\S]*?actions\/cache@v6/);
 assert.match(pluginReleaseWorkflow, /workflow_dispatch:[\s\S]*?Approved Plugin version/);
 assert.match(androidPreflightWorkflow, /Package immutable preflight artifacts/);
 assert.match(androidApprovalWorkflow, /Android public approval accepts stable SemVer only/);

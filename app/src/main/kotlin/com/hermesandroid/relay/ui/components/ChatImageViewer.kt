@@ -2,7 +2,7 @@
 
 package com.hermesandroid.relay.ui.components
 
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -107,143 +107,141 @@ fun ChatImageViewer(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        val context = LocalContext.current
-        val exportAllowed = LocalImageExportAllowed.current
-        AllowDeviceRotation()
-        val scope = rememberCoroutineScope()
+        MessageOverlayScope {
+            val context = LocalContext.current
+            val exportAllowed = LocalImageExportAllowed.current
+            AllowDeviceRotation()
+            val scope = rememberCoroutineScope()
 
-        var busy by remember { mutableStateOf(false) }
+            var busy by remember { mutableStateOf(false) }
 
-        val blurMode = LocalMediaBlurMode.current
-        var revealed by remember(source) { mutableStateOf(initiallyRevealed) }
-        val blurred = !revealed && shouldBlurImage(blurMode, sensitive)
+            val blurMode = LocalMediaBlurMode.current
+            var revealed by remember(source) { mutableStateOf(initiallyRevealed) }
+            val blurred = !revealed && shouldBlurImage(blurMode, sensitive)
 
-        val gestureModifier = Modifier.fillMaxSize().zoomable()
+            val gestureModifier = Modifier.fillMaxSize().zoomable()
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.94f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            BlurredMedia(
-                blurred = blurred,
-                onReveal = { revealed = true },
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                when (source) {
-                    is ChatImageViewerSource.Coil -> AsyncImage(
-                        model = source.model,
-                        contentDescription = source.displayName,
-                        contentScale = ContentScale.Fit,
-                        modifier = gestureModifier,
-                    )
-
-                    is ChatImageViewerSource.Bitmap -> Image(
-                        bitmap = source.bitmap,
-                        contentDescription = source.displayName,
-                        contentScale = ContentScale.Fit,
-                        modifier = gestureModifier,
-                    )
-                }
-            }
-
-            if (busy) {
-                CircularProgressIndicator(color = Color.White)
-            }
-
-            // Control bar — top-right, inset past the status bar / notch.
-            Row(
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.94f)),
+                contentAlignment = Alignment.Center,
             ) {
-                val tint = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-                val cdClose = stringResource(R.string.cd_close_viewer)
-                val errorMsg = context.getString(R.string.image_viewer_error)
-                if (exportAllowed) {
-                    val cdShare = stringResource(R.string.cd_share)
-                    val cdSave = stringResource(R.string.cd_save)
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                val bytes = try {
-                                    source.bytesProvider()
-                                } catch (_: Exception) {
-                                    null
-                                }
-                                busy = false
-                                if (bytes == null) {
-                                    toast(context, errorMsg)
-                                    return@launch
-                                }
-                                val uri = MediaSaver.stageForShare(
-                                    context,
-                                    bytes,
-                                    source.displayName,
-                                    source.mime,
-                                )
-                                MediaSaver.share(context, uri, source.mime)
-                            }
-                        },
-                        colors = tint,
-                    ) {
-                        Icon(Icons.Filled.Share, contentDescription = cdShare)
-                    }
-                    val savedFmt = context.getString(R.string.image_viewer_saved)
-                    val failedFmt = context.getString(R.string.image_viewer_failed)
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                val bytes = try {
-                                    source.bytesProvider()
-                                } catch (_: Exception) {
-                                    null
-                                }
-                                if (bytes == null) {
-                                    busy = false
-                                    toast(context, errorMsg)
-                                    return@launch
-                                }
-                                when (val result = MediaSaver.saveImage(context, bytes, source.displayName, source.mime)) {
-                                    is MediaSaver.SaveResult.Saved -> {
-                                        busy = false
-                                        toast(context, savedFmt.format(result.location))
-                                    }
-                                    MediaSaver.SaveResult.UseShareInstead -> {
-                                        busy = false
-                                        val uri = MediaSaver.stageForShare(
-                                            context,
-                                            bytes,
-                                            source.displayName,
-                                            source.mime,
-                                        )
-                                        MediaSaver.share(context, uri, source.mime)
-                                    }
-                                    is MediaSaver.SaveResult.Failed -> {
-                                        busy = false
-                                        toast(context, failedFmt.format(result.message))
-                                    }
-                                }
-                            }
-                        },
-                        colors = tint,
-                    ) {
-                        Icon(Icons.Filled.Download, contentDescription = cdSave)
+                BlurredMedia(
+                    blurred = blurred,
+                    onReveal = { revealed = true },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    when (source) {
+                        is ChatImageViewerSource.Coil -> AsyncImage(
+                            model = source.model,
+                            contentDescription = source.displayName,
+                            contentScale = ContentScale.Fit,
+                            modifier = gestureModifier,
+                        )
+
+                        is ChatImageViewerSource.Bitmap -> Image(
+                            bitmap = source.bitmap,
+                            contentDescription = source.displayName,
+                            contentScale = ContentScale.Fit,
+                            modifier = gestureModifier,
+                        )
                     }
                 }
-                IconButton(onClick = onDismiss, colors = tint) {
-                    Icon(Icons.Filled.Close, contentDescription = cdClose)
+
+                if (busy) {
+                    CircularProgressIndicator(color = Color.White)
+                }
+
+                // Control bar — top-right, inset past the status bar / notch.
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    val tint = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+                    val cdClose = stringResource(R.string.cd_close_viewer)
+                    val errorMsg = context.getString(R.string.image_viewer_error)
+                    if (exportAllowed) {
+                        val cdShare = stringResource(R.string.cd_share)
+                        val cdSave = stringResource(R.string.cd_save)
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val bytes = try {
+                                        source.bytesProvider()
+                                    } catch (_: Exception) {
+                                        null
+                                    }
+                                    busy = false
+                                    if (bytes == null) {
+                                        UiMessageBus.error(errorMsg)
+                                        return@launch
+                                    }
+                                    val uri = MediaSaver.stageForShare(
+                                        context,
+                                        bytes,
+                                        source.displayName,
+                                        source.mime,
+                                    )
+                                    MediaSaver.share(context, uri, source.mime)
+                                }
+                            },
+                            colors = tint,
+                        ) {
+                            Icon(Icons.Filled.Share, contentDescription = cdShare)
+                        }
+                        val savedFmt = context.getString(R.string.image_viewer_saved)
+                        val failedFmt = context.getString(R.string.image_viewer_failed)
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val bytes = try {
+                                        source.bytesProvider()
+                                    } catch (_: Exception) {
+                                        null
+                                    }
+                                    if (bytes == null) {
+                                        busy = false
+                                        UiMessageBus.error(errorMsg)
+                                        return@launch
+                                    }
+                                    when (val result = MediaSaver.saveImage(context, bytes, source.displayName, source.mime)) {
+                                        is MediaSaver.SaveResult.Saved -> {
+                                            busy = false
+                                            UiMessageBus.success(savedFmt.format(result.location))
+                                        }
+                                        MediaSaver.SaveResult.UseShareInstead -> {
+                                            busy = false
+                                            val uri = MediaSaver.stageForShare(
+                                                context,
+                                                bytes,
+                                                source.displayName,
+                                                source.mime,
+                                            )
+                                            MediaSaver.share(context, uri, source.mime)
+                                        }
+                                        is MediaSaver.SaveResult.Failed -> {
+                                            busy = false
+                                            UiMessageBus.error(failedFmt.format(result.message))
+                                        }
+                                    }
+                                }
+                            },
+                            colors = tint,
+                        ) {
+                            Icon(Icons.Filled.Download, contentDescription = cdSave)
+                        }
+                    }
+                    IconButton(onClick = onDismiss, colors = tint) {
+                        Icon(Icons.Filled.Close, contentDescription = cdClose)
+                    }
                 }
             }
         }
     }
-}
-
-private fun toast(context: android.content.Context, message: String) {
-    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }

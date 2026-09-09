@@ -6,7 +6,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -343,11 +343,7 @@ fun ConnectionWizard(
             // user at the manual pairing paths (URL entry / 6-char code)
             // instead of leaving them on a vanishing toast with no scanner.
             step = WizardStep.Nearby
-            Toast.makeText(
-                context,
-                context.getString(R.string.cw_camera_denied),
-                Toast.LENGTH_LONG
-            ).show()
+            UiMessageBus.warning(context.getString(R.string.cw_camera_denied))
         }
     }
 

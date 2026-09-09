@@ -1451,6 +1451,12 @@ class ChatHandler {
         val loaded = renderedItems.mapNotNull { item ->
             val displayKind = item.displayKind?.trim()?.lowercase()
             if (displayKind == "hidden") return@mapNotNull null
+            val activitySourceId = if (displayKind == "async_delegation_complete") {
+                item.displayMetadata.stringField("delegation_id")?.let { "delegation:$it" }
+                    ?: "unavailable:${item.id}"
+            } else null
+            val activityTaskCount = if (activitySourceId != null) item.displayMetadata.intField("task_count") else null
+            val activityFailedCount = if (activitySourceId != null) item.displayMetadata.intField("failed_count") else null
             val role = when {
                 displayKind == "model_switch" ||
                     displayKind == "async_delegation_complete" ||
@@ -1611,6 +1617,9 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
+                    activitySourceId = activitySourceId,
+                    activityTaskCount = activityTaskCount,
+                    activityFailedCount = activityFailedCount,
                     rowId = item.resolvedRowId,
                     reactions = item.reactions,
                     role = role,
@@ -1643,6 +1652,9 @@ class ChatHandler {
                 // nothing local to carry).
                 ChatMessage(
                     id = messageId,
+                    activitySourceId = activitySourceId,
+                    activityTaskCount = activityTaskCount,
+                    activityFailedCount = activityFailedCount,
                     rowId = item.resolvedRowId,
                     reactions = item.reactions,
                     role = role,

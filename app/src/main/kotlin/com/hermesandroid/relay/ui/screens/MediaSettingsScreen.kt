@@ -3,7 +3,7 @@
 package com.hermesandroid.relay.ui.screens
 
 import android.content.Context
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -285,11 +285,7 @@ fun MediaSettingsScreen(
                                         R.string.media_clear_cache_freed,
                                         formatBytesHuman(context, freed)
                                     )
-                                    Toast.makeText(
-                                        context,
-                                        freedMsg,
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                    UiMessageBus.info(freedMsg)
                                 }
                             }
                         ) {
