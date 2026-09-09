@@ -753,6 +753,7 @@ fun ChatScreen(
     gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
     gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
     onNavigateToGitWorkspace: () -> Unit = {},
+    onBindStatusStripActions: (onModelClick: (() -> Unit)?, onEffortClick: (() -> Unit)?, effortLabel: String?) -> Unit = { _, _, _ -> },
 ) {
     val responsiveLayout = chatResponsiveLayout(LocalConfiguration.current.screenWidthDp)
     val supervised = supervisedPolicy.enabled
@@ -4269,10 +4270,12 @@ fun ChatScreen(
                 isStreaming && steerNotice != null -> steerNotice
                 else -> null
             }
+            val activeProfileName = AgentDisplay.profileDisplayName(effectiveProfile)
             val inputPlaceholder = when {
                 editingMessage != null -> stringResource(R.string.chat_placeholder_edit)
                 isStreaming && correctCurrentMessage -> stringResource(R.string.chat_placeholder_steer)
                 isStreaming -> stringResource(R.string.chat_placeholder_queue)
+                !activeProfileName.isNullOrBlank() -> stringResource(R.string.chat_placeholder_ask_agent, activeProfileName)
                 else -> stringResource(R.string.chat_placeholder_message)
             }
             val editBusyMessage = stringResource(R.string.chat_edit_busy_snackbar)
@@ -4452,6 +4455,19 @@ fun ChatScreen(
                 )
             } else {
                 null
+            }
+
+            LaunchedEffect(modelControl, effortControl, effortControl?.value) {
+                onBindStatusStripActions(
+                    if (modelControl != null) { { showModelSheet = true } } else null,
+                    if (effortControl != null) { { showEffortSheet = true } } else null,
+                    effortControl?.value,
+                )
+            }
+            DisposableEffect(Unit) {
+                onDispose {
+                    onBindStatusStripActions(null, null, null)
+                }
             }
 
             visibleChatFailure

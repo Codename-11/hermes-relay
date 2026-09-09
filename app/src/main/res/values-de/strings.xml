@@ -116,6 +116,7 @@
     <string name="chat_placeholder_steer">Antwort korrigieren…</string>
     <string name="chat_placeholder_queue">Nachricht einreihen…</string>
     <string name="chat_placeholder_message">Nachricht…</string>
+    <string name="chat_placeholder_ask_agent">Frage %1$s…</string>
     <string name="chat_edit_busy_snackbar">Bearbeiten derzeit nicht möglich — warte, bis der aktuelle Durchlauf beendet ist</string>
     <string name="chat_select_reasoning_effort">Denkaufwand auswählen</string>
     <string name="reasoning_effort_standard_levels_notice">Hermes gibt für dieses Modell keine genauen Aufwandsstufen an. Daher werden Standardoptionen angezeigt.</string>

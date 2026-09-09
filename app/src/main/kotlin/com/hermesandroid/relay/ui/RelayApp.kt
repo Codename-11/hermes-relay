@@ -41,6 +41,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.hermesandroid.relay.ui.components.ModelPickerSheet
+import com.hermesandroid.relay.ui.components.OptionPickerSheet
+import com.hermesandroid.relay.ui.components.reasoningEffortLabel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -1563,6 +1566,9 @@ fun RelayApp() {
         val connectionSecurity by connectionViewModel.connectionSecurity.collectAsState()
         val serverModelName by chatViewModel.serverModelName.collectAsState()
         val gatewayCurrentModel by chatViewModel.gatewayCurrentModel.collectAsState()
+        var onStatusStripModelClick by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var onStatusStripEffortClick by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var statusStripEffortLabel by remember { mutableStateOf<String?>(null) }
         val appReady by connectionViewModel.isReady.collectAsState()
         val initialChatSettled by chatViewModel.initialChatSettled.collectAsState()
         val startupSessionsLoading by chatViewModel.isLoadingSessions.collectAsState()
@@ -2189,6 +2195,11 @@ fun RelayApp() {
                         },
                         routeLabel = transportRouteLabel,
                         trailing = "$footerModelLabel / $profileLabel",
+                        modelLabel = footerModelLabel,
+                        effortLabel = statusStripEffortLabel,
+                        profileLabel = "/ $profileLabel",
+                        onModelClick = if (currentRoute == Screen.Chat.route) onStatusStripModelClick else null,
+                        onEffortClick = if (currentRoute == Screen.Chat.route) onStatusStripEffortClick else null,
                         // Tap the persistent status/route readout to open
                         // Connections — preserves the affordance the dropped
                         // header endpoint chip used to provide.
@@ -2493,6 +2504,11 @@ fun RelayApp() {
                                 connectionSwitchScope.launch {
                                     voicePreferences.setPresentationMode(mode)
                                 }
+                            },
+                            onBindStatusStripActions = { modelClick, effortClick, effortLabel ->
+                                onStatusStripModelClick = modelClick
+                                onStatusStripEffortClick = effortClick
+                                statusStripEffortLabel = effortLabel
                             },
                             openAgentSheetOnEntry = openAgentSheetArg,
                             onAgentSheetArgConsumed = {

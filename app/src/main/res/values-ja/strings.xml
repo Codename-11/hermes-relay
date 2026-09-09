@@ -116,6 +116,7 @@
     <string name="chat_placeholder_steer">応答を修正…</string>
     <string name="chat_placeholder_queue">メッセージをキューに入れます…</string>
     <string name="chat_placeholder_message">メッセージ…</string>
+    <string name="chat_placeholder_ask_agent">%1$s に質問…</string>
     <string name="chat_edit_busy_snackbar">現在編集できません - 現在のターンが終了するまで待ちます</string>
     <string name="chat_select_reasoning_effort">推論努力を選択する</string>
     <string name="reasoning_effort_standard_levels_notice">Hermes はこのモデルの正確な推論レベルを公開していないため、標準オプションを表示しています。</string>

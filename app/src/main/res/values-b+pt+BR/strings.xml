@@ -105,6 +105,7 @@
     <string name="chat_placeholder_steer">Corrija a resposta…</string>
     <string name="chat_placeholder_queue">Coloque uma mensagem na fila…</string>
     <string name="chat_placeholder_message">Mensagem…</string>
+    <string name="chat_placeholder_ask_agent">Pergunte a %1$s…</string>
     <string name="chat_edit_busy_snackbar">Não é possível editar agora — aguarde o turno atual terminar</string>
     <string name="chat_select_reasoning_effort">Selecionar nível de raciocínio</string>
     <string name="reasoning_effort_standard_levels_notice">O Hermes não informa níveis exatos de esforço para este modelo, então as opções padrão são exibidas.</string>

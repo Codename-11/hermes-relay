@@ -116,6 +116,7 @@
     <string name="chat_placeholder_steer">Исправьте ответ…</string>
     <string name="chat_placeholder_queue">Поставьте сообщение в очередь…</string>
     <string name="chat_placeholder_message">Сообщение…</string>
+    <string name="chat_placeholder_ask_agent">Спросить %1$s…</string>
     <string name="chat_edit_busy_snackbar">Нельзя редактировать сейчас — подождите, пока завершится текущий ход</string>
     <string name="chat_select_reasoning_effort">Выберите усилия по рассуждению</string>
     <string name="reasoning_effort_standard_levels_notice">Hermes не сообщает точные уровни усилий для этой модели, поэтому показаны стандартные варианты.</string>

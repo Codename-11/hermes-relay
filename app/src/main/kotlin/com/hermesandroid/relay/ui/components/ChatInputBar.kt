@@ -73,6 +73,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
@@ -360,102 +361,19 @@ fun ChatInputBar(
                     }
                 }
 
-                Column(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                ) {
-                    BasicTextField(
-                        value = value,
-                        onValueChange = { updated ->
-                            val converted = largePasteThreshold
-                                ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
-                            if (converted != null) {
-                                onValueChange(converted.remainingText)
-                                onLargePaste(converted.insertedText)
-                            } else if (updated.length <= charLimit) {
-                                onValueChange(updated)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 30.dp)
-                            .padding(horizontal = 10.dp, vertical = 2.dp)
-                            // Keep directional keys inside the editor. Compose's
-                            // BasicTextField owns normal caret/selection movement;
-                            // cancelling focus traversal prevents a boundary arrow
-                            // from jumping to a neighboring composer control.
-                            .focusProperties {
-                                left = FocusRequester.Cancel
-                                right = FocusRequester.Cancel
-                                up = FocusRequester.Cancel
-                                down = FocusRequester.Cancel
-                            }
-                            .onPreviewKeyEvent { event ->
-                                val native = event.nativeKeyEvent
-                                val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
-                                // Enter only means "send" when a physical keyboard is
-                                // attached. IME-dispatched Enter (commitText or a
-                                // synthesized KEYCODE_ENTER) must always fall through
-                                // so the soft keyboard's return key inserts a newline
-                                // instead of sending (issue #367). Key events alone
-                                // cannot distinguish physical vs IME origin — deviceId
-                                // is 0 or -1 depending on the IME — so gate on the
-                                // hardware keyboard configuration (read above).
-                                val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
-                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
-                                    false
-                                } else if (isSubmitShortcut || (keyboardAttached && physicalEnterSends && !native.isShiftPressed)) {
-                                    if (canSubmit) onSend()
-                                    true
-                                } else {
-                                    // Shift+Enter always inserts a newline. When
-                                    // Enter is configured for newlines, the plain
-                                    // key also stays owned by BasicTextField.
-                                    false
-                                }
-                            }
-                            .testTag(CHAT_INPUT_FIELD_TEST_TAG),
-                        maxLines = 5,
-                        enabled = enabled,
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Sentences,
-                            // The field is multiline and already has a dedicated
-                            // send button. Leave the software keyboard action as
-                            // Return; hardware Enter remains handled above.
-                            imeAction = ImeAction.Default,
-                        ),
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        decorationBox = { inner ->
-                            Box(Modifier.fillMaxWidth()) {
-                                if (value.isEmpty()) {
-                                    Text(
-                                        text = placeholder,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = RelayRefresh.Dim,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 44.dp),
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    // "+" tap opens the attach menu (Photos / Files / Camera /
-                    // Paste image); long-press opens the command palette.
+                    // "+" Attachment menu button on the LEFT
                     var attachMenuExpanded by remember { mutableStateOf(false) }
                     Box {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .combinedClickable(
                                     onClick = { attachMenuExpanded = true },
@@ -518,85 +436,142 @@ fun ChatInputBar(
                         }
                     }
 
-                    if (modelControl != null) {
-                        ChatInputPickerChip(
-                            control = modelControl,
-                            onSelect = onModelOptionSelected,
-                            modifier = Modifier.widthIn(max = 126.dp),
-                            onClickOverride = onModelPickerClick,
-                        )
-                    }
-
-                    if (effortControl != null) {
-                        ChatInputPickerChip(
-                            control = effortControl,
-                            onSelect = {},
-                            modifier = Modifier.widthIn(max = 104.dp),
-                            onClickOverride = onEffortPickerClick,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // Trailing slot
-                    val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
-                    Box(
-                        modifier = if (glow) {
-                            Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
-                        } else {
-                            Modifier
+                    // Text Field in the CENTER
+                    BasicTextField(
+                        value = value,
+                        onValueChange = { updated ->
+                            val converted = if (largePasteThreshold != null) {
+                                detectLargeTextInsertion(value, updated, largePasteThreshold)
+                            } else null
+                            if (converted != null) {
+                                onValueChange(converted.remainingText)
+                                onLargePaste(converted.insertedText)
+                            } else if (updated.length <= charLimit) {
+                                onValueChange(updated)
+                            }
                         },
-                    ) {
-                        AnimatedContent(
-                            targetState = trailing,
-                            transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
-                                    .togetherWith(fadeOut(tween(100)))
-                            },
-                            label = "chatInputTrailing",
-                        ) { state ->
-                            when (state) {
-                                ChatInputTrailing.SEND -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_send_message),
-                                        tint = if (canSubmit) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 36.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
+                            // Keep directional keys inside the editor. Compose's
+                            // BasicTextField owns normal caret/selection movement;
+                            // cancelling focus traversal prevents a boundary arrow
+                            // from jumping to a neighboring composer control.
+                            .focusProperties {
+                                left = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                            }
+                            .onPreviewKeyEvent { event ->
+                                val native = event.nativeKeyEvent
+                                val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                // Enter only means "send" when a physical keyboard is
+                                // attached. IME-dispatched Enter (commitText or a
+                                // synthesized KEYCODE_ENTER) must always fall through
+                                // so the soft keyboard's return key inserts a newline
+                                // instead of sending (issue #367). Key events alone
+                                // cannot distinguish physical vs IME origin — deviceId
+                                // is 0 or -1 depending on the IME — so gate on the
+                                // hardware keyboard configuration (read above).
+                                val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
+                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
+                                    false
+                                } else if (isSubmitShortcut || (keyboardAttached && physicalEnterSends && !native.isShiftPressed)) {
+                                    if (canSubmit) onSend()
+                                    true
+                                } else {
+                                    // Shift+Enter always inserts a newline. When
+                                    // Enter is configured for newlines, the plain
+                                    // key also stays owned by BasicTextField.
+                                    false
+                                }
+                            }
+                            .testTag(CHAT_INPUT_FIELD_TEST_TAG),
+                        maxLines = 5,
+                        enabled = enabled,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                            // The field is multiline and already has a dedicated
+                            // send button. Leave the software keyboard action as
+                            // Return; hardware Enter remains handled above.
+                            imeAction = ImeAction.Default,
+                        ),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { inner ->
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (value.isEmpty()) {
+                                    Text(
+                                        text = placeholder,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = RelayRefresh.Dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                                inner()
+                            }
+                        },
+                    )
 
-                                ChatInputTrailing.VOICE -> {
-                                    if (!suppressVoiceTrailing) {
-                                        Box {
-                                            IconButton(onClick = onVoice) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.GraphicEq,
-                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                        else stringResource(R.string.chat_input_voice_setup_needed),
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                            // "Needs setup" badge — full-alpha button + Amber
-                                            // dot instead of a half-dimmed broken-looking mic.
-                                            if (!voiceReady) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.TopEnd)
-                                                        .padding(top = 8.dp, end = 8.dp)
-                                                        .size(6.dp)
-                                                        .clip(CircleShape)
-                                                        .background(RelayRefresh.Amber),
-                                                )
-                                            }
-                                        }
-                                    }
+                    // Right side controls: Voice waves button + Send / Action button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        // Voice waves button (where mic is in the picture)
+                        if (!suppressVoiceTrailing) {
+                            Box {
+                                IconButton(onClick = onVoice) {
+                                    Icon(
+                                        imageVector = Icons.Filled.GraphicEq,
+                                        contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                            else stringResource(R.string.chat_input_voice_setup_needed),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
                                 }
+                                // "Needs setup" badge — full-alpha button + Amber
+                                // dot instead of a half-dimmed broken-looking mic.
+                                if (!voiceReady) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 8.dp, end = 8.dp)
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(RelayRefresh.Amber),
+                                    )
+                                }
+                            }
+                        }
 
-                                ChatInputTrailing.STOP -> {
-                                    if (!suppressVoiceTrailing) {
+                        // Send / Stop / Steer / Queue Action button (to the right of Voice)
+                        val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
+                        Box(
+                            modifier = if (glow) {
+                                Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
+                            } else {
+                                Modifier
+                            },
+                        ) {
+                            AnimatedContent(
+                                targetState = trailing,
+                                transitionSpec = {
+                                    (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
+                                        .togetherWith(fadeOut(tween(100)))
+                                },
+                                label = "chatInputTrailing",
+                            ) { state ->
+                                when (state) {
+                                    ChatInputTrailing.STOP -> {
                                         IconButton(onClick = onStop) {
                                             Box(
                                                 modifier = Modifier
@@ -613,37 +588,49 @@ fun ChatInputBar(
                                             }
                                         }
                                     }
-                                }
 
-                                ChatInputTrailing.STEER -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_steer_response),
-                                        tint = MaterialTheme.colorScheme.tertiary,
-                                    )
-                                }
-
-                                ChatInputTrailing.QUEUE -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Box {
+                                    ChatInputTrailing.STEER -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.Send,
-                                            contentDescription = stringResource(R.string.chat_input_queue_message),
+                                            contentDescription = stringResource(R.string.chat_input_steer_response),
                                             tint = MaterialTheme.colorScheme.tertiary,
                                         )
+                                    }
+
+                                    ChatInputTrailing.QUEUE -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
+                                        Box {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                                contentDescription = stringResource(R.string.chat_input_queue_message),
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Filled.Schedule,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .offset(x = 5.dp, y = (-3).dp)
+                                                    .size(10.dp),
+                                            )
+                                        }
+                                    }
+
+                                    else -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
                                         Icon(
-                                            imageVector = Icons.Filled.Schedule,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .offset(x = 5.dp, y = (-3).dp)
-                                                .size(10.dp),
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = stringResource(R.string.chat_input_send_message),
+                                            tint = if (canSubmit) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                 }
@@ -654,7 +641,6 @@ fun ChatInputBar(
             }
         }
     }
-}
 }
 }
 
