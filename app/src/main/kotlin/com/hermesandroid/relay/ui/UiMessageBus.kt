@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicLong
 
 /** Visual tone of a transient banner message. */
-enum class UiMessageSeverity { Info, Success, Status, Warning }
+enum class UiMessageSeverity { Info, Success, Status, Warning, Error }
 
 data class UiMessage(
     val id: Long,
@@ -23,6 +23,7 @@ data class UiMessage(
 sealed interface UiMessageEvent {
     data class Show(val message: UiMessage) : UiMessageEvent
     data class Clear(val key: String) : UiMessageEvent
+    data object ClearAll : UiMessageEvent
 }
 
 internal fun reduceUiMessages(
@@ -30,6 +31,7 @@ internal fun reduceUiMessages(
     event: UiMessageEvent,
     maxRetained: Int,
 ): List<UiMessage> = when (event) {
+    UiMessageEvent.ClearAll -> emptyList()
     is UiMessageEvent.Clear -> current.filterNot { it.key == event.key }
     is UiMessageEvent.Show -> {
         val incoming = event.message
@@ -41,15 +43,14 @@ internal fun reduceUiMessages(
 }
 
 /**
- * App-wide bus for transient, non-error status/confirmation messages that
+ * App-wide bus for transient status, confirmation, and error messages that
  * surface in the top [com.hermesandroid.relay.ui.components.MessageBannerHost]
  * — a thin banner that takes its own space (content slides down, no overlay),
  * shows the newest line collapsed, expands to a few recent lines, auto-dismisses
  * and coalesces duplicates.
  *
- * App-owned errors and persistent/actionable messages keep going to the
- * snackbar so they demand acknowledgement. Upstream keyed AgentNotices may use
- * the warning tone here because their own sticky/clear lifecycle owns them.
+ * Messages requiring Retry or Undo use ThemedMessageHost and retain their
+ * action-result contract. Upstream keyed AgentNotices own their sticky/clear lifecycle.
  * Migrate frequent
  * `snackbarHostState.showSnackbar("…")` confirmations/status to [info] /
  * [success] / [status] here.
@@ -62,6 +63,23 @@ object UiMessageBus {
     const val STATUS_TTL_MS = 6_000L
 
     private val counter = AtomicLong(0L)
+    private val hosts = linkedMapOf<Long, Boolean>()
+    private val _activeHost = MutableStateFlow<Long?>(null)
+    internal val activeHost = _activeHost.asStateFlow()
+    private val _modalHostActive = MutableStateFlow(false)
+    internal val modalHostActive = _modalHostActive.asStateFlow()
+    internal fun registerHost(primary: Boolean): Long = synchronized(hosts) {
+        counter.incrementAndGet().also {
+            hosts[it] = primary
+            _activeHost.value = hosts.keys.lastOrNull()
+            _modalHostActive.value = hosts.values.any { primaryHost -> !primaryHost }
+        }
+    }
+    internal fun unregisterHost(id: Long) { synchronized(hosts) {
+        hosts.remove(id)
+        _activeHost.value = hosts.keys.lastOrNull()
+        _modalHostActive.value = hosts.values.any { !it }
+    } }
     private val _events = MutableSharedFlow<UiMessageEvent>(extraBufferCapacity = 24)
     val events: SharedFlow<UiMessageEvent> = _events.asSharedFlow()
 
@@ -96,6 +114,11 @@ object UiMessageBus {
     fun clear(key: String) {
         key.trim().takeIf(String::isNotEmpty)?.let { _events.tryEmit(UiMessageEvent.Clear(it)) }
     }
+
+    fun clearAll() { _events.tryEmit(UiMessageEvent.ClearAll) }
+
+    fun warning(text: String, ttlMillis: Long = STATUS_TTL_MS) = post(text, UiMessageSeverity.Warning, ttlMillis)
+    fun error(text: String, ttlMillis: Long = 10_000L) = post(text, UiMessageSeverity.Error, ttlMillis)
 
     /** Neutral confirmation/info (e.g. "Pairing code copied"). */
     fun info(text: String, ttlMillis: Long = DEFAULT_TTL_MS) =

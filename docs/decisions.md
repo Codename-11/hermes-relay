@@ -3982,7 +3982,13 @@ compression path instead of forking the relationship. New Bot creates an upstrea
 only the small `hermes-bots` metadata marker; profile skills/model remain managed
 through the established Hermes surfaces.
 
-Every Bot owner is the immutable `(connectionId, profile)` pair. A typed route
+Every Bot owner is the immutable `(connectionId, profile)` pair. Both the active
+Bot strip and conversation list use that pair for stable Compose item identity;
+opening progress belongs to the same exact owner. Profile names, display labels,
+and handles alone are not unique across installations. Upstream
+[`profiles.list`](https://github.com/NousResearch/hermes-agent/blob/2db0c7a2d8f29debe7d1cbfb4a72f4f98dc00808/tui_gateway/methods_profiles.py)
+returns installation-local profile names and profile-local session summaries.
+A typed route
 pool holds separate clients for separate owners, validates bearer authority
 against that connection's exact trusted Dashboard base, adds the profile to the
 WebSocket URL, mints a fresh one-use ticket on every dial, and uses request or

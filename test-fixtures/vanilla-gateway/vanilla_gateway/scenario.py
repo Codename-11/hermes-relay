@@ -30,6 +30,7 @@ class Scenario:
     turns: tuple[dict[str, Any], ...]
     active_list_supported: bool
     active_list_snapshots: tuple[tuple[dict[str, Any], ...], ...]
+    session_initialization_error: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Scenario":
@@ -39,6 +40,11 @@ class Scenario:
             raise ScenarioError(f"missing scenario fields: {', '.join(missing)}")
         if not isinstance(raw["turns"], list):
             raise ScenarioError("turns must be a list")
+        initialization_error = raw.get("session_initialization_error")
+        if initialization_error is not None and (
+            not isinstance(initialization_error, str) or not initialization_error or len(initialization_error) > 500
+        ):
+            raise ScenarioError("session_initialization_error must be a short non-empty string")
         if not isinstance(raw["name"], str) or not _SAFE_NAME.fullmatch(raw["name"]):
             raise ScenarioError("name must be a short metadata-safe scenario identifier")
         for turn_index, turn in enumerate(raw["turns"]):
@@ -124,6 +130,7 @@ class Scenario:
             turns=tuple(dict(turn) for turn in raw["turns"]),
             active_list_supported=active_list_supported,
             active_list_snapshots=tuple(validated_snapshots),
+            session_initialization_error=initialization_error,
         )
 
 

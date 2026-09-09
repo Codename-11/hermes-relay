@@ -4429,4 +4429,14 @@
     <string name="chat_queue_paused">Fila pausada</string>
     <string name="chat_queue_resume">Retomar</string>
     <string name="chat_queue_remove">Remover mensagem da fila</string>
+    <string name="chat_activity_receipt_subagents">Subagentes</string>
+    <string name="chat_activity_receipt_process">Comando em segundo plano</string>
+    <string name="chat_activity_receipt_view_activity">Ver atividade</string>
+    <string name="chat_activity_receipt_view_output">Ver saída</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">Atividade do chat</string>
+    <string name="chat_activity_history_empty">A atividade detalhada não foi mantida neste dispositivo. O registro de conclusão permanece no chat.</string>
+    <string name="tool_progress_status_dispatched">Enviado</string>
+    <string name="chat_activity_history_notice">Atividade registrada. As atualizações de progresso não são mantidas; o histórico disponível dos subagentes pode ser aberto somente para leitura.</string>
+    <string name="chat_activity_output_unavailable">A saída não está mais disponível. Este registro preserva o estado registrado do processo.</string>
 </resources>

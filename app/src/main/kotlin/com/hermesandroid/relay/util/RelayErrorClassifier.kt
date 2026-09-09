@@ -5,6 +5,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.diagnostics.DiagnosticCategory
 import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.diagnostics.NetworkDiagnosticGuidance
+import com.hermesandroid.relay.network.upstream.DashboardHttpException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -86,6 +87,8 @@ private fun nullFallback(context: String?, ctx: Context?): HumanError {
     return HumanError(title = titlePrefix(context, ctx), body = base, retryable = false)
 }
 
+private val LEGACY_HTTP_STATUS = Regex("""^(?:http(?: error)?|api error|relay responded http) ([1-5]\d{2})(?=\s|:|$)""")
+
 private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): HumanError? {
     // Ordered most-specific-first; callers have already handled the typed
     // SSL / timeout / connect exceptions so this only runs on generic IOs.
@@ -149,11 +152,9 @@ private fun classifyIoMessage(msg: String, context: String?, ctx: Context?): Hum
                 "server. Update the relay, then try again.",
             retryable = false,
         )
-        "404" in msg -> HumanError(
+        LEGACY_HTTP_STATUS.find(msg.trim())?.groupValues?.get(1) == "404" -> HumanError(
             title = ctx?.getString(R.string.error_classify_endpoint) ?: "Endpoint not found",
-            body = if (context == "voice_config")
-                "The relay doesn't have voice endpoints — it may be an older version"
-            else "The relay doesn't have this endpoint — it may be an older version",
+            body = "The requested resource or endpoint is unavailable on this server.",
             retryable = false,
         )
         "413" in msg -> HumanError(
@@ -254,6 +255,30 @@ private fun String.diagnosticOperation(): String =
 
 private fun classifyErrorInternal(t: Throwable?, context: String?, ctx: Context?): HumanError {
     if (t == null) return nullFallback(context, ctx)
+
+    // Preserve the actual transport and status instead of inferring them from
+    // a response body, resource identifier, or unrelated number in an error.
+    if (t is DashboardHttpException) {
+        return when (t.statusCode) {
+            401 -> HumanError(
+                title = ctx?.getString(R.string.power_feature_dashboard_signin_label) ?: "Dashboard sign-in required",
+                body = "Sign in to the Hermes Dashboard to continue this action.",
+            )
+            403 -> HumanError(
+                title = ctx?.getString(R.string.error_classify_not_allowed) ?: "Not allowed",
+                body = "The Dashboard refused this action.",
+            )
+            404 -> HumanError(
+                title = ctx?.getString(R.string.error_classify_endpoint) ?: "Endpoint not found",
+                body = "The requested Dashboard resource or endpoint is unavailable.",
+            )
+            else -> HumanError(
+                title = titlePrefix(context, ctx),
+                body = "The Dashboard request failed (HTTP ${t.statusCode}).",
+                retryable = t.statusCode == 408 || t.statusCode == 429 || t.statusCode >= 500,
+            )
+        }
+    }
 
     val msg = t.message.orEmpty().lowercase()
 

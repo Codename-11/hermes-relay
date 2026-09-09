@@ -4,7 +4,7 @@ package com.hermesandroid.relay.ui.screens
 
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -94,7 +94,7 @@ fun AboutScreen(
     val scope = rememberCoroutineScope()
     val isDarkTheme = LocalBrand.current.isDark
 
-    // Pre-resolved Toast messages (Toast is not a composable scope)
+    // Pre-resolved messages for non-composable action callbacks.
     val devUnlockedMsg = stringResource(R.string.about_dev_options_unlocked)
     val updateCopiedMsg = stringResource(R.string.about_update_copied)
     val emDash = stringResource(R.string.about_em_dash)
@@ -235,17 +235,13 @@ fun AboutScreen(
                                         versionTapCount = 0
                                         scope.launch {
                                             FeatureFlags.unlockDevOptions(context)
-                                            Toast.makeText(
-                                                context,
-                                                devUnlockedMsg,
-                                                Toast.LENGTH_SHORT,
-                                            ).show()
+                                            UiMessageBus.success(devUnlockedMsg)
                                             onUnlockDeveloperOptions()
                                         }
                                     }
                                     remaining <= 3 -> {
                                         val tapsMsg = context.getString(R.string.about_taps_to_unlock, remaining)
-                                        Toast.makeText(context, tapsMsg, Toast.LENGTH_SHORT).show()
+                                        UiMessageBus.info(tapsMsg)
                                     }
                                 }
                             },
@@ -326,11 +322,7 @@ fun AboutScreen(
                             if (ru.updateAvailable && !ru.updateCommand.isNullOrBlank()) {
                                 TextButton(onClick = {
                                     clipboard.setText(AnnotatedString(ru.updateCommand))
-                                    Toast.makeText(
-                                        context,
-                                        updateCopiedMsg,
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
+                                    UiMessageBus.success(updateCopiedMsg)
                                 }) {
                                     Text(stringResource(R.string.about_copy_fix))
                                 }

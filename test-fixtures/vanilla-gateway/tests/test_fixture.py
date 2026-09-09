@@ -123,6 +123,49 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_initialization_failure_precedes_lazy_create_ack(self) -> None:
+        fixture, base_url = await self.start("session_initialization_failure")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.create", {"profile": "default"})
+        failure = await ws.receive_json()
+        self.assertEqual("error", failure["params"]["type"])
+        self.assertEqual(fixture.scenario.live_session_id, failure["params"]["session_id"])
+        ack = await ws.receive_json()
+        self.assertTrue(ack["result"]["info"]["lazy"])
+
+    async def test_child_activity_outlives_parent_before_completion_wake(self) -> None:
+        fixture, base_url = await self.start("subagent_child_preview")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        first = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        later = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        first_types = [f.get("params", {}).get("type") for f in first]
+        later_types = [f.get("params", {}).get("type") for f in later]
+        self.assertIn("subagent.start", first_types)
+        self.assertNotIn("subagent.complete", first_types)
+        self.assertIn("subagent.progress", later_types)
+        self.assertEqual(2, later_types.count("subagent.complete"))
+        self.assertLess(later_types.index("subagent.complete"), later_types.index("message.start"))
+        child_events = [
+            frame["params"]["payload"] for frame in first + later
+            if frame.get("params", {}).get("type", "").startswith("subagent.")
+        ]
+        self.assertTrue(child_events)
+        self.assertEqual({"delegation-fixture-1"}, {event["delegation_id"] for event in child_events})
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+            params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
+        ) as response:
+            history = (await response.json())["messages"]
+        self.assertEqual(["user", "assistant", "user", "assistant"], [row["role"] for row in history])
+        receipt = history[2]
+        self.assertEqual("async_delegation_complete", receipt["display_kind"])
+        self.assertEqual("delegation-fixture-1", receipt["display_metadata"]["delegation_id"])
+        self.assertEqual(2, receipt["display_metadata"]["task_count"])
+        self.assertEqual(1, receipt["display_metadata"]["completed_count"])
+        self.assertNotIn("child_session_id", receipt["display_metadata"])
+        self.assertEqual("Delegation complete.", history[3]["content"])
+
     async def test_ownership_rejection_is_terminal_without_persisted_turn(self) -> None:
         fixture, base_url = await self.start("ownership_rejection")
         ws, _ = await self.connect(base_url)

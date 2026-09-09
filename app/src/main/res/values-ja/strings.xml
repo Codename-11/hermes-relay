@@ -4581,4 +4581,14 @@
     <string name="chat_queue_paused">キューを一時停止中</string>
     <string name="chat_queue_resume">再開</string>
     <string name="chat_queue_remove">キューからメッセージを削除</string>
+    <string name="chat_activity_receipt_subagents">サブエージェント</string>
+    <string name="chat_activity_receipt_process">バックグラウンドコマンド</string>
+    <string name="chat_activity_receipt_view_activity">アクティビティを表示</string>
+    <string name="chat_activity_receipt_view_output">出力を表示</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">チャットのアクティビティ</string>
+    <string name="chat_activity_history_empty">詳細なアクティビティはこのデバイスに保存されていません。完了の記録はチャットに残っています。</string>
+    <string name="tool_progress_status_dispatched">ディスパッチ済み</string>
+    <string name="chat_activity_history_notice">記録されたアクティビティです。進捗の更新は保存されません。利用可能なサブエージェントの履歴は読み取り専用で開けます。</string>
+    <string name="chat_activity_output_unavailable">出力は利用できなくなりました。この項目には記録されたプロセスの状態が残っています。</string>
 </resources>

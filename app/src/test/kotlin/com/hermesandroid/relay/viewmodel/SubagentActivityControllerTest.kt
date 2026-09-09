@@ -11,6 +11,86 @@ class SubagentActivityControllerTest {
     private val controller = SubagentActivityController { now++ }
 
     @Test
+    fun `open sheet keeps completed details across parent wake until dismissed`() {
+        controller.selectSession("parent", "scope")
+        controller.beginTurn("parent", "scope", "first")
+        controller.setPreviewOpen(true)
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child"), null)
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.COMPLETE, subagentId = "child", status = "completed"), null)
+        controller.beginTurn("parent", "scope", "wake")
+        assertEquals(SubagentActivityPhase.COMPLETED, controller.activities.value.single().phase)
+        controller.setPreviewOpen(false)
+        assertTrue(controller.activities.value.isEmpty())
+    }
+
+    @Test
+    fun `detached child survives parent completion and a new turn with stable preview identity`() {
+        controller.selectSession("parent", "scope")
+        controller.beginTurn("parent", "scope", "parent-turn")
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child"), null)
+        val key = controller.activities.value.single().stableKey
+        controller.endTurn("parent-turn")
+        assertFalse(controller.activities.value.single().isTerminal)
+        controller.beginTurn("parent", "scope", "next-turn")
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.PROGRESS, preview = "Still working", subagentId = "child"), null)
+        assertEquals(key, controller.activities.value.single().stableKey)
+        assertEquals("Still working", controller.activities.value.single().events.last().text)
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.COMPLETE, status = "completed", subagentId = "child"), null)
+        assertEquals(SubagentActivityPhase.COMPLETED, controller.activities.value.single().phase)
+        controller.beginTurn("parent", "scope", "completion-wake")
+        assertTrue(controller.activities.value.isEmpty())
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child"), null)
+        assertTrue(controller.activities.value.isEmpty())
+    }
+
+    @Test
+    fun `idle session accepts child start but not orphan progress or other profile`() {
+        controller.selectSession("parent", "scope")
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.PROGRESS, subagentId = "unknown"), null)
+        controller.onSessionEvent("parent", "foreign", event(0, GatewaySubagentEvent.Phase.START, subagentId = "foreign"), null)
+        assertTrue(controller.activities.value.isEmpty())
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child"), null)
+        assertFalse(controller.activities.value.single().isTerminal)
+        controller.interrupt()
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "late"), null)
+        assertEquals(SubagentActivityPhase.INTERRUPTED, controller.activities.value.single().phase)
+    }
+
+    @Test
+    fun `concurrent batches reusing task index remain separate across turns`() {
+        controller.selectSession("parent", "scope")
+        controller.beginTurn("parent", "scope", "first")
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child-a"), null)
+        controller.beginTurn("parent", "scope", "second")
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.START, subagentId = "child-b"), null)
+        controller.onSessionEvent("parent", "scope", event(0, GatewaySubagentEvent.Phase.COMPLETE, status = "completed", subagentId = "child-a"), null)
+        assertEquals(2, controller.activities.value.size)
+        assertFalse(controller.activities.value.single { it.subagentId == "child-b" }.isTerminal)
+    }
+
+    @Test
+    fun `timeouts and unknown terminal statuses never report success`() {
+        controller.selectSession("parent", "scope")
+        controller.beginTurn("parent", "scope", "turn")
+        listOf("timeout", "error", "unknown", "running").forEachIndexed { index, status ->
+            controller.onSessionEvent("parent", "scope", event(index, GatewaySubagentEvent.Phase.START, subagentId = "child-$index"), null)
+            controller.onSessionEvent("parent", "scope", event(index, GatewaySubagentEvent.Phase.COMPLETE, status = status, subagentId = "child-$index"), null)
+        }
+        assertTrue(controller.activities.value.all { it.phase == SubagentActivityPhase.FAILED })
+    }
+
+    @Test
+    fun `child preview keeps its admitted profile after parent checkpoint is cleared`() {
+        controller.selectSession("parent", "scope")
+        controller.beginTurn("parent", "scope", "turn")
+        val start = event(0, GatewaySubagentEvent.Phase.START, subagentId = "child")
+        controller.onSessionEvent("parent", "scope", start, "default")
+        controller.endTurn("turn")
+        controller.onSessionEvent("parent", "scope", start.copy(phase = GatewaySubagentEvent.Phase.PROGRESS), null)
+        assertEquals("default", controller.activities.value.single().profile)
+    }
+
+    @Test
     fun `interleaved children retain independent lifecycle previews`() {
         controller.selectSession("parent", "connection::default")
         controller.beginTurn("parent", "connection::default", "turn-1")
