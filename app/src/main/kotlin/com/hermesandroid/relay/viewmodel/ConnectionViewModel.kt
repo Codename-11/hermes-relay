@@ -517,11 +517,22 @@ internal fun resolveEffectiveDashboardUrl(
     connection.authenticatedDashboardOrigin
         ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
         ?.let { return it }
-    endpoint?.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { return it }
-    endpoint?.dashboard?.url
+    // The resolver publishes independently of the active connection. During a
+    // switch its last winner can still belong to the outgoing installation.
+    // Never use that winner as authority for the incoming connection's bearer.
+    val routes = connection.routeCandidates.ifEmpty {
+        Connection.buildRouteCandidates(
+            apiServerUrl = connection.apiServerUrl,
+            relayUrl = connection.relayUrl,
+            dashboardUrl = connection.configuredDashboardUrl,
+        )
+    }
+    val ownedEndpoint = endpoint?.takeIf { it in routes }
+    ownedEndpoint?.pluginProxyRoutesOrNull()?.dashboardBaseUrl?.let { return it }
+    ownedEndpoint?.dashboard?.url
         ?.takeIf { it.isNotBlank() }
         ?.let { return it }
-    endpoint?.api?.url?.let { apiUrl ->
+    ownedEndpoint?.api?.url?.let { apiUrl ->
         connection.dashboardUrl
             ?.takeIf { it.isNotBlank() && Connection.urlsShareHost(it, apiUrl) }
             ?.let { return it }
@@ -1747,15 +1758,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * Dashboard URL for the active connection **on the currently-resolved
-     * route** — snapshot twin of [effectiveDashboardUrl], which it delegates
-     * to. Standard voice and the availability probe read this per call, so
+     * route**. Read the authoritative id/list synchronously, not the combined
+     * [effectiveDashboardUrl] StateFlow: its previous emission can outlive a
+     * connection switch and must not authorize the new owner's credentials.
+     * Standard voice and the availability probe read this per call, so
      * an auto-managed dashboard URL follows LAN/Tailscale handoffs the same
      * way Manage does; an explicit dashboard override stays pinned. (This
      * used to read the persisted `resolvedDashboardUrl`, which kept voice
      * aimed at the LAN host after the resolver had moved chat to Tailscale.)
      */
     fun activeDashboardUrl(): String? =
-        effectiveDashboardUrl.value.takeIf { it.isNotBlank() }
+        resolveEffectiveDashboardUrl(
+            connection = activeConnectionSnapshot(),
+            endpoint = connectionManager.activeEndpoint.value,
+        ).takeIf { it.isNotBlank() }
 
     /**
      * Promote the exact reviewed Dashboard origin that completed cookie/OIDC

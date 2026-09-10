@@ -172,7 +172,7 @@ class GatingTests(_EnvIsolated):
 
 class RelayUrlTests(_EnvIsolated):
     def test_default(self) -> None:
-        self.assertEqual(pp._relay_base_url(), "http://localhost:8767")
+        self.assertEqual(pp._relay_base_url(), "http://127.0.0.1:8767")
 
     def test_explicit_phone_relay_url_wins(self) -> None:
         os.environ["PHONE_RELAY_URL"] = "https://relay.example:9000/"
@@ -183,12 +183,20 @@ class RelayUrlTests(_EnvIsolated):
         os.environ["ANDROID_BRIDGE_URL"] = "http://192.168.1.5:8767/"
         self.assertEqual(pp._relay_base_url(), "http://192.168.1.5:8767")
 
+    def test_preserves_explicit_loopback_overrides(self) -> None:
+        for key in ("PHONE_RELAY_URL", "ANDROID_BRIDGE_URL"):
+            for override in ("http://localhost:8767/", "http://[::1]:8767/"):
+                with self.subTest(key=key, override=override):
+                    os.environ[key] = override
+                    self.assertEqual(pp._relay_base_url(), override.rstrip("/"))
+                    os.environ.pop(key)
+
     def test_port_override(self) -> None:
         os.environ["ANDROID_RELAY_PORT"] = "8888"
-        self.assertEqual(pp._relay_base_url(), "http://localhost:8888")
+        self.assertEqual(pp._relay_base_url(), "http://127.0.0.1:8888")
         os.environ.pop("ANDROID_RELAY_PORT")
         os.environ["RELAY_PORT"] = "7777"
-        self.assertEqual(pp._relay_base_url(), "http://localhost:7777")
+        self.assertEqual(pp._relay_base_url(), "http://127.0.0.1:7777")
 
     def test_token_header_only_when_set(self) -> None:
         url, headers = pp._relay_url_and_headers()
@@ -254,7 +262,7 @@ class EnvEnablementTests(_EnvIsolated):
         assert seed is not None
         self.assertTrue(seed["enabled"])
         self.assertEqual(seed["home_channel"], {"chat_id": "myphone", "name": "Phone"})
-        self.assertEqual(seed["relay_url"], "http://localhost:8767")
+        self.assertEqual(seed["relay_url"], "http://127.0.0.1:8767")
         self.assertFalse(seed["typing_indicator"])
 
 
