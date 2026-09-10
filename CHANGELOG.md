@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android Dashboard sign-in removes pasted line breaks from username and password fields, matching the browser login while preserving every other credential character. (#541)
 - **Relay tool availability avoids repeated Windows loopback delays and preserves multi-PC capabilities.** Host-local Android, Desktop, and Phone paths use explicit IPv4 loopback, while Desktop checks share a bounded health snapshot that preserves per-client advertisements and fails closed when Hermes-Relay is unavailable. (#562, #563)
 - Android keeps saved Dashboard sign-ins bound to their connection when switching gateways, rather than letting a stale resolver route invalidate another connection's session.
 - Bot Mode no longer crashes when different connections have bots with the same profile name. Both the conversation list and Active Now strip preserve each bot's connection, and opening progress appears only on the selected bot.
