@@ -49,17 +49,17 @@ Tools registered (Phase B + remote-PC ergonomics, alpha.7):
 
 Architecture mirrors ``android_tool.py``:
 
-    Tools ──HTTP──> Unified Relay (localhost:8767) ──WSS desktop channel──> Desktop CLI
+    Tools ──HTTP──> Unified Relay (127.0.0.1:8767) ──WSS desktop channel──> Desktop CLI
 
 Each handler POSTs to ``/desktop/<tool_name>`` on the relay. The relay
 forwards a ``desktop.command`` envelope to the connected desktop client
 (see ``plugin/relay/channels/desktop.py``), awaits a ``desktop.response``,
 and returns the structured result.
 
-``check_fn`` pings ``/desktop/_ping?tool=<name>`` — 200 if a client is
-connected and advertises the tool, 503 otherwise. This is how Hermes
-becomes aware: with no client, the tool fails closed and the LLM learns
-to stop calling it.
+``check_fn`` shares a short-lived ``/desktop/health`` snapshot across the
+Desktop toolset. Availability matches the relay's multi-client advertisement
+rules, including compatibility for connected legacy clients. With no client,
+client-routed tools fail closed and the LLM learns to stop calling them.
 
 ``desktop_health`` is the one tool that does NOT round-trip to the client
 — the relay already has the client's heartbeat-advertised metadata, so we
@@ -71,7 +71,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import requests
@@ -112,8 +114,8 @@ def _trusted_call_context(kwargs: dict[str, Any]) -> dict[str, str]:
 
 
 def _relay_url() -> str:
-    """URL of the unified relay. Defaults to localhost:8767."""
-    return os.getenv("DESKTOP_RELAY_URL", "http://localhost:8767")
+    """URL of the unified relay. Defaults to its IPv4 loopback listener."""
+    return os.getenv("DESKTOP_RELAY_URL", "http://127.0.0.1:8767")
 
 
 def _relay_token() -> Optional[str]:
@@ -191,38 +193,163 @@ def _get(path: str, params: Optional[dict] = None) -> dict:
     return data
 
 
-def _check_tool(tool_name: str) -> bool:
-    """Returns True if a desktop client is connected AND advertises ``tool_name``.
+_AVAILABILITY_CACHE_TTL_SECONDS = 3.0
+_AVAILABILITY_CACHE_MAX_ENTRIES = 32
 
-    Hits ``/desktop/_ping?tool=<tool_name>``. 200 = available, 503 = no
-    client / tool not advertised.
-    """
+
+@dataclass(frozen=True)
+class _DesktopAvailability:
+    """Validated relay health state shared by one serialized registry pass."""
+
+    reachable: bool
+    valid: bool
+    connected: bool
+    client_toolsets: tuple[frozenset[str], ...]
+
+
+_UNREACHABLE_AVAILABILITY = _DesktopAvailability(False, False, False, ())
+_availability_cache: dict[
+    tuple[str, str | None], tuple[float, _DesktopAvailability]
+] = {}
+_availability_probe_generation: dict[tuple[str, str | None], object] = {}
+
+
+def _availability_cache_key() -> tuple[str, str | None]:
+    """Separate snapshots by endpoint and the credential used to reach it."""
+    return (_relay_url().rstrip("/"), _relay_token())
+
+
+def _clear_availability_cache() -> None:
+    """Reset process-local availability state for focused tests."""
+    _availability_cache.clear()
+    _availability_probe_generation.clear()
+
+
+def _prune_availability_cache(now: float) -> None:
+    """Discard expired endpoint/credential history from long-lived hosts."""
+    expired = [
+        key
+        for key, (expires_at, _) in _availability_cache.items()
+        if now >= expires_at
+    ]
+    for key in expired:
+        _availability_cache.pop(key, None)
+        _availability_probe_generation.pop(key, None)
+
+
+def _validated_toolset(value: Any) -> frozenset[str] | None:
+    if not isinstance(value, list):
+        return None
+    if any(not isinstance(name, str) or not name for name in value):
+        return None
+    return frozenset(value)
+
+
+def _parse_availability(data: Any) -> _DesktopAvailability:
+    """Validate current and pre-multi-client ``/desktop/health`` responses."""
+    if not isinstance(data, dict) or type(data.get("connected")) is not bool:
+        return _DesktopAvailability(True, False, False, ())
+
+    connected = data["connected"]
+    advertised = _validated_toolset(data.get("advertised_tools"))
+    if advertised is None:
+        return _DesktopAvailability(True, False, False, ())
+
+    if "clients" not in data:
+        # Older relays exposed only the latest/sole client's advertised tools.
+        # An empty set while connected retains the relay's legacy-client
+        # optimism for every tool except the experimental computer-use family.
+        if not connected and advertised:
+            return _DesktopAvailability(True, False, False, ())
+        return _DesktopAvailability(True, True, connected, (advertised,) if connected else ())
+
+    clients = data["clients"]
+    if not isinstance(clients, list):
+        return _DesktopAvailability(True, False, False, ())
+
+    toolsets: list[frozenset[str]] = []
+    for client in clients:
+        if not isinstance(client, dict):
+            return _DesktopAvailability(True, False, False, ())
+        tools = _validated_toolset(client.get("advertised_tools"))
+        if tools is None:
+            return _DesktopAvailability(True, False, False, ())
+        toolsets.append(tools)
+
+    # The current relay always emits one clients[] row per connected target.
+    # Contradictory shapes are unsafe to interpret as tool availability.
+    if connected != bool(toolsets) or (not connected and advertised):
+        return _DesktopAvailability(True, False, False, ())
+    return _DesktopAvailability(True, True, connected, tuple(toolsets))
+
+
+def _probe_availability() -> _DesktopAvailability:
     try:
-        r = requests.get(
-            f"{_relay_url()}/desktop/_ping",
-            params={"tool": tool_name},
+        response = requests.get(
+            f"{_relay_url().rstrip('/')}/desktop/health",
             headers=_auth_headers(),
             timeout=2,
         )
-        return r.status_code == 200
     except Exception:
+        return _UNREACHABLE_AVAILABILITY
+    if response.status_code != 200:
+        return _DesktopAvailability(True, False, False, ())
+    try:
+        return _parse_availability(response.json())
+    except Exception:
+        return _DesktopAvailability(True, False, False, ())
+
+
+def _availability() -> _DesktopAvailability:
+    """Return one cached health snapshot for all Desktop availability checks.
+
+    Hermes invokes shared-tool availability checks serially during a registry
+    pass, so one health request serves the whole Desktop toolset. No threading
+    primitive is introduced into the plugin: simultaneous callers may perform
+    duplicate probes, but generation ordering prevents an older probe from
+    overwriting the cache entry from a newer one.
+    """
+    key = _availability_cache_key()
+    now = time.monotonic()
+    _prune_availability_cache(now)
+    cached = _availability_cache.get(key)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+
+    generation = object()
+    _availability_probe_generation[key] = generation
+    snapshot = _probe_availability()
+    expires_at = time.monotonic() + _AVAILABILITY_CACHE_TTL_SECONDS
+    if _availability_probe_generation.get(key) is generation:
+        if (
+            key not in _availability_cache
+            and len(_availability_cache) >= _AVAILABILITY_CACHE_MAX_ENTRIES
+        ):
+            evicted = min(
+                _availability_cache,
+                key=lambda cached_key: _availability_cache[cached_key][0],
+            )
+            _availability_cache.pop(evicted, None)
+            _availability_probe_generation.pop(evicted, None)
+        _availability_cache[key] = (expires_at, snapshot)
+    return snapshot
+
+
+def _check_tool(tool_name: str) -> bool:
+    """Match DesktopHandler.has_client_for across every connected client."""
+    snapshot = _availability()
+    if not snapshot.reachable or not snapshot.valid or not snapshot.connected:
         return False
+    return any(tool_name in tools for tools in snapshot.client_toolsets) or (
+        not tool_name.startswith("desktop_computer_")
+        and any(not tools for tools in snapshot.client_toolsets)
+    )
 
 
 def _check_relay() -> bool:
-    """``check_fn`` for ``desktop_health`` — the relay must be reachable, but
-    a client need not be connected. The whole point of ``desktop_health`` is
-    to tell the agent whether a client IS connected, so it must remain callable
-    when one is not."""
-    try:
-        r = requests.get(
-            f"{_relay_url()}/desktop/health",
-            headers=_auth_headers(),
-            timeout=2,
-        )
-        return r.status_code == 200
-    except Exception:
-        return False
+    """Keep ``desktop_health`` callable on a valid relay with no client."""
+    snapshot = _availability()
+    return snapshot.reachable and snapshot.valid
 
 
 # ── Tool implementations ───────────────────────────────────────────────────────
