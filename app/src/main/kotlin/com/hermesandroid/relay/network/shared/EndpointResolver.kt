@@ -149,7 +149,10 @@ class EndpointResolver(
     )
 
     private val probeCache = ConcurrentHashMap<String, CacheEntry>()
-    private val inFlightProbes = ConcurrentHashMap<String, Deferred<Boolean>>()
+    // Every access is owned by [probeStateLock]. This must not be a
+    // concurrently-mutated collection: clearCache() takes a stable snapshot
+    // while completion callbacks remove finished probes.
+    private val inFlightProbes = mutableMapOf<String, Deferred<Boolean>>()
     private val probeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val probeStateLock = Any()
     private var probeGeneration = 0L
@@ -486,7 +489,13 @@ class EndpointResolver(
                     probe(candidate, surface, generation)
                 }.also { deferred ->
                     inFlightProbes[key] = deferred
-                    deferred.invokeOnCompletion { inFlightProbes.remove(key, deferred) }
+                    deferred.invokeOnCompletion {
+                        synchronized(probeStateLock) {
+                            // Identity-aware removal prevents an invalidated
+                            // probe from removing its fresh replacement.
+                            inFlightProbes.remove(key, deferred)
+                        }
+                    }
                     deferred.start()
                 }
             }
