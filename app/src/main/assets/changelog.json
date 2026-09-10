@@ -4,7 +4,7 @@
   {
    "version": "1.16.0",
    "title": "Safer startup, connections, and activity",
-   "date": "2026-09-09",
+   "date": "2026-09-10",
    "summary": "Gateway chat opens reliably from a cold launch, saved sign-ins stay with the correct connection, and network changes no longer race the route cache. Bot Mode and delegated-work feedback also remain stable across multiple gateways and later review.",
    "changes": [
     {

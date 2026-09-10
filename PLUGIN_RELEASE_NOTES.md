@@ -1,6 +1,6 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** September 9, 2026
+**Release Date:** September 10, 2026
 
 ## Summary
 
