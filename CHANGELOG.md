@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-## [Android 1.16.0] - 2026-09-09
+## [Android 1.16.0] - 2026-09-10
 
 ### Fixed
 
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Chat distinguishes session preparation from response streaming and retains initialization errors that arrive before the session acknowledgement. Long-press the agent header to open a live session-diagnostics drawer.
 - Delegated-agent activity survives parent replies and leaves compact history entries for later read-only review. The activity strip appears only while work runs; historical process views cannot stop or dismiss live work. (#447)
 
-## [Plugin 1.11.2] - 2026-09-09
+## [Plugin 1.11.2] - 2026-09-10
 
 ### Fixed
 
