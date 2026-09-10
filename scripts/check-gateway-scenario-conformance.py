@@ -333,8 +333,18 @@ def _check_active_list(server: SourceFile, methods: SourceFile) -> CheckResult:
         missing_fields = sorted({"id", "session_key", "status"} - item_strings)
         if missing_fields:
             raise ValueError("active-list row missing field(s): " + ", ".join(missing_fields))
-        required_markers = ("_sessions_lock", "_sessions.items()", "_session_live_item(")
-        missing_markers = [marker for marker in required_markers if marker not in handler_text]
+        snapshot_node = handler
+        snapshot_text = handler_text
+        if "_snapshot_sessions(" in handler_text:
+            snapshot_node = methods.function("_snapshot_sessions")
+            snapshot_text = methods.segment(snapshot_node)
+        required_snapshot_markers = ("_sessions_lock", "_sessions.items()")
+        missing_snapshot_markers = [
+            marker for marker in required_snapshot_markers if marker not in snapshot_text
+        ]
+        missing_markers = list(missing_snapshot_markers)
+        if "_session_live_item(" not in handler_text:
+            missing_markers.append("_session_live_item(")
         if missing_markers or "sessions" not in _string_constants(handler):
             raise ValueError(
                 "session.active_list no longer snapshots the live registry: "
@@ -352,7 +362,7 @@ def _check_active_list(server: SourceFile, methods: SourceFile) -> CheckResult:
                 server.evidence(status, "starting, working, waiting, and idle derivation"),
                 server.evidence(item, "live row carries runtime and durable identities"),
                 methods.evidence(
-                    handler, "active list snapshots the process-wide in-memory registry"
+                    snapshot_node, "active list snapshots the process-wide in-memory registry"
                 ),
             ),
         )

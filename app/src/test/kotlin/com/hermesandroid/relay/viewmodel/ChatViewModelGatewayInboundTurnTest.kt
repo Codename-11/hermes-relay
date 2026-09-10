@@ -183,6 +183,55 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun coldGatewayClientBeforeVisibilityOpensObservationWithoutControlRpc() {
+        viewModel.setChatVisible(false)
+        replaceGatewayClient(ticketTimeoutMs = 5_000L)
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val ticketMintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Ready }
+        assertEquals(ticketMintsBefore + 1, gatewayHarness.ticketMints.get())
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+    }
+
+    @Test
+    fun coldGatewayVisibilityBeforeClientBindingOpensObservationWithoutControlRpc() {
+        viewModel.setChatVisible(false)
+        replaceGatewayClient(ticketTimeoutMs = 5_000L, bind = false)
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val ticketMintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        viewModel.updateGatewayClient(gatewayClient)
+
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Ready }
+        assertEquals(ticketMintsBefore + 1, gatewayHarness.ticketMints.get())
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+    }
+
+    @Test
     fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
         DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
@@ -4322,7 +4371,10 @@ class ChatViewModelGatewayInboundTurnTest {
         ),
     )
 
-    private fun replaceGatewayClient(ticketTimeoutMs: Long): GatewayChatClient {
+    private fun replaceGatewayClient(
+        ticketTimeoutMs: Long,
+        bind: Boolean = true,
+    ): GatewayChatClient {
         viewModel.updateGatewayClient(null)
         gatewayClient.shutdown()
         gatewayScope.cancel()
@@ -4340,7 +4392,7 @@ class ChatViewModelGatewayInboundTurnTest {
             scope = gatewayScope,
             reconnectJitterUnit = { Math.nextDown(1.0) },
         )
-        viewModel.updateGatewayClient(gatewayClient)
+        if (bind) viewModel.updateGatewayClient(gatewayClient)
         return gatewayClient
     }
 

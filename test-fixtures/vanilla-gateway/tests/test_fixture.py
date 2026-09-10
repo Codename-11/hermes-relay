@@ -218,6 +218,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         active = (await observer.receive_json())["result"]["sessions"]
         self.assertEqual("working", active[0]["status"])
         self.assertNotIn("profile", active[0])
+
         async with self.session.get(
             f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
             params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
@@ -243,6 +244,19 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(["session.active_list"], observer_methods)
         self.assertNotIn("session.interrupt", observer_methods)
+
+    async def test_cold_start_observer_opens_socket_without_control_rpc(self) -> None:
+        _, base_url = await self.start("cold_start_observation")
+        observer, _ = await self.connect(base_url)
+        await self.rpc(observer, 1, "session.active_list")
+        active = (await observer.receive_json())["result"]["sessions"]
+        self.assertEqual([], active)
+
+        async with self.session.get(f"{base_url}/__fixture__/evidence") as response:
+            evidence = await response.json()
+        methods = [entry["method"] for entry in evidence["entries"] if "method" in entry]
+        self.assertEqual({"session.active_list"}, set(methods))
+        self.assertTrue(any(entry.get("event_type") == "gateway.ready" for entry in evidence["entries"]))
 
     async def test_rapid_chunks_tools_and_interims_keep_wire_order(self) -> None:
         _, base_url = await self.start("rapid_tools_interims")
@@ -455,6 +469,7 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_lifecycle",
             "active_status_profile_scope",
             "active_status_unsupported",
+            "cold_start_observation",
             "cross_client_observation",
             "initial_history_bind",
             "ordinary_turn",
@@ -507,6 +522,10 @@ class ScenarioTestCase(unittest.TestCase):
         self.assertEqual(
             ("gateway.settled_session_info",),
             load_scenario("terminal_gap_session_info").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_active_list",),
+            load_scenario("cold_start_observation").contract_requirements,
         )
         self.assertEqual(
             ("gateway.message_complete", "gateway.session_active_list"),
