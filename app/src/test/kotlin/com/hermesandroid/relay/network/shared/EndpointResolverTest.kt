@@ -477,6 +477,151 @@ class EndpointResolverTest {
         )
     }
 
+    @Test
+    fun clearCache_handlesConcurrentProbeCompletions_withoutThrowingOrPublishingStaleState() = runTest {
+        val candidateCount = 24
+        val staleRequestsStarted = CountDownLatch(candidateCount)
+        val releaseStaleRequests = CountDownLatch(1)
+        val staleRequestsFinished = CountDownLatch(candidateCount)
+        val raceGate = CountDownLatch(1)
+        val requestSequence = AtomicInteger(0)
+        val blockingClient = fastClient.newBuilder()
+            .addInterceptor { chain ->
+                if (requestSequence.incrementAndGet() <= candidateCount) {
+                    staleRequestsStarted.countDown()
+                    try {
+                        releaseStaleRequests.await(5, TimeUnit.SECONDS)
+                    } finally {
+                        staleRequestsFinished.countDown()
+                    }
+                    throw InterruptedIOException("concurrent invalidation test probe")
+                }
+                chain.proceed(chain.request())
+            }
+            .build()
+        val resolver = EndpointResolver(blockingClient, clock = { clockMillis.get() })
+        val candidates = (1..candidateCount).map { index ->
+            candidate("concurrent-clear-$index", priority = 0, server = reachableServer)
+        }
+
+        try {
+            val staleResolve = async(start = CoroutineStart.UNDISPATCHED) {
+                resolver.resolve(candidates, EndpointSurface.Api)
+            }
+            assertTrue(
+                "every physical probe must be active before the completion/invalidation race",
+                staleRequestsStarted.await(5, TimeUnit.SECONDS),
+            )
+
+            val invalidation = async(Dispatchers.Default) {
+                raceGate.await(5, TimeUnit.SECONDS)
+                resolver.clearCache()
+            }
+            val completions = async(Dispatchers.Default) {
+                raceGate.await(5, TimeUnit.SECONDS)
+                releaseStaleRequests.countDown()
+            }
+            raceGate.countDown()
+
+            withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(2_000L) {
+                    invalidation.await()
+                    completions.await()
+                    staleResolve.await()
+                }
+            }
+            assertTrue(staleRequestsFinished.await(5, TimeUnit.SECONDS))
+            assertTrue(resolver.cacheSnapshot().isEmpty())
+
+            resolver.clearCache()
+            val freshWinner = withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(2_000L) {
+                    resolver.resolve(listOf(candidates.first()), EndpointSurface.Api)
+                }
+            }
+            assertEquals(candidates.first(), freshWinner)
+            assertTrue(
+                "a completion racing invalidation must not overwrite the fresh generation",
+                resolver.probeOutcomes.value.getValue(
+                    EndpointResolver.cacheKey(candidates.first(), EndpointSurface.Api),
+                ).reachable,
+            )
+        } finally {
+            raceGate.countDown()
+            releaseStaleRequests.countDown()
+        }
+    }
+
+    @Test
+    fun invalidatedProbeCompletion_cannotRemoveFreshReplacement() = runTest {
+        val staleRequestStarted = CountDownLatch(1)
+        val releaseStaleRequest = CountDownLatch(1)
+        val staleRequestFinished = CountDownLatch(1)
+        val freshRequestStarted = CountDownLatch(1)
+        val releaseFreshRequest = CountDownLatch(1)
+        val requestSequence = AtomicInteger(0)
+        val blockingClient = fastClient.newBuilder()
+            .addInterceptor { chain ->
+                when (requestSequence.incrementAndGet()) {
+                    1 -> {
+                        staleRequestStarted.countDown()
+                        try {
+                            releaseStaleRequest.await(5, TimeUnit.SECONDS)
+                        } finally {
+                            staleRequestFinished.countDown()
+                        }
+                        throw InterruptedIOException("invalidated identity test probe")
+                    }
+                    2 -> {
+                        freshRequestStarted.countDown()
+                        releaseFreshRequest.await(5, TimeUnit.SECONDS)
+                        chain.proceed(chain.request())
+                    }
+                    else -> chain.proceed(chain.request())
+                }
+            }
+            .build()
+        val resolver = EndpointResolver(blockingClient, clock = { clockMillis.get() })
+        val candidate = candidate("replacement-identity-test", priority = 0, server = reachableServer)
+
+        try {
+            val staleResolve = async(start = CoroutineStart.UNDISPATCHED) {
+                resolver.resolve(listOf(candidate), EndpointSurface.Api)
+            }
+            assertTrue(staleRequestStarted.await(5, TimeUnit.SECONDS))
+            resolver.clearCache()
+
+            val freshResolve = async(start = CoroutineStart.UNDISPATCHED) {
+                resolver.resolve(listOf(candidate), EndpointSurface.Api)
+            }
+            assertTrue(freshRequestStarted.await(5, TimeUnit.SECONDS))
+
+            releaseStaleRequest.countDown()
+            assertTrue(staleRequestFinished.await(5, TimeUnit.SECONDS))
+            withContext(Dispatchers.Default.limitedParallelism(1)) {
+                withTimeout(1_000L) { staleResolve.await() }
+            }
+
+            val joiningResolve = async(start = CoroutineStart.UNDISPATCHED) {
+                resolver.resolve(listOf(candidate), EndpointSurface.Api)
+            }
+            releaseFreshRequest.countDown()
+
+            withContext(Dispatchers.Default.limitedParallelism(1)) {
+                assertEquals(candidate, withTimeout(2_000L) { freshResolve.await() })
+                assertEquals(candidate, withTimeout(2_000L) { joiningResolve.await() })
+            }
+            assertEquals(
+                "the late stale completion must leave the fresh shared probe registered",
+                2,
+                requestSequence.get(),
+            )
+        } finally {
+            releaseStaleRequest.countDown()
+            releaseFreshRequest.countDown()
+        }
+    }
+
     // ---------------------------------------------------------------
     // Test 6 — cached-reachable result is re-probed after TTL
     // ---------------------------------------------------------------
