@@ -463,6 +463,21 @@ internal fun shouldShowRetainedHistoryDashboardSignIn(
     gatewayAvailability == GatewayAvailability.SignInRequired &&
     !apiReachable
 
+/**
+ * A foreground Gateway-owned Chat must be allowed to open its observation
+ * socket before `gateway.ready` can make chatReady true. Authentication and
+ * protocol failures are terminal; ordinary reachability failures remain
+ * visible so the Gateway client's bounded retry policy can recover them.
+ */
+internal fun shouldOwnVisibleGateway(
+    appForeground: Boolean,
+    isGatewayTransport: Boolean,
+    gatewayAvailability: GatewayAvailability,
+): Boolean = appForeground &&
+    isGatewayTransport &&
+    gatewayAvailability != GatewayAvailability.SignInRequired &&
+    gatewayAvailability != GatewayAvailability.Unsupported
+
 internal fun shouldPresentChatFailureDuringDashboardSignIn(
     failure: ChatFailureNotice,
     dashboardSignInRequired: Boolean,
@@ -1212,8 +1227,12 @@ fun ChatScreen(
     // the foreground. setChatVisible owns that edge; an ordinary Gateway open
     // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
-    LaunchedEffect(isGatewayTransport, appForeground, chatReady) {
-        val visibleGatewayOwner = appForeground && chatReady && isGatewayTransport
+    LaunchedEffect(isGatewayTransport, appForeground, chatGatewayAvailability) {
+        val visibleGatewayOwner = shouldOwnVisibleGateway(
+            appForeground = appForeground,
+            isGatewayTransport = isGatewayTransport,
+            gatewayAvailability = chatGatewayAvailability,
+        )
         chatViewModel.setChatVisible(visibleGatewayOwner)
         // updateGatewayClient owns the one-time catalog/reasoning bootstrap for
         // a newly-ready socket. Repeating it here created a duplicate cold-open

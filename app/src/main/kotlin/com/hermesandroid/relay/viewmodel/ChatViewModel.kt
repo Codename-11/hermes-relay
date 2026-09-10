@@ -2987,9 +2987,10 @@ class ChatViewModel : ViewModel() {
                 _reasoningDisplay.value = null
             }
         }
-        if (changed && client != null && streamRecovery != null &&
-            AppForegroundTracker.isForeground.value
-        ) {
+        // Visibility can arrive before the runtime binder publishes its client.
+        // Start the same socket-only warmup in either ordering; prewarmGateway
+        // retains the directory barrier and exact-checkpoint ownership rules.
+        if (changed && client != null && chatVisible) {
             prewarmGateway()
         }
         if (changed && client != null) requestSessionActivityRefresh()
