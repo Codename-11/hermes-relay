@@ -110,11 +110,16 @@ def _(rid, params):
     session, error = _sess_nowait(params, rid)
     return _live_session_payload(params["session_id"], session)
 
+def _snapshot_sessions(rid):
+    with _sessions_lock:
+        return list(_sessions.items()), None
+
 @method("session.active_list")
 def _(rid, params):
+    snapshot, error = _snapshot_sessions(rid)
+    if error:
+        return error
     current = str(params.get("current_session_id") or "")
-    with _sessions_lock:
-        snapshot = list(_sessions.items())
     rows = [_session_live_item(sid, session, current) for sid, session in snapshot]
     return _ok(rid, {"sessions": rows})
 '''

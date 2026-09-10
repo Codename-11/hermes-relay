@@ -5,11 +5,12 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Button
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.Modifier
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -17,25 +18,28 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatTurnAssistantCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpoint
 import com.hermesandroid.relay.data.ChatTurnCheckpointStore
 import com.hermesandroid.relay.data.ChatTurnUserCheckpoint
+import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.network.upstream.ChatHandler
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
+import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
+import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.SubagentPreviewVisibility
+import com.hermesandroid.relay.ui.screens.shouldOwnVisibleGateway
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -85,6 +89,8 @@ class GatewayForegroundRecoveryInstrumentedTest {
     @Volatile
     private var persistedHistory: List<MessageItem> = emptyList()
     private val historySignInRequired = MutableStateFlow(false)
+    private val coldStartAdmissionEnabled = MutableStateFlow(false)
+    private val coldStartGatewayAvailability = MutableStateFlow(GatewayAvailability.Unknown)
 
     @Before
     fun setUp() {
@@ -119,6 +125,19 @@ class GatewayForegroundRecoveryInstrumentedTest {
             val streaming by viewModel.isStreaming.collectAsStateWithLifecycle()
             val children by viewModel.subagentActivities.collectAsStateWithLifecycle()
             val signInRequired by historySignInRequired.collectAsStateWithLifecycle()
+            val admissionEnabled by coldStartAdmissionEnabled.collectAsStateWithLifecycle()
+            val admissionAvailability by coldStartGatewayAvailability.collectAsStateWithLifecycle()
+            LaunchedEffect(admissionEnabled, admissionAvailability) {
+                if (admissionEnabled) {
+                    viewModel.setChatVisible(
+                        shouldOwnVisibleGateway(
+                            appForeground = true,
+                            isGatewayTransport = true,
+                            gatewayAvailability = admissionAvailability,
+                        ),
+                    )
+                }
+            }
             MaterialTheme {
                 Column(Modifier.testTag("contract-transcript")) {
                     GatewayBackgroundProcessStrip(
@@ -154,6 +173,53 @@ class GatewayForegroundRecoveryInstrumentedTest {
         assertTrue(runBlocking { gatewayClient.prewarmAwait(STORED_SESSION_ID) })
         serverSocket = fixture.awaitServerSocket()
         fixture.awaitRpc("session.resume")
+    }
+
+    @Test
+    fun authenticatedUnknownColdLaunch_opensObservationSocketWithoutLifecycleBounce() {
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith(fixture::rpcCount)
+        val ticketMintsBefore = fixture.requestsTo("/api/auth/ws-ticket")
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val okHttp = OkHttpClient()
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = fixture.server.url("/").toString().trimEnd('/'),
+                okHttpClient = okHttp,
+            ),
+            okHttpClient = okHttp,
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+            reconnectJitterUnit = { 0.0 },
+        )
+        viewModel.setChatTurnCheckpointStore(null)
+        viewModel.updateGatewayClient(gatewayClient)
+
+        coldStartGatewayAvailability.value = GatewayAvailability.Unknown
+        coldStartAdmissionEnabled.value = true
+
+        compose.waitUntil(5_000) {
+            gatewayClient.connectionState.value == GatewayConnectionState.Ready
+        }
+        serverSocket = fixture.awaitServerSocket()
+        assertEquals(ticketMintsBefore + 1, fixture.requestsTo("/api/auth/ws-ticket"))
+        controlMethods.forEach { method ->
+            assertEquals(
+                "cold observation sent $method",
+                baseline.getValue(method),
+                fixture.rpcCount(method),
+            )
+        }
     }
 
     @After

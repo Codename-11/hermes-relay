@@ -7,8 +7,9 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
-import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
+import com.hermesandroid.relay.ui.screens.shouldOwnVisibleGateway
 import com.hermesandroid.relay.viewmodel.ChatConnectState
+import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatConnectState
@@ -194,6 +195,50 @@ class RelayAppStatusTest {
         )
 
         assertEquals(ChatRuntimeStatus.Connecting, status)
+    }
+
+    @Test
+    fun `foreground Gateway owns cold observation before gateway ready`() {
+        assertTrue(
+            shouldOwnVisibleGateway(
+                appForeground = true,
+                isGatewayTransport = true,
+                gatewayAvailability = GatewayAvailability.Unknown,
+            ),
+        )
+        assertTrue(
+            shouldOwnVisibleGateway(
+                appForeground = true,
+                isGatewayTransport = true,
+                gatewayAvailability = GatewayAvailability.Unreachable,
+            ),
+        )
+        assertFalse(
+            shouldOwnVisibleGateway(
+                appForeground = false,
+                isGatewayTransport = true,
+                gatewayAvailability = GatewayAvailability.Unknown,
+            ),
+        )
+        assertFalse(
+            shouldOwnVisibleGateway(
+                appForeground = true,
+                isGatewayTransport = false,
+                gatewayAvailability = GatewayAvailability.Unknown,
+            ),
+        )
+        listOf(
+            GatewayAvailability.SignInRequired,
+            GatewayAvailability.Unsupported,
+        ).forEach { terminal ->
+            assertFalse(
+                shouldOwnVisibleGateway(
+                    appForeground = true,
+                    isGatewayTransport = true,
+                    gatewayAvailability = terminal,
+                ),
+            )
+        }
     }
 
     @Test
