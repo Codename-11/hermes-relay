@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.15.1 - Steadier chat, media, and voice
+v1.16.0 - Safer startup, connections, and activity
 
-More reliable chats and media: fewer memory-heavy refreshes, smoother large histories, and attachment previews that survive rotation. Choose whether follow-ups correct the current response or wait in a queue. Voice errors are easier to read, image-generation progress stays visible, and wake-word startup and first-message readiness are fixed.
+Gateway chat now opens reliably on a cold launch. Saved Dashboard sign-ins stay bound to the correct connection, pasted credentials ignore accidental line breaks, and network changes no longer race the route cache. Bot Mode supports duplicate profile names across gateways, while delegated work, session setup, attachment errors, and feedback remain visible and easier to review.
 ```
 ## Category
 

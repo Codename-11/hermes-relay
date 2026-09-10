@@ -1,10 +1,10 @@
-# Hermes-Relay Android v1.15.1
+# Hermes-Relay Android v1.16.0
 
-**Release Date:** September 2, 2026
+**Release Date:** September 9, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.15.1-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.16.0-sideload-release.apk` and tap it for the full feature set, or install the conservative build from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,29 +12,28 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-This patch improves chat, media, and voice reliability. It reduces memory-heavy work, keeps attachment previews stable through rotation, and makes follow-up message behavior and voice errors easier to understand.
+This release makes startup and connection switching safer, prevents a network-change crash, and keeps Bot Mode and delegated work stable across multiple Hermes gateways. Chat feedback, attachment failures, and session preparation are also easier to understand and review.
 
 ## Changed
 
-- Choose Correct now or Queue next from a slim tray behind the composer. Chat settings sets the default; the tray overrides one message. Stop pauses the queue, Resume continues it, and editing or removing an item preserves its successors.
-- Chat and Voice use readable centered layouts on wider screens, including landscape Voice Focus.
+- Delegated-agent activity remains available after parent replies as compact, bounded, read-only history. The live strip appears only while work is active, and historical views cannot control a running process.
+- Android feedback uses themed banners and action cards. A long-press on the agent header opens session diagnostics, and Developer settings can preview message surfaces locally.
 
 ## Fixed
 
-- Correction and delivery labels remain visible inside user-message bubbles.
-- Voice errors open in a scrollable dialog with separate Retry and Dismiss actions.
-- Attachment previews remain open through rotation, and video previews preserve their proportions.
-- Release optimization preserves the native speech configuration required for wake-word startup.
-- Standard Hermes attachments download directly to disk with bounded size checks.
-- Session refresh avoids repeated request loops; history loads, Markdown, image previews, and media exports keep memory use bounded.
-- Image-generation progress stays visible through gaps between interim replies and returned media.
-- The first prompt waits for Gateway session readiness. Ownership refusals retain the prompt for retry and show the original server error.
+- An authenticated Gateway chat opens on the first foreground launch instead of waiting for a background-and-resume cycle.
+- Network changes can invalidate route probes without racing the endpoint cache or crashing Android.
+- Saved Dashboard sign-ins stay bound to their owning connection when switching gateways; an outgoing route cannot invalidate another connection's session.
+- Dashboard sign-in removes pasted line breaks from username and password fields while preserving every other credential character.
+- Bot Mode and Active Now keep connection identity when different gateways expose the same profile name, and progress opens only on the selected bot.
+- Missing attachments keep their error and Retry action in the attachment card without repeated global messages.
+- Chat distinguishes session preparation from response streaming and retains initialization errors received before session acknowledgement.
 
 ## Install / Verify
 
-- App version: **1.15.1** (versionCode **54**).
+- App version: **1.16.0** (versionCode **55**).
 - Standard Chat, sessions, profiles, Manage, voice, and ordinary media use current upstream Hermes. Speech-to-text still requires a configured provider on the host.
-- Hermes-Relay Plugin **1.11.1** remains the current optional plugin release; this Android patch does not require a new plugin version.
-- Paused text queues can be restored. Attachment bytes are not persisted in preferences; unrestorable attachment queues must be reviewed and sent again.
+- Hermes-Relay Plugin **1.11.2** is the matching optional release for Relay tools; the Android connection, Bot Mode, and delegated-activity fixes do not require the plugin.
+- Already-erased or revoked Dashboard credentials still require a legitimate sign-in; this release prevents cross-connection invalidation going forward.
 - Explicit Direct API/API-only connections remain supported and are not used as silent failover for Dashboard-owned chats.
 - Granular Device Control and the system Voice Focus overlay remain sideload-only.
