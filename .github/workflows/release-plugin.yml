@@ -107,7 +107,11 @@ jobs:
             plugin/tests/test_voice_routes.py \
             plugin/tests/test_session_grants.py \
             plugin/tests/test_proactive_channel.py \
-            plugin/tests/test_android_phone_status.py
+            plugin/tests/test_android_phone_status.py \
+            plugin/tests/test_android_tool.py \
+            plugin/tests/test_android_navigate.py \
+            plugin/tests/test_phone_platform.py \
+            plugin/tests/test_desktop_tool_availability.py
 
   package:
     name: Build and publish Plugin package

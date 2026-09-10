@@ -76,18 +76,18 @@ except ImportError:  # pragma: no cover - direct-script fallback
 # ── Config ────────────────────────────────────────────────────────────────────
 #
 # Architecture: Phone connects OUT to Hermes server via WebSocket (NAT-friendly).
-# The unified Hermes-Relay server runs on localhost:8767 and multiplexes the
+# The unified Hermes-Relay server runs on 127.0.0.1:8767 and multiplexes the
 # bridge channel alongside chat, terminal, media, and voice. The legacy
 # standalone bridge relay on port 8766 was retired in Phase 3 Wave 1.
 #
-#   Tools ──HTTP──> Unified Relay (localhost:8767) ──WSS bridge channel──> Phone
+#   Tools ──HTTP──> Unified Relay (127.0.0.1:8767) ──WSS bridge channel──> Phone
 #
 # For local/USB dev, tools can also talk directly to the phone's HTTP server
 # by setting ANDROID_BRIDGE_URL to the phone's IP.
 
 def _bridge_url() -> str:
     """URL of the relay (default) or direct phone connection."""
-    return os.getenv("ANDROID_BRIDGE_URL", "http://localhost:8767")
+    return os.getenv("ANDROID_BRIDGE_URL", "http://127.0.0.1:8767")
 
 def _hermes_home() -> Path:
     """Return the request-scoped Hermes home when the host exposes one."""
@@ -1446,7 +1446,7 @@ def android_setup(
         public_ip = _get_public_ip()
 
         # Save config to ~/.hermes/.env
-        relay_url = f"http://localhost:{port}"
+        relay_url = f"http://127.0.0.1:{port}"
         try:
             from hermes_cli.config import save_env_value
             save_env_value("ANDROID_BRIDGE_URL", relay_url)
@@ -1468,7 +1468,7 @@ def android_setup(
         relay_running = False
         phone_connected = False
         try:
-            health = requests.get(f"http://localhost:{port}/health", timeout=2)
+            health = requests.get(f"{relay_url}/health", timeout=2)
             if health.status_code == 200:
                 relay_running = True
         except Exception:
@@ -1487,7 +1487,7 @@ def android_setup(
                 "status": "error",
                 "message": (
                     "Unified Hermes-Relay is not running on "
-                    f"localhost:{port}. Start it with "
+                    f"127.0.0.1:{port}. Start it with "
                     "`systemctl --user start hermes-relay` and retry."
                 ),
                 "server_address": server_address,

@@ -343,6 +343,8 @@ class TestSetup:
         )
         monkeypatch.delenv("ANDROID_BRIDGE_TOKEN", raising=False)
         monkeypatch.delenv("ANDROID_BRIDGE_URL", raising=False)
+        monkeypatch.delenv("ANDROID_RELAY_PORT", raising=False)
+        monkeypatch.delenv("RELAY_PORT", raising=False)
         android_tool._reset_token_cache()
         yield
         android_tool._reset_token_cache()
@@ -356,8 +358,15 @@ class TestSetup:
         result = json.loads(android_setup("ABC123"))
         # Config should be saved regardless of relay import
         assert os.environ.get("ANDROID_BRIDGE_TOKEN") == "ABC123"
-        assert "localhost" in os.environ.get("ANDROID_BRIDGE_URL", "")
+        assert os.environ.get("ANDROID_BRIDGE_URL") == "http://127.0.0.1:8767"
+        assert any(
+            call.request.url == "http://127.0.0.1:8767/health"
+            for call in responses.calls
+        )
         assert "ANDROID_BRIDGE_TOKEN=ABC123" in (
+            Path(os.environ["HERMES_HOME"]) / ".env"
+        ).read_text()
+        assert "ANDROID_BRIDGE_URL=http://127.0.0.1:8767" in (
             Path(os.environ["HERMES_HOME"]) / ".env"
         ).read_text()
 
