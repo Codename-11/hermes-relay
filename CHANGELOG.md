@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.16.0] - 2026-09-09
+
 ### Fixed
 
 - Android no longer crashes when a route probe finishes while a network change invalidates the endpoint cache.

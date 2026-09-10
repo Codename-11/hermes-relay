@@ -2,6 +2,79 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.16.0",
+   "title": "Safer startup, connections, and activity",
+   "date": "2026-09-09",
+   "summary": "Gateway chat opens reliably from a cold launch, saved sign-ins stay with the correct connection, and network changes no longer race the route cache. Bot Mode and delegated-work feedback also remain stable across multiple gateways and later review.",
+   "changes": [
+    {
+     "id": "gateway-cold-start",
+     "kind": "fixed",
+     "title": "Open Gateway chat on the first launch",
+     "summary": "An authenticated Gateway wakes and opens from a cold foreground start instead of waiting for the app to background and resume.",
+     "highlight": true
+    },
+    {
+     "id": "connection-owned-signin",
+     "kind": "fixed",
+     "title": "Keep saved sign-ins with their connection",
+     "summary": "Switching gateways cannot reuse an outgoing resolver route to invalidate another connection's saved Dashboard session.",
+     "highlight": true
+    },
+    {
+     "id": "network-change-invalidation",
+     "kind": "fixed",
+     "title": "Recover safely when the network changes",
+     "summary": "Route-probe completion and endpoint-cache invalidation are serialized so Wi-Fi, mobile-data, VPN, or Tailscale changes do not trigger the reported crash.",
+     "highlight": true
+    },
+    {
+     "id": "bot-mode-connection-identity",
+     "kind": "fixed",
+     "title": "Open same-named bots from multiple gateways",
+     "summary": "Bot Mode and Active Now keep connection and profile identity together, avoiding duplicate list keys and opening progress on the selected bot."
+    },
+    {
+     "id": "delegated-activity-receipts",
+     "kind": "improved",
+     "title": "Review delegated work after it finishes",
+     "summary": "Compact, bounded activity receipts survive parent replies and remain available read-only, while the live strip appears only during active work.",
+     "highlight": true
+    },
+    {
+     "id": "chat-feedback-surfaces",
+     "kind": "improved",
+     "title": "Keep feedback with the surface that owns it",
+     "summary": "Themed banners and action cards replace platform popups, global actions stay clear of the composer, and local Developer previews make feedback states inspectable."
+    },
+    {
+     "id": "attachment-error-recovery",
+     "kind": "fixed",
+     "title": "Retry missing attachments in place",
+     "summary": "A missing attachment keeps its error and Retry action in the attachment card without producing repeated global messages."
+    },
+    {
+     "id": "session-preparation-diagnostics",
+     "kind": "improved",
+     "title": "See session preparation and initialization failures",
+     "summary": "Chat distinguishes session preparation from response streaming, retains early initialization errors, and opens session diagnostics from the agent header."
+    },
+    {
+     "id": "pasted-dashboard-credentials",
+     "kind": "fixed",
+     "title": "Paste Dashboard credentials without hidden line breaks",
+     "summary": "Username and password fields remove pasted carriage returns and line feeds while preserving every other credential character."
+    }
+   ],
+   "compatibility": [
+    "Standard Chat, sessions, profiles, Manage, voice, Bot Mode, and delegated activity continue to use current upstream Hermes without requiring the optional Hermes-Relay Plugin.",
+    "Hermes-Relay Plugin 1.11.2 is the matching optional release for Relay tools. Existing erased or revoked Dashboard credentials still require a legitimate sign-in.",
+    "Granular Device Control and the system Voice Focus overlay remain sideload-only."
+   ],
+   "playNotes": "Gateway chat now opens reliably on a cold launch. Saved Dashboard sign-ins stay bound to the correct connection, pasted credentials ignore accidental line breaks, and network changes no longer race the route cache. Bot Mode supports duplicate profile names across gateways, while delegated work, session setup, attachment errors, and feedback remain visible and easier to review.",
+   "sections": []
+  },
+  {
    "version": "1.15.1",
    "title": "Steadier chat, media, and voice",
    "date": "2026-09-02",
