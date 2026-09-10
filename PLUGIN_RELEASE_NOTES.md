@@ -1,15 +1,17 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** August 31, 2026
+**Release Date:** September 9, 2026
 
 ## Summary
 
-This patch restores native installation compatibility on affected Hermes versions and makes Relay prompt context advertise only capabilities the selected session can actually call. Standard Chat, Manage, standard voice, and ordinary inbound files remain upstream-owned.
+This patch makes Android and Desktop tool availability fast and reliable when Relay is unavailable, starts late-created Android bridge sessions without restarting Hermes, and restores compatibility with both current and legacy `android_setup` arguments. Standard Chat, Manage, standard voice, and ordinary inbound files remain upstream-owned.
 
 ## Fixed
 
-- **Native installer compatibility.** The plugin keeps its complete current manifest while avoiding the installer/runtime schema mismatch that caused `manifest_version 2` installs to fail after an apparent Hermes update.
-- **Capability-gated phone context.** Phone-control and cross-platform delivery guidance now follows the selected session/profile tool catalog instead of implying unavailable `android_*` or `send_message` callables.
+- **Fast, accurate tool availability.** Android and Desktop tool checks use explicit IPv4 loopback and one bounded health snapshot instead of repeated per-tool connection attempts. Multi-PC capability advertisements remain isolated, and unavailable Relay clients continue to fail closed.
+- **Late Android bridge recovery.** `android_*` calls retry profile-scoped and active bridge-session credentials after a stale token is rejected, so a phone connected after Hermes startup becomes usable without restarting the host.
+- **Compatible Android setup arguments.** `android_setup` accepts the canonical `bridge_session_token` and `pairing_code` fields as well as their legacy aliases, with structured errors when no usable credential is supplied.
+- **Isolated setup tests.** Android tool setup tests use a temporary Hermes home instead of writing bridge settings into the operator environment.
 
 ## Install / update
 
