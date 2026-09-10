@@ -496,7 +496,7 @@ Errors: relay connect-error / timeout / 5xx → `502 Bad Gateway` with a human-r
 ## Health Check
 
 ```bash
-curl http://localhost:8767/health
+curl http://127.0.0.1:8767/health
 ```
 
 Returns JSON with server status and version.

@@ -42,7 +42,7 @@ Off by default:
 Environment variables (env wins over config.yaml ``extra``):
     PHONE_ENABLED              "1"/"true"/"yes"/"on" enables the platform (required)
     PHONE_RELAY_URL            Relay base URL. Default: reuse ANDROID_BRIDGE_URL,
-                               else http://localhost:{ANDROID_RELAY_PORT|RELAY_PORT|8767}
+                               else http://127.0.0.1:{ANDROID_RELAY_PORT|RELAY_PORT|8767}
     PHONE_RELAY_TOKEN          Optional bearer for the relay POST (loopback is
                                unauthenticated by default; sent only if set)
     PHONE_HOME_CHANNEL         Default chat_id for cron / home-channel delivery
@@ -156,7 +156,7 @@ def _relay_base_url() -> str:
     Honors ``PHONE_RELAY_URL`` first, then reuses the same convention as
     ``plugin/tools/android_tool.py`` (``ANDROID_BRIDGE_URL`` /
     ``ANDROID_RELAY_PORT`` / ``RELAY_PORT``) so a single override flips both
-    the android tools and this adapter. Defaults to ``http://localhost:8767``.
+    the android tools and this adapter. Defaults to ``http://127.0.0.1:8767``.
     """
     explicit = os.getenv("PHONE_RELAY_URL", "").strip()
     if explicit:
@@ -165,7 +165,7 @@ def _relay_base_url() -> str:
     if bridge:
         return bridge.rstrip("/")
     port = os.getenv("ANDROID_RELAY_PORT", os.getenv("RELAY_PORT", "8767")).strip() or "8767"
-    return f"http://localhost:{port}"
+    return f"http://127.0.0.1:{port}"
 
 
 def _home_channel() -> str:
